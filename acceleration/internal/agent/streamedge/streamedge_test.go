@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 )
 
@@ -662,4 +663,11 @@ func (s *StreamEdgeSuite) TestAFixedUserTokenIsUsedInPreferenceToASecret() {
 
 	s.Require().NoError(err)
 	s.Equal("deploy-token", edge.options.UserToken)
+}
+
+func (s *StreamEdgeSuite) TestSpeechForACallThatWasLeftIsTheAgentsCallLeft() {
+	talker, _ := s.timedSpeaker()
+	s.Require().NoError(talker.Close())
+
+	s.ErrorIs(talker.Write(speech(opusSampleRate, 100)), agent.ErrCallLeft)
 }

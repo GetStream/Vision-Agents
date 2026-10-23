@@ -186,7 +186,7 @@ type Session struct {
 	// call's last leaves still arrive while the session closes.
 	closing bool
 	// end ends this session when its timeout is reached (Manager.end).
-	end func()
+	end func(TimeoutReason)
 	// runs are who is in the call, per agent run that can tell (presence). callerSeen is
 	// whether a phone caller has been in the session's call, and settledOnce whether any run
 	// has settled, which only the first may start a phone session's start timeout from.
@@ -224,6 +224,13 @@ type Session struct {
 	// with no store, which is what makes the flag safe: there is nowhere to write rather
 	// than a check to remember.
 	records recorder
+	// recordMu guards recording and unwritten. Until the manager has queued the session's row,
+	// what the fan-out records is held rather than written, so no turn reaches the writer
+	// ahead of the session it belongs to; the manager queues the row only once the session
+	// has joined, so a session whose call refused it leaves no row.
+	recordMu  sync.Mutex
+	recording bool
+	unwritten []Event
 	// turnsMu guards the bookkeeping that turns a stream of events into rows.
 	turnsMu sync.Mutex
 	// turns maps a turn id to the response row it is being recorded as, so the events of
@@ -661,6 +668,15 @@ func (s *Session) FollowUpReply(id string) (state, text string, known bool) {
 		return "", "", false
 	}
 	return s.persisted.FollowUpReply(id)
+}
+
+// FollowUpMessage is the id of the reply to the follow-up under id, or "" when the
+// conversation holds no such follow-up.
+func (s *Session) FollowUpMessage(id string) string {
+	if s.persisted == nil {
+		return ""
+	}
+	return s.persisted.FollowUpMessage(id)
 }
 
 // AwaitCommand accepts a durable submission the way RespondCommand does without answering
@@ -1158,6 +1174,8 @@ func turnIDOf(event Event) string {
 		return typed.TurnID
 	case agent.Interrupted:
 		return typed.TurnID
+	case agent.Speaking:
+		return typed.TurnID
 	case agent.Spoke:
 		return typed.TurnID
 	}
@@ -1351,6 +1369,29 @@ func (s *Session) record(event Event) {
 		return
 	}
 
+	s.recordMu.Lock()
+	defer s.recordMu.Unlock()
+	if !s.recording {
+		s.unwritten = append(s.unwritten, event)
+		return
+	}
+	s.write(event)
+}
+
+// startRecording is called once the session's row is queued: it writes what was held
+// until then, in the order it happened, and lets every later event through.
+func (s *Session) startRecording() {
+	s.recordMu.Lock()
+	defer s.recordMu.Unlock()
+	s.recording = true
+	for _, event := range s.unwritten {
+		s.write(event)
+	}
+	s.unwritten = nil
+}
+
+// write maps one event onto the rows it adds to.
+func (s *Session) write(event Event) {
 	switch typed := event.(type) {
 	case agent.Responding:
 		if !s.continueTurn(typed.TurnID, typed.Continues) {

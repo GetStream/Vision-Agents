@@ -94,32 +94,47 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	if err != nil {
 		return nil, err
 	}
-	spec, err := forkSpec(parent, body, config, thread)
+	// A fork naming no config goes on with its parent's, as the config is now rather than as
+	// the parent was opened with. A config deleted since leaves the fork what its parent had;
+	// a config that cannot be read fails the fork rather than dropping what it decides.
+	var current *store.AgentConfig
+	currentConfig := func() error {
+		if config != nil || s.store == nil || parent.ConfigID() == "" {
+			return nil
+		}
+		read, err := s.store.AgentConfig(ctx, customerID, parent.ConfigID())
+		switch {
+		case err == nil:
+			current = &read
+		case !errors.Is(err, store.ErrNoAgentConfig):
+			return err
+		}
+		return nil
+	}
+	// An ended parent's fork is built from it, so it is read first. A live parent's fork, an
+	// incognito one or one on a thread is refused by forkSpec before any config is needed.
+	if parent.Live == nil && parent.Stored != nil && !thread {
+		if err := currentConfig(); err != nil {
+			return nil, err
+		}
+	}
+	spec, err := forkSpec(parent, body, config, current, thread)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	// The connector bindings are the config's as it is now, not as the parent was opened
-	// with. The session re-resolves the parent's selections against them and against the
-	// caller asking for the fork, and drops the ones the config no longer declares. A config
-	// deleted since binds nothing, and its fork goes ahead as a fork did before bindings
-	// existed; a config that cannot be read fails the fork rather than dropping its bindings.
-	// An ended parent's row keeps none of the config's prompts, so its fork is told, guarded
-	// and reviewed by the config as it is now too; a live parent's spec already carries them.
+	// The connector bindings are the config's as it is now, even for a live parent. The
+	// session re-resolves the parent's selections against them and against the caller asking
+	// for the fork, and drops the ones the config no longer declares. A config deleted since
+	// binds nothing, and its fork goes ahead as a fork did before bindings existed.
+	if parent.Live != nil {
+		if err := currentConfig(); err != nil {
+			return nil, err
+		}
+	}
 	if config == nil {
 		spec.ConnectorBindings = nil
-		if s.store != nil && spec.ConfigID != "" {
-			current, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID)
-			switch {
-			case err == nil:
-				spec.ConnectorBindings = current.Connectors
-				if parent.Live == nil {
-					spec.Instructions = current.Instructions
-					spec.Guardrail = current.Guardrail
-					spec.ReviewInstructions = current.ReviewInstructions
-				}
-			case !errors.Is(err, store.ErrNoAgentConfig):
-				return nil, err
-			}
+		if current != nil {
+			spec.ConnectorBindings = current.Connectors
 		}
 	}
 	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
@@ -150,7 +165,7 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &forkSessionResponse{Body: sessionOf(created)}, nil
+	return &forkSessionResponse{Body: sessionOf(ctx, created)}, nil
 }
 
 // getSession returns one session, running or ended. A backend is also told what was made of
@@ -166,7 +181,7 @@ func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*g
 
 	var rendered Session
 	if found.Live != nil {
-		rendered = sessionOf(found.Live)
+		rendered = sessionOf(ctx, found.Live)
 	} else {
 		rendered = storedSessionOf(*found.Stored)
 	}
@@ -354,7 +369,7 @@ func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSett
 		}
 		return nil, invalidRequest(err.Error())
 	}
-	return &setSessionSettingsResponse{Body: sessionOf(found)}, nil
+	return &setSessionSettingsResponse{Body: sessionOf(ctx, found)}, nil
 }
 
 // errCardedSessionToNative is what setSessionSettings and updateSession answer a move onto a
@@ -551,12 +566,12 @@ func holdUntilAnswered(reopened *session.Session, events <-chan session.Event, d
 
 // sessionsOf renders a query's results, taking the live half where there is one: a session
 // in flight knows what routing resolved its models to, which the row does not carry.
-func sessionsOf(found []session.Found) []Session {
+func sessionsOf(ctx context.Context, found []session.Found) []Session {
 	listed := make([]Session, 0, len(found))
 	for _, one := range found {
 		switch {
 		case one.Live != nil:
-			rendered := sessionOf(one.Live)
+			rendered := sessionOf(ctx, one.Live)
 			// A live session that also has a row takes the row's afterthoughts: a title
 			// somebody set from another tab is on the row and not on the running spec.
 			if one.Stored != nil {
@@ -697,8 +712,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	return spec
 }
 
-// sessionOf renders a session for the wire.
-func sessionOf(found *session.Session) Session {
+// sessionOf renders a session for the wire. Its instructions go only to a backend: they are
+// the backend's to set, and a brief the person using the agent is not meant to see would be
+// read straight off their own session.
+func sessionOf(ctx context.Context, found *session.Session) Session {
 	spec := found.Spec()
 	stt, model, voice, think := found.Resolved()
 	instructions := spec.Instructions
@@ -740,7 +757,7 @@ func sessionOf(found *session.Session) Session {
 	rendered.Voice = optional(speaking)
 	mode := SessionMode(found.Mode())
 	rendered.Mode = &mode
-	if instructions != "" {
+	if instructions != "" && ServerSideFrom(ctx) {
 		rendered.Instructions = &instructions
 	}
 	return rendered
@@ -895,8 +912,9 @@ func modelOverwritesFor(held store.ModelOverwrites) *ModelOverwrites {
 // The parent is read from whichever half of Found has it. A live parent is preferable -- it
 // carries the whole spec, tools and skills included -- but a conversation worth continuing
 // has usually ended, so the row has to be enough on its own. thread is whether the parent's
-// conversation is held on a thread channel (heldOnThread).
-func forkSpec(parent session.Found, request ForkSessionRequest, config *store.AgentConfig, thread bool) (session.Spec, error) {
+// conversation is held on a thread channel (heldOnThread). current is the parent's own config
+// as it is now, nil when the parent had none or it was deleted since.
+func forkSpec(parent session.Found, request ForkSessionRequest, config, current *store.AgentConfig, thread bool) (session.Spec, error) {
 	var spec session.Spec
 	var parentID string
 	// What the fork reads its history out of, which is the parent's channel and the agent
@@ -919,13 +937,20 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			recall = &session.Recall{AgentID: spec.AgentID, ConversationID: spec.ConversationID}
 		}
 	case parent.Stored != nil:
+		// The row keeps none of what the config decides but the models the parent was given
+		// in place of the config's, so the fork runs on the config as it is now, the way a
+		// reopened conversation does (reopenedFromRow).
 		row := parent.Stored
-		spec = session.Spec{
-			AgentName: row.AgentName, ConfigID: row.ConfigID,
-			Title: row.Title, Description: row.Description, Project: row.Project,
-			Custom: row.Custom, ModelOverwrites: row.ModelOverwrites,
-			Text: true,
+		spec = session.Spec{AgentName: row.AgentName, ConfigID: row.ConfigID}
+		if current != nil {
+			spec = session.FromConfig(*current)
 		}
+		spec.Text = true
+		// The conversation goes on after its history, which a greeting would interrupt:
+		// a reopen says none either (sessionToAnswer).
+		spec.Greeting = ""
+		spec.Title, spec.Description, spec.Project = row.Title, row.Description, row.Project
+		spec.Custom, spec.ModelOverwrites = row.Custom, row.ModelOverwrites
 		spec.ConnectorSelections = selectionsOf(*row)
 		spec.ReturnURL = row.ReturnURL
 		parentID = row.ID
@@ -1058,7 +1083,8 @@ func (s *Server) registerSessions(api huma.API) {
 			"somebody else is reported as not found rather than refused, so this is not a way to " +
 			"find out whose an id is.\n" +
 			"A session that ended is read too. A backend is also given its summary, review and usage, " +
-			"which a device asks the backend for.",
+			"which a device asks the backend for, and the instructions of a running session, which a " +
+			"device is never given.",
 		Extensions: map[string]any{clientAccessibleExtension: true},
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The session"},

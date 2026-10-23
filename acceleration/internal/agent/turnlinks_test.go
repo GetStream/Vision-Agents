@@ -187,10 +187,11 @@ func (s *AgentSuite) interruptsATool(policy ToolPolicy, runner ToolRunner, began
 	s.says(participant, "where is my order")
 	select {
 	case <-began:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("the tool did not start")
 	}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
 	s.mutters(participant, "stop cancel that lookup")
 }
 

@@ -178,13 +178,15 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		"ttft_ms", ttftMs, "duration_ms", durationMs,
 		"input_tokens", response.Usage.InputTokens,
 		"cached_tokens", response.Usage.InputTokensDetails.CachedTokens,
+		"cache_write_tokens", response.Usage.InputTokensDetails.CacheWriteTokens,
 		"output_tokens", response.Usage.OutputTokens,
 		"reasoning_tokens", response.Usage.OutputTokensDetails.ReasoningTokens,
 		"success", served(response), "error_code", errorCode(response))
 	usage := routing.Usage{
-		InputTokens:       response.Usage.InputTokens,
-		CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,
-		OutputTokens:      response.Usage.OutputTokens,
+		InputTokens:           response.Usage.InputTokens,
+		CachedInputTokens:     response.Usage.InputTokensDetails.CachedTokens,
+		CacheWriteInputTokens: response.Usage.InputTokensDetails.CacheWriteTokens,
+		OutputTokens:          response.Usage.OutputTokens,
 	}
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,

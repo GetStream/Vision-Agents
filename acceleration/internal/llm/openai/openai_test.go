@@ -161,6 +161,72 @@ func (s *OpenAISuite) TestAToolResultImageGoesInFunctionCallOutput() {
 	s.Contains(string(raw), "2 roses")
 }
 
+func (s *OpenAISuite) TestTheInstructionsOpenAConversationThatIsReplayed() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	raw, err := json.Marshal(provider.params(llm.ResponseParams{
+		Instructions: "You are Ashley.",
+		Input:        []llm.Message{{Role: llm.User, Content: "hello"}},
+	}))
+	s.Require().NoError(err)
+	var sent struct {
+		PreviousResponseID string `json:"previous_response_id"`
+		Input              []struct {
+			Role string `json:"role"`
+		} `json:"input"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &sent))
+
+	s.Empty(sent.PreviousResponseID)
+	s.Require().Len(sent.Input, 2)
+	s.Equal("developer", sent.Input[0].Role)
+	s.Contains(string(raw), "You are Ashley.")
+}
+
+func (s *OpenAISuite) TestAContinuedResponseDoesNotSendItsInstructionsAgain() {
+	// The stored response already holds the developer message it was sent. Sending it
+	// again appended a copy to the chain every turn: a 5k-token prompt became 48k after
+	// ten turns of a voice call.
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	raw, err := json.Marshal(provider.params(llm.ResponseParams{
+		Instructions:       "You are Ashley.",
+		Input:              []llm.Message{{Role: llm.User, Content: "and tomorrow?"}},
+		PreviousResponseID: "resp_1",
+	}))
+	s.Require().NoError(err)
+	var sent struct {
+		PreviousResponseID string `json:"previous_response_id"`
+		Input              []struct {
+			Role string `json:"role"`
+		} `json:"input"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &sent))
+
+	s.Equal("resp_1", sent.PreviousResponseID)
+	s.Require().Len(sent.Input, 1)
+	s.Equal("user", sent.Input[0].Role)
+	s.NotContains(string(raw), "You are Ashley.")
+}
+
+func (s *OpenAISuite) TestAContinuedResponseCarryingOnlyAToolResultSendsJustThatResult() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	items := provider.input(llm.ResponseParams{
+		Instructions:       "You are Ashley.",
+		Input:              []llm.Message{{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booked"}},
+		PreviousResponseID: "resp_1",
+	})
+	s.Require().Len(items, 1)
+
+	raw, err := json.Marshal(items[0])
+	s.Require().NoError(err)
+	s.Contains(string(raw), `"type":"function_call_output"`)
+}
+
 // sendMessage is Slack's MCP slack_send_message input schema as its server listed it on
 // 2026-10-08: two required properties and four optional ones (AI-969).
 var sendMessage = llm.Tool{

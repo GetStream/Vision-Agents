@@ -1,10 +1,11 @@
 package main
 
 import (
-	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/locate"
 )
 
 type ReportSuite struct {
@@ -103,7 +104,7 @@ func (s *ReportSuite) TestTheReportShowsEachCitysMatrixAndTheVendorShares() {
 		)
 	}
 	results[1].CalleeMedia = "192.0.2.10:30000"
-	places := map[string]Place{"192.0.2.10": {IP: "192.0.2.10", City: "Ashburn", Cloud: "AWS", CloudRegion: "us-east-1"}}
+	places := map[string]locate.Place{"192.0.2.10": {IP: "192.0.2.10", City: "Ashburn", Cloud: "AWS", CloudRegion: "us-east-1"}}
 
 	report := Render(results, places)
 
@@ -113,27 +114,4 @@ func (s *ReportSuite) TestTheReportShowsEachCitysMatrixAndTheVendorShares() {
 	s.Contains(report, "| telnyx | 135 ms (p95 135, n=1) | 125 ms (p95 125, n=1) |")
 	s.Contains(report, "| all calls | 150 ms | -20 ms | +20 ms | +5 ms | -5 ms | 0 ms |")
 	s.Contains(report, "192.0.2.10 · Ashburn · AWS us-east-1")
-}
-
-func (s *ReportSuite) TestAnAddressInAPublishedRangeIsNamedByItsCloudAndRegion() {
-	ranges, err := parseAWSRanges([]byte(`{"prefixes":[
-		{"ip_prefix":"3.0.0.0/8","region":"GLOBAL"},
-		{"ip_prefix":"3.80.0.0/12","region":"us-east-1"}]}`))
-	s.Require().NoError(err)
-
-	cloud, region := cloudOf(ranges, netip.MustParseAddr("3.84.1.2"), "AS14618 Amazon.com, Inc.")
-
-	s.Equal("AWS", cloud)
-	s.Equal("us-east-1", region)
-}
-
-func (s *ReportSuite) TestAnAddressOutsideThePublishedRangesFallsBackToItsNetworksName() {
-	ranges, err := parseGoogleRanges([]byte(`{"prefixes":[{"ipv4Prefix":"34.0.0.0/15","scope":"us-east1"}]}`))
-	s.Require().NoError(err)
-
-	cloud, _ := cloudOf(ranges, netip.MustParseAddr("20.1.2.3"), "AS8075 Microsoft Corporation")
-	s.Equal("Azure", cloud)
-
-	cloud, _ = cloudOf(ranges, netip.MustParseAddr("168.86.128.1"), "AS20473 Twilio Inc.")
-	s.Empty(cloud)
 }

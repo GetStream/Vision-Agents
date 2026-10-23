@@ -801,7 +801,7 @@ type Session struct {
 	ForkedFrom       *string                 `json:"forked_from,omitempty" doc:"The session this one continued from, empty for one opened fresh."`
 	Id               string                  `json:"id"`
 	Incognito        *bool                   `json:"incognito,omitempty" doc:"Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from."`
-	Instructions     *string                 `json:"instructions,omitempty"`
+	Instructions     *string                 `json:"instructions,omitempty" doc:"What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it."`
 	LastResponseAt   *time.Time              `json:"last_response_at,omitempty" doc:"When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent."`
 	Llm              *string                 `json:"llm,omitempty" doc:"The provider and model answering, once routing has picked one."`
 	Modality         SessionModality         `json:"modality"`
@@ -1292,18 +1292,18 @@ func (e TextContentPartType) Valid() bool {
 	}
 }
 
-// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself.
+// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out.
 type ToolApprovalCommand struct {
 	Allowed    bool                    `json:"allowed"`
 	RequestId  string                  `json:"request_id"`
 	Summary    *string                 `json:"summary,omitempty" doc:"Shown on the declined call, such as \"Location not shared\"." maxLength:"120"`
 	ToolCallId string                  `json:"tool_call_id"`
-	TurnId     string                  `json:"turn_id"`
+	TurnId     *string                 `json:"turn_id,omitempty" doc:"The turn of the call. Required, except for a connector call whose binding sets require_approval."`
 	Type       ToolApprovalCommandType `json:"type" enum:"tool_approval"`
 }
 
 func (*ToolApprovalCommand) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself."
+	schema.Description = "A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out."
 	return schema
 }
 

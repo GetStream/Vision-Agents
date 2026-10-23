@@ -21,6 +21,7 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
         internal/store/scheduled_tasks.go  (tables: scheduled_tasks, scheduled_task_runs)
         migrations/20261105120000_scheduled_tasks.sql
         migrations/20261105130000_scheduled_tasks_wake.sql  (scheduled_tasks_wake_idx)
+        migrations/20261106120000_scheduled_task_thread.sql (channel_thread)
                  |
                  |  ClaimDueScheduledTasks (FOR UPDATE SKIP LOCKED, lease, claim_id)
                  v
@@ -30,6 +31,7 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
                  v
         internal/api/scheduled_delivery.go DeliverScheduledTask
                  |   quiet hours? -> Postponed
+                 |   channel_thread? -> internal/api/scheduled_thread_delivery.go deliverOnThread
                  |   session live here | on a peer (POST /internal/scheduled-tasks/deliver)
                  |   | ended: reopen from its row | none yet: open one
                  v
@@ -37,6 +39,14 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
           conversation  Session.FollowUp(command id "st_<run id>")
           sms | whatsapp | imessage   same turn's words -> channels.Service.Notify
           phone         phone.Service.Call -> call session -> task as first turn
+
+        deliverOnThread (a task made in an SMS or WhatsApp thread; deliver_to is not read):
+          channel_threads row, the task's customer's and user's   else thread_gone
+          channelbridge.Bridge.Reachable: connection, opt-out, sandbox gate, WhatsApp 24 h
+          lease the thread's turn (store.TakeChannelThreadTurn)
+          the session on the thread channel, else one opened as answerThread opens it
+          Session.FollowUp("st_<run id>"), wait for the reply   -> Bridge.Reply texts it
+          delivered_to sms (telnyx) | whatsapp
 ```
 
 ## Terms
@@ -147,6 +157,56 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksSuite/TestGuestsAndAnonymousCallersAreNotOfferedTheTools`,
   `TestScheduledTasksSuite/TestAnIncognitoSessionIsNotOfferedTheTools`,
   `TestScheduledTasksSuite/TestAnAgentWithoutSchedulingOnIsNotOfferedTheTools`.
+- **A thread on a line of one person schedules for the person who wrote (AI-1842).** An SMS
+  (`telnyx`) or WhatsApp thread session (`api.threadSession`, `personalThreads`) is offered
+  the tools when its person writes, and not when someone else in the thread does; the task's `user_id` is the Stream user the bridge writes the person as
+  (`channelbridge.authorUserID`: per customer, line and person), `caller_kind` `server`, and
+  `channel_thread` its thread channel. A Slack thread is shared and is offered none.
+  `TestTelnyxChannelSuite/TestAPersonTextingTheLineSchedulesATaskThatKeepsTheirThread`,
+  `TestTelnyxChannelSuite/TestTwoPeopleOnOneLineNeverReachEachOthersTasks`,
+  `TestTelnyxChannelSuite/TestTheSamePersonOnAnotherCustomersLineReachesNoneOfTheTasks`,
+  `TestTelnyxChannelSuite/TestSomeoneElseWritingInAPersonsThreadIsNotOfferedTheTools`,
+  `TestTelnyxChannelSuite/TestAZoneNamedInOneRoundIsTheNextRoundsTasks`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadSchedulesForThePersonWhoWrote`,
+  `TestLinqChannelSuite/TestALinqChatIsNotOfferedTheTools`,
+  `TestSlackChannelSuite/TestASlackThreadIsNotOfferedTheTools`.
+- **A task made in a thread is delivered back to that thread (AI-1843).** `deliverOnThread`
+  opens the thread's conversation as `answerThread` does (the session the backend keeps on the
+  channel, else one on the task's config, closed after the turn), under the thread's turn lease,
+  and runs the follow-up. The delivery holds the reply back from `Bridge.Reply` (`Bridge.Hold`)
+  and sends it through the same path (`Bridge.Send`), so the run is `delivered_to` `sms` or
+  `whatsapp` only once the line took it: a refused send is `delivery_failed`, and its retry
+  sends the reply the thread holds without a second turn; a person who opted out by then is
+  `channel_unreachable`, final. The task stores `deliver_to` `sms` or `whatsapp`
+  (`Spec.ThreadDelivery`), which PATCH refuses to change. Quiet hours hold it as any task.
+  Before the turn,
+  `Bridge.Reachable` refuses: a removed connection (`connection_removed`, final), an opted-out
+  person (`channel_unreachable`, final), the sandbox gate (`channel_unreachable`), WhatsApp
+  past 24 h since the person last wrote with no `after_window` template in the manifest
+  (`outside_window`, final). A thread row that is gone, of another customer, or of another person is
+  `thread_gone`, final. A task without `channel_thread` is delivered as before.
+  `TestTelnyxChannelSuite/TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread`,
+  `TestTelnyxChannelSuite/TestARetriedOccurrenceIsNotTextedTwice`,
+  `TestTelnyxChannelSuite/TestATaskWaitsForTheThreadsTurnAndLetsGoOfIt`,
+  `TestTelnyxChannelSuite/TestATaskIsCarriedInTheSessionTheBackendKeepsOnTheThread`,
+  `TestTelnyxChannelSuite/TestATaskWhoseTurnFailsTextsNothing`,
+  `TestTelnyxChannelSuite/TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry`,
+  `TestTelnyxChannelSuite/TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotTextedAndTheTaskIsNotRetried`,
+  `TestTelnyxChannelSuite/TestAThreadTaskInItsQuietHoursIsHeld`,
+  `TestTelnyxChannelSuite/TestAThreadTasksDeliverToCannotChange`,
+  `TestTelnyxChannelSuite/TestAThreadTaskSaysItIsDeliveredOnTheThreadsChannel`,
+  `TestTelnyxChannelSuite/TestATaskScheduledInATasksTurnIsDeliveredOnTheThreadToo`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskSaysItIsDeliveredOnWhatsApp`,
+  `TestTelnyxChannelSuite/TestAPersonWhoOptedOutIsNotTextedAndTheTaskIsNotRetried`,
+  `TestTelnyxChannelSuite/TestATaskOnARemovedLineFailsFinally`,
+  `TestTelnyxChannelSuite/TestATaskWhoseThreadIsGoneFailsFinally`,
+  `TestTelnyxChannelSuite/TestATaskNeverReachesAnotherPersonsThread`,
+  `TestTelnyxChannelSuite/TestATaskReachesOnlyItsOwnCustomersThread`,
+  `TestTelnyxChannelSuite/TestATaskWithoutAThreadIsDeliveredAsBefore` (control),
+  `TestTelnyxSandboxSuite/TestATaskPastTheSandboxsDailyLimitIsHeldBack`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskWithinTheWindowIsSentOnTheThread`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskPastTheWindowIsNotSent`,
+  `TestBridgeSuite/TestAWhatsAppReplyPastTheDayIsPastTheWindowUnlessTheManifestHasATemplate` (unit).
 - **A caller's own tool with a scheduling name keeps the name.**
   `TestScheduledTasksSuite/TestACallersOwnScheduleTaskKeepsTheName`.
 - **Another user's task is a 404.** `TestScheduledTasksSuite/TestTheOwnerReachesATaskItsBackendMadeAndAnotherUserDoesNot`.
@@ -190,7 +250,11 @@ so `testing.yaml` wins over `ROUTER_POSTGRES_DSN` (`TestTheTestingFileWinsOverTh
    `testenv.Database`, which puts the suite's name before `_test`
    (`model_router_test_<slug>_test` becomes `model_router_store_test_<slug>_test`). They create
    it on first use. `StoreSuite` drops the schema of its own (`internal/store/store_test.go:96`),
-   never of yours.
+   never of yours. `ScheduledTasksSuite` runs on `model_router_scheduled_tasks_test_<slug>_test`
+   and `TelnyxChannelSuite` on `model_router_telnyx_channel_test_<slug>_test`
+   (`RouterSuite.database`): a worker claims every task due in its database, so a worker of
+   another suite or package would take their tasks (AI-1555). Each of their tests deletes its
+   tasks when it ends, so the next test's worker finds none.
 2. Keep `redis.addr: localhost:56379` there: `ScheduledTasksSuite` skips without both
    `ROUTER_POSTGRES_DSN` and `ROUTER_REDIS_ADDR` (`internal/api/router_suite_test.go:367`).
 3. Run one package at a time (`-p 1`), as the `parallel-agents` skill says:
@@ -208,6 +272,3 @@ go test -tags integration -p 1 -count=1 -run TestDrainSuite ./cmd/router/
 The store command runs all of `StoreSuite`, more than 500 tests. It took 8 to 14 minutes on a
 loaded machine, and the default `go test` timeout is 10 minutes, so it sets `-timeout 40m`.
 Narrow to one test with `-run 'TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered'`.
-Known flake: AI-1555. AI-1566 is a panic of `TestATaskTextedBySMSArrivesThere` on the first
-run against a fresh database, which step 1 gives you. It did not happen on a fresh database
-on 2026-10-21; if it does, run the test again.

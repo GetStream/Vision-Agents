@@ -200,7 +200,21 @@ func (e *Edge) Join(ctx context.Context) error {
 
 	e.logger.Info("joined the call",
 		"user", e.options.User.ID, "session", e.call.SessionID.Load(), "tracks", len(subscriptions))
+	sfu := e.SFU()
+	e.logger.Info("joined an sfu", "sfu_edge", sfu.Edge, "sfu_host", sfu.Host)
+	go watchSFU(e.SFU, sfuCheckEvery, e.leftDone, func(was, now agent.SFU) {
+		e.logger.Info("moved to another sfu",
+			"was_sfu_edge", was.Edge, "sfu_edge", now.Edge, "sfu_host", now.Host)
+	})
 	return nil
+}
+
+// SFU is the SFU the call is on now, satisfying agent.SFUReporter. It is zero before the join.
+func (e *Edge) SFU() agent.SFU {
+	if e.call == nil {
+		return agent.SFU{}
+	}
+	return sfuOf(e.call.GetState())
 }
 
 // Audio carries what the participants said, as 16 kHz mono PCM.

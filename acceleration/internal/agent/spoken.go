@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -154,4 +155,20 @@ func runDigits(run []string) (string, bool) {
 		digits.WriteString(strconv.Itoa(spokenDigits[word]))
 	}
 	return digits.String(), true
+}
+
+// spokenSeparator is the name of a character a caller reads out between the parts of an ID
+// or a number: "omar underscore davis", "five five five dash one two three".
+var spokenSeparator = regexp.MustCompile(`(?i)\s+\b(underscore|dash|hyphen)\b\s+`)
+
+// withSpokenSeparators writes the separators a caller named as the characters they named,
+// joining the parts either side: after digitsFor, "omar underscore davis underscore 3817" is
+// omar_davis_3817 and "555 dash 123 dash 2002" is 555-123-2002, one value each, as written.
+func withSpokenSeparators(text string) string {
+	return spokenSeparator.ReplaceAllStringFunc(text, func(named string) string {
+		if strings.EqualFold(strings.TrimSpace(named), "underscore") {
+			return "_"
+		}
+		return "-"
+	})
 }

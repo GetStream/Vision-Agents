@@ -40,21 +40,14 @@ public struct Responses: Sendable {
         let body = Self.body(
             text, images: images, maxOutputTokens: maxOutputTokens, reasoningEffort: reasoningEffort)
         await asked?(text)
-        let output = try await backend.call {
-            try await $0.createResponse(path: .init(id: sessionID), body: .json(body))
-        }
-        switch output {
-        case .accepted(let response):
-            return Response(try response.body.json)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        return Response(
+            try await backend.call { try await $0.createResponse(id: sessionID, createResponseRequest: body) })
     }
 
     static func body(
         _ text: String, images: [ImageSource], maxOutputTokens: Int? = nil,
         reasoningEffort: String? = nil
-    ) -> Components.Schemas.CreateResponseRequest {
+    ) -> CreateResponseRequest {
         .init(
             images: images.isEmpty ? nil : images.map(\.schema), maxOutputTokens: maxOutputTokens,
             reasoningEffort: reasoningEffort, requestId: UUID().uuidString, text: text)
@@ -65,19 +58,11 @@ public struct Responses: Sendable {
     /// A session that records nothing has none, and one rewound has none after the response
     /// it went back to. Pass the page's `nextCursor` as `cursor` for the next one.
     public func list(limit: Int? = nil, cursor: String? = nil) async throws -> Page<Response> {
-        let output = try await backend.call {
-            try await $0.listResponses(
-                path: .init(id: sessionID), query: .init(limit: limit, cursor: cursor))
+        let page = try await backend.call {
+            try await $0.listResponses(id: sessionID, cursor: cursor, limit: limit)
         }
-        switch output {
-        case .ok(let response):
-            let page = try response.body.json
-            return Page(
-                items: page.items.map(Response.init), hasMore: page.hasMore,
-                nextCursor: page.nextCursor)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        return Page(
+            items: page.items.map(Response.init), hasMore: page.hasMore, nextCursor: page.nextCursor)
     }
 
     /// One page of what the agent did, turn by turn, in the order it happened.
@@ -87,20 +72,12 @@ public struct Responses: Sendable {
     public func items(
         responseID: String? = nil, limit: Int? = nil, cursor: String? = nil
     ) async throws -> Page<ResponseItem> {
-        let output = try await backend.call {
+        let page = try await backend.call {
             try await $0.listResponseItems(
-                path: .init(id: sessionID),
-                query: .init(responseId: responseID, limit: limit, cursor: cursor))
+                id: sessionID, cursor: cursor, limit: limit, responseId: responseID)
         }
-        switch output {
-        case .ok(let response):
-            let page = try response.body.json
-            return Page(
-                items: page.items.map(ResponseItem.init), hasMore: page.hasMore,
-                nextCursor: page.nextCursor)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        return Page(
+            items: page.items.map(ResponseItem.init), hasMore: page.hasMore, nextCursor: page.nextCursor)
     }
 
     /// Goes back to a response and carries on from there, as though nothing after it was said.

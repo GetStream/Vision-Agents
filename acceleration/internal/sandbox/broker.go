@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"net"
 	"net/url"
 	"strconv"
 
@@ -16,6 +17,11 @@ type Grant struct {
 	Connection core.ConnectionRef
 	// Binding is the agent config's binding the grant comes from.
 	Binding string
+	// Config is the agent config Binding is in. Connector and Selection are what Binding bound
+	// when the session opened: its connector, and how it picks its connection
+	// (store.ConnectionBinding.Type). The grant gives a token only while Config still binds
+	// Binding so, with sandbox set (session.SandboxBound).
+	Config, Connector, Selection string
 	// Scheme is the connection's auth scheme, which reads its token from its credential.
 	Scheme string
 	// Env is the env var code in the sandbox reads the placeholder from, such as GITHUB_TOKEN.
@@ -51,6 +57,23 @@ type Tokens func(ctx context.Context, grant Grant) (Token, error)
 // disconnected, waiting for a reconnect, deleted, or its scheme sends no bearer token.
 var ErrNoCredential = errors.New("sandbox: the connection gives no credential until it is reconnected")
 
+// ErrorClass is the kind of err, for a log or an error that must not hold its text: a
+// provider's refresh error may quote its answer.
+func ErrorClass(err error) string {
+	var netErr net.Error
+	switch {
+	case errors.Is(err, ErrNoCredential):
+		return "no_credential"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline"
+	case errors.As(err, &netErr):
+		return "network"
+	}
+	return "other"
+}
+
 // Mount is what a sandbox is created with so that its code reaches its grants.
 type Mount struct {
 	// Secrets maps an env var to the name the sandbox provider keeps the credential under,
@@ -64,9 +87,9 @@ type Mount struct {
 	// sandbox, which Env does not: Daytona's netleash replaces its proxy and CA env vars (live
 	// probe, 2026-10-21).
 	RunEnv map[string]string
-	// Proxy, when set, is the only address the sandbox may reach: an http proxy at an IPv4
-	// address, with the sandbox's credential in the userinfo. RunEnv sends the sandbox's
-	// requests there.
+	// Proxy, when set, is the only address the sandbox may reach: an http or https proxy at an
+	// IPv4 address, with the sandbox's credential in the userinfo. RunEnv sends the sandbox's
+	// requests there, or to a tunnel in the sandbox to it.
 	Proxy *url.URL
 	// Files are written into the sandbox, by absolute path, before code runs in it.
 	Files map[string][]byte
@@ -74,6 +97,9 @@ type Mount struct {
 	// any code. One that fails stops the run, and runs again, with those after it, before the
 	// next.
 	Setup []string
+	// EachRun are shell commands run in the sandbox before each run of code, once Setup is
+	// done. One that fails fails the run, and no code runs.
+	EachRun []string
 }
 
 // CredentialBroker lets code in a sandbox call a connector's API with a connection's

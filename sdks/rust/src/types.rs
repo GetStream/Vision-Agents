@@ -136,6 +136,9 @@ pub struct AgentConfig {
     pub keyterms: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub knowledge_namespace: ::std::option::Option<::std::string::String>,
+    ///The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub left_out_connectors: ::std::option::Option<::std::vec::Vec<LeftOutConnector>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -148,10 +151,17 @@ pub struct AgentConfig {
     ///Deprecated: use connectors, a binding to a connector.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    ///Absent when calls are reviewed by Stream's default guide.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub review: ::std::option::Option<AgentReview>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub role: ::std::option::Option<AgentRole>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox: ::std::option::Option<Sandbox>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox_options: ::std::option::Option<SandboxOptions>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub scheduling: ::std::option::Option<AgentScheduling>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub search: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -227,9 +237,15 @@ pub struct AgentConfigPatch {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub review: ::std::option::Option<AgentReview>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub role: ::std::option::Option<AgentRole>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox: ::std::option::Option<Sandbox>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox_options: ::std::option::Option<SandboxOptions>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub scheduling: ::std::option::Option<AgentScheduling>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub search: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -304,10 +320,18 @@ pub struct AgentConfigRequest {
     ///Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    ///How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub review: ::std::option::Option<AgentReview>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub role: ::std::option::Option<AgentRole>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox: ::std::option::Option<Sandbox>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox_options: ::std::option::Option<SandboxOptions>,
+    ///Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub scheduling: ::std::option::Option<AgentScheduling>,
     ///What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub search: ::std::option::Option<::std::string::String>,
@@ -360,6 +384,9 @@ pub struct AgentConnectorBinding {
     ///Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub required: ::std::option::Option<bool>,
+    ///Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub sandbox: ::std::option::Option<bool>,
     ///How long one tool call may take, in milliseconds. Omitted, the session's default applies.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub timeout_ms: ::std::option::Option<i64>,
@@ -816,6 +843,73 @@ impl ::std::convert::TryFrom<::std::string::String> for AgentResponseStatus {
         value.parse()
     }
 }
+///How a finished call under an agent is reviewed.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct AgentReview {
+    ///What the model reviewing a finished call judges it by, in place of Stream's default guide: what to summarise and how to score the call from 1 to 5. A score outside 1 to 5 is not kept. The reviewer is always told to answer with JSON holding a summary, a score and notes, so leave the answer's format out. Empty is the default guide. On an update or a patch, left out keeps the stored instructions and an empty string removes them.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instructions: ::std::option::Option<::std::string::String>,
+}
+///What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AgentRole {
+    #[serde(rename = "agent_moderator")]
+    AgentModerator,
+}
+impl ::std::fmt::Display for AgentRole {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::AgentModerator => f.write_str("agent_moderator"),
+        }
+    }
+}
+impl ::std::str::FromStr for AgentRole {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "agent_moderator" => Ok(Self::AgentModerator),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AgentRole {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AgentRole {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Whether the agent may schedule tasks for its users, and the defaults those tasks take.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct AgentScheduling {
+    ///The IANA zone a scheduled task takes when neither the user nor their session has ever named one, such as America/New_York. A zone nobody knows is refused with a 400 invalid_timezone.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub default_timezone: ::std::option::Option<::std::string::String>,
+    ///Offer the agent the scheduling tools (schedule_task, list_scheduled_tasks, update_scheduled_task, cancel_scheduled_task), so a user can ask it to remind them or do something later, once or on a repeat. Off by default: it adds four tools to every turn. Left out on an update, the stored setting stays.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub enabled: ::std::option::Option<bool>,
+    ///How many active scheduled tasks one user may hold. Omitted is 25.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_tasks_per_user: ::std::option::Option<i64>,
+}
 ///`AgentStats`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct AgentStats {
@@ -963,7 +1057,7 @@ pub struct AuditEntry {
     ///Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub actor_id: ::std::option::Option<::std::string::String>,
-    ///Their name, as their client named them. Never an email address: the router keeps none.
+    ///Their name, as their client named them. Never an email address: the only one the router keeps is the one a backend says its user signs in with, X-Stream-User-Email, which no audit entry names.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub actor_name: ::std::option::Option<::std::string::String>,
     ///The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router.
@@ -1158,12 +1252,12 @@ impl ::std::convert::TryFrom<::std::string::String> for AuditSource {
 pub struct Authorization {
     ///When the attempt ends, 10 minutes after it began. A callback after that is refused.
     pub expires_at: ::std::string::String,
-    ///Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+    ///Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, and never in a query string. A native app, which has no origin to post from, puts it in launch_url's fragment, which no server and no Referer is sent. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
     pub handoff_token: ::std::string::String,
     ///The attempt.
     pub id: ::std::string::String,
     pub kind: AuthorizationKind,
-    ///The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider.
+    ///The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider. A consent whose return_url is a native app's own scheme is opened in the app's web authentication sheet as launch_url#handoff_token=<handoff_token> instead, and the page reads the token from its fragment.
     pub launch_url: ::std::string::String,
 }
 ///consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
@@ -1220,7 +1314,7 @@ impl ::std::convert::TryFrom<::std::string::String> for AuthorizationKind {
 ///`AuthorizationRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct AuthorizationRequest {
-    ///The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs.
+    ///The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch page then takes handoff_token from its own fragment, and the callback hands the browser back to the app.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub return_url: ::std::option::Option<::std::string::String>,
 }
@@ -2380,7 +2474,7 @@ pub struct Connection {
     ///Why the connector marked definition_revision broken. Present only when definition_status is broken.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub definition_broken_reason: ::std::option::Option<::std::string::String>,
-    ///The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
+    ///The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again, or a none connection's empty credentials (PUT .../credentials), moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
     pub definition_revision: i64,
     pub definition_status: ConnectionDefinitionStatus,
     ///When the current credential expires. Absent when there is none or it does not.
@@ -2428,7 +2522,7 @@ pub struct ConnectionCredentials {
     )]
     pub values: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
 }
-///current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.
+///current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2495,12 +2589,18 @@ pub struct ConnectionInvocation {
     pub config_id: ::std::string::String,
     pub connection_id: ::std::string::String,
     pub connector_id: ::std::string::String,
+    ///Why the call failed: the start of the provider's error body when it answered with a 4xx or a 5xx, else what the call's error said, at most 1 KiB. Every URL in it keeps only its scheme and host, and the connection's credential and the request's path are taken out. A call the router held for the provider's rate limit says rate limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before the router kept it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_message: ::std::option::Option<::std::string::String>,
     ///How the call failed. Absent for a call that answered.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error_type: ::std::option::Option<InvocationErrorType>,
     pub id: ::std::string::String,
     ///From the call reaching the router to its answer, the router's own checks included.
     pub latency_ms: i64,
+    ///The HTTP status the provider answered the call's last request with. Absent for a call that answered, and for one no request of which was answered: the router refused or held it, or the provider could not be reached.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider_status: ::std::option::Option<i64>,
     ///The session that called it. Absent for an incognito session, whose calls are tied to no conversation.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub session_id: ::std::option::Option<::std::string::String>,
@@ -2598,7 +2698,7 @@ pub struct ConnectionPage {
     pub has_more: bool,
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub items: ::std::option::Option<::std::vec::Vec<Connection>>,
-    ///Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
+    ///Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app) and the same X-Stream-User-Id, or again none. Absent on the last one.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub next_cursor: ::std::option::Option<::std::string::String>,
 }
@@ -2869,6 +2969,9 @@ pub struct Connector {
     pub redirect_uri: ::std::option::Option<::std::string::String>,
     ///The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
     pub revision: i64,
+    ///How code in an agent's sandbox calls the provider's API with a connection's credential without holding it. Absent when the connector offers no such access.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub sandbox: ::std::option::Option<ConnectorSandbox>,
     ///How a connection may authenticate, such as oauth2_code.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub schemes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
@@ -3523,6 +3626,16 @@ pub struct ConnectorProviderAppRequest {
     ///The app's name in the customer's workspace.
     pub name: ::std::string::String,
 }
+///How code in an agent's sandbox reaches the provider's API with a connection's credential.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[derive(Default)]
+pub struct ConnectorSandbox {
+    ///The env var code in the sandbox reads, such as GITHUB_TOKEN. Its value is a placeholder: the sandbox's egress puts the connection's credential in its place, only in a request header and only to one of hosts.
+    pub env: ::std::string::String,
+    ///The hosts a request may carry the credential to: an exact host, or *. and a domain for the domain and every name under it.
+    pub hosts: ::std::vec::Vec<::std::string::String>,
+}
 ///What a person does at the provider before the first consent.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -3738,7 +3851,7 @@ pub struct CreateResponseRequest {
     ///How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reasoning_effort: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
+    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
     ///What to answer, as though it had been said.
@@ -3746,6 +3859,60 @@ pub struct CreateResponseRequest {
     ///Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub videos: ::std::option::Option<::std::vec::Vec<VideoSource>>,
+}
+///`CreateRunRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CreateRunRequest {
+    ///The agent config to run.
+    pub config_id: ::std::string::String,
+    ///Images that go with the input, in order, so the input can refer to them by their place in this list. At most 8. Each URL is fetched before the run, and one that cannot be fetched or is not a JPEG, PNG, WebP or GIF of at most 5 MB is a 400 image_unavailable. An agent with no vision skill and a conversation model that cannot see refuses them with a 400 invalid_config.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
+    ///What the agent works on: a string, or any JSON value. It is handed to the agent as data, never as instructions.
+    pub input: ::serde_json::Value,
+    ///What the agent is told for this run alone, added to its config's instructions.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instructions: ::std::option::Option<::std::string::String>,
+    ///Cost labels, carried onto every request the run makes alongside the config's own.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///How long the run may take before it is given up as a 504. Two minutes when left out.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub timeout_ms: ::std::option::Option<i64>,
+}
+///`CreateScheduledTaskRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CreateScheduledTaskRequest {
+    ///The agent config by name, as session create names it. config_id or this, or session_id.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent: ::std::option::Option<::std::string::String>,
+    ///The agent config by id. agent or this, or session_id.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub config_id: ::std::option::Option<::std::string::String>,
+    ///The caller's own labels, handed back untouched.
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ///Where an occurrence is delivered, in order, the first that lands: conversation, sms, whatsapp, imessage or phone. The agent's reply is written in its conversation either way; a channel carries the same words out, and phone rings the user and speaks them. Left out or empty is the conversation alone.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub deliver_to: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///The task's id, chosen by the caller as a session id can be: up to 64 letters, digits, - and _. Left out, the router generates one. Sending one that is used answers 409.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub id: ::std::option::Option<::std::string::String>,
+    ///What the agent is told when the task comes due. Read back by the owner and by the customer's backend, so put nothing in it a user must not read.
+    pub instructions: ::std::string::String,
+    ///The part of the user's day an occurrence that comes due in is held through, until it ends, on every channel.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub quiet_hours: ::std::option::Option<ScheduledTaskQuietHours>,
+    ///When it runs.
+    pub schedule: ScheduledTaskSchedule,
+    ///The named user's own session whose conversation the follow-up lands in; its config is the task's. Left out, the first occurrence opens a session.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub session_id: ::std::option::Option<::std::string::String>,
+    ///A short name the user will recognise.
+    pub title: ::std::string::String,
 }
 ///`CreateSessionRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -3789,6 +3956,9 @@ pub struct CreateSessionRequest {
     ///Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub incognito: ::std::option::Option<bool>,
+    ///What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instructions: ::std::option::Option<::std::string::String>,
     ///Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub keyterms: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
@@ -3798,9 +3968,6 @@ pub struct CreateSessionRequest {
     ///A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
-    ///What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instructions: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_tokens: ::std::option::Option<i64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -3839,6 +4006,9 @@ pub struct CreateSessionRequest {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub timezone: ::std::option::Option<::std::string::String>,
     ///What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub title: ::std::option::Option<::std::string::String>,
@@ -4530,7 +4700,7 @@ pub enum Equals {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -4544,7 +4714,7 @@ pub struct ErrorDetail {
 pub struct ErrorResponse {
     pub error: ErrorDetail,
 }
-///The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+///The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4584,6 +4754,8 @@ pub enum ErrorType {
     Internal,
     #[serde(rename = "unavailable")]
     Unavailable,
+    #[serde(rename = "timeout")]
+    Timeout,
 }
 impl ::std::fmt::Display for ErrorType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4601,6 +4773,7 @@ impl ::std::fmt::Display for ErrorType {
             Self::RateLimited => f.write_str("rate_limited"),
             Self::Internal => f.write_str("internal"),
             Self::Unavailable => f.write_str("unavailable"),
+            Self::Timeout => f.write_str("timeout"),
         }
     }
 }
@@ -4621,6 +4794,7 @@ impl ::std::str::FromStr for ErrorType {
             "rate_limited" => Ok(Self::RateLimited),
             "internal" => Ok(Self::Internal),
             "unavailable" => Ok(Self::Unavailable),
+            "timeout" => Ok(Self::Timeout),
             _ => Err("invalid value".into()),
         }
     }
@@ -5712,6 +5886,16 @@ impl ::std::convert::TryFrom<::std::string::String> for KnowledgeUrlState {
         value.parse()
     }
 }
+///A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct LeftOutConnector {
+    ///The connection id or label agent.yaml named, which no connection of the app has.
+    pub connection: ::std::string::String,
+    ///The connector agent.yaml named, or the alias when it named none.
+    pub connector_id: ::std::string::String,
+    ///The alias agent.yaml gave the connector.
+    pub name: ::std::string::String,
+}
 ///One voice a provider offers. Everything past the name is what that vendor chose to say about it, in its own words, so a field being absent means the vendor did not label it rather than that the voice lacks it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct LibraryVoice {
@@ -5973,7 +6157,7 @@ pub struct McpServer {
     ///Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Its Streamable HTTP endpoint, over https.
+    ///Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
     pub url: ::std::string::String,
     ///Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -6100,6 +6284,9 @@ pub struct ModelCallTiming {
     ///Request to completed response or failed create.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub duration_ms: ::std::option::Option<f64>,
+    ///Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_code: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub input_tokens: ::std::option::Option<i64>,
     pub model: ::std::string::String,
@@ -6897,6 +7084,8 @@ pub struct Policy {
     ///Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub prompt_injection: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub quota: ::std::option::Option<Quota>,
     ///Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub require_own_stream_app: ::std::option::Option<bool>,
@@ -6953,6 +7142,9 @@ pub struct Provider {
     pub price: ::std::option::Option<ProviderPrice>,
     pub provider: ::std::string::String,
     pub realtime: bool,
+    ///The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub supports: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     pub tier: Tier,
     ///This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -6989,7 +7181,7 @@ pub struct ProviderBenchmark {
 ///`ProviderHealth`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ProviderHealth {
-    ///False once the error rate crosses the configured threshold.
+    ///False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
     pub available: bool,
     pub error_rate: f64,
     pub errors: i64,
@@ -7004,6 +7196,16 @@ pub struct ProviderPrice {
     pub per_million_input_tokens: ::std::option::Option<f64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub per_million_output_tokens: ::std::option::Option<f64>,
+}
+///What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct Quota {
+    ///How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub messages_per_user_per_day: ::std::option::Option<i64>,
+    ///How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tokens_per_user_per_day: ::std::option::Option<i64>,
 }
 ///`RcsProfile`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -7355,6 +7557,18 @@ pub struct RouterConfigRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<TtsOptions>,
 }
+///`Run`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct Run {
+    ///The last thing the agent said.
+    pub final_text: ::std::string::String,
+    ///The provider/model routing picked to answer.
+    pub model_route: ::std::string::String,
+    ///The session the run held. It ended with the run, and being incognito, it cannot be read back.
+    pub session_id: ::std::string::String,
+    ///What the run's model calls spent.
+    pub usage: CallUsage,
+}
 ///Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 #[derive(
     ::serde::Deserialize,
@@ -7438,6 +7652,341 @@ pub struct SandboxOptions {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SayRequest {
     pub text: ::std::string::String,
+}
+///`ScheduledTask`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ScheduledTask {
+    pub config_id: ::std::string::String,
+    pub consecutive_failures: i64,
+    pub created_at: ::std::string::String,
+    ///agent when the model made it in a conversation, api when a backend did.
+    pub created_by: ScheduledTaskCreatedBy,
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ///Where an occurrence is delivered, in order, the first that lands.
+    pub deliver_to: ::std::vec::Vec<::std::string::String>,
+    pub id: ::std::string::String,
+    pub instructions: ::std::string::String,
+    ///When a run last finished, in UTC. Null when none has.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub last_run_at: ::std::option::Option<::std::string::String>,
+    ///The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub next_run_at: ::std::option::Option<::std::string::String>,
+    ///The part of the user's day an occurrence that comes due in is held through. Absent is no hold.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub quiet_hours: ::std::option::Option<ScheduledTaskQuietHours>,
+    pub schedule: ScheduledTaskSchedule,
+    ///The conversation the task follows up in. Empty until its first occurrence opens one.
+    pub session_id: ::std::string::String,
+    ///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+    pub state: ScheduledTaskState,
+    pub title: ::std::string::String,
+    ///Up to the next five occurrences, RFC 3339 with the task zone's offset.
+    pub upcoming: ::std::vec::Vec<::std::string::String>,
+    pub updated_at: ::std::string::String,
+    pub user_id: ::std::string::String,
+}
+///agent when the model made it in a conversation, api when a backend did.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ScheduledTaskCreatedBy {
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "api")]
+    Api,
+}
+impl ::std::fmt::Display for ScheduledTaskCreatedBy {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Agent => f.write_str("agent"),
+            Self::Api => f.write_str("api"),
+        }
+    }
+}
+impl ::std::str::FromStr for ScheduledTaskCreatedBy {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "agent" => Ok(Self::Agent),
+            "api" => Ok(Self::Api),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ScheduledTaskCreatedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ScheduledTaskCreatedBy {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ScheduledTaskNext`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct ScheduledTaskNext {
+    ///The next occurrence as the user's clock reads it, in the task's zone.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub at: ::std::option::Option<::std::string::String>,
+    ///How long from now instead, an ISO 8601 duration: PT15M.
+    #[serde(rename = "in", skip_serializing_if = "::std::option::Option::is_none")]
+    pub in_: ::std::option::Option<::std::string::String>,
+}
+///`ScheduledTaskPage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ScheduledTaskPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<ScheduledTask>,
+    ///Pass as cursor for the next page. Absent on the last one.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
+}
+///`ScheduledTaskQuietHours`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ScheduledTaskQuietHours {
+    ///When the hold ends. It may read before the start: 22:00 to 07:00 holds the night.
+    pub end: ::std::string::String,
+    ///When the hold begins, as the user's clock reads it. Both boundaries empty is no hold, which is also how an update clears one.
+    pub start: ::std::string::String,
+}
+///`ScheduledTaskRun`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ScheduledTaskRun {
+    pub attempts: i64,
+    ///Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
+    pub delivered_to: ::std::string::String,
+    ///Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again); on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub error: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub finished_at: ::std::option::Option<::std::string::String>,
+    pub id: ::std::string::String,
+    ///When the occurrence was due, RFC 3339 with the task zone's offset.
+    pub scheduled_for: ::std::string::String,
+    pub session_id: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub started_at: ::std::option::Option<::std::string::String>,
+    ///running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
+    pub state: ScheduledTaskRunState,
+    pub task_id: ::std::string::String,
+    ///schedule when it came due, manual when it was run by hand.
+    pub trigger: ScheduledTaskRunTrigger,
+}
+///`ScheduledTaskRunPage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ScheduledTaskRunPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<ScheduledTaskRun>,
+    ///Pass as cursor for the next page. Absent on the last one.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
+}
+///running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ScheduledTaskRunState {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "delivered")]
+    Delivered,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "missed")]
+    Missed,
+}
+impl ::std::fmt::Display for ScheduledTaskRunState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Running => f.write_str("running"),
+            Self::Delivered => f.write_str("delivered"),
+            Self::Failed => f.write_str("failed"),
+            Self::Missed => f.write_str("missed"),
+        }
+    }
+}
+impl ::std::str::FromStr for ScheduledTaskRunState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "running" => Ok(Self::Running),
+            "delivered" => Ok(Self::Delivered),
+            "failed" => Ok(Self::Failed),
+            "missed" => Ok(Self::Missed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ScheduledTaskRunState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ScheduledTaskRunState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///schedule when it came due, manual when it was run by hand.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ScheduledTaskRunTrigger {
+    #[serde(rename = "schedule")]
+    Schedule,
+    #[serde(rename = "manual")]
+    Manual,
+}
+impl ::std::fmt::Display for ScheduledTaskRunTrigger {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Schedule => f.write_str("schedule"),
+            Self::Manual => f.write_str("manual"),
+        }
+    }
+}
+impl ::std::str::FromStr for ScheduledTaskRunTrigger {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "schedule" => Ok(Self::Schedule),
+            "manual" => Ok(Self::Manual),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ScheduledTaskRunTrigger {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ScheduledTaskRunTrigger {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ScheduledTaskSchedule`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct ScheduledTaskSchedule {
+    ///When it first runs, as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub at: ::std::option::Option<::std::string::String>,
+    ///What the schedule says, in one sentence. Read-only: written by the router, and the same sentence the model reads back.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub description: ::std::option::Option<::std::string::String>,
+    ///How long from now instead, an ISO 8601 duration: PT20M, P1D. Days are calendar days: P1D is the same time tomorrow. Resolved on write; a response never carries it.
+    #[serde(rename = "in", skip_serializing_if = "::std::option::Option::is_none")]
+    pub in_: ::std::option::Option<::std::string::String>,
+    ///Omit for once. Otherwise an RRULE subset without DTSTART or UNTIL: FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY;BYMONTHDAY=1.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub repeat: ::std::option::Option<::std::string::String>,
+    ///An IANA zone, such as Europe/Amsterdam. On create, left out resolves to the user's stored zone, then the agent's default_timezone; on update, to the task's own zone.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub timezone: ::std::option::Option<::std::string::String>,
+    ///The last local date it repeats on, inclusive, 2026-12-31.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub until: ::std::option::Option<::std::string::String>,
+}
+///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ScheduledTaskState {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for ScheduledTaskState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Active => f.write_str("active"),
+            Self::Paused => f.write_str("paused"),
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for ScheduledTaskState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "active" => Ok(Self::Active),
+            "paused" => Ok(Self::Paused),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ScheduledTaskState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ScheduledTaskState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`SearchAnswer`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -9620,6 +10169,9 @@ pub struct SyncAgentRequest {
     ///The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub knowledge_urls: ::std::option::Option<::std::vec::Vec<KnowledgeUrlDeclaration>>,
+    ///The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub left_out_connectors: ::std::option::Option<::std::vec::Vec<LeftOutConnector>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
     ///MCP servers outside the plugin catalog, opened by their URL with no login.
@@ -9636,9 +10188,14 @@ pub struct SyncAgentRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub role: ::std::option::Option<AgentRole>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox: ::std::option::Option<Sandbox>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox_options: ::std::option::Option<SandboxOptions>,
+    ///Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub scheduling: ::std::option::Option<AgentScheduling>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub search: ::std::option::Option<::std::string::String>,
     ///The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone.
@@ -9925,7 +10482,7 @@ pub struct TimelineEntry {
     pub tts_ttfb_ms: ::std::option::Option<f64>,
     pub turn_id: ::std::string::String,
 }
-///A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result.
+///A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ToolApprovalCommand {
     pub allowed: bool,
@@ -10135,12 +10692,81 @@ pub struct TranscriptMessage {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub agent: ::std::option::Option<bool>,
     pub created_at: ::std::string::String,
+    ///The line is still being written: a reply still streaming, or words still being said, stored as they first were. The session's live frames carry the rest.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub generating: ::std::option::Option<bool>,
+    ///The stored line's id. A line a participant was heard saying has the line_id its session's hearing and heard frames named it by; any other line has an id Chat gave it.
+    pub id: ::std::string::String,
+    ///The reply was cut off, by the caller talking over it or its voice failing. Its text is what it was going to say, of which some or none was heard.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub interrupted: ::std::option::Option<bool>,
     ///That speaker's display name, when they have one.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub purpose: ::std::option::Option<TranscriptMessagePurpose>,
     ///Who said it, the agent under its own user id.
     pub speaker: ::std::string::String,
     pub text: ::std::string::String,
+    ///The turn a reply was written for, as the session's response frames name it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub turn_id: ::std::option::Option<::std::string::String>,
+}
+///Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum TranscriptMessagePurpose {
+    #[serde(rename = "greeting")]
+    Greeting,
+    #[serde(rename = "checkin")]
+    Checkin,
+    #[serde(rename = "update")]
+    Update,
+}
+impl ::std::fmt::Display for TranscriptMessagePurpose {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Greeting => f.write_str("greeting"),
+            Self::Checkin => f.write_str("checkin"),
+            Self::Update => f.write_str("update"),
+        }
+    }
+}
+impl ::std::str::FromStr for TranscriptMessagePurpose {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "greeting" => Ok(Self::Greeting),
+            "checkin" => Ok(Self::Checkin),
+            "update" => Ok(Self::Update),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for TranscriptMessagePurpose {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TranscriptMessagePurpose {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`TranscriptWord`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -10360,6 +10986,28 @@ pub struct TurnStatsBucket {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts_ttfb_p95_ms: ::std::option::Option<f64>,
     pub turn_count: i64,
+}
+///`UpdateScheduledTaskRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct UpdateScheduledTaskRequest {
+    ///Replaces where an occurrence is delivered, in order. An empty list is the conversation alone.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub deliver_to: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///What the agent is told when the task comes due. Server-side only: a device sending it is refused.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instructions: ::std::option::Option<::std::string::String>,
+    ///Moves the next occurrence only: a snooze, or a skip when it lands past the following one. It lands 15 minutes from now at the soonest, unless it lands no earlier than the current next occurrence; sooner is refused with interval_too_short.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next: ::std::option::Option<ScheduledTaskNext>,
+    ///Replaces the part of the day an occurrence is held through. Both boundaries empty clears the hold.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub quiet_hours: ::std::option::Option<ScheduledTaskQuietHours>,
+    ///Replaces the whole schedule, except a timezone left out of it keeps the task's. Its first occurrence follows the rule of next: 15 minutes from now at the soonest, unless it lands no earlier than the current next occurrence.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub schedule: ::std::option::Option<ScheduledTaskSchedule>,
+    ///A short name the user will recognise.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub title: ::std::option::Option<::std::string::String>,
 }
 ///What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]

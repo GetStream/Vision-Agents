@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -149,10 +150,9 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	// Reading and writing each own the connection in one direction, which is what gorilla
 	// requires: two goroutines writing to one socket interleave frames.
 	owner := OwnerFrom(r.Context())
-	gone := make(chan struct{})
+	gone := make(chan error, 1)
 	go func() {
-		defer close(gone)
-		s.readCommands(connection, found, owner, CallerFrom(r.Context()))
+		gone <- s.readCommands(connection, found, owner, CallerFrom(r.Context()))
 	}()
 	s.writeEvents(connection, events, watching(r), gone)
 }
@@ -200,20 +200,25 @@ func (w wanted) takesFrame(kind string) bool {
 }
 
 // writeEvents pushes the conversation to the caller until the session ends or the socket
-// breaks.
-func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted, gone <-chan struct{}) {
+// breaks. gone carries why the reader stopped, which is answered here because this is the
+// goroutine that writes.
+func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted, gone <-chan error) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 
 	for {
 		select {
-		case <-gone:
+		case stopped := <-gone:
+			switch {
+			case stopped == nil:
+				closeSocket(connection, websocket.CloseNormalClosure, "the session ended")
+			case errors.Is(stopped, errUnreadableFrame):
+				refuseUnreadable(connection)
+			}
 			return
 		case event, open := <-events:
 			if !open {
-				connection.SetWriteDeadline(time.Now().Add(writeWait))
-				connection.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "the session ended"))
+				closeBeforeReader(connection, websocket.CloseNormalClosure, "the session ended", gone)
 				return
 			}
 			if !asked.takes(event) {
@@ -268,28 +273,54 @@ type watcherCommand struct {
 // readCommands applies what the caller sends, which is tool results and the handful of
 // things it can do to the conversation.
 //
-// A frame it cannot read is reported and skipped rather than closing the socket: dropping
-// the connection over one bad message would take the tool calls in flight with it.
-func (s *Server) readCommands(connection *websocket.Conn, found *session.Session, owner session.Owner, sender routing.Caller) {
+// A command of a type it does not know is reported and skipped rather than closing the
+// socket: dropping the connection over one bad message would take the tool calls in flight
+// with it. A frame that is not JSON it can read ends the socket.
+//
+// It returns nil once a command closed the session, errUnreadableFrame for a frame that is not
+// a command, and the read's own error when the connection ended.
+func (s *Server) readCommands(connection *websocket.Conn, found *session.Session, owner session.Owner, sender routing.Caller) error {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	for {
-		var command watcherCommand
-		if err := connection.ReadJSON(&command); err != nil {
+		_, payload, err := connection.ReadMessage()
+		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				s.logger.Debug("session socket read failed", "error", err)
 			}
-			return
+			return stack.Wrap(err)
 		}
 		connection.SetReadDeadline(time.Now().Add(pongWait))
+		var command watcherCommand
+		if json.Unmarshal(payload, &command) != nil {
+			return errUnreadableFrame
+		}
 
 		if !s.applyCommand(found, owner, sender, command) {
-			return
+			return nil
 		}
 	}
+}
+
+// errUnreadableFrame ends a socket on a frame that is not JSON of the shape it reads.
+var errUnreadableFrame = invalidRequest("a frame on this socket is not JSON it can read")
+
+// refuseUnreadable tells the caller its frame could not be read, then closes with 1008,
+// policy violation, since the frame is the caller's to fix (RFC 6455 section 7.4.1,
+// https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1). Only a socket's writer may call it,
+// once its reader has stopped: it writes a frame and then reads.
+func refuseUnreadable(connection *websocket.Conn) {
+	connection.SetWriteDeadline(time.Now().Add(writeWait))
+	if connection.WriteJSON(frame{
+		"type": "error", "error": errUnreadableFrame.Message,
+		"code": errUnreadableFrame.Code, "error_type": errUnreadableFrame.Type,
+	}) != nil {
+		return
+	}
+	closeSocket(connection, websocket.ClosePolicyViolation, errUnreadableFrame.Message)
 }
 
 // applyCommand carries out one of the watcher's commands, reporting whether the socket
@@ -323,6 +354,11 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, sende
 	case "tool_approval":
 		if command.Allowed == nil {
 			found.Report(fmt.Errorf("tool_approval needs allowed"), "tool")
+			return true
+		}
+		// A connector call the router holds for the person's approval is sent only once they
+		// allow it, and only they or their backend may answer it.
+		if found.AnswerConnectorApproval(command.ToolCallID, command.CommandID, *command.Allowed, command.Summary, owner) {
 			return true
 		}
 		// A connector call waiting for the person to sign in is declined the same way.
@@ -512,13 +548,25 @@ func frameOf(event session.Event) (frame, bool) {
 			"held_ms":     typed.HeldMs,
 		}, true
 
+	case agent.Speaking:
+		return withMessageSpan(frame{
+			"type":         "speaking",
+			"turn_id":      typed.TurnID,
+			"synthesis_id": typed.SynthesisID,
+			"text":         typed.Text,
+			"at":           typed.At,
+			"delay_ms":     typed.DelayMs,
+		}, typed.Message), true
+
 	case agent.Spoke:
-		return frame{
+		return withMessageSpan(frame{
 			"type":                  "spoke",
 			"turn_id":               typed.TurnID,
+			"synthesis_id":          typed.SynthesisID,
+			"characters":            typed.Characters,
 			"audio_duration_ms":     typed.AudioDurationMs,
 			"time_to_first_byte_ms": typed.TimeToFirstByteMs,
-		}, true
+		}, typed.Message), true
 
 	case agent.Turn:
 		return frame{
@@ -655,11 +703,18 @@ func frameOf(event session.Event) (frame, bool) {
 		}, true
 
 	case agent.Interrupted:
-		return frame{
+		cut := frame{
 			"type":        "interrupted",
 			"turn_id":     typed.TurnID,
 			"participant": participantOf(typed.Participant),
-		}, true
+		}
+		// Only when some of the turn had been heard, so a client falls back on its own
+		// count rather than freezing at nothing.
+		if typed.SynthesisID != "" {
+			cut["synthesis_id"] = typed.SynthesisID
+			cut["heard_ms"] = typed.HeardMs
+		}
+		return withMessageSpan(cut, typed.Message), true
 
 	case agent.OverlapDecided:
 		return frame{
@@ -711,6 +766,17 @@ func withPurpose(rendered frame, purpose string) frame {
 		rendered["purpose"] = purpose
 	}
 	return rendered
+}
+
+// withMessageSpan adds where an utterance is in its reply's Chat message to a frame about it,
+// when the agent knows. A router before them sent neither, and a client falls back on
+// counting the voice's characters.
+func withMessageSpan(sent frame, message *agent.MessageSpan) frame {
+	if message != nil {
+		sent["message_start"] = message.Start
+		sent["message_end"] = message.End
+	}
+	return sent
 }
 
 // withLine names the transcript line a frame is about, which is the id the stored transcript

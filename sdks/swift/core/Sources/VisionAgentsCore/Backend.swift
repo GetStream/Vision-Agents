@@ -1,24 +1,5 @@
 import Foundation
-import HTTPTypes
-import OpenAPIRuntime
-import OpenAPIURLSession
-import os
-
-/// Somebody a device is acting for, as Stream knows them.
-///
-/// Only the id reaches the router; the token is what proves it. The name and image are carried
-/// so chat and video have something to show without a second lookup.
-public struct User: Sendable, Hashable {
-    public let id: String
-    public var name: String
-    public var image: String
-
-    public init(id: String, name: String = "", image: String = "") {
-        self.id = id
-        self.name = name
-        self.image = image
-    }
-}
+import StreamCore
 
 /// The one identity Stream's own SDKs connect with: the app's key, the user `setUser` named
 /// and their token. It is the identity the router is reached with, so chat and video need
@@ -93,7 +74,7 @@ public struct Backend: Sendable {
 
     /// Acts as a guest from here on.
     public func setUser(_ guest: Guest) {
-        setUser(User(id: guest.id, name: guest.name), token: guest.token)
+        setUser(User(id: guest.id, name: guest.name.isEmpty ? nil : guest.name), token: guest.token)
     }
 
     /// Forgets the user, which is what signing out is.
@@ -227,7 +208,7 @@ final class Identity: Sendable {
         let disconnect: @Sendable (any Sendable) async -> Void
     }
 
-    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let state = AllocatedUnfairLock(State())
 
     var user: User? { state.withLock { $0.user } }
 
@@ -332,37 +313,29 @@ final class Identity: Sendable {
 
 /// Puts the backend's credentials on every request the generated client makes, and asks for
 /// a fresh token once when the router says the one it had expired.
-struct CredentialMiddleware: ClientMiddleware {
+struct CredentialMiddleware: DefaultAPIClientMiddleware {
     let backend: Backend
 
     func intercept(
-        _ request: HTTPRequest,
-        body: HTTPBody?,
-        baseURL: URL,
-        operationID: String,
-        next: (HTTPRequest, HTTPBody?, URL) async throws -> (HTTPResponse, HTTPBody?)
-    ) async throws -> (HTTPResponse, HTTPBody?) {
-        if operationID == "createGuestUser", backend.anonymous {
-            let answer = try await next(
-                credentialed(request, ["Stream-Auth-Type": "anonymous"]), body, baseURL)
-            guard answer.0.status != .unauthorized else {
+        _ request: Request,
+        next: (Request) async throws -> (Data, URLResponse)
+    ) async throws -> (Data, URLResponse) {
+        if request.url.path.hasSuffix("/v1/agents/guests"), backend.anonymous {
+            let answer = try await next(credentialed(request, ["Stream-Auth-Type": "anonymous"]))
+            guard (answer.1 as? HTTPURLResponse)?.statusCode != 401 else {
                 throw AgentsError.configuration(anonymousGuestRefused)
             }
             return answer
         }
-        let answer = try await next(credentialed(request, try await backend.headers()), body, baseURL)
-        guard answer.0.status == .unauthorized, backend.expireToken() else { return answer }
-        return try await next(credentialed(request, try await backend.headers()), body, baseURL)
+        let answer = try await next(credentialed(request, try await backend.headers()))
+        guard (answer.1 as? HTTPURLResponse)?.statusCode == 401, backend.expireToken() else { return answer }
+        return try await next(credentialed(request, try await backend.headers()))
     }
 
-    private func credentialed(_ request: HTTPRequest, _ headers: [String: String]) -> HTTPRequest {
+    private func credentialed(_ request: Request, _ headers: [String: String]) -> Request {
         var request = request
-        for (name, value) in headers {
-            request.headerFields[HTTPField.Name(name)!] = value
-        }
-        var components = URLComponents(string: request.path ?? "/") ?? URLComponents()
-        components.queryItems = (components.queryItems ?? []) + backend.credentialQuery
-        request.path = components.string
+        request.headers.merge(headers) { _, new in new }
+        request.queryParams += backend.credentialQuery
         return request
     }
 }
@@ -370,40 +343,41 @@ struct CredentialMiddleware: ClientMiddleware {
 /// Throws every answer that is not a success as the `HTTPFailure` it reports, before the
 /// generated client reads it.
 ///
-/// Every status goes through here, documented or not, because the generated outputs carry no
-/// headers to read `X-Request-Id` from, and because a body that is not the envelope under a
-/// documented status would otherwise fail to decode and read as a transport failure.
-struct FailureMiddleware: ClientMiddleware {
+/// Every status goes through here, documented or not, because the generated client reads no
+/// headers to take `X-Request-Id` from, and because a body that is not the envelope under a
+/// documented status would otherwise fail to decode and read as an unreadable success.
+struct FailureMiddleware: DefaultAPIClientMiddleware {
     func intercept(
-        _ request: HTTPRequest,
-        body: HTTPBody?,
-        baseURL: URL,
-        operationID: String,
-        next: (HTTPRequest, HTTPBody?, URL) async throws -> (HTTPResponse, HTTPBody?)
-    ) async throws -> (HTTPResponse, HTTPBody?) {
-        let (response, answer) = try await next(request, body, baseURL)
-        guard response.status.kind != .successful else { return (response, answer) }
-        throw AgentsError.http(
-            HTTPFailure(
-                status: response.status.code,
-                requestID: response.headerFields[HTTPField.Name("X-Request-Id")!] ?? "",
-                body: try await prefix(of: answer)))
-    }
-
-    private func prefix(of body: HTTPBody?) async throws -> Data {
-        var data = Data()
-        guard let body else { return data }
-        do {
-            for try await chunk in body {
-                data.append(contentsOf: chunk.prefix(maximumFailureBody - data.count))
-                if data.count >= maximumFailureBody { break }
-            }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            // A body that breaks off leaves the status as the failure, with what did arrive.
+        _ request: Request,
+        next: (Request) async throws -> (Data, URLResponse)
+    ) async throws -> (Data, URLResponse) {
+        let (data, response) = try await next(request)
+        if let response = response as? HTTPURLResponse, !(200..<300).contains(response.statusCode) {
+            throw AgentsError.http(
+                HTTPFailure(
+                    status: response.statusCode,
+                    requestID: response.value(forHTTPHeaderField: "X-Request-Id") ?? "",
+                    body: data.prefix(maximumFailureBody)))
         }
-        return data
+        // The generated client decodes every success, an operation answering nothing included,
+        // so a 204 with no body reads as the empty object.
+        return (data.isEmpty ? Data("{}".utf8) : data, response)
+    }
+}
+
+/// Sends a request over the backend's session and hands back whatever answered, so the
+/// middlewares see every status. A request given up because its task was cancelled throws
+/// `CancellationError`, which is how a view that went away is told apart from a lost
+/// connection.
+struct RouterTransport: DefaultAPITransport {
+    let urlSession: URLSession
+
+    func execute(request: Request) async throws -> (Data, URLResponse) {
+        do {
+            return try await urlSession.data(for: request.urlRequest())
+        } catch where Task.isCancelled {
+            throw CancellationError()
+        }
     }
 }
 
@@ -411,21 +385,45 @@ struct FailureMiddleware: ClientMiddleware {
 ///
 /// Go's `time.Time` marshals to RFC 3339 with however many fractional digits the value needs
 /// and none when it needs none, so one timestamp is `...:50.89279Z` and the next is `...:50Z`.
-/// The generator's default reads only the second, which is how a client ends up refusing a
-/// perfectly good agent config.
-struct RouterDates: DateTranscoder {
+/// A reader that expects one or the other is how a client ends up refusing a perfectly good
+/// agent config. Before iOS 26, a format style that includes fractional seconds refuses a
+/// timestamp without them, so one that does not is the second reading.
+struct RouterDates {
     private let iso8601 = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    private let wholeSeconds = Date.ISO8601FormatStyle(timeZoneSeparator: .colon)
 
-    func encode(_ date: Date) throws -> String {
+    func encode(_ date: Date) -> String {
         iso8601.format(date)
     }
 
     func decode(_ string: String) throws -> Date {
-        guard let date = try? iso8601.parse(string) else {
+        guard let date = (try? iso8601.parse(string)) ?? (try? wholeSeconds.parse(string)) else {
             throw AgentsError.unreadable("\(string) is not a timestamp")
         }
         return date
     }
+}
+
+/// What the generated client reads and writes with: every timestamp through `RouterDates`.
+extension JSONDecoder {
+    static let `default`: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            try RouterDates().decode(decoder.singleValueContainer().decode(String.self))
+        }
+        return decoder
+    }()
+}
+
+extension JSONEncoder {
+    static let `default`: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(RouterDates().encode(date))
+        }
+        return encoder
+    }()
 }
 
 extension Backend {
@@ -433,12 +431,10 @@ extension Backend {
     ///
     /// The transport is a parameter so a test can answer requests itself without a server and
     /// without pretending to be `URLSession`.
-    func client(transport: (any ClientTransport)? = nil) -> Client {
-        Client(
-            serverURL: url,
-            configuration: .init(dateTranscoder: RouterDates()),
-            transport: transport ?? URLSessionTransport(
-                configuration: .init(session: urlSession)),
+    func client(transport: (any DefaultAPITransport)? = nil) -> DefaultAPI {
+        DefaultAPI(
+            basePath: url.absoluteString,
+            transport: transport ?? RouterTransport(urlSession: urlSession),
             // Outermost, so a 401 is a failure only once the credentials have had their retry.
             middlewares: [FailureMiddleware(), CredentialMiddleware(backend: self)])
     }

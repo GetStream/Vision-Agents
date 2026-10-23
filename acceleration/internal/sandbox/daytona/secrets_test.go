@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -36,7 +37,8 @@ func TestSecretsBrokerContract(t *testing.T) {
 		}
 		held := stub
 		return brokertest.Subject{
-			Broker: secrets,
+			Broker:    secrets,
+			Elsewhere: true,
 			Held: func(name string) (string, []string, bool) {
 				held.mu.Lock()
 				defer held.mu.Unlock()
@@ -269,6 +271,21 @@ func (s *SecretsSuite) TestASandboxDaytonaWouldNotDeleteStillLosesItsSecrets() {
 	s.Empty(s.platform.secretNames())
 }
 
+// TestACloseARunOutlastsStillDeletesTheSecret: Close waits for the run until its timeout, and
+// the secret goes then, not at the sweep. The run that outlasted it brings none back.
+func (s *SecretsSuite) TestACloseARunOutlastsStillDeletesTheSecret() {
+	s.box.timeout = time.Second
+	ran, release := s.platform.outlasting(s.T(), s.box)
+	s.Require().Len(s.platform.secretNames(), 1)
+
+	s.ErrorIs(s.box.Close(), context.DeadlineExceeded)
+
+	s.Empty(s.platform.secretNames())
+	release()
+	s.NoError(<-ran)
+	s.Empty(s.platform.secretNames())
+}
+
 // TestAGrantWithoutHostsIsRefused: Daytona would keep a secret that no host may receive.
 func (s *SecretsSuite) TestAGrantWithoutHostsIsRefused() {
 	hostless := github
@@ -410,6 +427,40 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelEachEnvVarAndItsHosts() {
 
 	s.Contains(description, "Code may call api.github.com, uploads.github.com with $GITHUB_TOKEN: send it over HTTPS as "+
 		"`Authorization: Bearer $GITHUB_TOKEN`; the value is a placeholder that works only for api.github.com, uploads.github.com")
+	s.NotContains(description, "git over HTTPS", "a grant with no git host gets no git sentence")
+	s.NotContains(description, "x-access-token")
+}
+
+// githubGit is a GitHub grant that reaches github.com too, as the connector's manifest does.
+var githubGit = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-1"},
+	Binding: "github", Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "github.com"}}
+
+// TestRunCodeTellsTheModelGitTakesTheGrant: Daytona replaces the placeholder in git's Base64
+// Basic header too (live staging E2E, 2026-10-22, session 01a16514-923c-7843-9214-40a94453f194: git ls-remote with
+// x-access-token:$GITHUB_TOKEN, rc 0). Bearer is not offered for github.com, which git cannot
+// send it to.
+func (s *SecretsSuite) TestRunCodeTellsTheModelGitTakesTheGrant() {
+	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, githubGit)).Description
+
+	s.Contains(description, "Code may call api.github.com with $GITHUB_TOKEN: send it over HTTPS as "+
+		"`Authorization: Bearer $GITHUB_TOKEN`; the value is a placeholder that works only for api.github.com, github.com")
+	s.Contains(description, " git over HTTPS takes it as the password in the remote's URL, such as "+
+		"https://x-access-token:$GITHUB_TOKEN@github.com/<owner>/<repo>.git.")
+	s.NotContains(description, "cannot use")
+	s.NotContains(description, "code_sandbox.broker")
+}
+
+// TestRunCodeOffersNoBearerForAGrantWhoseOnlyHostIsGithub: Bearer is not offered for github.com,
+// so the description gives the placeholder's host alone.
+func (s *SecretsSuite) TestRunCodeOffersNoBearerForAGrantWhoseOnlyHostIsGithub() {
+	grant := githubGit
+	grant.Hosts = []string{"github.com"}
+
+	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, grant)).Description
+
+	s.Contains(description, " $GITHUB_TOKEN is a placeholder that works only for github.com, only in a request header.")
+	s.NotContains(description, "Code may call")
+	s.NotContains(description, "Bearer")
 }
 
 // TestASandboxWithoutGrantsIsCreatedAsOnBase is the control: a sandbox no binding gives

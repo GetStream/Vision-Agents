@@ -114,6 +114,13 @@ const (
 	ReasonNoLine      = "no_agent_number"
 	ReasonNotAnswered = "not_answered"
 	ReasonRungAlready = "already_called"
+	// ReasonOutsideWindow is a thread whose person last wrote longer ago than the provider
+	// takes free text (WhatsApp's 24 h), with no template to send after it.
+	ReasonOutsideWindow = "outside_window"
+	// ReasonThreadGone is a task's thread that no longer exists, or is no longer its user's.
+	ReasonThreadGone = "thread_gone"
+	// ReasonConnectionRemoved is a task's thread whose connection, its line, was removed.
+	ReasonConnectionRemoved = "connection_removed"
 	// ReasonPaused is not a failure: it is on the missed run of a one-shot
 	// whose time came while the task was paused.
 	ReasonPaused = "task_paused"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -95,19 +96,10 @@ func (s *ToolsetSuite) TestNoOtherBuiltInAsksForToolsets() {
 // agent:content:read or agent:query:run, which it asks for, and none that needs a scope it
 // leaves out (metabase.yaml, [tools]).
 func (s *ToolsetSuite) TestMetabaseOffersOnlyTheToolsItsScopesReach() {
-	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "metabase", Version: "1"}, nil)
-	for _, name := range []string{"alert_write", "bookmark_content", "browse_collection", "browse_data",
+	srv := s.listing("metabase", "alert_write", "bookmark_content", "browse_collection", "browse_data",
 		"collection_write", "dashboard_write", "document_write", "duplicate_content", "execute_query",
 		"execute_sql", "get_content", "get_parameter_values", "glossary", "learn", "measure_write",
-		"metric_write", "question_write", "run_saved_question", "search", "segment_write", "subscription_write"} {
-		server.AddTool(&sdkmcp.Tool{Name: name, InputSchema: map[string]any{"type": "object"}},
-			func(context.Context, *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
-				return &sdkmcp.CallToolResult{}, nil
-			})
-	}
-	srv := httptest.NewTLSServer(sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server { return server },
-		&sdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
-	defer srv.Close()
+		"metric_write", "question_write", "run_saved_question", "search", "segment_write", "subscription_write")
 	resolved, err := s.manifest("metabase").Resolve(oauth2code.Name, map[string]string{"host": "metabase.example.com"}, nil)
 	s.Require().NoError(err)
 	resolved.Endpoints["mcp"] = srv.URL
@@ -121,6 +113,85 @@ func (s *ToolsetSuite) TestMetabaseOffersOnlyTheToolsItsScopesReach() {
 	}
 	s.ElementsMatch([]string{"browse_collection", "browse_data", "execute_query", "get_content", "get_parameter_values",
 		"glossary", "learn", "run_saved_question", "search"}, names)
+}
+
+// TestGoogleDriveAndDocsOfferTheirWriteTools (AI-1933): against a server listing the tools
+// Google's tool lists name (google_drive.yaml, google_docs.yaml), each write tool is offered
+// to a session granting it and says the scope it needs, which the consent asks for. A
+// manifest that stops asking for the scope leaves the tool out (AI-1394).
+func (s *ToolsetSuite) TestGoogleDriveAndDocsOfferTheirWriteTools() {
+	const driveFile, documents = "https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/documents"
+	for _, c := range []struct {
+		id     string
+		tools  []string
+		writes map[string]string
+	}{
+		{"google_drive", []string{"copy_file", "create_file", "download_file_content", "get_file_metadata",
+			"get_file_permissions", "list_recent_files", "read_file_content", "search_files"},
+			map[string]string{"copy_file": driveFile, "create_file": driveFile}},
+		{"google_docs", []string{"read_doc", "update_doc"}, map[string]string{"update_doc": documents}},
+	} {
+		s.Run(c.id, func() {
+			srv := s.listing(c.id, c.tools...)
+			resolved, err := s.manifest(c.id).Resolve(oauth2code.Name, nil, nil)
+			s.Require().NoError(err)
+			resolved.Endpoints["mcp"] = srv.URL
+			binding := core.ResolvedBinding{Binding: core.Binding{Name: c.id}, Manifest: resolved, HTTP: srv.Client()}
+
+			specs, err := mcp.New().Discover(s.ctx, binding)
+			s.Require().NoError(err)
+			needs := map[string][]string{}
+			var grants []core.ToolGrant
+			for _, spec := range specs {
+				needs[spec.Name] = spec.NeedsScopes
+				if _, write := c.writes[spec.Name]; write {
+					grants = append(grants, core.ToolGrant{Name: spec.Name, SchemaDigest: spec.SchemaDigest})
+				}
+			}
+			s.ElementsMatch(c.tools, slices.Collect(maps.Keys(needs)))
+			for tool, scope := range c.writes {
+				s.Equal([]string{scope}, needs[tool], tool)
+				s.Contains(resolved.Scopes.List, scope, "the consent asks for what %s needs", tool)
+			}
+			toolset, err := mcp.New().Open(s.ctx, binding, grants)
+			s.Require().NoError(err)
+			var offered []string
+			for _, tool := range toolset.Tools() {
+				offered = append(offered, strings.TrimPrefix(tool.Name, c.id+mcp.Separator))
+			}
+			toolset.Close()
+			s.ElementsMatch(slices.Collect(maps.Keys(c.writes)), offered)
+
+			binding.Manifest.Scopes.List = slices.DeleteFunc(slices.Clone(resolved.Scopes.List), func(scope string) bool {
+				return slices.Contains(slices.Collect(maps.Values(c.writes)), scope)
+			})
+			specs, err = mcp.New().Discover(s.ctx, binding)
+			s.Require().NoError(err)
+			var left []string
+			for _, spec := range specs {
+				left = append(left, spec.Name)
+			}
+			s.ElementsMatch(slices.DeleteFunc(slices.Clone(c.tools), func(tool string) bool {
+				_, write := c.writes[tool]
+				return write
+			}), left, "without the scope, the tools that need it are left out")
+		})
+	}
+}
+
+// listing is an MCP server, named name, that lists tools, each taking an object.
+func (s *ToolsetSuite) listing(name string, tools ...string) *httptest.Server {
+	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: name, Version: "1"}, nil)
+	for _, tool := range tools {
+		server.AddTool(&sdkmcp.Tool{Name: tool, InputSchema: map[string]any{"type": "object"}},
+			func(context.Context, *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+				return &sdkmcp.CallToolResult{}, nil
+			})
+	}
+	srv := httptest.NewTLSServer(sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server { return server },
+		&sdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
+	s.T().Cleanup(srv.Close)
+	return srv
 }
 
 func (s *ToolsetSuite) manifest(id string) core.Manifest {

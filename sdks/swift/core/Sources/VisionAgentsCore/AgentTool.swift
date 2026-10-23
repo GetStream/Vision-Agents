@@ -1,4 +1,5 @@
 import Foundation
+import StreamCore
 
 /// A function of yours the agent can call.
 ///
@@ -13,7 +14,7 @@ public struct AgentTool: Sendable {
     public let description: String
 
     /// A JSON Schema object describing the arguments, or nil for a tool that takes none.
-    public let parameters: JSONValue?
+    public let parameters: RawJSON?
 
     /// Who runs it, as the people in a persistent conversation are shown. Nil is the server.
     public let executor: Executor?
@@ -28,7 +29,7 @@ public struct AgentTool: Sendable {
 
     /// Runs the tool. What it returns is given to the model as the result; throwing tells the
     /// model the tool failed and why.
-    public let run: @Sendable ([String: JSONValue]) async throws -> ToolOutput
+    public let run: @Sendable ([String: RawJSON]) async throws -> ToolOutput
 
     public enum Executor: String, Sendable {
         case server
@@ -74,11 +75,11 @@ public struct AgentTool: Sendable {
     public init(
         name: String,
         description: String,
-        parameters: JSONValue? = nil,
+        parameters: RawJSON? = nil,
         executor: Executor? = nil,
         displayTitle: String? = nil,
         approval: Approval? = nil,
-        run: @escaping @Sendable ([String: JSONValue]) async throws -> ToolOutput
+        run: @escaping @Sendable ([String: RawJSON]) async throws -> ToolOutput
     ) {
         self.name = name
         self.description = description
@@ -93,11 +94,11 @@ public struct AgentTool: Sendable {
     public init(
         name: String,
         description: String,
-        parameters: JSONValue? = nil,
+        parameters: RawJSON? = nil,
         executor: Executor? = nil,
         displayTitle: String? = nil,
         approval: Approval? = nil,
-        run: @escaping @Sendable ([String: JSONValue]) async throws -> String
+        run: @escaping @Sendable ([String: RawJSON]) async throws -> String
     ) {
         self.init(
             name: name, description: description, parameters: parameters, executor: executor,
@@ -126,7 +127,7 @@ public struct ToolOutput: Sendable, Hashable {
     }
 }
 
-extension JSONValue {
+extension RawJSON {
     /// A JSON Schema object for a tool whose arguments are all strings.
     ///
     /// A convenience for the common shape, so declaring a tool does not mean writing out a
@@ -136,12 +137,12 @@ extension JSONValue {
     public static func strings(
         _ properties: [String: String],
         required: [String] = []
-    ) -> JSONValue {
-        .object([
+    ) -> RawJSON {
+        .dictionary([
             "type": .string("object"),
-            "properties": .object(
+            "properties": .dictionary(
                 properties.mapValues { description in
-                    .object(["type": .string("string"), "description": .string(description)])
+                    .dictionary(["type": .string("string"), "description": .string(description)])
                 }),
             "required": .array(required.map { .string($0) }),
         ])

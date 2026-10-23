@@ -784,6 +784,7 @@ async fn connector_bindings(
             connection,
             events: None,
             policy: None,
+            sandbox: None,
             timeout_ms: None,
         });
     }
@@ -876,6 +877,7 @@ async fn stored_config(client: &Client, name: &str) -> Result<Option<types::Agen
     let stored = client
         .list_agent_configs(&ListAgentConfigsQuery {
             name: Some(name.into()),
+            role: None,
         })
         .await?;
     Ok(stored.into_iter().find(|config| config.name == name))

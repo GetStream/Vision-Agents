@@ -33,12 +33,23 @@ type chunker struct {
 	// decimalPoint defers a period after a digit until the next rune shows whether it is
 	// part of a number or the end of an integer sentence.
 	decimalPoint bool
+	// read is how many runes of the reply it has been given, and from where the pending
+	// text starts among them.
+	read, from int
+}
+
+// sentence is a chunk of a reply and where it came from in what the chunker was given, in
+// runes: from start up to end, the whitespace trimmed off its text included, so that one
+// sentence ends where the next starts.
+type sentence struct {
+	text       string
+	start, end int
 }
 
 // Add takes a delta and returns whatever complete sentences it finished, in order. Usually
 // that is nothing, and occasionally more than one.
-func (c *chunker) Add(text string) []string {
-	var chunks []string
+func (c *chunker) Add(text string) []sentence {
+	var chunks []sentence
 
 	for _, r := range text {
 		if c.decimalPoint {
@@ -49,6 +60,7 @@ func (c *chunker) Add(text string) []string {
 		}
 
 		c.pending.WriteRune(r)
+		c.read++
 		after := c.last
 		c.last = r
 
@@ -72,12 +84,12 @@ func (c *chunker) Add(text string) []string {
 }
 
 // Flush returns whatever is left, for the end of a reply that did not end in punctuation.
-func (c *chunker) Flush() string {
+func (c *chunker) Flush() sentence {
 	defer c.Reset()
 	if strings.TrimSpace(c.pending.String()) == "" {
-		return ""
+		return sentence{}
 	}
-	return strings.TrimSpace(c.pending.String())
+	return sentence{text: strings.TrimSpace(c.pending.String()), start: c.from, end: c.read}
 }
 
 // Reset throws away the text in hand, for a reply that was interrupted, and makes the next
@@ -87,12 +99,14 @@ func (c *chunker) Reset() {
 	c.started = false
 	c.last = 0
 	c.decimalPoint = false
+	c.read, c.from = 0, 0
 }
 
 // take returns the pending text and clears it.
-func (c *chunker) take() string {
-	chunk := strings.TrimSpace(c.pending.String())
+func (c *chunker) take() sentence {
+	chunk := sentence{text: strings.TrimSpace(c.pending.String()), start: c.from, end: c.read}
 	c.pending.Reset()
+	c.from = c.read
 	c.started = true
 	return chunk
 }

@@ -93,11 +93,25 @@ def sync_detailed(
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
     line the agent says as written rather than asking the model, such as its greeting, with the purpose
-    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
-    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
-    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
-    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had
+    been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for
+    an utterance reported before the track got to it, how long after at it is expected to be heard, from
+    the speech queued ahead of it, and message_start and message_end, where that text is in the reply's
+    Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of
+    and sentences held back are in one and not the other; a streaming voice's grows as it is sent more),
+    `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code
+    points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and
+    message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
+    `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
+    mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
+    `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
+    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
+    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
+    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
     `models_changed`, `error` and `left`.
+    message_start and message_end are offsets in Unicode code points into the text of the Chat message
+    the reply is written into, the one whose turn_id names the turn, from message_start up to
+    message_end. They are left out where the router does not know them.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -176,7 +190,12 @@ def sync_detailed(
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
     for the person to sign in (`awaiting_authorization`) is declined with `tool_approval` too, naming
-    only its `tool_call_id` with `allowed` false: the router answers that call itself.
+    only its `tool_call_id` with `allowed` false: the router answers that call itself. A connector call
+    whose binding sets `require_approval` waits on its step (`awaiting_approval`) for the session's
+    user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the
+    `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id`
+    left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so.
+    It needs no `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -228,11 +247,25 @@ def sync(
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
     line the agent says as written rather than asking the model, such as its greeting, with the purpose
-    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
-    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
-    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
-    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had
+    been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for
+    an utterance reported before the track got to it, how long after at it is expected to be heard, from
+    the speech queued ahead of it, and message_start and message_end, where that text is in the reply's
+    Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of
+    and sentences held back are in one and not the other; a streaming voice's grows as it is sent more),
+    `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code
+    points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and
+    message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
+    `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
+    mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
+    `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
+    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
+    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
+    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
     `models_changed`, `error` and `left`.
+    message_start and message_end are offsets in Unicode code points into the text of the Chat message
+    the reply is written into, the one whose turn_id names the turn, from message_start up to
+    message_end. They are left out where the router does not know them.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -311,7 +344,12 @@ def sync(
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
     for the person to sign in (`awaiting_authorization`) is declined with `tool_approval` too, naming
-    only its `tool_call_id` with `allowed` false: the router answers that call itself.
+    only its `tool_call_id` with `allowed` false: the router answers that call itself. A connector call
+    whose binding sets `require_approval` waits on its step (`awaiting_approval`) for the session's
+    user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the
+    `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id`
+    left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so.
+    It needs no `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -358,11 +396,25 @@ async def asyncio_detailed(
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
     line the agent says as written rather than asking the model, such as its greeting, with the purpose
-    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
-    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
-    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
-    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had
+    been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for
+    an utterance reported before the track got to it, how long after at it is expected to be heard, from
+    the speech queued ahead of it, and message_start and message_end, where that text is in the reply's
+    Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of
+    and sentences held back are in one and not the other; a streaming voice's grows as it is sent more),
+    `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code
+    points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and
+    message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
+    `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
+    mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
+    `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
+    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
+    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
+    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
     `models_changed`, `error` and `left`.
+    message_start and message_end are offsets in Unicode code points into the text of the Chat message
+    the reply is written into, the one whose turn_id names the turn, from message_start up to
+    message_end. They are left out where the router does not know them.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -441,7 +493,12 @@ async def asyncio_detailed(
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
     for the person to sign in (`awaiting_authorization`) is declined with `tool_approval` too, naming
-    only its `tool_call_id` with `allowed` false: the router answers that call itself.
+    only its `tool_call_id` with `allowed` false: the router answers that call itself. A connector call
+    whose binding sets `require_approval` waits on its step (`awaiting_approval`) for the session's
+    user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the
+    `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id`
+    left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so.
+    It needs no `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -491,11 +548,25 @@ async def asyncio(
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
     line the agent says as written rather than asking the model, such as its greeting, with the purpose
-    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
-    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
-    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
-    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had
+    been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for
+    an utterance reported before the track got to it, how long after at it is expected to be heard, from
+    the speech queued ahead of it, and message_start and message_end, where that text is in the reply's
+    Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of
+    and sentences held back are in one and not the other; a streaming voice's grows as it is sent more),
+    `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code
+    points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and
+    message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
+    `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
+    mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
+    `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
+    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
+    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
+    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
     `models_changed`, `error` and `left`.
+    message_start and message_end are offsets in Unicode code points into the text of the Chat message
+    the reply is written into, the one whose turn_id names the turn, from message_start up to
+    message_end. They are left out where the router does not know them.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -574,7 +645,12 @@ async def asyncio(
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
     for the person to sign in (`awaiting_authorization`) is declined with `tool_approval` too, naming
-    only its `tool_call_id` with `allowed` false: the router answers that call itself.
+    only its `tool_call_id` with `allowed` false: the router answers that call itself. A connector call
+    whose binding sets `require_approval` waits on its step (`awaiting_approval`) for the session's
+    user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the
+    `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id`
+    left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so.
+    It needs no `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.

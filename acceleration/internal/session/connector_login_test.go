@@ -464,6 +464,26 @@ func (s *ConnectorLoginSuite) TestACallThroughALoginLeavesOneInvocationRow() {
 	s.Empty(rows[0].ErrorType)
 }
 
+// TestACallThroughALoginIsHeldForApprovalAsAnyOther: call_tool on a binding a login opened
+// reaches the tool through the same envelope, so a tool its require_approval names is not sent
+// unasked. This session has nobody to ask, so the call is refused at once.
+func (s *ConnectorLoginSuite) TestACallThroughALoginIsHeldForApprovalAsAnyOther() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	binding := s.chosen("crm", "whoami")
+	binding.RequireApproval = []string{"whoami"}
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(binding), "alice", nil)))
+	s.Require().NoError(err)
+	s.connect(mine, "primary")
+
+	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().NoError(err)
+	s.Contains(said, "crm__whoami runs only once the user allows it")
+	s.Zero(s.provider.calls("primary"))
+	s.Equal("declined: nobody can approve it here", s.invocations(mine, 1)[0].ErrorMessage)
+}
+
 // TestACallThroughALoginRecordsTheShapeOfTheToolsArguments: the row is the inner tool's
 // arguments, not the {tool, arguments} of the login's call_tool verb; so is a refused one's.
 func (s *ConnectorLoginSuite) TestACallThroughALoginRecordsTheShapeOfTheToolsArguments() {

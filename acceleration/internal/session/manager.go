@@ -538,7 +538,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// agent reads dates, and the prompt's clock line tells the day, in the
 		// zone its tasks will run in.
 		if spec.Timezone == "" {
-			if zone, err := m.options.Store.UserTimezone(ctx, spec.CustomerID, spec.Caller.UserID); err == nil && zone != "" {
+			if zone, err := m.options.Store.UserTimezone(ctx, spec.CustomerID, scheduling.user); err == nil && zone != "" {
 				spec.Timezone, created.spec.Timezone = zone, zone
 				scheduling.spec.Timezone = zone
 			}
@@ -596,7 +596,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// here. A text session joins nothing, so no edge is opened for it: everything downstream
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	created.supersede = m.supersede
-	created.end = func() { m.end(created) }
+	created.end = func(reason TimeoutReason) { m.end(created, reason) }
 	created.think = m.think
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
@@ -745,6 +745,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}
 
+	// An incognito session is never handed the recorder, so nothing downstream has to
+	// remember to check the flag: there is simply nowhere for it to write.
+	//
+	// It is handed over before the fan-out starts, which reads it on every event. What the
+	// fan-out records is held until the row is queued below (startRecording).
+	if m.records != nil && !spec.Incognito {
+		created.records = m.records
+	}
+
 	// The fan-out starts before joining so nothing said between joining and the first
 	// watcher attaching is lost to a channel nobody is reading.
 	created.running.Add(1)
@@ -781,14 +790,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		m.calls.Started(row(created))
 	}
 
-	// An incognito session is never handed the recorder, so nothing downstream has to
-	// remember to check the flag: there is simply nowhere for it to write.
-	if m.records != nil && !spec.Incognito {
-		created.records = m.records
+	// The row is queued once the session has joined, so a call that refused it leaves no
+	// session behind, and once search has started, so its tool is among the ones stored.
+	// The turns held until now, the greeting's among them, are written after it.
+	if created.records != nil {
 		created.closers = append(created.closers, func() {
 			m.records.Closed(created.id, time.Now().UTC())
 		})
 		m.records.Opened(sessionRow(created), toolRows(created))
+		created.startRecording()
 	}
 
 	m.mu.Lock()
@@ -1055,6 +1065,18 @@ func (f Found) ID() string {
 	return ""
 }
 
+// ConfigID is the id of the agent config the session was opened from, whichever half is
+// holding it.
+func (f Found) ConfigID() string {
+	switch {
+	case f.Live != nil:
+		return f.Live.Spec().ConfigID
+	case f.Stored != nil:
+		return f.Stored.ConfigID
+	}
+	return ""
+}
+
 // Query returns the sessions an owner may have, most recently updated first, including ones
 // that have already ended.
 //
@@ -1259,7 +1281,7 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 // nobody is left to hear the end of its sentence. A reopened conversation can take the id
 // of a session that ended, so it does nothing unless found is still the session held under
 // its id.
-func (m *Manager) end(found *Session) {
+func (m *Manager) end(found *Session, reason TimeoutReason) {
 	m.mu.Lock()
 	if held, ok := m.sessions[found.id]; !ok || held != found {
 		m.mu.Unlock()
@@ -1277,7 +1299,7 @@ func (m *Manager) end(found *Session) {
 	}()
 	m.release(found.id)
 
-	m.logger.Info("ending the session at its timeout", "session", found.id)
+	m.logger.Info("ending the session at its timeout", "session", found.id, "timeout", reason)
 	found.abandon()
 }
 
@@ -1332,9 +1354,10 @@ func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
 			return err
 		}
 	}
-	if m.options.Memory != nil {
+	// The memories go before the row, so a store that fails keeps the session to delete again.
+	if m.options.Memory != nil && m.mayRemember(ctx, owner.CustomerID, id) {
 		if err := m.options.Memory.ForgetRun(ctx, owner.CustomerID, id); err != nil {
-			return err
+			return memoryFailed(ctx, err)
 		}
 	}
 	if m.options.Store == nil {
@@ -1343,13 +1366,29 @@ func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
 	return m.options.Store.DeleteSession(ctx, owner.CustomerID, id)
 }
 
+// mayRemember is whether a session could have taught the memory store anything. Only a row
+// saying it was opened without a memory user id says no: asking the store to forget is a
+// retrieval its quota counts, and a session with nothing there need not depend on the store
+// answering. A row from before rows said, no row (an incognito session keeps none), or a row
+// that could not be read are forgotten as before, since skipping would leave memories behind.
+func (m *Manager) mayRemember(ctx context.Context, customerID, id string) bool {
+	if m.options.Store == nil {
+		return true
+	}
+	row, err := m.options.Store.StoredSession(ctx, customerID, id)
+	if err != nil {
+		return true
+	}
+	return row.Remembers == nil || *row.Remembers
+}
+
 // TruncateMemories deletes everything remembered about one of the customer's users, from
 // every session and every agent.
 func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID string) error {
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
 	}
-	return m.options.Memory.Truncate(ctx, customerID, userID)
+	return memoryFailed(ctx, m.options.Memory.Truncate(ctx, customerID, userID))
 }
 
 // ForgetSession deletes what one session learned. Whoever asks has to have checked the
@@ -1358,7 +1397,7 @@ func (m *Manager) ForgetSession(ctx context.Context, customerID, sessionID strin
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
 	}
-	return m.options.Memory.ForgetRun(ctx, customerID, sessionID)
+	return memoryFailed(ctx, m.options.Memory.ForgetRun(ctx, customerID, sessionID))
 }
 
 // Shutdown ends every session, which is what a router does on its way down rather than
@@ -1690,6 +1729,22 @@ var ErrSessionExists = errors.New("session: a session with that id already exist
 
 // ErrNoMemory is memory asked of a deployment with no memory provider.
 var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
+
+// ErrMemoryFailed is a memory store that failed to do what it was asked, such as a vendor
+// answering 429. Asking again later may succeed.
+var ErrMemoryFailed = errors.New("session: the memory store failed")
+
+// memoryFailed is err from the memory store, marked as the store's failure. Nil is nil.
+// A caller who hung up is not the store failing, so err stays as it is once ctx is done.
+func memoryFailed(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return err
+	}
+	return stack.Wrap(fmt.Errorf("%w: %w", ErrMemoryFailed, err))
+}
 
 // newID is a handle for an agent or a turn. It is random rather than sequential because it
 // is the only thing standing between two customers who both guessed at an id.

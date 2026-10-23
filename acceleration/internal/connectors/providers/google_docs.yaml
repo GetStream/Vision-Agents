@@ -12,10 +12,13 @@
 #         https://www.googleapis.com/auth/.
 #   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server at
 #         2026-10-07T14:28:24Z, as google_calendar.yaml quotes it.
+# And the tool's own page, opened October 23, 2026 («Last updated 2026-10-01»):
+#   [update] https://developers.google.com/workspace/docs/api/reference/mcp/tools_list/update_doc
 id: google_docs
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
-# false, which revision 1 was stored without (refresh.rotating became a pointer).
-revision: 2
+# false, which revision 1 was stored without (refresh.rotating became a pointer). 3 lists the
+# tools that only read. 4 asks for documents, so update_doc works (AI-1933).
+revision: 4
 # [plugin]
 name: Google Docs
 category: Documents
@@ -32,7 +35,9 @@ setup:
     - title: Set up the consent screen
       description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
     - title: Add the scopes
-      description: Under Data Access, add https://www.googleapis.com/auth/documents.readonly and https://www.googleapis.com/auth/drive.readonly.
+      # [setup] (opened 2026-10-23, «Last updated 2026-10-12») pastes drive.file as well;
+      # scopes.list does not ask for it, so it is not added here.
+      description: Under Data Access, add https://www.googleapis.com/auth/documents.readonly, https://www.googleapis.com/auth/drive.readonly and https://www.googleapis.com/auth/documents.
     - title: Create a web client
       # [setup]: a «Web application» client.
       description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
@@ -58,11 +63,14 @@ authorize_params:
   prompt: consent
 scopes:
   # [plugin] scopes: Docs read, and Drive read, because a document is found before it is
-  # read ([plugin]'s comment). [setup] adds drive.file and documents; the plugin's two are
-  # kept, so a moved grant keeps what it was granted.
+  # read ([plugin]'s comment); kept, so a moved grant keeps what it was granted. And
+  # documents: update_doc «Requires one of the following OAuth scopes» drive, drive.file
+  # and documents ([update]). [setup] adds drive.file as well, which no tool needs beside
+  # documents, so it is not asked.
   list:
     - https://www.googleapis.com/auth/documents.readonly
     - https://www.googleapis.com/auth/drive.readonly
+    - https://www.googleapis.com/auth/documents
 # No identity, as google_calendar.yaml.
 refresh:
   # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh
@@ -74,3 +82,16 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tool that writes, with the one scope of [update] scopes.list asks for: a validate
+    # names it when the grant lacks it, and the source leaves the tool out if scopes.list
+    # stops asking for it (AI-1394).
+    tools:
+      - name: update_doc
+        needs_scopes: [https://www.googleapis.com/auth/documents]
+    # The tools that only read, from the tool list at
+    # https://developers.google.com/workspace/docs/api/reference/mcp (opened 2026-10-22,
+    # «Last updated 2026-10-01»): read_doc «retrieves a JSON representation of the Google
+    # Doc». update_doc writes («documents.batchUpdate»), so it is left out, as is a tool added
+    # later.
+    read_only_tools:
+      - read_doc

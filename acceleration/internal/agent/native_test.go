@@ -168,7 +168,7 @@ func (s *AgentSuite) nativeFrame(peer *nativePeer, kind string) map[string]json.
 			if string(frame["type"]) == strconv.Quote(kind) {
 				return frame
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(settleFor):
 			s.FailNow("missing native frame", kind)
 			return nil
 		}
@@ -592,6 +592,8 @@ func (s *AgentSuite) TestCloseCancelsAWithheldNativeReplacementHandshake() {
 	select {
 	case err := <-done:
 		s.NoError(err)
+	// Under nativeRetrySetupTimeout (5s, native.go:22): past it the setup times out on its
+	// own and Close returns even when it did not cancel the handshake.
 	case <-time.After(time.Second):
 		s.FailNow("Close did not cancel the withheld native handshake")
 	}

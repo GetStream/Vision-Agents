@@ -115,6 +115,15 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	}
 	run, cancel := context.WithTimeout(ctx, s.runTimeout+5*time.Second)
 	defer cancel()
+	for _, command := range s.mount.EachRun {
+		checked, err := s.box.Process.ExecuteCommand(run, "sh -c "+quoted(command), options.WithCommandEnv(s.mount.RunEnv))
+		if err != nil {
+			return sandbox.Result{}, stack.Wrap(err)
+		}
+		if checked.ExitCode != 0 {
+			return sandbox.Result{}, stack.Wrap(fmt.Errorf("daytona: readying the sandbox for a run: exit code %d: %s", checked.ExitCode, checked.Result))
+		}
+	}
 	ran, err := s.box.Process.CodeRun(run, code, options.WithCodeRunTimeout(s.runTimeout),
 		options.WithCodeRunParams(types.CodeRunParams{Env: s.mount.RunEnv}))
 	if err != nil {
@@ -271,7 +280,14 @@ func (s *Sandbox) Close() error {
 	case s.gate <- struct{}{}:
 		defer func() { <-s.gate }()
 	case <-ctx.Done():
-		return ctx.Err()
+		// A run still holds the sandbox, which stays, but its credential goes now: Daytona's
+		// secret would wait for the sweep, the proxy's record for its expiry.
+		if s.broker == nil {
+			return ctx.Err()
+		}
+		released, end := context.WithTimeout(context.Background(), s.timeout)
+		defer end()
+		return errors.Join(ctx.Err(), s.broker.Close(released))
 	}
 
 	// The secrets go first: a sandbox Daytona would not delete keeps no credential.

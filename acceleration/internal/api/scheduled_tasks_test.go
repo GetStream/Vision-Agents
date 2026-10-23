@@ -35,6 +35,43 @@ import (
 type schedulingScript struct {
 	mu    sync.Mutex
 	turns [][]llm.ToolCall
+	// rounds is the tool calls of the next rounds a tool's answer starts, one entry for each.
+	rounds [][]llm.ToolCall
+	// failing is how many scheduled turns each model opened from now on fails.
+	failing int
+}
+
+// failScheduled has every model opened from now on fail its next times a scheduled task comes
+// due, for a session the test cannot reach before it opens.
+func (s *schedulingScript) failScheduled(times int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failing = times
+}
+
+func (s *schedulingScript) failingTurns() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failing
+}
+
+// planRound queues the tool calls of the next round a tool's answer starts: a later round
+// of the turn a person's words began.
+func (s *schedulingScript) planRound(calls ...llm.ToolCall) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rounds = append(s.rounds, calls)
+}
+
+func (s *schedulingScript) nextRound() []llm.ToolCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.rounds) == 0 {
+		return nil
+	}
+	calls := s.rounds[0]
+	s.rounds = s.rounds[1:]
+	return calls
 }
 
 // plan queues the tool calls of the next turn somebody speaks.
@@ -59,7 +96,7 @@ func (s *schedulingScript) next() []llm.ToolCall {
 func (s *schedulingScript) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.turns = nil
+	s.turns, s.rounds, s.failing = nil, nil, 0
 }
 
 // schedulingModel is a model that asks for the tool calls its test queued and
@@ -115,11 +152,18 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 	}
 	m.mu.Unlock()
 
-	// A turn somebody started runs what the test queued; the turn a tool's
-	// answer starts is simply agreed with.
+	// A turn somebody started runs what the test queued; the round a tool's
+	// answer starts runs what the test queued for a later round, and is
+	// otherwise simply agreed with, and so is a call offering no tools, such
+	// as the summary of a thread's episode.
 	var calls []llm.ToolCall
-	if len(params.Input) > 0 && params.Input[len(params.Input)-1].Role == llm.User {
-		calls = m.script.next()
+	if len(params.Tools) > 0 && len(params.Input) > 0 {
+		switch params.Input[len(params.Input)-1].Role {
+		case llm.User:
+			calls = m.script.next()
+		case llm.ToolResult:
+			calls = m.script.nextRound()
+		}
 	}
 	script := llmtest.New(llm.StreamOptions{ResponseID: params.ID, Provider: m.Provider(), Model: m.Model()})
 	if failing {
@@ -262,6 +306,9 @@ func (s *ScheduledTasksSuite) SetupSuite() {
 	s.sink = &channelSink{sent: map[string][]string{}}
 	s.channelAPI = httptest.NewTLSServer(http.HandlerFunc(s.sink.serve))
 	s.T().Cleanup(s.channelAPI.Close)
+	// A worker claims every task due in its database, so the suite's workers and those of
+	// the other suites and packages running beside it must not share one.
+	s.database = "scheduled_tasks"
 	s.RouterSuite.SetupSuite()
 	s.runReads = &runReads{}
 	if s.store != nil {
@@ -388,7 +435,7 @@ func (s *ScheduledTasksSuite) taskReloaded(task store.ScheduledTask) store.Sched
 // delivered waits for the task's latest run to be delivered, and returns it.
 func (s *ScheduledTasksSuite) delivered(task store.ScheduledTask) store.ScheduledTaskRun {
 	var latest store.ScheduledTaskRun
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		runs := s.runsOf(task)
 		if len(runs) == 0 {
 			return false
@@ -430,6 +477,7 @@ func (s *ScheduledTasksSuite) TestTheAgentSchedulesATaskForItsUser() {
 	s.Equal("Remind them to stretch.", task.Instructions)
 	s.Equal(store.ScheduledTaskActive, task.State)
 	s.Equal("agent", task.CreatedBy)
+	s.Equal("authenticated", task.CallerKind)
 	s.Equal(config, task.ConfigID)
 	s.Equal(opened.Id, task.SessionID)
 	s.Require().NotNil(task.NextRunAt)
@@ -2189,7 +2237,7 @@ func (s *ScheduledTasksSuite) TestATaskTextedOnWhatsAppArrivesThere() {
 	run := s.delivered(s.tasksOf(user)[0])
 	s.Equal("whatsapp", run.DeliveredTo)
 	s.Equal(created.Id, run.TaskID)
-	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
+	s.Require().Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
 	s.Equal("Done.", s.sink.to(writer)[0], "the words the agent answered with are the words carried out")
 	s.True(s.model().heard("<scheduled_task"), "the follow-up ran in the conversation")
@@ -2232,7 +2280,7 @@ func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
 
 	run := s.delivered(s.tasksOf(user)[0])
 	s.Equal("sms", run.DeliveredTo)
-	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
+	s.Require().Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
 	s.Equal("Done.", s.sink.to(writer)[0])
 }
@@ -2291,7 +2339,7 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 	s.makeDue(task)
 
 	var runs []store.ScheduledTaskRun
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		runs = s.runsOf(task)
 		return len(runs) > 0 && runs[0].State == store.ScheduledTaskRunFailed
 	}, 30*time.Second, 250*time.Millisecond, "the occurrence never finished failing")
@@ -2687,7 +2735,7 @@ func (s *ScheduledTasksSuite) TestAQuietOneShotEditedWhileHeldIsHeldAgainAsItNow
 		stored := s.taskReloaded(task)
 		return stored.LeaseUntil != nil && stored.LeaseUntil.After(time.Now().Add(time.Hour))
 	}
-	s.Eventually(held, 15*time.Second, 250*time.Millisecond, "the task was never held")
+	s.Require().Eventually(held, 15*time.Second, 250*time.Millisecond, "the task was never held")
 	first := s.runsOf(task)[0]
 
 	var updated ScheduledTask
@@ -2697,7 +2745,7 @@ func (s *ScheduledTasksSuite) TestAQuietOneShotEditedWhileHeldIsHeldAgainAsItNow
 
 	// The held occurrence is settled, and the one-shot comes due again as it
 	// now reads: quiet hours still hold, so it is held again, not delivered.
-	s.Eventually(func() bool { return len(s.runsOf(task)) == 2 && held() },
+	s.Require().Eventually(func() bool { return len(s.runsOf(task)) == 2 && held() },
 		15*time.Second, 250*time.Millisecond, "the edited one-shot was never taken up again")
 	runs := s.runsOf(task)
 	s.Equal(first.ID, runs[1].ID)

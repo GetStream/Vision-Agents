@@ -9,12 +9,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -29,16 +34,29 @@ type CallHooksSuite struct {
 	// unique, because a number is held by one customer at a time.
 	e164   string
 	callID string
+	// stats stands in for Stream's call stats, so no test in the suite reaches Stream.
+	stats *recordedStats
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 func TestCallHooksSuite(t *testing.T) {
 	runSuite(t, new(CallHooksSuite))
 }
 
+func (s *CallHooksSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
+}
+
 func (s *CallHooksSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 	s.e164 = s.utils.number()
 	s.callID = "phone-" + s.e164
+	s.stats = &recordedStats{asked: make(chan string, 8), answer: &getstream.QueryCallSessionParticipantStatsResponse{}}
+	s.router.readCallStats = s.stats.read
+	s.router.callStatsWaits = []time.Duration{0}
 }
 
 func (s *CallHooksSuite) TestAnArrivingCallReachesTheWorkerOfWhoeverHoldsTheNumber() {
@@ -197,8 +215,167 @@ func (s *CallHooksSuite) TestTheHookIgnoresWhoeverTheCallerClaimsToBe() {
 	}
 }
 
+func (s *CallHooksSuite) TestAnEndedPlacedCallGetsACallSitesRow() {
+	s.releasing()
+	s.placed()
+	s.stats.answer = agentAndCaller("sfu-a.example.com", "sfu-c.example.com")
+
+	s.Require().Equal(http.StatusOK, s.end(`{}`))
+
+	row := s.callSitesRow()
+	s.Equal("2", row.Details["sfus_used"])
+	s.Equal("sfu-a.example.com", row.Details["agent_current_sfu"])
+	s.Equal("sfu-c.example.com", row.Details["caller_current_sfu"])
+	line := s.sitesLine()
+	s.Contains(line, "caller_current_sfu=sfu-c.example.com")
+	s.NotContains(line, "+15550100002", "the caller's participant id names its number")
+	s.Equal("session-1", row.Details["stream_session_id"])
+	s.NotContains(row.Details, "stream_sip_host", "a placed call's SIP host is on its call_placed row")
+	s.Equal("session-1", <-s.stats.asked)
+	left, err := s.store.CallResourcesInApp(context.Background(), store.AppScope{Unpinned: true}, "default", s.callID)
+	s.Require().NoError(err)
+	s.Empty(left, "the call's resources are still released")
+}
+
+func (s *CallHooksSuite) TestAnEndedInboundCallsRowNamesTheNumbersSIPHost() {
+	s.holdBridged("default", s.callID, "sip:+15550100001@sip.example.com")
+
+	s.Require().Equal(http.StatusOK, s.end(fmt.Sprintf(`{"phone_number":%q}`, s.e164)))
+
+	s.Equal("sip.example.com", s.callSitesRow().Details["stream_sip_host"])
+}
+
+func (s *CallHooksSuite) TestAnEndedCallRingingANumberNobodyHoldsIsWarnedAbout() {
+	s.Require().Equal(http.StatusOK, s.end(fmt.Sprintf(`{"phone_number":%q}`, s.e164)))
+
+	s.Contains(s.logged.String(), "could not tell whose number an ended call rang")
+	s.NotContains(s.logged.String(), "no number "+s.e164+" is attached")
+}
+
+func (s *CallHooksSuite) TestAnEndedVideoCallGetsNoCallSitesRow() {
+	s.Require().Equal(http.StatusOK, s.end(`{}`))
+
+	select {
+	case session := <-s.stats.asked:
+		s.Failf("a video call's stats were read", "session %s", session)
+	case <-time.After(dropped):
+	}
+}
+
+func (s *CallHooksSuite) TestTheWebhookIsAnsweredBeforeTheStatsAreRead() {
+	s.placed()
+	s.stats.hold = make(chan struct{})
+
+	s.Require().Equal(http.StatusOK, s.end(`{}`))
+
+	select {
+	case <-s.stats.asked:
+		s.Fail("the stats were read before the webhook was answered")
+	default:
+	}
+	close(s.stats.hold)
+	s.Equal("session-1", <-s.stats.asked)
+	s.callSitesRow()
+}
+
+// sitesLine is the router's "phone call sites" line for the suite's call.
+func (s *CallHooksSuite) sitesLine() string {
+	var found []string
+	for line := range strings.Lines(s.logged.String()) {
+		if strings.Contains(line, `msg="phone call sites"`) && strings.Contains(line, "session_id="+s.callID+" ") {
+			found = append(found, line)
+		}
+	}
+	s.Require().Len(found, 1)
+	return found[0]
+}
+
+// recordedStats answers every stats read with one answer, and says which session it was
+// asked for once that answer is given. hold, when set, keeps the answer back until closed.
+type recordedStats struct {
+	asked  chan string
+	answer *getstream.QueryCallSessionParticipantStatsResponse
+	hold   chan struct{}
+}
+
+func (r *recordedStats) read(ctx context.Context, _ *getstream.Stream, _, _, session string) (*getstream.QueryCallSessionParticipantStatsResponse, error) {
+	if r.hold != nil {
+		select {
+		case <-r.hold:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	r.asked <- session
+	return r.answer, nil
+}
+
+// releasing has the router delete an ended call's lines at the suite's Stream, as a
+// deployment does. The suite's own phone service has no Stream, so it releases nothing.
+func (s *CallHooksSuite) releasing() {
+	bound, err := s.router.streamForApp(context.Background(), s.customerID(), 0, false)
+	s.Require().NoError(err)
+	config, err := phone.DefaultConfig()
+	s.Require().NoError(err)
+	service, err := phone.NewService(phone.ServiceOptions{
+		Registry: vendors.Registry(config),
+		Store:    s.store,
+		Gate:     s.gate,
+		Stream:   phone.NewStreamFromClient(bound.Client),
+		Logger:   slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	kept := s.router.phone
+	s.router.phone = service
+	s.T().Cleanup(func() { s.router.phone = kept })
+}
+
+// placed records the trunk an outbound call to the suite's call was given.
+func (s *CallHooksSuite) placed() {
+	s.Require().NoError(s.store.RecordCallResource(context.Background(), &store.CallResource{
+		TrunkID: "trunk-" + s.utils.uuid(), RouteID: "route-" + s.utils.uuid(),
+		CallType: "default", CallID: s.callID, CustomerID: s.customerID(),
+	}))
+}
+
+// end delivers a signed call.session_ended for the suite's call, with the given custom data.
+func (s *CallHooksSuite) end(custom string) int {
+	return s.signedly("/v1/phone/hooks/stream", fmt.Sprintf(
+		`{"type":"call.session_ended","call_cid":"default:%s","session_id":"session-1",`+
+			`"created_at":"2026-08-27T12:05:00Z",`+
+			`"call":{"cid":"default:%s","id":"%s","type":"default","custom":%s}}`,
+		s.callID, s.callID, s.callID, custom))
+}
+
+// callSitesRow waits for the suite's call to get its call_sites row, and reads it whole.
+func (s *CallHooksSuite) callSitesRow() *store.AgentLog {
+	ctx := context.Background()
+	var id int64
+	s.Require().Eventually(func() bool {
+		rows, err := s.store.AgentLogs(ctx, store.LogFilter{
+			CustomerID: s.customerID(), SessionID: s.callID, Limit: 250,
+		})
+		s.Require().NoError(err)
+		for _, row := range rows {
+			if row.EventType == "call_sites" {
+				id = row.ID
+				return true
+			}
+		}
+		return false
+	}, settleFor, 50*time.Millisecond, "the ended call got no call_sites row")
+	row, err := s.store.AgentLog(ctx, s.customerID(), id)
+	s.Require().NoError(err)
+	return row
+}
+
 // hold records the number for the suite's app and attaches it to a call.
 func (s *CallHooksSuite) hold(callType, callID string) {
+	s.holdBridged(callType, callID, "")
+}
+
+// holdBridged is hold, with the Stream trunk the number's calls go to.
+func (s *CallHooksSuite) holdBridged(callType, callID, bridgeURI string) {
 	ctx := context.Background()
 	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
 		E164:        s.e164,
@@ -208,7 +385,9 @@ func (s *CallHooksSuite) hold(callType, callID string) {
 		PurchasedAt: time.Now().UTC(),
 	}))
 	s.Require().NoError(s.store.AttachNumber(
-		ctx, s.customerID(), s.e164, store.NumberAttachment{TrunkID: "trunk-" + s.utils.uuid(), CallType: callType, CallID: callID}))
+		ctx, s.customerID(), s.e164, store.NumberAttachment{
+			TrunkID: "trunk-" + s.utils.uuid(), CallType: callType, CallID: callID, BridgeURI: bridgeURI,
+		}))
 }
 
 // arrive delivers a signed call.session_started for one call, as Stream would.

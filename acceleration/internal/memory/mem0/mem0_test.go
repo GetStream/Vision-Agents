@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -28,6 +29,8 @@ type platform struct {
 	replies []string
 	// requests is every call that arrived, as method and path, in order.
 	requests []string
+	// delay is how long each call takes to be answered.
+	delay time.Duration
 }
 
 func newPlatform() *platform {
@@ -41,6 +44,7 @@ func newPlatform() *platform {
 		stub.body = map[string]any{}
 		_ = json.Unmarshal(raw, &stub.body)
 
+		time.Sleep(stub.delay)
 		reply := stub.respond
 		if len(stub.replies) > 0 {
 			reply, stub.replies = stub.replies[0], stub.replies[1:]

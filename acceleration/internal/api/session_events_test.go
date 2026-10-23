@@ -131,6 +131,60 @@ func (s *SessionEventsSuite) TestTheCallDoesNotOutliveASocketThatEndsIt() {
 	}, 2*settleFor, 50*time.Millisecond, "the call outlived the socket that closed it")
 }
 
+// The socket's own close command ends the session, and the socket after it with 1000. It is
+// tried 20 times because the end raced the session's own: 10 of 40 ended 1006 on base 291f2e34c.
+func (s *SessionEventsSuite) TestASocketThatClosesTheSessionIsClosedNormally() {
+	for range 20 {
+		watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+		s.Require().NoError(watching.WriteJSON(map[string]any{"type": "close"}))
+
+		_, ended := s.socketEnd(watching)
+
+		s.Equal("the session ended", s.closedWith(ended, websocket.CloseNormalClosure).Text)
+	}
+}
+
+// A session ended from outside the socket closes it with 1000, and the router waits for the
+// caller's answer before it hangs up.
+func (s *SessionEventsSuite) TestASessionEndedElsewhereClosesTheSocketAndWaitsForTheAnswer() {
+	opened := s.inWriting(CreateSessionRequest{})
+	watching := s.watch(opened.Id)
+
+	s.serverClient.stopSession(opened.Id)
+
+	closed, held := s.unanswered(watching)
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+	s.Equal("the session ended", closed.Text)
+	s.heldUntilAnswered(held)
+}
+
+func (s *SessionEventsSuite) TestAFrameThatIsNotJSONIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("not json")))
+
+	read, ended := s.socketEnd(watching)
+
+	s.Require().Len(read, 1)
+	s.Equal(frame{
+		"type": "error", "error": errUnreadableFrame.Message,
+		"code": errUnreadableFrame.Code, "error_type": string(errUnreadableFrame.Type),
+	}, read[0])
+	s.Equal(errUnreadableFrame.Message, s.closedWith(ended, websocket.ClosePolicyViolation).Text)
+}
+
+// The control: a caller that closes first is answered with its own close, as on base
+// 291f2e34c.
+func (s *SessionEventsSuite) TestACallerThatClosesTheSocketIsAnsweredWithItsOwnClose() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseGoingAway, "")))
+
+	read, ended := s.socketEnd(watching)
+
+	s.Empty(read)
+	s.closedWith(ended, websocket.CloseGoingAway)
+}
+
 func (s *SessionEventsSuite) TestAnotherAppCannotWatchASession() {
 	opened := s.inWriting(CreateSessionRequest{})
 

@@ -34,6 +34,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/locate"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/twilio"
@@ -234,7 +235,7 @@ func run(ctx context.Context, arguments []string, log *slog.Logger) error {
 func report(ctx context.Context, arguments []string, log *slog.Logger) error {
 	flags := flag.NewFlagSet("report", flag.ExitOnError)
 	out := flags.String("out", "report.md", "where to write the report")
-	locate := flags.Bool("locate", true, "look up where each vendor's addresses are")
+	withPlaces := flags.Bool("locate", true, "look up where each vendor's addresses are")
 	_ = flags.Parse(arguments)
 	if flags.NArg() == 0 {
 		return errors.New("report needs one or more results files")
@@ -249,9 +250,9 @@ func report(ctx context.Context, arguments []string, log *slog.Logger) error {
 		results = append(results, read...)
 	}
 
-	places := map[string]Place{}
-	if *locate {
-		locator, err := NewLocator(ctx, &http.Client{Timeout: 30 * time.Second})
+	places := map[string]locate.Place{}
+	if *withPlaces {
+		locator, err := locate.NewLocator(ctx, &http.Client{Timeout: 30 * time.Second})
 		if err != nil {
 			log.Warn("telephony-latency: some cloud ranges are missing", "err", err)
 		}

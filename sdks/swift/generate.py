@@ -5,18 +5,23 @@
 # ///
 """Regenerate the Swift client from the acceleration OpenAPI spec.
 
-The spec at ``acceleration/api/openapi.yaml`` is the source of truth. The output is committed
-so building the package needs no code generation and no build-tool plugin to be trusted in
-Xcode, which matches what the Python and Go clients already do.
+The spec at ``acceleration/api/openapi.yaml`` is the source of truth. The client is written by
+the generator Stream Chat and Stream Video use, from the ``chat`` repository checked out beside
+this one (``tools/openapi``), so the models and ``DefaultAPI`` lean on the same StreamCore
+runtime as theirs. The output is committed, so building the package needs no code generation
+and no Go.
 
 Only the operations a phone is allowed to call are generated. The filter is the point: an
 endpoint the spec does not mark ``x-client-accessible`` is server-side only, and a client
 SDK that had a method for one would only be offering callers a 403. ``--check`` verifies the
 filter still agrees with the spec without regenerating.
 
-Only the successes are generated. ``FailureMiddleware`` throws every other status before the
-generated client reads it, so the generator is handed a copy of the spec without them rather
-than writing a decoder per error, per operation, that nothing ever reaches.
+The generator is handed a copy of the spec holding those operations, their successes and the
+schemas they reach, and nothing else: ``FailureMiddleware`` throws every other status before the
+client reads it. The copy is also put in terms the generator reads. It reads only string enums,
+so an integer enum is a plain integer, and it drops a field that is a string-or-object union,
+so such a field is sent as its string shorthand. A model whose name a hand-written type already
+has is renamed, as ``RENAMED`` says.
 
 WebSockets are not generated. OpenAPI cannot describe a socket past the upgrade, so the
 session events socket is hand-written in ``SessionSocket.swift``.
@@ -39,6 +44,7 @@ ROOT = SWIFT.parents[1]
 SPEC = ROOT / "acceleration" / "api" / "openapi.yaml"
 TARGET = SWIFT / "core" / "Sources" / "VisionAgentsCore"
 GENERATED = TARGET / "Generated"
+GENERATOR = ROOT.parent / "chat" / "tools" / "openapi"
 
 # What a client is allowed to reach: opening a conversation, finding and ending one, a guest
 # to do it as, and looking something up. Everything else about an agent — what it is configured as, what it
@@ -63,12 +69,25 @@ OPERATIONS = [
     "updateSession",
 ]
 
-CONFIG = {
-    "generate": ["types", "client"],
-    "accessModifier": "internal",
-    "namingStrategy": "idiomatic",
-    "filter": {"operations": OPERATIONS},
+# The generator puts every model at the top level of the module, beside the hand-written types
+# that wrap them, so a model sharing a name with one is renamed.
+RENAMED = {
+    "Greeting": "GreetingPayload",
+    "ImageSource": "ImageSourcePayload",
+    "SearchAnswer": "SearchAnswerPayload",
+    "SearchOptions": "SearchOptionsPayload",
+    "Session": "SessionPayload",
+    "SessionQuery": "SessionQueryPayload",
 }
+
+# What Stream Chat's SDK asks of the generator too: internal, immutable models, enums that
+# keep a value the router added later, and one shared set of coding keys.
+OPTIONS = [
+    "access_modifier=internal",
+    "immutable_models=true",
+    "raw_representable_over_enum=true",
+    "string_coding_keys=true",
+]
 
 
 def audit(spec: dict) -> list[str]:
@@ -91,18 +110,79 @@ def audit(spec: dict) -> list[str]:
     return complaints
 
 
-def successes(spec: dict) -> dict:
-    """The spec as the generator should see it: each operation's 2xx responses and nothing
-    else, and no account of the router's auth atop every generated file."""
-    spec["info"].pop("description", None)
-    for operations in spec["paths"].values():
-        for operation in operations.values():
-            if isinstance(operation, dict) and "responses" in operation:
+def references(node: object) -> set[str]:
+    """Every ``$ref`` under ``node``."""
+    if isinstance(node, list):
+        return set().union(set(), *map(references, node))
+    if not isinstance(node, dict):
+        return set()
+    found = {node["$ref"]} if isinstance(node.get("$ref"), str) else set()
+    return found.union(*map(references, node.values()))
+
+
+def client(spec: dict) -> dict:
+    """The spec as the generator should see it: the client operations with their 2xx
+    responses, and the components they reach."""
+    paths: dict[str, dict] = {}
+    for path, operations in spec["paths"].items():
+        for method, operation in operations.items():
+            if (
+                isinstance(operation, dict)
+                and operation.get("operationId") in OPERATIONS
+            ):
                 operation["responses"] = {
                     status: response
                     for status, response in operation["responses"].items()
                     if status.startswith("2")
                 }
+                paths.setdefault(path, {})[method] = operation
+
+    reached: set[str] = set()
+    pending = references(paths)
+    while pending:
+        ref = pending.pop()
+        reached.add(ref)
+        _, _, kind, name = ref.split("/")
+        pending |= references(spec["components"][kind][name]) - reached
+
+    components: dict[str, dict] = {}
+    for ref in sorted(reached):
+        _, _, kind, name = ref.split("/")
+        components.setdefault(kind, {})[name] = spec["components"][kind][name]
+    spec["paths"] = paths
+    spec["components"] = components
+    return spec
+
+
+def readable(node: object, schemas: dict) -> object:
+    """``node`` in terms the generator reads: no integer enums, and a reference to a
+    string-or-object union written out as a string where it is used."""
+    if isinstance(node, list):
+        return [readable(value, schemas) for value in node]
+    if not isinstance(node, dict):
+        return node
+    union = schemas.get(node.get("$ref", "").removeprefix("#/components/schemas/"), {})
+    if {"type": "string"} in union.get("oneOf", []):
+        node = {key: value for key, value in node.items() if key != "$ref"}
+        node["type"] = "string"
+    node = {key: readable(value, schemas) for key, value in node.items()}
+    if node.get("type") == "integer":
+        node.pop("enum", None)
+    return node
+
+
+def renamed(spec: dict) -> dict:
+    """``spec`` with the models in ``RENAMED`` under their new names."""
+    text = json.dumps(spec)
+    for old, new in RENAMED.items():
+        text = text.replace(
+            f'"#/components/schemas/{old}"', f'"#/components/schemas/{new}"'
+        )
+    spec = json.loads(text)
+    schemas = spec["components"]["schemas"]
+    spec["components"]["schemas"] = {
+        RENAMED.get(name, name): schema for name, schema in schemas.items()
+    }
     return spec
 
 
@@ -122,39 +202,42 @@ def main(argv: list[str]) -> int:
         print(f"{len(OPERATIONS)} client operations, none server-side only")
         return 0
 
-    generator = ROOT / ".codegen" / "swift" / "swift-openapi-generator"
-    if not generator.exists():
-        print(f"no generator at {generator}; see sdks/swift/README.md", file=sys.stderr)
+    if not GENERATOR.exists():
+        print(f"no generator at {GENERATOR}; see sdks/swift/README.md", file=sys.stderr)
         return 1
 
     work = SWIFT / ".codegen"
     shutil.rmtree(work, ignore_errors=True)
     (work / "out").mkdir(parents=True)
 
-    config = work / "openapi-generator-config.yaml"
-    config.write_text(yaml.safe_dump(CONFIG, sort_keys=False))
     trimmed = work / "openapi.json"
-    trimmed.write_text(json.dumps(successes(spec)))
-
-    result = subprocess.run(
-        [
-            str(generator),
-            "generate",
-            str(trimmed),
-            "--config",
-            str(config),
-            "--output-directory",
-            str(work / "out"),
-        ]
+    trimmed.write_text(
+        json.dumps(renamed(client(readable(spec, spec["components"]["schemas"]))))
     )
+
+    command = ["go", "run", ".", "generate-client", "--language", "swift"]
+    for option in OPTIONS:
+        command += ["--opt", option]
+    command += ["--spec", str(trimmed), "--output", str(work / "out")]
+    result = subprocess.run(command, cwd=GENERATOR)
     if result.returncode != 0:
         shutil.rmtree(work, ignore_errors=True)
         return result.returncode
 
+    # The endpoint factories are Stream Chat's own request path, written against its internals.
+    # This SDK calls DefaultAPI.
     shutil.rmtree(GENERATED, ignore_errors=True)
-    GENERATED.mkdir(parents=True)
-    for generated in sorted((work / "out").glob("*.swift")):
-        shutil.move(str(generated), str(GENERATED / generated.name))
+    (GENERATED / "Models").mkdir(parents=True)
+    shutil.move(
+        str(work / "out" / "APIs" / "DefaultAPI.swift"),
+        str(GENERATED / "DefaultAPI.swift"),
+    )
+    shutil.move(
+        str(work / "out" / "StringCodingKey.swift"),
+        str(GENERATED / "StringCodingKey.swift"),
+    )
+    for generated in sorted((work / "out" / "models").glob("*.swift")):
+        shutil.move(str(generated), str(GENERATED / "Models" / generated.name))
     shutil.rmtree(work, ignore_errors=True)
 
     print(f"regenerated {GENERATED.relative_to(ROOT)}")

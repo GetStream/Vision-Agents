@@ -17,7 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 )
 
 // EventsSuite is the source's MCP Events client against the fake provider, which offers events
@@ -54,7 +54,7 @@ func (s *EventsSuite) SetupTest() {
 		var envelope struct {
 			Challenge string `json:"challenge"`
 		}
-		if plugins.VerifyWebhook(s.secret, r.Header, body, time.Now()) != nil || json.Unmarshal(body, &envelope) != nil {
+		if webhook.Verify(s.secret, r.Header, body, time.Now()) != nil || json.Unmarshal(body, &envelope) != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

@@ -82,7 +82,7 @@ enum Demo {
             ["order_id": "the order number, such as A-1042"], required: ["order_id"]),
         displayTitle: "Looking up your order"
     ) { arguments in
-        let id = arguments["order_id"]?.stringValue.uppercased() ?? ""
+        let id = arguments["order_id"]?.stringValue?.uppercased() ?? ""
         guard let order = orders[id] else {
             return "There is no order \(id) on this account."
         }
@@ -113,7 +113,7 @@ enum Demo {
             allowTitle: "Refund",
             declineTitle: "Not now")
     ) { arguments in
-        let id = arguments["order_id"]?.stringValue.uppercased() ?? ""
+        let id = arguments["order_id"]?.stringValue?.uppercased() ?? ""
         let amount = arguments["amount"]?.stringValue ?? ""
         guard orders[id] != nil else {
             return "There is no order \(id) on this account."

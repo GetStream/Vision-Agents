@@ -1,3 +1,4 @@
+import Combine
 import Observation
 import StreamChat
 import StreamChatAI
@@ -14,6 +15,10 @@ import VisionAgentsCore
 @Observable
 final class AgentChat {
     let session: AgentSession
+
+    /// The session's conversation as it last was. The session is an `ObservableObject`, which
+    /// Observation does not see into, so views follow it through here.
+    private(set) var conversation: Conversation
 
     /// The channel's messages, oldest first.
     private(set) var messages: [ChatMessage] = []
@@ -38,6 +43,7 @@ final class AgentChat {
 
     @ObservationIgnored private let channel: ChatChannelController
     @ObservationIgnored private let events: EventsController
+    @ObservationIgnored private var following: Set<AnyCancellable> = []
 
     /// Opens the session's channel and starts following the session.
     static func open(_ session: AgentSession) async throws -> AgentChat {
@@ -56,12 +62,17 @@ final class AgentChat {
     private init(session: AgentSession, channel: ChatChannelController) {
         self.session = session
         self.channel = channel
+        conversation = session.conversation
         // The client's events rather than the channel's list: the list can fold several live
         // updates into one, and each update carries its own window of the reply's thinking.
         events = channel.client.eventsController()
         messages = channel.messages.reversed()
         channel.delegate = self
         events.delegate = self
+        // Published from the main actor, which is where the session changes.
+        session.$conversation
+            .sink { [weak self] conversation in MainActor.assumeIsolated { self?.conversation = conversation } }
+            .store(in: &following)
     }
 
     /// What the agent is doing while its reply shows nothing yet.
@@ -78,7 +89,7 @@ final class AgentChat {
     /// read those as Stream delivers them, with their state under `custom`, and drops every one
     /// but the clear.
     var activity: Activity? {
-        switch session.state {
+        switch conversation.state {
         case .working(let skills):
             return .working(
                 "Working on " + skills.map { $0.replacingOccurrences(of: "_", with: " ") }
@@ -113,7 +124,7 @@ final class AgentChat {
 
     /// Whether a reply is on its way, from the first thought to the last word.
     var isAnswering: Bool {
-        switch session.state {
+        switch conversation.state {
         case .responding, .working:
             return true
         default:

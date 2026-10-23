@@ -22,10 +22,11 @@ import (
 // stubProvider stands in for a real provider so routing decisions can be tested without
 // credentials. startErr makes it refuse to start, which is what failover reacts to.
 type stubProvider struct {
-	provider string
-	model    string
-	startErr error
-	closed   bool
+	provider   string
+	model      string
+	dataPolicy options.DataPolicy
+	startErr   error
+	closed     bool
 }
 
 func (s *stubProvider) Start(context.Context) error { return s.startErr }
@@ -317,24 +318,24 @@ func (s *RoutingSuite) TestTheShippedConversationShortcutComesFirst() {
 	s.NotContains(config[LLM].Offered(), "llm-scenario-runner", "a simulation's default is not a choice for a conversation")
 }
 
-// shippedSTT is a router over the configuration the binary ships, for the shortcuts whose
+// shipped is a router over the configuration the binary ships, for the shortcuts whose
 // membership is the thing being tested rather than the mechanism behind it. Every provider
 // builds, since what a base group resolves to is a question about the config and not about
 // whether the vendor's own factory is happy.
-func (s *RoutingSuite) shippedSTT() *Router[*stubProvider] {
+func (s *RoutingSuite) shipped(modality Modality) *Router[*stubProvider] {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 
 	registry := NewRegistry[*stubProvider]()
-	for _, provider := range config[STT].Providers {
+	for _, provider := range config[modality].Providers {
 		registry.Register(provider.Provider, func(spec Spec) (*stubProvider, error) {
 			return &stubProvider{model: spec.Model}, nil
 		})
 	}
 
 	router, err := New(Options[*stubProvider]{
-		Modality: STT,
-		Config:   config[STT],
+		Modality: modality,
+		Config:   config[modality],
 		Registry: registry,
 		Logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 	})
@@ -344,7 +345,7 @@ func (s *RoutingSuite) shippedSTT() *Router[*stubProvider] {
 }
 
 func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
-	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
+	candidates, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-fast"},
 	})
 	s.Require().NoError(err)
@@ -361,8 +362,36 @@ func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
 		"a group is the list it names and nothing else, so a model joining the router does not join it")
 }
 
+func (s *RoutingSuite) TestTheConversationalGroupLeadsWithGemmaAndKeepsLunaToFailOverTo() {
+	candidates, err := s.shipped(LLM).resolveChain(s.ctx, Request{
+		Providers: []string{"llm-conversational"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("gemma/gemma-4-26B-A4B-it", names(candidates)[0],
+		"the cheapest model that holds a short turn heads the group while it is up")
+	s.ElementsMatch([]string{
+		"gemma/gemma-4-26B-A4B-it",
+		"cerebras/gemma-4-31b",
+		"openai/gpt-5.6-luna",
+	}, names(candidates),
+		"Luna stays in the group, so a turn still has a model when both Gemmas are down")
+}
+
+func (s *RoutingSuite) TestTheFlowGroupLeadsWithGemmaAndLunaCatchesItBeingDown() {
+	candidates, err := s.shipped(LLM).resolveChain(s.ctx, Request{
+		Providers: []string{"llm-flow"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("gemma/gemma-4-26B-A4B-it", names(candidates)[0],
+		"a ruling is pinned to the model that starts writing at once while it is up")
+	s.Contains(names(candidates), "openai/gpt-5.6-luna",
+		"the rest of the fast tier, Luna with it, still catches Gemma being down")
+}
+
 func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoice() {
-	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
+	candidates, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-accurate"},
 	})
 	s.Require().NoError(err)
@@ -379,7 +408,7 @@ func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoic
 
 func (s *RoutingSuite) TestABaseGroupIsALiveGroupOnly() {
 	batch := false
-	_, err := s.shippedSTT().resolveChain(s.ctx, Request{
+	_, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-accurate"},
 		Realtime:  &batch,
 	})
@@ -392,7 +421,7 @@ func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
 	// The whole of what these groups do not carry: naming one asks for its models, not for
 	// its options. Of the accurate group only Muse declares diarize, so a config that names
 	// the group and then asks to be told who spoke gets that one rather than all four.
-	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
+	candidates, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-accurate"},
 	})
 	s.Require().NoError(err)
@@ -1611,6 +1640,21 @@ func (s *RoutingSuite) TestCostBillsCachedPromptTokensOnlyOnce() {
 	s.EqualValues(550_000, price.CostMicros(Usage{InputTokens: 1_000_000, CachedInputTokens: 500_000}))
 	s.EqualValues(100_000, price.CostMicros(Usage{InputTokens: 1_000_000, CachedInputTokens: 1_000_000}),
 		"a prompt served entirely from cache costs only the cached rate")
+}
+
+func (s *RoutingSuite) TestCostBillsCacheWritesAtTheWriteRate() {
+	// Opus 5.5: $4 per million fresh, $0.20 read from cache, $5 written to it. Of a
+	// million-token prompt, 900k were read and 90k written, leaving 10k fresh.
+	price := Price{PerMillionInputTokens: 4, PerMillionCachedInputTokens: 0.2, PerMillionCacheWriteInputTokens: 5}
+
+	s.EqualValues(40_000+180_000+450_000, price.CostMicros(Usage{InputTokens: 1_000_000, CachedInputTokens: 900_000, CacheWriteInputTokens: 90_000}))
+}
+
+func (s *RoutingSuite) TestCostBillsCacheWritesAsFreshInputWithoutAWriteRate() {
+	// A provider that reports writes but does not charge extra for them.
+	price := Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.1}
+
+	s.EqualValues(550_000, price.CostMicros(Usage{InputTokens: 1_000_000, CachedInputTokens: 500_000, CacheWriteInputTokens: 400_000}))
 }
 
 func (s *RoutingSuite) TestCostIgnoresMoreCachedTokensThanPromptTokens() {

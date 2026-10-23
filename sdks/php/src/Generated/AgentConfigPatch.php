@@ -42,8 +42,11 @@ final readonly class AgentConfigPatch
         // Deprecated: use connectors, a binding to a connector.
         /** @var list<mixed>|null */
         public ?array $plugins = null,
+        public ?AgentReview $review = null,
+        public AgentRole|string|null $role = null,
         public Sandbox|string|null $sandbox = null,
         public ?SandboxOptions $sandboxOptions = null,
+        public ?AgentScheduling $scheduling = null,
         public ?string $search = null,
         /** @var list<string>|null */
         public ?array $skills = null,
@@ -86,8 +89,11 @@ final readonly class AgentConfigPatch
             name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
+            review: array_key_exists('review', $data) && $data['review'] !== null ? AgentReview::fromArray(Json::object($data, 'review')) : null,
+            role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             sandboxOptions: array_key_exists('sandbox_options', $data) && $data['sandbox_options'] !== null ? SandboxOptions::fromArray(Json::object($data, 'sandbox_options')) : null,
+            scheduling: array_key_exists('scheduling', $data) && $data['scheduling'] !== null ? AgentScheduling::fromArray(Json::object($data, 'scheduling')) : null,
             search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
             skills: array_key_exists('skills', $data) && $data['skills'] !== null ? Json::strings($data, 'skills') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
@@ -158,11 +164,20 @@ final readonly class AgentConfigPatch
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
         }
+        if ($this->review !== null) {
+            $out['review'] = $this->review->toArray();
+        }
+        if ($this->role !== null) {
+            $out['role'] = Json::enumValue($this->role);
+        }
         if ($this->sandbox !== null) {
             $out['sandbox'] = Json::enumValue($this->sandbox);
         }
         if ($this->sandboxOptions !== null) {
             $out['sandbox_options'] = $this->sandboxOptions->toArray();
+        }
+        if ($this->scheduling !== null) {
+            $out['scheduling'] = $this->scheduling->toArray();
         }
         if ($this->search !== null) {
             $out['search'] = $this->search;

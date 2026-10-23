@@ -41,6 +41,8 @@ final readonly class Connector
         public ?string $description = null,
         // The redirect URI an OAuth client registered for this connector has to list: where every consent of this dep...
         public ?string $redirectUri = null,
+        // How code in an agent's sandbox calls the provider's API with a connection's credential without holding it....
+        public ?ConnectorSandbox $sandbox = null,
         // What a person does at the provider before the first consent, such as registering an OAuth client. Absent wh...
         public ?ConnectorSetup $setup = null,
     ) {
@@ -65,6 +67,7 @@ final readonly class Connector
             category: array_key_exists('category', $data) && $data['category'] !== null ? Json::string($data, 'category') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             redirectUri: array_key_exists('redirect_uri', $data) && $data['redirect_uri'] !== null ? Json::string($data, 'redirect_uri') : null,
+            sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? ConnectorSandbox::fromArray(Json::object($data, 'sandbox')) : null,
             setup: array_key_exists('setup', $data) && $data['setup'] !== null ? ConnectorSetup::fromArray(Json::object($data, 'setup')) : null,
         );
     }
@@ -95,6 +98,9 @@ final readonly class Connector
         }
         if ($this->redirectUri !== null) {
             $out['redirect_uri'] = $this->redirectUri;
+        }
+        if ($this->sandbox !== null) {
+            $out['sandbox'] = $this->sandbox->toArray();
         }
         if ($this->setup !== null) {
             $out['setup'] = $this->setup->toArray();

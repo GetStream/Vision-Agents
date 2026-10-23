@@ -387,6 +387,19 @@ func (s *PhoneSuite) TestABridgeCarriesTheNumberStreamFindsItsTrunkBy() {
 	s.EqualError(err, `phone: "tel:+15550000301" is not a sip uri`)
 }
 
+func (s *PhoneSuite) TestTheBridgeHostIsTheHostAlone() {
+	s.Equal("trunk-1.sip.example.com", BridgeHost("sip:+15550100001@trunk-1.sip.example.com"))
+
+	host := BridgeHost("sips:user:secret-value@sip.example.com:5061;transport=tls")
+	s.Equal("sip.example.com", host)
+	s.NotContains(host, "secret-value")
+}
+
+func (s *PhoneSuite) TestABridgeHostOfSomethingThatIsNotSIPIsEmpty() {
+	s.Empty(BridgeHost(""))
+	s.Empty(BridgeHost("https://sip.example.com"))
+}
+
 func (s *PhoneSuite) TestCapabilitiesAreCoveredOnlyWhenEveryOneIsPresent() {
 	s.True(covers([]Capability{Voice, SMS}, []Capability{Voice}))
 	s.True(covers([]Capability{Voice}, nil))
@@ -542,6 +555,10 @@ type stub struct {
 	// inbound is the last number this vendor was told to send to a bridge, so a test can see
 	// the address the service passed on.
 	inbound Inbound
+	// ordered counts the numbers this vendor was asked to sell, and released the numbers it
+	// was told to take back.
+	ordered  int
+	released []string
 }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
@@ -553,10 +570,14 @@ func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
 }
 
 func (s *stub) BuyNumber(context.Context, Order) (Number, error) {
+	s.ordered++
 	return Number{Vendor: s.vendor}, s.err
 }
 
-func (s *stub) ReleaseNumber(context.Context, string) error { return s.err }
+func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {
+	s.released = append(s.released, e164)
+	return s.err
+}
 
 func (s *stub) ConfigureInbound(_ context.Context, inbound Inbound) error {
 	s.inbound = inbound

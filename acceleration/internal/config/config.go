@@ -180,6 +180,9 @@ type Auth struct {
 	// KEK unseals the stored key secrets. It belongs in the environment rather than in a
 	// file checked in beside the code: it is what makes a leaked backup ciphertext.
 	KEK string `koanf:"kek"`
+	// KMSKey names the KMS key that unwraps each ROUTER_AUTH_KEK_V<n>_WRAPPED at startup, so
+	// the keyring itself is in no variable. Empty reads only the plain keys.
+	KMSKey string `koanf:"kms_key"`
 	// ProxyDeclaresKind says the proxy in front authenticates every caller and declares
 	// whether it is a backend or an end user. In proxy mode the router then reads only the
 	// app header and takes a caller that declares nothing for an end user. Off, a caller
@@ -343,8 +346,9 @@ type CodeSandbox struct {
 	// signs each granted host's certificate with. Both are needed when ProxyAddr is set.
 	ProxyCACert string `koanf:"proxy_ca_cert"`
 	ProxyCAKey  string `koanf:"proxy_ca_key"`
-	// ProxyPublicURL is the proxy as a sandbox reaches it, http://<IPv4 address>:port, which the
-	// proxy broker needs, with ProxyCACert.
+	// ProxyPublicURL is the proxy as a sandbox reaches it, http or https://<IPv4 address>:port,
+	// which the proxy broker needs, with ProxyCACert. With https the proxy serves TLS on
+	// ProxyAddr, with a certificate for that address the CA signs.
 	ProxyPublicURL string `koanf:"proxy_public_url"`
 }
 
@@ -403,6 +407,7 @@ var variables = map[string]string{
 	"shutdown.drain":       "ROUTER_SHUTDOWN_DRAIN",
 	"auth.mode":            "ROUTER_AUTH_MODE",
 	"auth.kek":             "ROUTER_AUTH_KEK",
+	"auth.kms_key":         "ROUTER_AUTH_KMS_KEY",
 	"auth.ops_key":         "ROUTER_AUTH_OPS_KEY",
 	"data_move.retention":  "ROUTER_DATA_MOVE_RETENTION",
 	"stream.api_key":       "STREAM_API_KEY",
@@ -628,9 +633,22 @@ func (c Config) validate() error {
 	}
 	_, validProxy := ProxyURL(c.CodeSandbox.ProxyPublicURL)
 	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && (!validProxy || c.CodeSandbox.ProxyCACert == "") {
-		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url (http://<public IPv4 address>:port: " +
-			"a sandbox reaches that address alone and has no DNS to look a host name up with) and proxy_ca_cert " +
+		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url " +
+			"(http://<public IPv4 address>:port or https://<public IPv4 address>:port: a sandbox reaches that address " +
+			"alone and has no DNS to look a host name up with) and proxy_ca_cert " +
 			"(ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL, ROUTER_CODE_SANDBOX_PROXY_CA_CERT) must say how a sandbox reaches the proxy")
+	}
+	// An https URL a sandbox cannot use is served as plain HTTP by the listener, which would
+	// leave a router running a different proxy from the one its settings say.
+	if raw := c.CodeSandbox.ProxyPublicURL; c.CodeSandbox.ProxyAddr != "" && len(raw) >= len("https://") &&
+		strings.EqualFold(raw[:len("https://")], "https://") && !validProxy {
+		// The URL may carry a credential as its user, so the error names the host alone.
+		host := "unparseable"
+		if parsed, err := url.Parse(raw); err == nil {
+			host = parsed.Host
+		}
+		return fmt.Errorf("config: code_sandbox.proxy_public_url (ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL) has host %q, an https URL that is not "+
+			"https://<public IPv4 address>:port, so the proxy would be served in plain HTTP: fix it or use http", host)
 	}
 	// Every router of a proxy broker serves the proxy, so no sandbox is sent to a proxy no
 	// router runs.
@@ -656,8 +674,8 @@ func (c Config) validate() error {
 	return c.validateShard()
 }
 
-// ProxyURL parses raw as the proxy's public URL, http://<IPv4 address>:port, and says whether it
-// is one a sandbox can use. The URL carries the sandbox's own credential as its user, so it has
+// ProxyURL parses raw as the proxy's public URL, http or https://<IPv4 address>:port, and says
+// whether it is one a sandbox can use. https is the proxy serving TLS. The URL carries the sandbox's own credential as its user, so it has
 // none. The sandbox may reach that address alone, through Daytona's network allow list, which
 // takes IP ranges, so it has no DNS to look a name up with, and no IPv6 route (live probe,
 // 2026-10-22). The address must be public: a sandbox reaches no loopback, private (RFC 1918),
@@ -666,7 +684,7 @@ func (c Config) validate() error {
 // the URL has no path, query or fragment.
 func ProxyURL(raw string) (*url.URL, bool) {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" ||
+	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" ||
 		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
 		return nil, false
 	}
@@ -763,6 +781,7 @@ func (c Config) export() error {
 		"shutdown.drain":                c.Shutdown.Drain.String(),
 		"auth.mode":                     c.Auth.Mode,
 		"auth.kek":                      c.Auth.KEK,
+		"auth.kms_key":                  c.Auth.KMSKey,
 		"auth.ops_key":                  c.Auth.OpsKey,
 		"auth.proxy_declares_kind":      fmt.Sprint(c.Auth.ProxyDeclaresKind),
 		"stream.api_key":                c.Stream.APIKey,

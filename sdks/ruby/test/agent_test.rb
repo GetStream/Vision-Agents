@@ -348,6 +348,17 @@ class TestAgent < LocalRouterTest
     assert_equal({ "name" => "support" }, @router.last(:get, "/v1/agents/configs").query)
   end
 
+  def test_update_config_sends_a_review_guide
+    guide = { "instructions" => "Score how fast the refund was settled." }
+    @router.on(:get, "/v1/agents/configs", body: [{ "name" => "support", "id" => "cfg_1" }])
+    @router.on(:patch, "/v1/agents/configs/cfg_1") { |request| request.json.merge("id" => "cfg_1") }
+
+    config = agent.update_config(review: { instructions: guide["instructions"] })
+
+    assert_equal({ "review" => guide }, @router.last(:patch, "/v1/agents/configs/cfg_1").json)
+    assert_equal guide, config["review"]
+  end
+
   def test_update_config_needs_a_stored_config
     @router.on(:get, "/v1/agents/configs", body: [])
 

@@ -99,6 +99,18 @@ func (s *RelayedSessionSuite) TestTheSocketClosesWhenTheSessionEndsOnTheOtherNod
 	}
 }
 
+func (s *RelayedSessionSuite) TestTheOtherNodeWaitsForTheAnswerToItsClose() {
+	opened := s.inWriting(CreateSessionRequest{})
+	watching := s.watchFromTheOtherNode(opened.Id)
+
+	s.serverClient.stopSession(opened.Id)
+
+	closed, held := s.unanswered(watching)
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+	s.Equal("the session ended", closed.Text)
+	s.heldUntilAnswered(held)
+}
+
 func (s *RelayedSessionSuite) TestASessionNoNodeIsRunningIsNotFound() {
 	_, status := s.serverClient.on(s.other).watch(
 		"/v1/agents/sessions/" + s.utils.uuid() + "/events")

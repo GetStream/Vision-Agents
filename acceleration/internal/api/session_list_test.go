@@ -70,6 +70,20 @@ func (s *SessionListSuite) TestARenamedSessionMovesToTheTop() {
 	}, 5*time.Second, 20*time.Millisecond, "renaming a session did not move it up")
 }
 
+// A device listing its sessions is not given their brief, and the backend still is.
+func (s *SessionListSuite) TestOnlyTheBackendReadsTheBriefOfASessionItLists() {
+	owner := s.data.createUser()
+	request, brief := s.data.briefed(textSession(nil))
+	s.serverClient.actingFor(owner).createSession(request)
+
+	listed := owner.querySessions(SessionQuery{}).Items
+	s.Require().Len(listed, 1)
+	s.Nil(listed[0].Instructions)
+	listed = s.serverClient.actingFor(owner).querySessions(SessionQuery{}).Items
+	s.Require().Len(listed, 1)
+	s.Equal(brief, value(listed[0].Instructions))
+}
+
 func (s *SessionListSuite) TestAProjectNarrowsTheList() {
 	support, sales := "support", "sales"
 	ticketed := textSession(nil)

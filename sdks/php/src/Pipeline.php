@@ -20,6 +20,9 @@ final readonly class Pipeline
 {
     /**
      * @param ?string $sts a speech-to-speech target; naming one means no transcriber or voice is opened
+     * @param ?string $voice the voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+     *     the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent
+     *     takes the vendor's own voice name instead
      * @param ?string $greeting said on joining without going through the model
      * @param ?GreetingMode $greetingMode exact, the default, or variation, which has the model
      *     say its own variation of the greeting on every call

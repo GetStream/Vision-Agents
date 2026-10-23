@@ -1,0 +1,150 @@
+//go:build integration
+
+package api
+
+import (
+	"encoding/json"
+	"io"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+)
+
+// socketEnd reads a socket to its end: every JSON frame left on it, and how it ended.
+func (s *RouterSuite) socketEnd(connection *websocket.Conn) ([]frame, error) {
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
+	var read []frame
+	for {
+		kind, payload, err := connection.ReadMessage()
+		if err != nil {
+			return read, err
+		}
+		var decoded frame
+		if kind == websocket.TextMessage && json.Unmarshal(payload, &decoded) == nil {
+			read = append(read, decoded)
+		}
+	}
+}
+
+// closedWith checks a socket ended with a close frame of the code given.
+func (s *RouterSuite) closedWith(ended error, code int) *websocket.CloseError {
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed, "the socket ended without a close frame")
+	s.Equal(code, closed.Code)
+	return closed
+}
+
+// unanswered reads a socket to its close frame without answering it, and says how long the
+// router then held the connection. A router that hangs up as it sends its close lets a proxy
+// drop the frame; one that waits for the answer holds the socket for about closeWait.
+func (s *RouterSuite) unanswered(connection *websocket.Conn) (*websocket.CloseError, time.Duration) {
+	closed, began := s.closeUnanswered(connection)
+	return closed, s.heldSince(connection, began)
+}
+
+// closeUnanswered reads a socket to its close frame without answering it, and says when the
+// frame arrived.
+func (s *RouterSuite) closeUnanswered(connection *websocket.Conn) (*websocket.CloseError, time.Time) {
+	connection.SetCloseHandler(func(int, string) error { return nil })
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
+	var ended error
+	for ended == nil {
+		_, _, ended = connection.ReadMessage()
+	}
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed, "the socket ended without a close frame")
+	return closed, time.Now()
+}
+
+// heldSince says how long after began the router hung up the socket.
+func (s *RouterSuite) heldSince(connection *websocket.Conn, began time.Time) time.Duration {
+	_, err := connection.UnderlyingConn().Read(make([]byte, 64))
+	s.Require().ErrorIs(err, io.EOF, "the router still holds the socket")
+	return time.Since(began)
+}
+
+// heldUntilAnswered checks the router waited for an answer to its close, though not forever.
+func (s *RouterSuite) heldUntilAnswered(held time.Duration) {
+	s.Greater(held, closeWait/2, "the router hung up as it sent its close")
+	s.Less(held, closeWait+closeWait/2, "the router waits for the answer for about closeWait")
+}
+
+// SocketHangUpSuite covers a caller hanging up on /v1/agents/socket while the agent speaks.
+// It is a suite of its own for the router's log, and for a voice no other test has closed:
+// the harness has one, and the first session to end closes it.
+type SocketHangUpSuite struct {
+	RouterSuite
+	logged *lockedLog
+}
+
+func TestSocketHangUpSuite(t *testing.T) {
+	runSuite(t, new(SocketHangUpSuite))
+}
+
+func (s *SocketHangUpSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *SocketHangUpSuite) SetupTest() {
+	s.useFixture("standard")
+}
+
+// greetingVoice is the voice the socket's session speaks in, started by the time the socket
+// answers with its session.
+func (s *SocketHangUpSuite) greetingVoice() *tts.Emitter {
+	return s.speaking().emitter
+}
+
+func (s *SocketHangUpSuite) TestACallerHangingUpMidGreetingIsNoFailure() {
+	connection := s.serverClient.opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "start", "session": map[string]any{"greeting": map[string]any{"text": "hello there"}},
+	}))
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
+	var answered frame
+	s.Require().NoError(connection.ReadJSON(&answered))
+	s.Require().Equal("session", answered["type"], "the socket answered %v", answered)
+	// Ten seconds of greeting, far more than the socket's 400 ms of queue, so the agent is
+	// still publishing when the caller goes.
+	voice := s.greetingVoice()
+	speaking := make(chan struct{})
+	go func() {
+		defer close(speaking)
+		chunk := audio.PcmData{Samples: make([]int16, 1600), SampleRate: 16_000, Channels: 1}
+		for range 100 {
+			voice.Send(tts.AudioChunk{SynthesisID: "greeting", Audio: chunk})
+		}
+	}()
+	for {
+		kind, _, err := connection.ReadMessage()
+		s.Require().NoError(err, "the greeting never reached the socket")
+		if kind == websocket.BinaryMessage {
+			break
+		}
+	}
+
+	s.Require().NoError(connection.Close())
+
+	select {
+	case <-speaking:
+	case <-time.After(settleFor):
+		s.FailNow("the agent never took the rest of the greeting")
+	}
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), "has been left")
+	}, settleFor, 20*time.Millisecond, "the agent never published into the call that was left")
+	var failures []string
+	for line := range strings.Lines(s.logged.String()) {
+		if strings.Contains(line, "level=ERROR") {
+			failures = append(failures, line)
+		}
+	}
+	s.Empty(failures, "a caller hanging up is logged as a failure")
+}

@@ -2,6 +2,6 @@
 # the store suite drops the whole schema, so it must never be pointed at the database a
 # local router is using. The database is created on first use.
 postgres:
-  dsn: postgres://postgres:postgres@localhost:55432/model_router_test_retire_test?sslmode=disable
+  dsn: postgres://postgres:postgres@localhost:55432/model_router_test?sslmode=disable
 redis:
   addr: localhost:56379
