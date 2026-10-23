@@ -57,8 +57,12 @@ func NewCartesia(options CartesiaOptions) (*Cartesia, error) {
 
 // Prepare uploads the first recording and returns the voice id sessions ask for. Cartesia
 // clones from one clip, so the rest are not sent: a few seconds of clean speech is what
-// the endpoint asks for, and sending more would not make the clone better.
-func (c *Cartesia) Prepare(ctx context.Context, request Request) (string, error) {
+// the endpoint asks for, and sending more would not make the clone better. It is one clone.
+func (c *Cartesia) Prepare(ctx context.Context, request Request) (Prepared, error) {
+	return cloned(c.clone(ctx, request))
+}
+
+func (c *Cartesia) clone(ctx context.Context, request Request) (string, error) {
 	if err := request.Validate(); err != nil {
 		return "", stack.Wrap(err)
 	}

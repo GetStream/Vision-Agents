@@ -21,7 +21,8 @@ type Meter struct {
 	Config   ProviderConfig
 	Owner    Owner
 	// UsageID names work that may be asked for twice, such as preparing the same voice, so it
-	// is billed once. Zero gives the call an id of its own.
+	// is billed once. Zero gives the call an id of its own, and so does a Call that fails: a
+	// failure is not billed, so it must not take the id from the retry that succeeds.
 	UsageID uuid.UUID
 	// Code turns a failure into the row's error code. Nil records "provider_error".
 	Code func(error) string
@@ -50,6 +51,9 @@ func Call[R pricing.Metered](ctx context.Context, meter Meter, ask func(context.
 	// Deferred so a vendor that panics still leaves its row; the panic carries on.
 	defer func() {
 		stat.LatencyMs = MsSince(started)
+		if !stat.Success {
+			stat.UsageID = uuid.Nil
+		}
 		meter.record(stat)
 	}()
 
@@ -90,12 +94,13 @@ func (m Meter) stat(started time.Time) Stat {
 }
 
 // settle makes stat the row of work that succeeded: what it used, what the vendor said it
-// cost, and the meter's quoted cost, which only a success carries since a failure is not
-// billed.
+// cost or the provider's formula makes it, and the meter's quoted cost, which only a success
+// carries since a failure is not billed.
 func (m Meter) settle(stat *Stat, work pricing.Metered) {
 	stat.Success, stat.ErrorCode, stat.CostMicros = true, "", m.CostMicros
 	stat.Use(work.Used())
 	stat.VendorCost(work)
+	stat.ProviderCost(work)
 }
 
 func (m Meter) record(stat Stat) {

@@ -52,7 +52,8 @@ type Options struct {
 	Logger     *slog.Logger
 }
 
-// Store is a mem0 memory store. It satisfies memory.Store.
+// Store is a mem0 memory store. It satisfies memory.Backend: mem0 bills by request, so every
+// call says how many it made.
 type Store struct {
 	apiKey  string
 	baseURL string
@@ -89,9 +90,9 @@ func New(options Options) (*Store, error) {
 }
 
 // Recall returns what mem0 knows that bears on the query, most relevant first.
-func (s *Store) Recall(ctx context.Context, query memory.Query) ([]memory.Memory, error) {
+func (s *Store) Recall(ctx context.Context, query memory.Query) (memory.Recalled, error) {
 	if err := query.Scope.Validate(); err != nil {
-		return nil, err
+		return memory.Recalled{}, err
 	}
 
 	limit := query.Limit
@@ -113,27 +114,27 @@ func (s *Store) Recall(ctx context.Context, query memory.Query) ([]memory.Memory
 
 	var response searchResponse
 	if err := s.call(ctx, http.MethodPost, "/v3/memories/search/", body, &response); err != nil {
-		return nil, err
+		return memory.Recalled{}, err
 	}
 
-	recalled := make([]memory.Memory, 0, len(response.Results))
+	recalled := memory.Recalled{Memories: make([]memory.Memory, 0, len(response.Results)), Billed: memory.Billed{Requests: 1}}
 	for _, result := range response.Results {
 		if result.Memory == "" {
 			continue
 		}
-		recalled = append(recalled, memory.Memory{ID: result.ID, Text: result.Memory, Score: result.Score})
+		recalled.Memories = append(recalled.Memories, memory.Memory{ID: result.ID, Text: result.Memory, Score: result.Score})
 	}
 	return recalled, nil
 }
 
 // Remember hands a conversation to mem0 to learn from. Extraction runs on mem0's side, so
 // this returns as soon as the work is queued rather than when memories exist.
-func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm.Message) error {
+func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm.Message) (memory.Billed, error) {
 	if err := scope.Validate(); err != nil {
-		return err
+		return memory.Billed{}, err
 	}
 	if len(messages) == 0 {
-		return nil
+		return memory.Billed{}, nil
 	}
 
 	body := addRequest{
@@ -153,63 +154,67 @@ func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm
 		body.Messages = append(body.Messages, message{Role: string(said.Role), Content: said.Content})
 	}
 	if len(body.Messages) == 0 {
-		return nil
+		return memory.Billed{}, nil
 	}
 
 	var response addResponse
 	if err := s.call(ctx, http.MethodPost, "/v3/memories/add/", body, &response); err != nil {
-		return err
+		return memory.Billed{}, err
 	}
 	s.logger.Debug("queued a conversation to remember", "event", response.EventID, "status", response.Status)
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
 // Truncate deletes everything mem0 knows about one user of one app.
-func (s *Store) Truncate(ctx context.Context, appID, userID string) error {
+func (s *Store) Truncate(ctx context.Context, appID, userID string) (memory.Billed, error) {
 	if appID == "" || userID == "" {
-		return stack.Wrap(errors.New("mem0: truncating needs an app id and a user id"))
+		return memory.Billed{}, stack.Wrap(errors.New("mem0: truncating needs an app id and a user id"))
 	}
 	return s.deleteMatching(ctx, map[string]any{"app_id": appID, "user_id": userID})
 }
 
 // ForgetRun deletes what one session of one app taught mem0.
-func (s *Store) ForgetRun(ctx context.Context, appID, runID string) error {
+func (s *Store) ForgetRun(ctx context.Context, appID, runID string) (memory.Billed, error) {
 	if appID == "" || runID == "" {
-		return stack.Wrap(errors.New("mem0: forgetting a session needs an app id and a run id"))
+		return memory.Billed{}, stack.Wrap(errors.New("mem0: forgetting a session needs an app id and a run id"))
 	}
 	return s.deleteMatching(ctx, map[string]any{"app_id": appID, "run_id": runID})
 }
 
-// deleteMatching deletes every memory the filters match, a page at a time.
+// deleteMatching deletes every memory the filters match, a page at a time, and counts the
+// requests it made: each listing and each batch delete.
 //
 // mem0's delete-all endpoint takes one entity and ignores the rest, so asked for an app and
 // a run it deletes the whole app. Listing by filter and deleting by id is the only way to
 // delete exactly what was asked for.
-func (s *Store) deleteMatching(ctx context.Context, filters map[string]any) error {
+func (s *Store) deleteMatching(ctx context.Context, filters map[string]any) (memory.Billed, error) {
+	var billed memory.Billed
 	deleted := map[string]bool{}
 	for {
 		var page listResponse
 		path := fmt.Sprintf("/v3/memories/?page=1&page_size=%d", deletePageSize)
 		if err := s.call(ctx, http.MethodPost, path, listRequest{Filters: filters}, &page); err != nil {
-			return err
+			return billed, err
 		}
+		billed.Requests++
 		if len(page.Results) == 0 {
-			return nil
+			return billed, nil
 		}
 
 		batch := batchDeleteRequest{Memories: make([]batchMemory, 0, len(page.Results))}
 		for _, found := range page.Results {
 			// A memory listed again after being deleted would loop here for ever.
 			if deleted[found.ID] {
-				return stack.Wrap(fmt.Errorf("mem0: memory %s is still listed after being deleted", found.ID))
+				return billed, stack.Wrap(fmt.Errorf("mem0: memory %s is still listed after being deleted", found.ID))
 			}
 			deleted[found.ID] = true
 			batch.Memories = append(batch.Memories, batchMemory{MemoryID: found.ID})
 		}
 		var response batchDeleteResponse
 		if err := s.call(ctx, http.MethodDelete, "/v1/batch/", batch, &response); err != nil {
-			return err
+			return billed, err
 		}
+		billed.Requests++
 	}
 }
 

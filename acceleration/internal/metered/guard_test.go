@@ -41,6 +41,8 @@ var vendorFacing = []facing{
 	{"internal/phone", "Provider"},
 	{"internal/channels", "Provider"},
 	{"internal/dlc", "Registrar"},
+	{"internal/knowledge", "Backend"},
+	{"internal/memory", "Backend"},
 }
 
 // holders are, beside a type's own package and the vendor, suite and mock packages under it,
@@ -70,15 +72,15 @@ var modalities = map[string]string{
 	"internal/decisionmodel": "internal/decisionmodel/decisionmodelsuite",
 }
 
-// vendorRoots are the packages whose subpackages are vendors: the model modalities, and the
-// phone and 10DLC vendors.
+// vendorRoots are the packages whose subpackages are vendors: the model modalities, the phone
+// and 10DLC vendors, and the knowledge and memory stores.
 var vendorRoots = append(slices.Sorted(func(yield func(string) bool) {
 	for modality := range modalities {
 		if !yield(modality) {
 			return
 		}
 	}
-}), "internal/phone", "internal/dlc")
+}), "internal/phone", "internal/dlc", "internal/knowledge", "internal/memory")
 
 // importers are, beside the vendors themselves and the routers, which build theirs through
 // their registries and meter what they build, the packages that may import a vendor: the
@@ -111,6 +113,8 @@ var notVendors = map[string]string{
 	"internal/phone/sipbridge":         "the SIP bridge every phone vendor's calls go through",
 	"internal/phone/siptrunk":          "the customer's own SIP trunk, which is no vendor of Stream's",
 	"internal/phone/vendors":           "the phone vendors' registry",
+	"internal/knowledge/ingest":        "how a document is cut into passages, whichever store they go to",
+	"internal/knowledge/urls":          "the pages a knowledge base is kept filled from, written through internal/metered",
 }
 
 // withoutSuite are the vendors that run no suite, and why. The list may only shrink.
@@ -354,8 +358,12 @@ func TestEveryVendorRunsItsSuite(t *testing.T) {
 func TestTheGuardCatchesWhatBreaksTheRule(t *testing.T) {
 	sources, tests := tree(t, filepath.Join("testdata", "tree"))
 
-	require.Equal(t, []string{"internal/api/voice.go names stt.STT"}, vendorHolders(sources))
 	require.Equal(t, []string{
+		"internal/agent/lookup.go names knowledge.Backend",
+		"internal/api/voice.go names stt.STT",
+	}, vendorHolders(sources))
+	require.Equal(t, []string{
+		"internal/agent/lookup.go imports internal/knowledge/turbopuffer",
 		"internal/agent/model.go imports internal/llm/openai",
 		"internal/sts/crossed/crossed.go imports internal/stt/deepgram",
 	}, vendorImporters(sources))

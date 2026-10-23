@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 // Query is a question to answer out of what the business wrote down.
@@ -52,7 +54,88 @@ type Document struct {
 	Score float64
 }
 
-// Store is a knowledge provider.
+// ErrNoNamespace is a knowledge base the provider does not have, such as one deleted since it
+// was listed.
+var ErrNoNamespace = errors.New("knowledge: no such namespace")
+
+// Billed is what one call to a knowledge provider was billed, in quantities any search
+// store bills by, each taken from the provider's own billable figure where it reports one.
+// A provider that reports nothing bills its requests alone.
+type Billed struct {
+	// Requests is how many requests the call made of the provider.
+	Requests int64
+	// BytesQueried is what the provider counted as searched, its minimum and discounts
+	// included.
+	BytesQueried int64
+	// BytesReturned is what came back.
+	BytesReturned int64
+	// Results is how many passages came back.
+	Results int64
+	// BytesWritten is what was written or deleted, as the provider counts it before any
+	// discount it gives a large batch.
+	BytesWritten int64
+	// ByteHours is an hour of a knowledge base's size, sampled once an hour.
+	ByteHours int64
+	// CostNanos is what the call cost the operator under the provider's own formula, in
+	// billionths of a dollar. It is kept beside the row; the price list prices the row.
+	CostNanos int64
+}
+
+// Used is what the call is priced by.
+func (b Billed) Used() pricing.Quantities {
+	return pricing.Quantities{
+		pricing.Requests:      b.Requests,
+		pricing.BytesQueried:  b.BytesQueried,
+		pricing.BytesReturned: b.BytesReturned,
+		pricing.Results:       b.Results,
+		pricing.BytesWritten:  b.BytesWritten,
+		pricing.ByteHours:     b.ByteHours,
+	}
+}
+
+// ProviderCostNanos is what the call cost the operator.
+func (b Billed) ProviderCostNanos() int64 { return b.CostNanos }
+
+// Plus is both calls' bills together, as a call made in batches sums its requests.
+func (b Billed) Plus(other Billed) Billed {
+	return Billed{
+		Requests:      b.Requests + other.Requests,
+		BytesQueried:  b.BytesQueried + other.BytesQueried,
+		BytesReturned: b.BytesReturned + other.BytesReturned,
+		Results:       b.Results + other.Results,
+		BytesWritten:  b.BytesWritten + other.BytesWritten,
+		ByteHours:     b.ByteHours + other.ByteHours,
+		CostNanos:     b.CostNanos + other.CostNanos,
+	}
+}
+
+// Found is what a read returned and what it was billed.
+type Found struct {
+	Documents []Document
+	Billed
+}
+
+// Backend is what a knowledge provider implements. Every call says what it was billed, and
+// only internal/metered holds one: everything else is handed a Store or a Writer, which
+// records each call for whoever it is owned by.
+type Backend interface {
+	Search(ctx context.Context, query Query) (Found, error)
+	Fetch(ctx context.Context, namespace string, ids []string) (Found, error)
+	Upsert(ctx context.Context, namespace string, documents []Document) (Billed, error)
+	Delete(ctx context.Context, namespace string, ids []string) (Billed, error)
+	// Namespaces lists every knowledge base whose name starts with prefix, every one for an
+	// empty prefix.
+	Namespaces(ctx context.Context, prefix string) ([]string, error)
+	// Stored samples a knowledge base's size, as an hour of it in ByteHours. One the provider
+	// does not have is ErrNoNamespace.
+	Stored(ctx context.Context, namespace string) (Billed, error)
+	Provider() string
+	Close() error
+}
+
+// Store is a knowledge base as one owner reads it. It comes only from metered.Knowledge.For,
+// which records every lookup for that owner, so a Backend does not fit where a Store is
+// wanted.
 type Store interface {
 	// Search returns the passages that bear on the question, most relevant first.
 	Search(ctx context.Context, query Query) ([]Document, error)
@@ -61,7 +144,8 @@ type Store interface {
 	Close() error
 }
 
-// Writer fills a knowledge base, which Store only ever reads.
+// Writer fills a knowledge base, which Store only ever reads. It comes from
+// metered.Knowledge.For as a Store does.
 //
 // It is separate because almost nothing writes: a conversation looks things up and never
 // puts anything there, so the reading half is what a session is given.

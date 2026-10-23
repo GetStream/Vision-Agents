@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -20,22 +21,30 @@ import (
 // for example s3://voices?region=eu-west-1, gs://voices, or file:///var/lib/router/voices.
 const EnvBucketURL = "ROUTER_VOICES_BUCKET_URL"
 
+// VoiceClone is the model a clone is recorded as, under its provider, and the kind its usage
+// id names.
+const VoiceClone = "voice_clone"
+
 // Service is the control plane for a customer's own voices: it holds the rows, the
-// recordings behind them and the ids each provider gave them back.
+// recordings behind them and the ids each provider gave them back. It is the only caller of
+// a Cloner, so it records every clone it asks for.
 type Service struct {
-	store   *appconfig.Store
-	bucket  *blob.Bucket
-	cloners *Registry
-	logger  *slog.Logger
+	store    *appconfig.Store
+	bucket   *blob.Bucket
+	cloners  *Registry
+	recorder *routing.Recorder
+	logger   *slog.Logger
 }
 
-// Options configures a Service. All three dependencies are required, since a voice with
-// nowhere to keep its recordings and nobody to teach them to is not a voice.
+// Options configures a Service. The first three dependencies are required, since a voice
+// with nowhere to keep its recordings and nobody to teach them to is not a voice.
 type Options struct {
 	Store   *appconfig.Store
 	Bucket  *blob.Bucket
 	Cloners *Registry
-	Logger  *slog.Logger
+	// Recorder records each clone as a tts row. Nil records nothing.
+	Recorder *routing.Recorder
+	Logger   *slog.Logger
 }
 
 // NewService validates the options and returns a Service.
@@ -53,11 +62,16 @@ func NewService(options Options) (*Service, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	recorder := options.Recorder
+	if recorder != nil {
+		recorder = recorder.For(routing.TTS)
+	}
 	return &Service{
-		store:   options.Store,
-		bucket:  options.Bucket,
-		cloners: options.Cloners,
-		logger:  logger,
+		store:    options.Store,
+		bucket:   options.Bucket,
+		cloners:  options.Cloners,
+		recorder: recorder,
+		logger:   logger,
 	}, nil
 }
 
@@ -107,7 +121,8 @@ func (s *Service) AddSample(ctx context.Context, customerID, voiceID string, sam
 
 // Prepare teaches the voice to each named provider, or to every provider that can clone
 // when none are named. One provider refusing does not stop the others: its binding records
-// why, and the router simply will not choose it for this voice.
+// why, and the router simply will not choose it for this voice. Each clone is recorded for
+// the customer, under the key that asked.
 func (s *Service) Prepare(ctx context.Context, customerID, voiceID string, providers []string) error {
 	voice, err := s.store.Voice(ctx, customerID, voiceID)
 	if err != nil {
@@ -238,7 +253,16 @@ func (s *Service) prepareOne(
 	}
 
 	binding := store.VoiceBinding{VoiceID: voice.ID, Provider: provider, ExternalID: previous}
-	externalID, err := cloner.Prepare(ctx, request)
+	prepared, err := routing.Call(ctx, routing.Meter{
+		Recorder: s.recorder,
+		Config:   routing.ProviderConfig{Provider: provider, Model: VoiceClone},
+		Owner:    routing.Owner{CustomerID: voice.CustomerID, Attribution: routing.AttributionFrom(ctx)},
+		// Preparing the same voice for the same provider again bills nothing.
+		UsageID: routing.UsageID(VoiceClone, provider, voice.CustomerID, voice.ID),
+	}, func(ctx context.Context) (Prepared, error) {
+		return cloner.Prepare(ctx, request)
+	})
+	externalID := prepared.ExternalID
 	if err != nil {
 		binding.State = store.VoiceFailed
 		binding.Error = err.Error()

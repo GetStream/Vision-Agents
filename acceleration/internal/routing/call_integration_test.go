@@ -137,6 +137,50 @@ func (s *CallSuite) TestAUsageIDBillsTwoCallsOnce() {
 	s.EqualValues(2_000, row.CostMicros)
 }
 
+func (s *CallSuite) TestAFailureLeavesTheUsageIDToTheRetryThatSucceeds() {
+	meter := s.meter(priced)
+	meter.UsageID = uuid.Must(uuid.NewV7())
+
+	_, err := Call(s.ctx, meter, func(context.Context) (used, error) { return nil, errors.New("vendor down") })
+	s.Require().Error(err)
+	_, err = Call(s.ctx, meter, func(context.Context) (used, error) { return used{pricing.InputTokens: 1_000}, nil })
+	s.Require().NoError(err)
+
+	rows := s.rows(meter)
+	s.Require().Len(rows, 2, "the failure and the retry")
+	billed := 0
+	for _, row := range rows {
+		if row.UsageID == meter.UsageID {
+			billed++
+			s.True(row.Success, "the id is the success's")
+			s.EqualValues(2_000, row.CostMicros)
+		}
+	}
+	s.Equal(1, billed)
+}
+
+// providerCosted is work whose provider's formula says what it cost the operator.
+type providerCosted struct {
+	used
+	nanos int64
+}
+
+func (p providerCosted) ProviderCostNanos() int64 { return p.nanos }
+
+func (s *CallSuite) TestWhatTheWorkCostTheOperatorIsKeptToAThousandthOfAMicro() {
+	meter := s.meter(priced)
+
+	_, err := Call(s.ctx, meter, func(context.Context) (providerCosted, error) {
+		return providerCosted{used: used{pricing.InputTokens: 1_000}, nanos: 1_286}, nil
+	})
+	s.Require().NoError(err)
+
+	row := s.only(meter)
+	s.Equal(map[string]string{AttributeProviderCostMicros: "1.286"}, row.Attributes,
+		"a lookup costing about a micro would lose a fifth of itself rounded to one")
+	s.EqualValues(2_000, row.CostMicros, "the provider's cost never prices the row")
+}
+
 func (s *CallSuite) TestQuantitiesLandInColumnsAndMeters() {
 	meter := s.meter(priced)
 

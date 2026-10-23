@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -41,14 +42,32 @@ type Speech struct {
 	ContentType string
 }
 
+// Prepared is a voice a provider made: the id its sessions ask for, and the clones it billed.
+type Prepared struct {
+	ExternalID string
+	Clones     int64
+}
+
+// Used is what preparing the voice is priced by.
+func (p Prepared) Used() pricing.Quantities { return pricing.Quantities{pricing.Clones: p.Clones} }
+
+// cloned is the one clone a provider made under externalID, or its failure.
+func cloned(externalID string, err error) (Prepared, error) {
+	if err != nil {
+		return Prepared{}, err
+	}
+	return Prepared{ExternalID: externalID, Clones: 1}, nil
+}
+
 // Cloner prepares a voice with one provider.
 //
 // Prepare returns the id the provider's sessions ask for, which is what gets stored as the
-// binding. Delete takes the voice back off the provider, so deleting ours does not leave
-// the customer paying for voices nobody can reach. Speak says a line in the prepared
-// voice, so a customer can hear what the provider made of it before a caller does.
+// binding, and the clone it made. Delete takes the voice back off the provider, so deleting
+// ours does not leave the customer paying for voices nobody can reach. Speak says a line in
+// the prepared voice, so a customer can hear what the provider made of it before a caller
+// does.
 type Cloner interface {
-	Prepare(ctx context.Context, request Request) (string, error)
+	Prepare(ctx context.Context, request Request) (Prepared, error)
 	Delete(ctx context.Context, externalID string) error
 	Speak(ctx context.Context, externalID, text string) (Speech, error)
 }

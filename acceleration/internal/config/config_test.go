@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 type ConfigSuite struct {
@@ -38,6 +40,28 @@ func (s *ConfigSuite) TestEveryEnvironmentLoads() {
 		s.Equal(name, from)
 		s.Equal(":8080", config.Addr, "the default fills in what no file sets")
 	}
+}
+
+func (s *ConfigSuite) TestTheKnowledgeProvidersCostIsConfigThatAFileReplaces() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("knowledge:\n  stream_cost:\n    bytes_written:\n      usd: 2.6\n      per: 1000000000\n      minimum: 10000\n"), 0o600))
+
+	config, _, err := Load(path)
+
+	s.Require().NoError(err)
+	s.Equal(pricing.Rate{USD: 2.6, Per: 1_000_000_000, Minimum: 10_000}, config.Knowledge.StreamCost["bytes_written"],
+		"a price change of the provider's is a line of config")
+	s.Equal(pricing.Rate{USD: 0.33, Per: 730_000_000_000}, config.Knowledge.StreamCost["byte_hours"],
+		"what the file does not name keeps the provider's list price")
+}
+
+func (s *ConfigSuite) TestAKnowledgeCostWithNoUnitIsRefused() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("knowledge:\n  stream_cost:\n    bytes_written:\n      usd: 2.6\n"), 0o600))
+
+	_, _, err := Load(path)
+
+	s.ErrorContains(err, "knowledge.stream_cost.bytes_written")
 }
 
 func (s *ConfigSuite) TestTestingUsesItsOwnDatabase() {

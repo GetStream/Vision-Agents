@@ -54,8 +54,12 @@ func NewElevenLabs(options ElevenLabsOptions) (*ElevenLabs, error) {
 	return &ElevenLabs{options: options, client: client(options.Timeout)}, nil
 }
 
-// Prepare uploads the recordings and returns the voice id sessions ask for.
-func (e *ElevenLabs) Prepare(ctx context.Context, request Request) (string, error) {
+// Prepare uploads the recordings and returns the voice id sessions ask for: one clone.
+func (e *ElevenLabs) Prepare(ctx context.Context, request Request) (Prepared, error) {
+	return cloned(e.clone(ctx, request))
+}
+
+func (e *ElevenLabs) clone(ctx context.Context, request Request) (string, error) {
 	if err := request.Validate(); err != nil {
 		return "", stack.Wrap(err)
 	}

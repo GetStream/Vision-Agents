@@ -54,14 +54,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -144,6 +143,7 @@ const usage = `usage: router [--config path] [command]
   prices                read and check the price list (router prices for its commands)
   usage replay          write the usage rows a log says were lost, once each (--from path)
   usage reship          send this shard's shipped or refused rows to the usage service again (--since, --rejected)
+  usage storage         record this hour of every knowledge base's size, once each (hourly)
 `
 
 func main() {
@@ -953,11 +953,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
-	var base *turbopuffer.Store
-	if search, err := turbopuffer.New(turbopuffer.Options{Logger: logger}); err != nil {
-		logger.Debug("nothing will be looked up or written down", "error", err)
-	} else {
-		base = search
+	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), logger)
+	if base != nil {
 		defer base.Close()
 	}
 
@@ -1059,7 +1056,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Bringing a voice needs somewhere to keep the recordings, a place to record them and
 	// at least one provider willing to be taught. Missing any of those, the voice paths
 	// say so rather than half-working.
-	voiceService, err := buildVoices(configs, bucket, logger)
+	voiceService, err := buildVoices(configs, bucket, routing.NewRecorderOn(routing.TTS, usageWriter, prices, logger), logger)
 	if err != nil {
 		return err
 	}
@@ -1308,11 +1305,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 				"endpoint", "POST /v1/agents/calls/{id}/token")
 		}
 	}
-	// A nil *turbopuffer.Store in an interface is not a nil interface, so the absence has
-	// to stay absent rather than becoming a value that says it is there.
-	if base != nil {
-		options.Knowledge = base
-	}
+	options.Knowledge = base
 	// A channel's provider credentials are sealed under the same keyring as the other
 	// secrets the router holds. Without one the channel paths refuse to hold them, which is
 	// better than keeping a WhatsApp token in the clear, and nothing is delivered because
@@ -1679,7 +1672,7 @@ func buildSessions(
 	usageWriter *routing.Writer,
 	directory *node.Directory,
 	telephony *phone.Service,
-	base *turbopuffer.Store,
+	base *metered.Knowledge,
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
 	stream *streamapp.Clients,
@@ -1695,16 +1688,11 @@ func buildSessions(
 
 	// Without a mem0 key a session starts every call knowing nothing but its
 	// instructions, which is the behaviour before memory existed.
-	var remembering memory.Store
+	var remembering *metered.Memory
 	if recall, err := mem0.New(mem0.Options{Logger: logger}); err != nil {
 		logger.Debug("sessions will not remember anything between calls", "error", err)
 	} else {
-		remembering = recall
-	}
-
-	var reading knowledge.Store
-	if base != nil {
-		reading = base
+		remembering = metered.NewMemory(recall, routing.NewRecorderOn(routing.Memory, usageWriter, prices, logger))
 	}
 
 	options := session.ManagerOptions{
@@ -1713,7 +1701,7 @@ func buildSessions(
 		TTS:        streams.TTS,
 		STS:        streams.STS,
 		Memory:     remembering,
-		Knowledge:  reading,
+		Knowledge:  base,
 		Pricer:     prices,
 		Search:     finding,
 		Classifier: judging,
@@ -1757,7 +1745,7 @@ func buildSessions(
 func buildKnowledgeURLs(
 	pgStore *store.Store,
 	redisAddress string,
-	base *turbopuffer.Store,
+	base *metered.Knowledge,
 	logger *slog.Logger,
 ) (*urls.Service, error) {
 	if pgStore == nil || redisAddress == "" || base == nil {
@@ -1773,12 +1761,32 @@ func buildKnowledgeURLs(
 	}
 
 	return urls.New(urls.Options{
-		Store:  pgStore,
-		Redis:  asynq.RedisClientOpt{Addr: redisAddress},
-		Reader: reader,
-		Writer: base,
-		Logger: logger,
+		Store:     pgStore,
+		Redis:     asynq.RedisClientOpt{Addr: redisAddress},
+		Reader:    reader,
+		Knowledge: base,
+		Logger:    logger,
 	})
+}
+
+// newKnowledge is the knowledge base every lookup and write goes through, recorded by
+// recorder, or nil without a turbopuffer key.
+func newKnowledge(settings config.Config, recorder *routing.Recorder, logger *slog.Logger) *metered.Knowledge {
+	backend, err := turbopuffer.New(turbopuffer.Options{Cost: knowledgeCost(settings.Knowledge), Logger: logger})
+	if err != nil {
+		logger.Debug("nothing will be looked up or written down", "error", err)
+		return nil
+	}
+	return metered.NewKnowledge(backend, recorder)
+}
+
+// knowledgeCost is the knowledge provider's rates as the settings name them.
+func knowledgeCost(settings config.Knowledge) turbopuffer.Cost {
+	cost := turbopuffer.Cost{}
+	for meter, rate := range settings.StreamCost {
+		cost[pricing.Meter(meter)] = rate
+	}
+	return cost
 }
 
 // buildLibrary wires the catalogues the speech providers publish, so a voice can be picked
@@ -1816,6 +1824,7 @@ func buildLibrary(logger *slog.Logger) *voices.Catalogue {
 func buildVoices(
 	configs *appconfig.Store,
 	bucket *blob.Bucket,
+	recorder *routing.Recorder,
 	logger *slog.Logger,
 ) (*voices.Service, error) {
 	if configs == nil || bucket == nil {
@@ -1839,10 +1848,11 @@ func buildVoices(
 	}
 
 	return voices.NewService(voices.Options{
-		Store:   configs,
-		Bucket:  bucket,
-		Cloners: cloners,
-		Logger:  logger,
+		Store:    configs,
+		Bucket:   bucket,
+		Cloners:  cloners,
+		Recorder: recorder,
+		Logger:   logger,
 	})
 }
 

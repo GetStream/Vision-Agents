@@ -38,6 +38,12 @@ const usageCommands = `usage: router usage <command>
                              it refused instead, once the producer is fixed. A row it never had
                              nor refused is never queued: one written before the router shipped,
                              or carried in by a data move. Writes the database
+  storage [--hour time]      record an hour (this one, or the RFC 3339 hour given) of every
+                             knowledge base's size, as one storage row per knowledge base owned
+                             by its app under job:knowledge_storage; run hourly. A rerun within
+                             the hour writes nothing twice. One it cannot read is logged, alerted
+                             on (storage_missed) and fails the run, so a retry fills it in. Needs
+                             TURBOPUFFER_API_KEY. Writes the database
 `
 
 const (
@@ -116,6 +122,8 @@ func runUsage(args []string, settings config.Config, out io.Writer) error {
 		return runUsageReplay(ctx, args[1:], settings, out)
 	case "reship":
 		return runUsageReship(ctx, args[1:], settings, out)
+	case "storage":
+		return runUsageStorage(ctx, args[1:], settings, out)
 	default:
 		return fmt.Errorf("unknown usage command %q\n\n%s", args[0], usageCommands)
 	}

@@ -20,11 +20,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -86,9 +86,9 @@ type ManagerOptions struct {
 	// Transcript is optional.
 	Transcript TranscriptFactory
 	// Memory is optional. Without it every session starts knowing nothing.
-	Memory memory.Store
+	Memory *metered.Memory
 	// Knowledge is optional, and is what a session with a namespace looks things up in.
-	Knowledge knowledge.Store
+	Knowledge *metered.Knowledge
 	// Search is optional, and is what every session finds out what is true now with.
 	Search *searchrouter.Router
 	// Classifier is optional, and is what a session with a guardrail asks whether a turn
@@ -119,7 +119,7 @@ type ManagerOptions struct {
 	// which case every read is a query, which is what a deployment without Redis does.
 	Configs *appconfig.Store
 	Live    *live.Client
-	// Pricer prices what an agent's memory and knowledge record. Nil prices nothing.
+	// Pricer prices what a session's own recorders record. Nil prices nothing.
 	Pricer pricing.Pricer
 	// Writer is the process's usage writer, which a session's own recorders share. Nil
 	// gives each of them one of their own.
@@ -333,7 +333,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		spec.StreamApp = store.ForeignStreamApp
 	}
 
-	var remembering memory.Store
+	var remembering *metered.Memory
 	if spec.Memory.UserID != "" {
 		if m.options.Memory == nil {
 			return nil, stack.Wrap(ErrNoMemory)
@@ -681,8 +681,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			MemoryFilter:       spec.Memory.Filter,
 			Store:              m.options.Store,
 			Live:               m.options.Live,
-			Pricer:             m.options.Pricer,
-			Writer:             m.options.Writer,
 			Logger:             m.logger,
 		})
 	}
@@ -1346,7 +1344,7 @@ func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
 		}
 	}
 	if m.options.Memory != nil {
-		if err := m.options.Memory.ForgetRun(ctx, owner.CustomerID, id); err != nil {
+		if err := m.options.Memory.For(forgetting(ctx, owner.CustomerID)).ForgetRun(ctx, owner.CustomerID, id); err != nil {
 			return err
 		}
 	}
@@ -1362,7 +1360,7 @@ func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID strin
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
 	}
-	return m.options.Memory.Truncate(ctx, customerID, userID)
+	return m.options.Memory.For(forgetting(ctx, customerID)).Truncate(ctx, customerID, userID)
 }
 
 // ForgetSession deletes what one session learned. Whoever asks has to have checked the
@@ -1371,7 +1369,13 @@ func (m *Manager) ForgetSession(ctx context.Context, customerID, sessionID strin
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
 	}
-	return m.options.Memory.ForgetRun(ctx, customerID, sessionID)
+	return m.options.Memory.For(forgetting(ctx, customerID)).ForgetRun(ctx, customerID, sessionID)
+}
+
+// forgetting is who deleting a customer's memories is recorded for: the customer, and whoever
+// asked through the request.
+func forgetting(ctx context.Context, customerID string) routing.Owner {
+	return routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx)}
 }
 
 // Shutdown ends every session, which is what a router does on its way down rather than

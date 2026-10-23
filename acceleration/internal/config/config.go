@@ -32,6 +32,8 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 const (
@@ -111,6 +113,17 @@ type Config struct {
 	Models      Models      `koanf:"models"`
 	Telnyx      Telnyx      `koanf:"telnyx"`
 	Usage       Usage       `koanf:"usage"`
+	Knowledge   Knowledge   `koanf:"knowledge"`
+}
+
+// Knowledge is the knowledge store's settings.
+type Knowledge struct {
+	// StreamCost is what the knowledge provider charges the operator, by meter: bytes_queried
+	// and bytes_returned for a query, bytes_written for a write (its minimum is per request),
+	// byte_hours for storage. Each call's cost under it is kept beside its row as
+	// attributes.provider_cost_micros; what a customer pays is the price list's. It is here,
+	// not in code, so a change in the provider's prices is a change of config.
+	StreamCost map[string]pricing.Rate `koanf:"stream_cost"`
 }
 
 // Usage is the usage service the router ships the rows it writes to. An empty URL is none:
@@ -512,6 +525,16 @@ func Defaults() Config {
 		// A choice, not a measurement: room for a moderation worker's batch without letting
 		// one app's backlog take every model slot. # unverified
 		Runs: Runs{ConcurrentPerApp: 20},
+		// turbopuffer's list prices (turbopuffer.com/pricing, read 2026-10-23): $1 per PB
+		// queried, $0.05 per GB returned, $2 per GB written with every write billed at least
+		// 10 KB, $0.33 per GB-month stored, a month taken as 730 hours. Its batch discount on
+		// writes is a formula, not a rate, so it is the store's code.
+		Knowledge: Knowledge{StreamCost: map[string]pricing.Rate{
+			string(pricing.BytesQueried):  {USD: 1, Per: 1_000_000_000_000_000},
+			string(pricing.BytesReturned): {USD: 0.05, Per: 1_000_000_000},
+			string(pricing.BytesWritten):  {USD: 2, Per: 1_000_000_000, Minimum: 10_000},
+			string(pricing.ByteHours):     {USD: 0.33, Per: 730_000_000_000},
+		}},
 	}
 }
 
@@ -682,6 +705,11 @@ func (c Config) validate() error {
 	}
 	if err := c.validateUsage(); err != nil {
 		return err
+	}
+	for meter, rate := range c.Knowledge.StreamCost {
+		if rate.Per <= 0 || rate.USD < 0 || rate.Minimum < 0 {
+			return fmt.Errorf("config: knowledge.stream_cost.%s is usd per a positive number of units, got %+v", meter, rate)
+		}
 	}
 	return c.validateShard()
 }
