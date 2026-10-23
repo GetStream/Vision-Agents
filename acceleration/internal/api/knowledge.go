@@ -9,6 +9,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
@@ -164,7 +166,7 @@ func (s *Server) listKnowledgeDocumentPassages(ctx context.Context, request *lis
 func (s *Server) knowledgePassages(
 	ctx context.Context, customerID, namespace, source string, count int,
 ) ([]KnowledgePassage, error) {
-	found, err := s.knowledge.Fetch(ctx, knowledge.Scoped(customerID, namespace), ingest.IDs(source, 0, count))
+	found, err := s.knowledgeFor(ctx, customerID).Fetch(ctx, knowledge.Scoped(customerID, namespace), ingest.IDs(source, 0, count))
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +218,8 @@ func (s *Server) fillKnowledge(
 		return 0, 0, stack.Wrap(errors.New("there is nothing to read in these documents"))
 	}
 	base := knowledge.Scoped(customerID, namespace)
-	if err := s.knowledge.Upsert(ctx, base, passages); err != nil {
+	writer := s.knowledgeFor(ctx, customerID)
+	if err := writer.Upsert(ctx, base, passages); err != nil {
 		return 0, 0, err
 	}
 	if s.store == nil {
@@ -238,7 +241,7 @@ func (s *Server) fillKnowledge(
 		document := &written[i]
 		was, had := before[document.Source]
 		stale := ingest.IDs(document.Source, document.Passages, was.Passages)
-		if err := s.knowledge.Delete(ctx, base, stale); err != nil {
+		if err := writer.Delete(ctx, base, stale); err != nil {
 			return 0, 0, err
 		}
 		if err := s.store.SaveKnowledgeDocument(ctx, document); err != nil {
@@ -318,7 +321,7 @@ func (s *Server) forgetKnowledge(
 func (s *Server) removeKnowledgeDocument(ctx context.Context, document store.KnowledgeDocument) error {
 	ids := ingest.IDs(document.Source, 0, document.Passages)
 	base := knowledge.Scoped(document.CustomerID, document.Namespace)
-	if err := s.knowledge.Delete(ctx, base, ids); err != nil {
+	if err := s.knowledgeFor(ctx, document.CustomerID).Delete(ctx, base, ids); err != nil {
 		return err
 	}
 	if err := s.store.DeleteKnowledgeDocument(ctx, document.CustomerID, document.ID); err != nil {
@@ -331,6 +334,12 @@ func (s *Server) removeKnowledgeDocument(ctx context.Context, document store.Kno
 		Changes: auditDiff(auditedKnowledgeOf(document), nil),
 	})
 	return nil
+}
+
+// knowledgeFor is the knowledge base as the request reads and writes it: every call is a
+// knowledge row of the customer's, under the key and user that asked.
+func (s *Server) knowledgeFor(ctx context.Context, customerID string) metered.OwnedKnowledge {
+	return s.knowledge.For(routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx)})
 }
 
 // indexedKnowledgeDocumentOf is the stored row as the API describes it.

@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -623,22 +624,22 @@ type stubMemory struct {
 	recallErr error
 }
 
-func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Memory, error) {
+func (m *stubMemory) Recall(_ context.Context, query memory.Query) (memory.Recalled, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.scope = query.Scope
 	if m.recallErr != nil {
-		return nil, m.recallErr
+		return memory.Recalled{}, m.recallErr
 	}
-	return m.knows, nil
+	return memory.Recalled{Memories: m.knows, Billed: memory.Billed{Requests: 1}}, nil
 }
 
-func (m *stubMemory) Remember(_ context.Context, scope memory.Scope, messages []llm.Message) error {
+func (m *stubMemory) Remember(_ context.Context, scope memory.Scope, messages []llm.Message) (memory.Billed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.learnedAs = scope
 	m.learned = append(m.learned, messages)
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
 func (m *stubMemory) writtenAs() memory.Scope {
@@ -647,10 +648,16 @@ func (m *stubMemory) writtenAs() memory.Scope {
 	return m.learnedAs
 }
 
-func (m *stubMemory) Truncate(context.Context, string, string) error  { return nil }
-func (m *stubMemory) ForgetRun(context.Context, string, string) error { return nil }
-func (m *stubMemory) Provider() string                                { return "stub" }
-func (m *stubMemory) Close() error                                    { return nil }
+func (m *stubMemory) Truncate(context.Context, string, string) (memory.Billed, error) {
+	return memory.Billed{Requests: 1}, nil
+}
+
+func (m *stubMemory) ForgetRun(context.Context, string, string) (memory.Billed, error) {
+	return memory.Billed{Requests: 1}, nil
+}
+
+func (m *stubMemory) Provider() string { return "stub" }
+func (m *stubMemory) Close() error     { return nil }
 
 func (m *stubMemory) remembered() [][]llm.Message {
 	m.mu.Lock()
@@ -778,6 +785,9 @@ type AgentSuite struct {
 	// the agent a database and a Redis.
 	records *store.Store
 	live    *live.Client
+	// metering records what memory and knowledge did, when a test reads it back. Nil records
+	// nothing.
+	metering *routing.Recorder
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
 	// voiceAsked is what the voice was opened with.
@@ -872,9 +882,9 @@ func (s *AgentSuite) joinText() {
 	if s.subagent != nil {
 		subagentTarget = "en-low-latency"
 	}
-	var reading knowledge.Store
+	var reading *metered.Knowledge
 	if s.knows != nil {
-		reading = s.knows
+		reading = metered.NewKnowledge(s.knows, s.metering)
 	}
 	var running ToolRunner
 	if s.runner != nil {
@@ -989,11 +999,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
-	// A typed nil would make the interface non-nil, which is not the same as having no
-	// memory at all.
-	var remembering memory.Store
+	var remembering *metered.Memory
 	if s.remembers != nil {
-		remembering = s.remembers
+		remembering = metered.NewMemory(s.remembers, s.metering)
 	}
 	var calling Telephony
 	if s.line != nil {
@@ -1003,9 +1011,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	if s.runner != nil {
 		running = s.runner
 	}
-	var reading knowledge.Store
+	var reading *metered.Knowledge
 	if s.knows != nil {
-		reading = s.knows
+		reading = metered.NewKnowledge(s.knows, s.metering)
 	}
 
 	var finding *searchrouter.Router
@@ -2090,7 +2098,7 @@ func (s *AgentSuite) TestAnAgentWithMemoryButNoSessionIsRefused() {
 		CustomerID: "acme",
 		AgentID:    "agent-1",
 		LLM:        s.reasoner(slog.New(slog.DiscardHandler)),
-		Memory:     &stubMemory{},
+		Memory:     metered.NewMemory(&stubMemory{}, nil),
 	})
 
 	s.ErrorContains(err, "run id", "a memory written without its session could never be traced back to it")

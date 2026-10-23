@@ -45,10 +45,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -183,10 +183,10 @@ type Options struct {
 	// ManageKey is what Stream staff's billing paths, under /v1/manage, are reached with.
 	// Empty turns them off: they answer 404 not_configured.
 	ManageKey string
-	// Knowledge fills the bases a config's knowledge_namespace has an agent read from.
-	// Absent when the deployment has no knowledge provider, in which case there is nothing
-	// to fill and the path says so.
-	Knowledge knowledge.Writer
+	// Knowledge fills the bases a config's knowledge_namespace has an agent read from, each
+	// call recorded for the customer and key that asked. Absent when the deployment has no
+	// knowledge provider, in which case there is nothing to fill and the path says so.
+	Knowledge *metered.Knowledge
 	// KnowledgeURLs keeps those bases filled from pages published elsewhere. Absent
 	// without a database or without something that can read a page, in which case the url
 	// paths say so rather than accepting a subscription nothing would honour.
@@ -338,7 +338,7 @@ type Server struct {
 	telnyxConnectionID string
 	campaigns          *campaign.Runner
 	simulations        *simulation.Runner
-	knowledge          knowledge.Writer
+	knowledge          *metered.Knowledge
 	pages              *urls.Service
 	voices             *voices.Service
 	library            *voices.Catalogue

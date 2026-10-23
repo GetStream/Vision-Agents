@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -286,24 +287,30 @@ type stubMemory struct {
 	learned [][]llm.Message
 }
 
-func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Memory, error) {
+func (m *stubMemory) Recall(_ context.Context, query memory.Query) (memory.Recalled, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.scope = query.Scope
-	return nil, nil
+	return memory.Recalled{Billed: memory.Billed{Requests: 1}}, nil
 }
 
-func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) error {
+func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) (memory.Billed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.learned = append(m.learned, messages)
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
-func (m *stubMemory) Truncate(context.Context, string, string) error  { return nil }
-func (m *stubMemory) ForgetRun(context.Context, string, string) error { return nil }
-func (m *stubMemory) Provider() string                                { return "stub" }
-func (m *stubMemory) Close() error                                    { return nil }
+func (m *stubMemory) Truncate(context.Context, string, string) (memory.Billed, error) {
+	return memory.Billed{Requests: 1}, nil
+}
+
+func (m *stubMemory) ForgetRun(context.Context, string, string) (memory.Billed, error) {
+	return memory.Billed{Requests: 1}, nil
+}
+
+func (m *stubMemory) Provider() string { return "stub" }
+func (m *stubMemory) Close() error     { return nil }
 
 func (m *stubMemory) remembered() [][]llm.Message {
 	m.mu.Lock()
@@ -492,11 +499,9 @@ func (s *SessionSuite) manages() {
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
-	// A typed nil would make the interface non-nil, which is not the same as having no
-	// memory at all.
-	var remembering memory.Store
+	var remembering *metered.Memory
 	if s.remembers != nil {
-		remembering = s.remembers
+		remembering = metered.NewMemory(s.remembers, nil)
 	}
 
 	var storing TranscriptFactory

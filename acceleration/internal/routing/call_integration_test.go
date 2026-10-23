@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
@@ -135,6 +136,97 @@ func (s *CallSuite) TestAUsageIDBillsTwoCallsOnce() {
 	row := s.only(meter)
 	s.Equal(meter.UsageID, row.UsageID)
 	s.EqualValues(2_000, row.CostMicros)
+}
+
+func (s *CallSuite) TestAFailureLeavesTheUsageIDToTheRetryThatSucceeds() {
+	meter := s.meter(priced)
+	meter.UsageID = uuid.Must(uuid.NewV7())
+
+	_, err := Call(s.ctx, meter, func(context.Context) (used, error) { return nil, errors.New("vendor down") })
+	s.Require().Error(err)
+	_, err = Call(s.ctx, meter, func(context.Context) (used, error) { return used{pricing.InputTokens: 1_000}, nil })
+	s.Require().NoError(err)
+
+	rows := s.rows(meter)
+	s.Require().Len(rows, 2, "the failure and the retry")
+	billed := 0
+	for _, row := range rows {
+		if row.UsageID == meter.UsageID {
+			billed++
+			s.True(row.Success, "the id is the success's")
+			s.EqualValues(2_000, row.CostMicros)
+		}
+	}
+	s.Equal(1, billed)
+}
+
+// named is work that names what it did, as a clone names the voice a provider made.
+type named struct {
+	used
+	id uuid.UUID
+}
+
+func (n named) UsageID() uuid.UUID { return n.id }
+
+func (s *CallSuite) TestWorkThatNamesItselfIsBilledOncePerName() {
+	meter := s.meter(priced)
+	first, second := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+
+	for _, id := range []uuid.UUID{first, first, second} {
+		_, err := Call(s.ctx, meter, func(context.Context) (named, error) {
+			return named{used: used{pricing.InputTokens: 1_000}, id: id}, nil
+		})
+		s.Require().NoError(err)
+	}
+
+	rows := s.rows(meter)
+	s.Require().Len(rows, 2, "the same work reported twice is one row, and other work another")
+	s.ElementsMatch([]uuid.UUID{first, second}, []uuid.UUID{rows[0].UsageID, rows[1].UsageID})
+}
+
+func (s *CallSuite) TestAMeterDatesTheRowToWhatItBills() {
+	meter := s.meter(priced)
+	meter.BilledAt = time.Date(2026, 10, 23, 13, 0, 0, 0, time.UTC)
+
+	_, err := Call(s.ctx, meter, func(context.Context) (used, error) { return used{pricing.InputTokens: 1_000}, nil })
+	s.Require().NoError(err)
+
+	s.Equal(meter.BilledAt, s.only(meter).StartedAt.UTC())
+}
+
+func (s *CallSuite) TestWorkTheMeterOmitsWritesNoRowAndAFailureStillDoes() {
+	meter := s.meter(priced)
+	meter.Omit = func(used pricing.Quantities) bool { return used[pricing.InputTokens] == 0 }
+
+	_, err := Call(s.ctx, meter, func(context.Context) (used, error) { return used{pricing.Requests: 1}, nil })
+	s.Require().NoError(err)
+	_, err = Call(s.ctx, meter, func(context.Context) (used, error) { return nil, errors.New("vendor down") })
+	s.Require().Error(err)
+
+	row := s.only(meter)
+	s.False(row.Success, "only the failure is a row")
+}
+
+// providerCosted is work whose provider's formula says what it cost the operator.
+type providerCosted struct {
+	used
+	nanos int64
+}
+
+func (p providerCosted) ProviderCostNanos() int64 { return p.nanos }
+
+func (s *CallSuite) TestWhatTheWorkCostTheOperatorIsKeptToAThousandthOfAMicro() {
+	meter := s.meter(priced)
+
+	_, err := Call(s.ctx, meter, func(context.Context) (providerCosted, error) {
+		return providerCosted{used: used{pricing.InputTokens: 1_000}, nanos: 1_286}, nil
+	})
+	s.Require().NoError(err)
+
+	row := s.only(meter)
+	s.Equal(map[string]string{AttributeProviderCostMicros: "1.286"}, row.Attributes,
+		"a lookup costing about a micro would lose a fifth of itself rounded to one")
+	s.EqualValues(2_000, row.CostMicros, "the provider's cost never prices the row")
 }
 
 func (s *CallSuite) TestQuantitiesLandInColumnsAndMeters() {

@@ -5,18 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
-
-// knowledgeModel names the model row a lookup is recorded as, so what looking things up
-// costs is reported next to what the models cost.
-const knowledgeModel = "search"
 
 // lookupArguments is what the model fills in to look something up.
 type lookupArguments struct {
@@ -27,76 +20,25 @@ type lookupArguments struct {
 //
 // It is on the live path rather than behind a queue, unlike the memory writer: the caller
 // is waiting on the answer, which is the whole reason the model asked. What bounds it is
-// the store's own timeout.
+// the store's own timeout. The store is the agent's owner's, so every lookup is recorded
+// under the same customer and labels as the models the conversation used.
 type knowledgeReader struct {
 	store     knowledge.Store
 	namespace string
 	limit     int
-	owner     routing.Owner
-	recorder  *routing.Recorder
-	logger    *slog.Logger
 }
 
-func newKnowledgeReader(
-	store knowledge.Store,
-	namespace string,
-	limit int,
-	owner routing.Owner,
-	recorder *routing.Recorder,
-	logger *slog.Logger,
-) *knowledgeReader {
-	return &knowledgeReader{
-		store:     store,
-		namespace: namespace,
-		limit:     limit,
-		owner:     owner,
-		recorder:  recorder,
-		logger:    logger,
-	}
+func newKnowledgeReader(store knowledge.Store, namespace string, limit int) *knowledgeReader {
+	return &knowledgeReader{store: store, namespace: namespace, limit: limit}
 }
 
 // Search answers one question out of the knowledge base.
 func (r *knowledgeReader) Search(ctx context.Context, question string) ([]knowledge.Document, error) {
-	started := time.Now()
-	found, err := r.store.Search(ctx, knowledge.Query{
+	return r.store.Search(ctx, knowledge.Query{
 		Namespace: r.namespace,
 		Text:      question,
 		Limit:     r.limit,
 	})
-	r.record(started, err)
-	if err != nil {
-		return nil, err
-	}
-	return found, nil
-}
-
-// Close releases the recorder, which is what flushes what the lookups cost.
-func (r *knowledgeReader) Close() {
-	if r.recorder != nil {
-		r.recorder.Close()
-	}
-}
-
-// record files the lookup as a request row, under the same customer and labels as the
-// models the conversation used.
-func (r *knowledgeReader) record(started time.Time, err error) {
-	if r.recorder == nil {
-		return
-	}
-
-	stat := routing.Stat{
-		Owner:     r.owner,
-		StartedAt: started.UTC(),
-		LatencyMs: routing.MsSince(started),
-		Success:   err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = "knowledge_failed"
-	}
-	r.recorder.Record(routing.ProviderConfig{
-		Provider: r.store.Provider(),
-		Model:    knowledgeModel,
-	}, stat)
 }
 
 // lookup answers a question out of the knowledge base and hands the passages to the model.

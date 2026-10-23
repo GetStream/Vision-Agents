@@ -33,8 +33,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
@@ -190,9 +190,10 @@ type Options struct {
 	// randomness, verbosity -- because instructions and tools belong to the agent and a
 	// caller able to rewrite those could make a session impersonate a different agent.
 	Overwrites options.LLM
-	// Memory carries what earlier conversations established into this one. Without it
-	// the agent starts every call knowing nothing but its instructions.
-	Memory memory.Store
+	// Memory carries what earlier conversations established into this one, each call
+	// recorded for the agent's owner. Without it the agent starts every call knowing nothing
+	// but its instructions.
+	Memory *metered.Memory
 	// AppID narrows memories within the customer, so two deployments of one customer do
 	// not read each other's. It is kept as a label rather than as the app id, which is
 	// always the customer, so it can never reach another customer's.
@@ -211,10 +212,11 @@ type Options struct {
 	// RecallLimit caps how many memories are recalled on joining. Zero leaves the
 	// store's own default.
 	RecallLimit int
-	// Knowledge is what the agent may look up mid-conversation. Without it, or without a
-	// namespace to read, the lookup tool is not offered: a model told it can search and
-	// then refused would promise the caller an answer it cannot get.
-	Knowledge knowledge.Store
+	// Knowledge is what the agent may look up mid-conversation, each lookup recorded for the
+	// agent's owner. Without it, or without a namespace to read, the lookup tool is not
+	// offered: a model told it can search and then refused would promise the caller an answer
+	// it cannot get.
+	Knowledge *metered.Knowledge
 	// KnowledgeNamespace is which body of knowledge this agent reads.
 	KnowledgeNamespace string
 	// KnowledgeLimit caps how many passages one lookup returns. Zero leaves the store's
@@ -233,15 +235,9 @@ type Options struct {
 	Guardrail guardrail.Guardrail
 	// Store records what each turn cost the participant in waiting. Without it the
 	// timings are still emitted as Turn events, they are just not persisted.
-	Store *store.Store
-	Live  *live.Client
-	// Pricer prices what remembering and looking up knowledge cost. It is the process's,
-	// so work with no price is logged once per process rather than once per agent.
-	Pricer pricing.Pricer
+	Store  *store.Store
+	Live   *live.Client
 	Logger *slog.Logger
-	// Writer is the process's usage writer, which memory and knowledge record through. Nil
-	// gives each of them one of their own over Store and Live.
-	Writer *routing.Writer
 }
 
 // Agent is a voice agent in one call.
@@ -667,41 +663,22 @@ func New(options Options) (*Agent, error) {
 	agent.nativeMode.Store(native)
 
 	if options.Memory != nil {
-		// Memory is recorded as a modality of its own so what remembering costs is
-		// reported alongside what the models cost.
-		agent.memory = newMemoryWriter(
-			options.Memory,
-			scope,
-			options.Incognito,
-			owner,
-			usageRecorder(routing.Memory, options, logger),
-			logger,
-		)
+		// Each call is recorded as a memory row of the agent's owner, so what remembering
+		// costs is reported alongside what the models cost.
+		agent.memory = newMemoryWriter(options.Memory.For(owner), scope, options.Incognito, logger)
 	}
 
 	// A knowledge store without a namespace reads nothing, so the agent is treated as
 	// having none rather than being offered a search that would always fail.
 	if options.Knowledge != nil && options.KnowledgeNamespace != "" {
 		agent.knowledge = newKnowledgeReader(
-			options.Knowledge,
+			options.Knowledge.For(owner),
 			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
 			options.KnowledgeLimit,
-			owner,
-			usageRecorder(routing.Knowledge, options, logger),
-			logger,
 		)
 	}
 
 	return agent, nil
-}
-
-// usageRecorder records a modality the agent calls itself, through the process's writer when
-// it has one.
-func usageRecorder(modality routing.Modality, options Options, logger *slog.Logger) *routing.Recorder {
-	if options.Writer != nil {
-		return routing.NewRecorderOn(modality, options.Writer, options.Pricer, logger)
-	}
-	return routing.NewRecorder(modality, options.Store, options.Live, options.Pricer, logger)
 }
 
 // finishTurn reports a measured exchange and records it.
@@ -1299,9 +1276,6 @@ func (a *Agent) close() error {
 	}
 	if a.memory != nil {
 		a.memory.Close()
-	}
-	if a.knowledge != nil {
-		a.knowledge.Close()
 	}
 	if a.searcher != nil {
 		failures = append(failures, a.searcher.Close())

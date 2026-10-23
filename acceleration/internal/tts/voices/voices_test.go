@@ -99,7 +99,7 @@ func (s *ClonerSuite) TestElevenLabsSendsEveryRecordingAndKeepsTheVoiceItIsGiven
 	id, err := cloner.Prepare(s.ctx, s.request())
 	s.Require().NoError(err)
 
-	s.Equal("el-77", id)
+	s.Equal(Prepared{ExternalID: "el-77", Clones: 1}, id)
 	s.Equal("/v1/voices/add", s.seen.path)
 	s.Equal("secret", s.seen.header.Get("xi-api-key"))
 	s.Equal([]string{"first", "second"}, s.seen.files["files"],
@@ -115,7 +115,7 @@ func (s *ClonerSuite) TestCartesiaClonesFromTheFirstRecordingOnly() {
 	id, err := cloner.Prepare(s.ctx, s.request())
 	s.Require().NoError(err)
 
-	s.Equal("ct-42", id)
+	s.Equal(Prepared{ExternalID: "ct-42", Clones: 1}, id)
 	s.Equal("/voices/clone", s.seen.path)
 	s.Equal("Bearer secret", s.seen.header.Get("Authorization"))
 	s.Equal([]string{"first"}, s.seen.files["clip"],
@@ -131,7 +131,7 @@ func (s *ClonerSuite) TestFishSendsATranscriptForEveryRecordingInOrder() {
 	id, err := cloner.Prepare(s.ctx, s.request())
 	s.Require().NoError(err)
 
-	s.Equal("fish-9", id)
+	s.Equal(Prepared{ExternalID: "fish-9", Clones: 1}, id)
 	s.Equal("/model", s.seen.path)
 	s.Equal([]string{"first", "second"}, s.seen.files["voices"])
 	s.Equal([]string{"hello", "again"}, s.seen.fields["texts"],

@@ -101,7 +101,8 @@ func run(options options, paths []string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := base.Upsert(ctx, knowledge.Scoped(options.customer, options.namespace), documents); err != nil {
+	// An operator's tool, so what it writes is nobody's usage and is not recorded.
+	if _, err := base.Upsert(ctx, knowledge.Scoped(options.customer, options.namespace), documents); err != nil {
 		return err
 	}
 	fmt.Printf("wrote %d passages from %d files to %s\n",
