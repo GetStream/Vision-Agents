@@ -1408,3 +1408,51 @@ func (s *AppsSuite) TestAttachingANumberOnASharedTrunkAgainChangesNothing() {
 	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(first.TrunkID))
 	s.Empty(s.vendor.inbound.E164, "the vendor is not told anything new")
 }
+
+// backdate moves a call's rows back in time, as a call that has been up for hours has.
+func (s *AppsSuite) backdate(callID string, age time.Duration) {
+	_, err := s.store.DB().NewUpdate().Table("call_resources").
+		Set("created_at = ?", time.Now().UTC().Add(-age)).
+		Where("call_id = ?", callID).Exec(s.ctx)
+	s.Require().NoError(err)
+}
+
+func (s *AppsSuite) TestAPerCallTrunkWhoseCallNeverEndedIsSweptAfterSixHours() {
+	placed, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	s.Require().Len(s.deployment.Trunks(), 1)
+	s.backdate(placed.CallID, 7*time.Hour)
+
+	swept, err := s.service.SweepCallResources(s.ctx, time.Now().Add(-6*time.Hour))
+
+	s.Require().NoError(err)
+	s.Positive(swept)
+	s.Empty(s.deployment.Trunks())
+	s.Empty(s.deployment.Rules())
+}
+
+func (s *AppsSuite) TestAPerCallTrunkOfARecentCallIsNotSwept() {
+	placed, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	s.backdate(placed.CallID, time.Hour)
+
+	_, err = s.service.SweepCallResources(s.ctx, time.Now().Add(-6*time.Hour))
+
+	s.Require().NoError(err)
+	s.Len(s.deployment.Trunks(), 1)
+}
+
+func (s *AppsSuite) TestASharedCallsResourceIsNeverSwept() {
+	s.sealed()
+	placed, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	s.backdate(placed.CallID, 7*time.Hour)
+
+	_, err = s.service.SweepCallResources(s.ctx, time.Now().Add(-6*time.Hour))
+
+	s.Require().NoError(err)
+	s.Len(s.deployment.Trunks(), 1, "the number's other calls use it")
+	rows, err := s.store.CallResourcesInApp(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID)
+	s.Require().NoError(err)
+	s.Len(rows, 1)
+}

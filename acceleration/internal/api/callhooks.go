@@ -153,6 +153,18 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		return
 	}
 
+	// A call the router placed has its own worker already. Its leg comes in through the
+	// number's routing rule, which names the number too, so it would look like a call to dial.
+	placed, err := s.store.CallResourcesInApp(r.Context(), origin.scope(), callType, callID)
+	if err != nil {
+		s.logger.Error("could not tell whether the router placed a call", "cid", event.CallCid, "error", err)
+		return
+	}
+	if len(placed) > 0 {
+		s.logger.Debug("not dispatching a call the router placed", "cid", event.CallCid)
+		return
+	}
+
 	// Only a call one of the numbers reaches is a phone call. Every video call in the app
 	// arrives here too, and there is nothing to answer on those.
 	// And only a number attached in the app the hook came from: a call of the same name in
@@ -162,7 +174,6 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	custom := customOf(event.Call.Custom)
 	rung, fresh := custom[phone.NumberKey]
 	var number store.PhoneNumber
-	var err error
 	if fresh {
 		number, err = s.store.NumberRungInApp(r.Context(), origin.scope(), rung)
 	} else {

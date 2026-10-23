@@ -1186,6 +1186,22 @@ func (s *Service) ReleaseCall(ctx context.Context, scope store.AppScope, callTyp
 	return nil
 }
 
+// SweepCallResources unwires the per-call trunks of calls older than before, whose end
+// hook never arrived, and returns how many it took down.
+func (s *Service) SweepCallResources(ctx context.Context, before time.Time) (int, error) {
+	if s.store == nil || (s.stream == nil && s.apps == nil) {
+		return 0, nil
+	}
+	stale, err := s.store.StaleCallResources(ctx, before)
+	if err != nil {
+		return 0, fmt.Errorf("phone: sweep call resources: %w", err)
+	}
+	for _, resource := range stale {
+		s.unwire(ctx, resource.CustomerID, resource.StreamAppPK, resource.RouteID, resource.TrunkID, "a call never ended")
+	}
+	return len(stale), nil
+}
+
 // trunkAllowlist is the addresses a vendor's trunk should accept calls from.
 //
 // A vendor that can present the trunk's password needs no allowlist. One that cannot needs

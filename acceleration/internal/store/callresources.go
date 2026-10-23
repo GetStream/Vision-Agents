@@ -69,6 +69,25 @@ func (s *Store) ReleaseCallResourcesInApp(ctx context.Context, scope AppScope, c
 	return slices.Concat(lists...), nil
 }
 
+// StaleCallResources deletes the per-call trunk rows older than before and returns them, for
+// calls whose end hook never arrived. Shared rows are left: their trunk belongs to a number,
+// not to the call.
+func (s *Store) StaleCallResources(ctx context.Context, before time.Time) ([]CallResource, error) {
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]CallResource, error) {
+		var stale []CallResource
+		err := db.NewDelete().Model((*CallResource)(nil)).
+			Where("shared = false").
+			Where("created_at < ?", before).
+			Returning("*").
+			Scan(ctx, &stale)
+		return stale, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: stale call resources: %w", err)
+	}
+	return slices.Concat(lists...), nil
+}
+
 // CallResourcesInApp is what ReleaseCallResourcesInApp would delete for one call, read
 // without deleting it.
 func (s *Store) CallResourcesInApp(ctx context.Context, scope AppScope, callType, callID string) ([]CallResource, error) {
