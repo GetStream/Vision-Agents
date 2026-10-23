@@ -1540,11 +1540,16 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 	if customerID == "" || e164 == "" {
 		return stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
+	return releaseNumber(ctx, s.db, customerID, e164, at)
+}
+
+// releaseNumber marks a number as given back, in db.
+func releaseNumber(ctx context.Context, db bun.IDB, customerID, e164 string, at time.Time) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 
-	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
+	result, err := db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("released_at = ?", at).
 		Set("attached_at = NULL").
 		Set("sip_trunk_id = NULL").
@@ -1724,14 +1729,18 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 	if customerID == "" || e164 == "" {
 		return PhoneNumber{}, stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
+	return heldNumber(ctx, s.db.NewSelect(), customerID, e164)
+}
+
+// heldNumber is one number a customer holds, read by query.
+func heldNumber(ctx context.Context, query *bun.SelectQuery, customerID, e164 string) (PhoneNumber, error) {
 	// Nobody holds a number written another way, and the vendor may read it as one somebody
 	// else holds.
 	if !IsE164(e164) {
 		return PhoneNumber{}, stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not a number %s holds", e164, customerID)})
 	}
-
 	var number PhoneNumber
-	err := s.db.NewSelect().Model(&number).
+	err := query.Model(&number).
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").

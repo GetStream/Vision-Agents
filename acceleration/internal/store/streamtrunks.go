@@ -120,6 +120,18 @@ func (t *TrunkGroupTx) DeleteTrunk(id string) error {
 	return nil
 }
 
+// Number is one of the customer's numbers held, locked until the transaction ends. A line
+// being made for it in another app's group, which holds a different lock, then waits to
+// record itself until this transaction is done, and finds the number released if it was.
+func (t *TrunkGroupTx) Number(e164 string) (PhoneNumber, error) {
+	return heldNumber(t.ctx, t.tx.NewSelect().For("UPDATE"), t.group.CustomerID, e164)
+}
+
+// ReleaseNumber marks one of the customer's numbers as given back.
+func (t *TrunkGroupTx) ReleaseNumber(e164 string, at time.Time) error {
+	return releaseNumber(t.ctx, t.tx, t.group.CustomerID, e164, at)
+}
+
 // SetLine records the trunk and rule a number held in the group is reached through.
 func (t *TrunkGroupTx) SetLine(e164, trunkID, routeID string, bridge NumberBridge) error {
 	result, err := t.tx.NewUpdate().Model((*PhoneNumber)(nil)).

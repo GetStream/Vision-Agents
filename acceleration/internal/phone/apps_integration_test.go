@@ -1352,3 +1352,59 @@ func (s *AppsSuite) TestReattachingAfterRegistrationTakesTheNumberOffItsSharedTr
 	s.Equal([]string{s.e164}, s.own.TrunkNumbers(moved.TrunkID))
 	s.Equal(int64(4242), s.number().StreamAppPK)
 }
+
+func (s *AppsSuite) TestReleasingANumberLinedSinceItWasReadTakesItOffItsTrunk() {
+	// Release reads the number before it takes the lock: a call lining it in the
+	// customer's new app meanwhile must not leave a released number on that trunk.
+	stale := s.number()
+	s.ownApp()
+	s.sealed()
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	other, err := s.lineFor(s.customer, second)
+	s.Require().NoError(err)
+	lined, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.unline(s.ctx, stale, "released a number", true))
+
+	s.Equal([]string{second}, s.own.TrunkNumbers(lined.TrunkID))
+	s.Equal([]string{other.RouteID}, s.own.Rules())
+	_, err = s.store.Number(s.ctx, s.customer, s.e164)
+	s.ErrorIs(err, store.ErrNoNumber, "the number is released")
+}
+
+func (s *AppsSuite) TestAttachingANumberWhoseTrunkPasswordWasNotKeptGivesItATrunkOfItsOwn() {
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	_, err = s.store.DB().NewUpdate().Table("phone_numbers").Set("attached_at = NULL").
+		Where("customer_id = ?", s.customer).Where("e164 = ?", s.e164).Exec(s.ctx)
+	s.Require().NoError(err)
+	s.sealed()
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.NotEqual(first.TrunkID, again.TrunkID)
+	s.Equal([]string{again.TrunkID}, s.deployment.Trunks(), "the old trunk is deleted")
+	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(again.TrunkID))
+	s.Equal([]string{again.RouteID}, s.deployment.Rules())
+	s.NotEmpty(s.number().BridgePasswordSealed, "its new trunk's password is kept")
+}
+
+func (s *AppsSuite) TestAttachingANumberOnASharedTrunkAgainChangesNothing() {
+	s.sealed()
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.vendor.inbound = Inbound{}
+	made := len(s.deployment.Requests("test"))
+	s.Require().NotZero(made)
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, again.TrunkID)
+	s.Equal(first.RouteID, again.RouteID)
+	s.Len(s.deployment.Requests("test"), made, "nothing is asked of Stream")
+	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(first.TrunkID))
+	s.Empty(s.vendor.inbound.E164, "the vendor is not told anything new")
+}

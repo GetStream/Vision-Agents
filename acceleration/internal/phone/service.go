@@ -448,71 +448,103 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 	}
 	// The trunk and rule the number was attached with would otherwise outlive it, billed
 	// and pointing a number nobody holds at a call.
-	s.unline(ctx, held, "released a number")
-	return s.store.ReleaseNumber(ctx, customerID, e164, time.Now().UTC())
+	return s.unline(ctx, held, "released a number", true)
 }
 
 // unline takes a number off its trunk and deletes its rule, in the app they are in, and
-// forgets them on the number. The trunk is deleted with its last number; one the number had
-// to itself, made before trunks were shared, is not a row and is deleted with it. It is
-// best-effort: a failure is logged, never returned, so it cannot mask what the caller was
-// doing.
-func (s *Service) unline(ctx context.Context, held store.PhoneNumber, why string) {
-	if held.StreamTrunkID == "" {
-		return
-	}
-	stream, err := s.streamToRemove(ctx, held.CustomerID, held.StreamAppPK)
-	if err != nil {
-		s.logger.Error("could not reach the Stream app a line was made in", "why", why,
-			"trunk", held.StreamTrunkID, "route", held.StreamRouteID, "error", err)
-		return
-	}
-	group := store.TrunkGroup{CustomerID: held.CustomerID, StreamAppPK: held.StreamAppPK, Vendor: held.Vendor}
-	err = s.store.InTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
-		trunks, err := tx.Trunks()
-		if err != nil {
+// forgets them on the number. With release it also gives the number back under the same
+// lock, so a line made for it meanwhile cannot put it back on a trunk. A Stream failure is
+// logged, not returned, so the number is still taken off.
+func (s *Service) unline(ctx context.Context, held store.PhoneNumber, why string, release bool) error {
+	app := held.StreamAppPK
+	// A call or attach lining the number in another app while this waited for its lock
+	// moves it there, and a release follows it.
+	for range 3 {
+		var moved bool
+		group := store.TrunkGroup{CustomerID: held.CustomerID, StreamAppPK: app, Vendor: held.Vendor}
+		err := s.store.InTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
+			number, err := tx.Number(held.E164)
+			if err != nil {
+				return err
+			}
+			if number.StreamTrunkID != "" && number.StreamAppPK != app {
+				moved, app = true, number.StreamAppPK
+				return nil
+			}
+			if number.StreamTrunkID != "" {
+				if err := s.offTrunk(ctx, tx, number, why); err != nil {
+					return err
+				}
+			}
+			if release {
+				return tx.ReleaseNumber(number.E164, time.Now().UTC())
+			}
+			return nil
+		})
+		if err != nil || !moved || !release {
 			return err
 		}
-		i := slices.IndexFunc(trunks, func(t store.StreamTrunk) bool { return t.ID == held.StreamTrunkID })
-		if i < 0 {
-			s.deleteLines(ctx, stream, held.StreamRouteID, held.StreamTrunkID, why)
-			return tx.ClearLine(held.E164)
+	}
+	return stack.Wrap(fmt.Errorf("phone: %s kept moving between apps while it was released", held.E164))
+}
+
+// offTrunk takes a number off its trunk and deletes its rule. The trunk is deleted with its
+// last number; one the number had to itself, made before trunks were shared, is not a row
+// and is deleted with it.
+func (s *Service) offTrunk(ctx context.Context, tx *store.TrunkGroupTx, number store.PhoneNumber, why string) error {
+	stream, err := s.streamToRemove(ctx, number.CustomerID, number.StreamAppPK)
+	if err != nil {
+		stream = nil
+		s.logger.Error("could not reach the Stream app a line was made in", "why", why,
+			"trunk", number.StreamTrunkID, "route", number.StreamRouteID, "error", err)
+	}
+	trunks, err := tx.Trunks()
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(trunks, func(t store.StreamTrunk) bool { return t.ID == number.StreamTrunkID })
+	if i < 0 {
+		if stream != nil {
+			s.deleteLines(ctx, stream, number.StreamRouteID, number.StreamTrunkID, why)
 		}
-		if err := stream.DeleteRoute(ctx, held.StreamRouteID); err != nil {
-			s.logger.Error("could not delete a routing rule", "why", why, "route", held.StreamRouteID, "error", err)
+		return tx.ClearLine(number.E164)
+	}
+	if stream != nil {
+		if err := stream.DeleteRoute(ctx, number.StreamRouteID); err != nil {
+			s.logger.Error("could not delete a routing rule", "why", why, "route", number.StreamRouteID, "error", err)
 		}
-		trunk := trunks[i]
-		trunk.Numbers = slices.DeleteFunc(slices.Clone(trunk.Numbers), func(n string) bool { return n == held.E164 })
-		if len(trunk.Numbers) == 0 {
+	}
+	trunk := trunks[i]
+	trunk.Numbers = slices.DeleteFunc(slices.Clone(trunk.Numbers), func(n string) bool { return n == number.E164 })
+	if len(trunk.Numbers) == 0 {
+		if stream != nil {
 			if err := stream.DeleteTrunk(ctx, trunk.ID); err != nil {
 				s.logger.Error("could not delete a trunk", "why", why, "trunk", trunk.ID, "error", err)
 			}
-			if err := tx.DeleteTrunk(trunk.ID); err != nil {
-				return err
-			}
-			return tx.ClearLine(held.E164)
 		}
-		allowedIPs, err := s.allowlistFor(held.Vendor)
-		if err != nil {
+		if err := tx.DeleteTrunk(trunk.ID); err != nil {
 			return err
 		}
-		// Stored as it should be either way: the trunk's next update resends its numbers,
-		// which mends one Stream failed to take off.
-		err = stream.UpdateTrunk(ctx, trunk.ID, Trunk{
-			Name: "phone-" + held.Vendor + "-" + held.CustomerID, Numbers: trunk.Numbers, AllowedIPs: allowedIPs,
+		return tx.ClearLine(number.E164)
+	}
+	allowedIPs, err := s.allowlistFor(number.Vendor)
+	if err != nil {
+		return err
+	}
+	// Stored as it should be either way: the trunk's next update resends its numbers,
+	// which mends one Stream failed to take off.
+	if stream != nil {
+		err := stream.UpdateTrunk(ctx, trunk.ID, Trunk{
+			Name: sharedTrunkName(number.Vendor, number.CustomerID), Numbers: trunk.Numbers, AllowedIPs: allowedIPs,
 		})
 		if err != nil {
 			s.logger.Error("could not take a number off a trunk", "why", why, "trunk", trunk.ID, "error", err)
 		}
-		if err := tx.SaveTrunk(trunk); err != nil {
-			return err
-		}
-		return tx.ClearLine(held.E164)
-	})
-	if err != nil {
-		s.logger.Error("could not take a number off its line", "why", why, "number", held.E164,
-			"trunk", held.StreamTrunkID, "error", err)
 	}
+	if err := tx.SaveTrunk(trunk); err != nil {
+		return err
+	}
+	return tx.ClearLine(number.E164)
 }
 
 // Attachment points a number at the agent: every caller lands in a call of their own,
@@ -583,7 +615,9 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	// A number lined in another app is taken off there first: the customer's app is where
 	// its calls go now.
 	if held.StreamTrunkID != "" && held.StreamAppPK != pin {
-		s.unline(ctx, held, "re-attached a number in another app")
+		if err := s.unline(ctx, held, "re-attached a number in another app", false); err != nil {
+			return Attached{}, err
+		}
 		held.StreamTrunkID, held.StreamRouteID = "", ""
 	}
 
@@ -602,7 +636,9 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		}
 		// Attached before its trunk's password was kept, so its trunk cannot be shared: it is
 		// replaced by one of its own, which keeps it.
-		s.unline(ctx, held, "re-attached a number")
+		if err := s.unline(ctx, held, "re-attached a number", false); err != nil {
+			return Attached{}, err
+		}
 	}
 
 	allowedIPs, err := trunkAllowlist(declared)

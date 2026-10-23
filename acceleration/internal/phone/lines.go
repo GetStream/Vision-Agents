@@ -83,7 +83,7 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 	if err != nil {
 		return TrunkLine{}, err
 	}
-	name := "phone-" + held.Vendor + "-" + held.CustomerID
+	name := sharedTrunkName(held.Vendor, held.CustomerID)
 
 	var trunk store.StreamTrunk
 	var password string
@@ -182,7 +182,7 @@ func (s *Service) leave(ctx context.Context, stream *Stream, group store.TrunkGr
 			return err
 		}
 		return stream.UpdateTrunk(ctx, joined.trunkID, Trunk{
-			Name: "phone-" + group.Vendor + "-" + group.CustomerID, Numbers: trunks[i].Numbers, AllowedIPs: allowedIPs,
+			Name: sharedTrunkName(group.Vendor, group.CustomerID), Numbers: trunks[i].Numbers, AllowedIPs: allowedIPs,
 		})
 	})
 	if err != nil {
@@ -253,6 +253,11 @@ func (s *Service) trunkPassword(trunk store.StreamTrunk) (string, error) {
 		return "", stack.Wrap(fmt.Errorf("phone: open the password of trunk %s: %w", trunk.ID, err))
 	}
 	return password, nil
+}
+
+// sharedTrunkName is the name at Stream of a customer's trunk for a vendor's numbers.
+func sharedTrunkName(vendor, customerID string) string {
+	return "phone-" + vendor + "-" + customerID
 }
 
 // trunkAAD binds a shared trunk's sealed password to the customer and the trunk, so the
