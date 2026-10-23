@@ -5,7 +5,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -92,10 +91,14 @@ var importers = []string{
 	"cmd",
 }
 
-// importsAllowed are the files outside those that import a vendor, and why. The list may only
-// shrink.
+// importsAllowed are the imports of a vendor the rules refuse and the tree needs, as the file
+// and the vendor, and why. A vendor may import the vendors of its own modality, which share
+// a client; one of another modality is an exception of its own. The list may only shrink.
 var importsAllowed = map[string]string{
-	"internal/api/telnyxhook.go": "renders the call-control answer Telnyx's webhook asks for, and calls nothing",
+	"internal/api/telnyxhook.go imports internal/phone/telnyx": "renders the call-control answer Telnyx's webhook " +
+		"asks for, and calls nothing",
+	"internal/sts/openailive/openailive.go imports internal/llm/openai": "GPT-Live delegates to a Responses model, " +
+		"whose tools it describes as the OpenAI text adapter does (openai.HasOptional), and calls nothing of it",
 }
 
 // notVendors are packages under a vendor root that are not a vendor: what every vendor of
@@ -252,26 +255,35 @@ func vendorOf(dir string) (string, bool) {
 	return "", false
 }
 
-// vendorImporters is every file that imports a vendor's package where it may not, as the
-// file and the vendor.
-func vendorImporters(sources []source) []string {
+// vendorImports is every import of a vendor's package the rules refuse, as the file and the
+// vendor, the exceptions in importsAllowed included: one from outside the vendors, the routers
+// and importers, and one from a vendor of another modality.
+func vendorImports(sources []source) []string {
 	var found []string
 	for _, src := range sources {
-		if _, allowed := importsAllowed[src.dir+"/"+src.name]; allowed {
-			continue
-		}
-		if _, vendor := vendorOf(src.dir); vendor || router(src.dir) ||
-			slices.ContainsFunc(importers, func(importer string) bool { return under(src.dir, importer) }) {
+		own, isVendor := vendorOf(src.dir)
+		if !isVendor && (router(src.dir) ||
+			slices.ContainsFunc(importers, func(importer string) bool { return under(src.dir, importer) })) {
 			continue
 		}
 		for _, imported := range imports(src.file) {
-			if vendor, ok := vendorOf(imported); ok {
-				found = append(found, src.dir+"/"+src.name+" imports "+vendor)
+			vendor, ok := vendorOf(imported)
+			if !ok || isVendor && path.Dir(vendor) == path.Dir(own) {
+				continue
 			}
+			found = append(found, src.dir+"/"+src.name+" imports "+vendor)
 		}
 	}
 	slices.Sort(found)
 	return slices.Compact(found)
+}
+
+// vendorImporters is vendorImports without the exceptions.
+func vendorImporters(sources []source) []string {
+	return slices.DeleteFunc(vendorImports(sources), func(found string) bool {
+		_, allowed := importsAllowed[found]
+		return allowed
+	})
 }
 
 // vendorsWithoutSuite is every model vendor none of whose tests names its modality's suite,
@@ -343,21 +355,26 @@ func TestTheGuardCatchesWhatBreaksTheRule(t *testing.T) {
 	sources, tests := tree(t, filepath.Join("testdata", "tree"))
 
 	require.Equal(t, []string{"internal/api/voice.go names stt.STT"}, vendorHolders(sources))
-	require.Equal(t, []string{"internal/agent/model.go imports internal/llm/openai"}, vendorImporters(sources))
+	require.Equal(t, []string{
+		"internal/agent/model.go imports internal/llm/openai",
+		"internal/sts/crossed/crossed.go imports internal/stt/deepgram",
+	}, vendorImporters(sources))
 	require.Equal(t, []string{"internal/llm/unsuited"}, vendorsWithoutSuite(sources, tests))
 }
 
 func TestTheExceptionsAreStillNeeded(t *testing.T) {
 	sources, tests := tree(t, root(t))
 
-	for file, why := range importsAllowed {
-		index := slices.IndexFunc(sources, func(src source) bool { return src.dir+"/"+src.name == file })
-		require.NotEqual(t, -1, index, "%s is gone, so its exception (%s) is too", file, why)
-		imported := slices.ContainsFunc(slices.Collect(maps.Values(imports(sources[index].file))), func(pkg string) bool {
-			_, vendor := vendorOf(pkg)
-			return vendor
-		})
-		require.True(t, imported, "%s imports no vendor now, so it no longer needs its exception (%s)", file, why)
+	refused := vendorImports(sources)
+	for found, why := range importsAllowed {
+		require.Contains(t, refused, found, "the tree no longer does what %q excused (%s)", found, why)
+	}
+
+	for shared, why := range notVendors {
+		require.True(t, slices.ContainsFunc(vendorRoots, func(root string) bool { return under(shared, root) }),
+			"%s is under no vendor root, so it needs no place among the packages that are not vendors (%s)", shared, why)
+		require.True(t, slices.ContainsFunc(sources, func(src source) bool { return src.dir == shared }),
+			"%s is gone, so its place among the packages that are not vendors (%s) is too", shared, why)
 	}
 
 	for vendor, why := range withoutSuite {

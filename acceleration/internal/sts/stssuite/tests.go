@@ -90,6 +90,9 @@ func (s *Suite) TestTheWorkIsBilled() {
 		s.Positive(reply.Complete.Usage.InputTokens, "the reply should say what it read")
 		s.Positive(reply.Complete.Usage.OutputTokens, "the reply should say what it generated")
 	}
+	if capabilities.BilledAudio {
+		s.True(reply.Complete.Usage.AudioBilled, "the reply should carry the vendor's count of the audio it bills")
+	}
 	if capabilities.SessionBilled {
 		s.Require().NoError(provider.Close())
 		var seconds int64

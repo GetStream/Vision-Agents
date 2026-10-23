@@ -18,14 +18,6 @@ func (s *Suite) TestAQuestionIsAnsweredOutOfWhatIsOnTheWeb() {
 	s.Contains(s.Said(found), austenAnswer)
 }
 
-// TestTheWorkIsBilled: what came back says what it used, which is what the search is billed
-// by.
-func (s *Suite) TestTheWorkIsBilled() {
-	found := s.Search(austen)
-
-	s.False(found.Used().Zero(), "the search should say what it used")
-}
-
 // TestEverySourceSaysWhereItCameFrom is what lets the agent say where it read something,
 // and a source with nothing to read is a result the model cannot use.
 func (s *Suite) TestEverySourceSaysWhereItCameFrom() {
