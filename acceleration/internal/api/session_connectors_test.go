@@ -339,7 +339,7 @@ func (s *SessionConnectorsSuite) TestAForkOfARunningSessionKeepsTheInstructionsI
 	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+running.Id+"/fork",
 		ForkSessionRequest{Messages: pointerTo(false)}, &forked))
 
-	s.Equal(prompts.instructions, value(forked.Instructions))
+	s.Equal(prompts.instructions, value(s.serverClient.actingFor(s.client).getSession(forked.Id).Instructions))
 }
 
 // TestAForkOfAnEndedSessionRunsOnItsConfigsModel: the parent's row keeps no models, so the
@@ -774,6 +774,8 @@ func (s *SessionConnectorsSuite) forkPrompts(parent string) forkedPrompts {
 	var forked Session
 	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent+"/fork",
 		ForkSessionRequest{Messages: pointerTo(false), ModelOverwrites: &ModelOverwrites{Llm: pointerTo("summarising/summarising-model")}}, &forked))
+	// A device is never given the instructions, so the backend reads what the fork was told.
+	instructions := value(s.serverClient.actingFor(s.client).getSession(forked.Id).Instructions)
 	watching := s.client.opens("/v1/agents/sessions/" + forked.Id + "/events")
 	status, failure := s.serverClient.actingFor(s.client).failure(http.MethodPost, "/v1/agents/sessions/"+forked.Id+"/respond",
 		RespondRequest{Text: "Is the upgrade worth it?", RequestId: pointerTo(s.utils.uuid())})
@@ -788,7 +790,7 @@ func (s *SessionConnectorsSuite) forkPrompts(parent string) forkedPrompts {
 			call.ReviewNotes != nil
 	}, 2*settleFor, 10*time.Millisecond, "the fork is reviewed when it ends")
 	review := strings.TrimSuffix(*call.ReviewNotes, "\n\n"+`Answer with JSON only: {"summary": "...", "score": 3, "notes": "..."}`)
-	return forkedPrompts{instructions: value(forked.Instructions), answer: answer, review: review}
+	return forkedPrompts{instructions: instructions, answer: answer, review: review}
 }
 
 // recorded waits for the call of session id to be written. It is queued behind the session,

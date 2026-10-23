@@ -1530,6 +1530,14 @@ func (d testData) instructedAgent(instructions string) *string {
 	return &created.Id
 }
 
+// briefed is request with instructions of its own, such as the brief of a customer somebody
+// practises on, returned with the brief.
+func (d testData) briefed(request CreateSessionRequest) (CreateSessionRequest, string) {
+	brief := "Be a customer whose order " + d.suite.utils.uuid() + " never came."
+	request.Instructions = &brief
+	return request, brief
+}
+
 // createUser is a client signed in as a new end user of the suite's app.
 func (d testData) createUser() *testClient {
 	return d.signedInAs(d.suite.utils.uuid())
