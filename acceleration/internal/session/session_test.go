@@ -284,6 +284,8 @@ type stubMemory struct {
 	mu      sync.Mutex
 	scope   memory.Scope
 	learned [][]llm.Message
+	// forgot is every session the store was asked to forget.
+	forgot []string
 }
 
 func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Memory, error) {
@@ -300,10 +302,22 @@ func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.
 	return nil
 }
 
-func (m *stubMemory) Truncate(context.Context, string, string) error  { return nil }
-func (m *stubMemory) ForgetRun(context.Context, string, string) error { return nil }
-func (m *stubMemory) Provider() string                                { return "stub" }
-func (m *stubMemory) Close() error                                    { return nil }
+func (m *stubMemory) Truncate(context.Context, string, string) error { return nil }
+func (m *stubMemory) Provider() string                               { return "stub" }
+func (m *stubMemory) Close() error                                   { return nil }
+
+func (m *stubMemory) ForgetRun(_ context.Context, _, runID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forgot = append(m.forgot, runID)
+	return nil
+}
+
+func (m *stubMemory) forgotten() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.forgot)
+}
 
 func (m *stubMemory) remembered() [][]llm.Message {
 	m.mu.Lock()
@@ -1542,6 +1556,17 @@ func (s *SessionSuite) TestAnIncognitoSessionWritesNothingToMemory() {
 
 	s.Equal("222", s.remembers.scopedTo().UserID, "an incognito session may still recall")
 	s.Empty(s.remembers.remembered(), "an incognito session is not kept, in memory or anywhere else")
+}
+
+func (s *SessionSuite) TestDeletingWithNoStoreStillForgetsTheSession() {
+	// Without a store there is no row to say the session had no memory.
+	s.remembers = &stubMemory{}
+	s.manages()
+	created := s.joins(Spec{})
+
+	s.Require().NoError(s.manager.Delete(s.T().Context(), created.ID(), backend("acme")))
+
+	s.Equal([]string{created.ID()}, s.remembers.forgotten())
 }
 
 func (s *SessionSuite) TestARecordedSessionWritesToMemory() {

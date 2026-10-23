@@ -54,7 +54,7 @@ func (s *MemoryUnavailableSuite) SetupTest() {
 }
 
 func (s *MemoryUnavailableSuite) TestADeleteTheMemoryStoreRefusesKeepsTheSession() {
-	opened := s.client.createSession(textSession(nil))
+	opened := s.client.createSession(s.remembering())
 	s.mem0.remember(s.customerID(), opened.Id)
 	s.mem0.down.Store(true)
 
@@ -73,7 +73,7 @@ func (s *MemoryUnavailableSuite) TestADeleteTheMemoryStoreRefusesKeepsTheSession
 }
 
 func (s *MemoryUnavailableSuite) TestACallerWhoHangsUpWhileTheMemoryStoreIsSlowIsNotAMemoryFailure() {
-	opened := s.client.createSession(textSession(nil))
+	opened := s.client.createSession(s.remembering())
 	s.mem0.remember(s.customerID(), opened.Id)
 	s.mem0.hang.Store(true)
 	path := "/v1/agents/sessions/" + opened.Id
@@ -98,7 +98,7 @@ func (s *MemoryUnavailableSuite) TestACallerWhoHangsUpWhileTheMemoryStoreIsSlowI
 }
 
 func (s *MemoryUnavailableSuite) TestTheMemoryStoresRefusalIsLoggedAsAnError() {
-	opened := s.client.createSession(textSession(nil))
+	opened := s.client.createSession(s.remembering())
 	s.mem0.down.Store(true)
 
 	s.Require().Equal(http.StatusServiceUnavailable,
@@ -113,7 +113,7 @@ func (s *MemoryUnavailableSuite) TestTheMemoryStoresRefusalIsLoggedAsAnError() {
 }
 
 func (s *MemoryUnavailableSuite) TestTheSameDeleteSucceedsOnceTheMemoryStoreAnswers() {
-	opened := s.client.createSession(textSession(nil))
+	opened := s.client.createSession(s.remembering())
 	s.mem0.remember(s.customerID(), opened.Id)
 	s.mem0.down.Store(true)
 	s.Require().Equal(http.StatusServiceUnavailable,
@@ -154,6 +154,79 @@ func (s *MemoryUnavailableSuite) TestForgettingASessionWhileTheMemoryStoreRefuse
 	s.True(s.mem0.holds(s.customerID(), opened.Id))
 }
 
+func (s *MemoryUnavailableSuite) TestDeletingASessionWithoutMemoryAsksNothingOfTheMemoryStore() {
+	opened := s.client.createSession(textSession(nil))
+	asked := s.mem0.calls.Load()
+
+	s.client.deleteSession(opened.Id)
+
+	s.assertDoesNotReach(s.client, opened.Id)
+	s.Equal(asked, s.mem0.calls.Load())
+}
+
+func (s *MemoryUnavailableSuite) TestASessionWithoutMemoryIsDeletedWhileTheMemoryStoreRefuses() {
+	opened := s.client.createSession(textSession(nil))
+	s.mem0.down.Store(true)
+	asked := s.mem0.calls.Load()
+
+	s.client.deleteSession(opened.Id)
+
+	s.assertDoesNotReach(s.client, opened.Id)
+	s.Equal(asked, s.mem0.calls.Load())
+}
+
+func (s *MemoryUnavailableSuite) TestDeletingASessionWithMemoryForgetsWhatItRemembered() {
+	opened := s.client.createSession(s.remembering())
+	s.mem0.remember(s.customerID(), opened.Id)
+	asked := s.mem0.calls.Load()
+
+	s.client.deleteSession(opened.Id)
+
+	s.assertDoesNotReach(s.client, opened.Id)
+	s.Greater(s.mem0.calls.Load(), asked)
+	s.False(s.mem0.holds(s.customerID(), opened.Id))
+}
+
+func (s *MemoryUnavailableSuite) TestASessionFromBeforeRowsSaidIsStillForgotten() {
+	opened := s.client.createSession(textSession(nil))
+	// A row written before rows said whether the session remembered. The row is written
+	// behind the request, so it is made old once it is there.
+	s.Require().Eventually(func() bool {
+		made, err := s.store.DB().ExecContext(s.T().Context(),
+			"UPDATE agent_sessions SET remembers = NULL WHERE id = ?", opened.Id)
+		if err != nil {
+			return false
+		}
+		n, err := made.RowsAffected()
+		return err == nil && n == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	s.mem0.remember(s.customerID(), opened.Id)
+
+	s.client.deleteSession(opened.Id)
+
+	s.assertDoesNotReach(s.client, opened.Id)
+	s.False(s.mem0.holds(s.customerID(), opened.Id))
+}
+
+func (s *MemoryUnavailableSuite) TestASessionWithNoRowIsStillForgotten() {
+	// An incognito session keeps no row, so nothing says it had no memory.
+	unrecorded := textSession(nil)
+	unrecorded.Incognito = new(true)
+	opened := s.client.createSession(unrecorded)
+	s.mem0.remember(s.customerID(), opened.Id)
+
+	s.client.deleteSession(opened.Id)
+
+	s.False(s.mem0.holds(s.customerID(), opened.Id))
+}
+
+// remembering is a session opened with a memory user id, so it can teach the memory store.
+func (s *MemoryUnavailableSuite) remembering() CreateSessionRequest {
+	opened := textSession(nil)
+	opened.Memory = &SessionMemory{UserId: new(s.utils.uuid())}
+	return opened
+}
+
 // servedLine is the one access log line of the request to path.
 func (s *MemoryUnavailableSuite) servedLine(method, path string) string {
 	var found []string
@@ -174,6 +247,8 @@ type flakyMem0 struct {
 	server *httptest.Server
 	down   atomic.Bool
 	hang   atomic.Bool
+	// calls is every request mem0 was sent, answered or not.
+	calls atomic.Int64
 
 	mu   sync.Mutex
 	kept []keptMem0
@@ -205,6 +280,7 @@ func (f *flakyMem0) holds(appID, runID string) bool {
 }
 
 func (f *flakyMem0) serve(w http.ResponseWriter, r *http.Request) {
+	f.calls.Add(1)
 	if f.hang.Load() {
 		// The server notices a client hang-up only once the body is read.
 		_, _ = io.Copy(io.Discard, r.Body)
