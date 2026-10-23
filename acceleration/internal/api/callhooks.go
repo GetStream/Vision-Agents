@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -149,6 +150,20 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 			"call", event.CallCid, "stream_app", origin.app, "error", err)
 		return
 	}
+	// The caller is on the line from here, whether an agent answers or the call is refused
+	// and ended below, and the vendor bills every second of it. No key placed it, so its
+	// minutes are the app's, and priced by the country of the number rung.
+	if s.phone != nil {
+		s.phone.OpenLeg(r.Context(), routing.Owner{
+			CustomerID:  number.CustomerID,
+			Attribution: routing.Attribution{APIKey: routing.OriginPhoneInbound},
+			Tags:        number.Tags,
+		}, store.CallLeg{
+			StreamAppPK: number.StreamAppPK, CallType: callType, CallID: callID, Vendor: number.Vendor,
+			Direction: store.Inbound, LocalNumber: number.E164, RemoteNumber: callerOf(event),
+			Country: cmp.Or(number.Country, phone.Country(number.E164)),
+		})
+	}
 	// A suspension that cannot be read refuses the call too: it is there to stop fraud that
 	// costs money.
 	if _, err := s.store.TelephonySuspension(r.Context(), number.CustomerID); !errors.Is(err, store.ErrNotSuspended) {
@@ -224,6 +239,11 @@ func (s *Server) releaseEndedCall(r *http.Request, origin hookOrigin, event call
 	// released: a call's id is only unique within its app.
 	if err := s.phone.ReleaseCall(r.Context(), origin.scope(), callType, callID); err != nil {
 		s.logger.Error("could not release an ended call's resources", "call", event.CallCid, "error", err)
+	}
+	// Every leg of the call ends with it, and is billed for its minutes. A leg whose end is
+	// lost here is ended by the sweep, at the longest a call is billed for.
+	if err := s.phone.EndLegs(r.Context(), origin.scope(), callType, callID); err != nil {
+		s.logger.Error("could not end an ended call's legs", "call", event.CallCid, "error", err)
 	}
 }
 

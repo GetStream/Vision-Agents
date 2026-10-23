@@ -124,7 +124,7 @@ func (p *linqProvider) Parse(body []byte) ([]Message, error) {
 
 // Send writes the reply back as one message of several parts: the text, then each file.
 // iMessage previews a URL, so a login goes in the text.
-func (p *linqProvider) Send(ctx context.Context, account Account, thread string, reply Reply) error {
+func (p *linqProvider) Send(ctx context.Context, account Account, thread string, reply Reply) (Sent, error) {
 	text := reply.Text
 	if link := reply.Link; link != nil {
 		text = strings.TrimSpace(text + "\n\n" + link.Text + ": " + link.URL)
@@ -139,11 +139,15 @@ func (p *linqProvider) Send(ctx context.Context, account Account, thread string,
 		}
 	}
 	if len(parts) == 0 {
-		return nil
+		return Sent{}, nil
 	}
 	body := map[string]any{"message": map[string]any{"parts": parts}}
-	return post(ctx, p.client, fmt.Sprintf("%s/chats/%s/messages", p.host(), url.PathEscape(thread)),
-		account.Token, body)
+	if err := post(ctx, p.client, fmt.Sprintf("%s/chats/%s/messages", p.host(), url.PathEscape(thread)),
+		account.Token, body); err != nil {
+		return Sent{}, err
+	}
+	// Its parts are one message, however many files ride along.
+	return Sent{Messages: 1}, nil
 }
 
 func (p *linqProvider) host() string {

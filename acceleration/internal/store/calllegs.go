@@ -23,7 +23,7 @@ func (s *Store) OpenCallLeg(ctx context.Context, leg *CallLeg) (bool, error) {
 		return false, stack.Wrap(errors.New("store: a call leg needs a customer"))
 	case leg.CallType == "" || leg.CallID == "":
 		return false, stack.Wrap(errors.New("store: a call leg needs a call"))
-	case leg.Direction != CallInbound && leg.Direction != CallOutbound:
+	case leg.Direction != Inbound && leg.Direction != Outbound:
 		return false, stack.Wrap(fmt.Errorf("store: a call leg is inbound or outbound, not %q", leg.Direction))
 	}
 	if leg.StartedAt.IsZero() {

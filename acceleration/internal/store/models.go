@@ -377,12 +377,6 @@ type CallResource struct {
 	CreatedAt   time.Time `bun:"created_at,notnull"`
 }
 
-// The directions a call leg is in.
-const (
-	CallInbound  = "inbound"
-	CallOutbound = "outbound"
-)
-
 // CallLeg is one leg of a phone call, from when it was connected until the call ended, which
 // is what its minutes are billed by. Who it is billed to is kept from when it opened, so the
 // minutes of a placed call stay with the key that placed it.
@@ -402,7 +396,7 @@ type CallLeg struct {
 	CallType    string `bun:"call_type,notnull"`
 	CallID      string `bun:"call_id,notnull"`
 	Vendor      string `bun:"vendor,notnull"`
-	// Direction is CallInbound or CallOutbound.
+	// Direction is Inbound or Outbound.
 	Direction    string `bun:"direction,notnull"`
 	LocalNumber  string `bun:"local_number,notnull"`
 	RemoteNumber string `bun:"remote_number,notnull"`
@@ -1186,7 +1180,7 @@ type VoiceBinding struct {
 	SyncedAt *time.Time `bun:"synced_at,nullzero"`
 }
 
-// Which way a call went.
+// Which way a call, a leg of one or a text went.
 const (
 	// Inbound is somebody ringing the agent.
 	Inbound = "inbound"

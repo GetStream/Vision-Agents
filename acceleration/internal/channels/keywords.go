@@ -56,6 +56,6 @@ func (s *Service) keyword(ctx context.Context, account store.ChannelAccount, lin
 		s.logger.Error("could not record a keyword", "keyword", word, "channel", account.Kind, "error", recorded)
 		return true
 	}
-	s.say(ctx, line, provider, message, Reply{Text: reply})
+	s.say(ctx, line, provider, message, Reply{Text: reply}, answering(account.CustomerID, ""))
 	return true
 }

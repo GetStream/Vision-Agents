@@ -794,7 +794,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	// minutes run from now.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
 		StreamAppPK: pin, CallType: callType, CallID: callID, Vendor: held.Vendor,
-		Direction: store.CallOutbound, LocalNumber: request.From, RemoteNumber: request.To,
+		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
 	})
 	sites := placedSites{streamSIPHost: BridgeHost(outbound.Bridge.URI)}
 	if trunk != nil {
@@ -1206,7 +1206,7 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	// The human's leg is a leg of the call it joins, billed to whoever transferred.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
 		StreamAppPK: request.StreamApp, CallType: callType, CallID: request.CallID, Vendor: held.Vendor,
-		Direction: store.CallOutbound, LocalNumber: request.From, RemoteNumber: request.To,
+		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
 	})
 	if err := s.store.RecordCallResource(ctx, &store.CallResource{
 		TrunkID:     trunkID,

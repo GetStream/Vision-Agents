@@ -106,8 +106,8 @@ func (p *telnyxProvider) Parse(body []byte) ([]Message, error) {
 }
 
 // Send writes the reply back. Files go as media URLs, which makes it an MMS, batched because
-// Telnyx takes ten a message.
-func (p *telnyxProvider) Send(ctx context.Context, account Account, thread string, reply Reply) error {
+// Telnyx takes ten a message. The text is billed by its segments and each MMS by itself.
+func (p *telnyxProvider) Send(ctx context.Context, account Account, thread string, reply Reply) (Sent, error) {
 	text := reply.Text
 	if link := reply.Link; link != nil {
 		text = strings.TrimSpace(text + "\n\n" + link.Text + ": " + link.URL)
@@ -131,12 +131,19 @@ func (p *telnyxProvider) Send(ctx context.Context, account Account, thread strin
 		bodies = append([]map[string]any{first}, bodies...)
 	}
 
+	var sent Sent
 	for _, body := range bodies {
 		if err := post(ctx, p.client, p.host()+"/messages", account.Token, body); err != nil {
-			return err
+			return sent, err
+		}
+		sent.Messages++
+		if words, ok := body["text"].(string); ok {
+			sent.Segments += Segments(words)
+		} else {
+			sent.Media++
 		}
 	}
-	return nil
+	return sent, nil
 }
 
 // ConfigureMessaging points the number's messaging at a URL, so texts to it are delivered
