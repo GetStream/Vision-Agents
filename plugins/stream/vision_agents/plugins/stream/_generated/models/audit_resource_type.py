@@ -6,6 +6,7 @@ class AuditResourceType(StrEnum):
     END_USER = "end_user"
     KNOWLEDGE = "knowledge"
     KNOWLEDGE_URL = "knowledge_url"
+    LIMIT = "limit"
     PLUGIN = "plugin"
     POLICY = "policy"
     PRICE_LIST = "price_list"

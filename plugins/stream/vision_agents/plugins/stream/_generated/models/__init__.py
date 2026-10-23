@@ -252,6 +252,16 @@ from .knowledge_url_state import KnowledgeUrlState
 from .left_out_connector import LeftOutConnector
 from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
+from .limit import Limit
+from .limit_change import LimitChange
+from .limit_in_force import LimitInForce
+from .limit_input import LimitInput
+from .limit_interval import LimitInterval
+from .limit_level import LimitLevel
+from .limit_page import LimitPage
+from .limit_reset_input import LimitResetInput
+from .limit_subject import LimitSubject
+from .limit_window import LimitWindow
 from .link_channel_request import LinkChannelRequest
 from .list_agent_logs_severity import ListAgentLogsSeverity
 from .list_scheduled_tasks_state import ListScheduledTasksState
@@ -261,6 +271,8 @@ from .llm_options_format import LlmOptionsFormat
 from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
+from .manage_limit_input import ManageLimitInput
+from .manage_limit_reset_input import ManageLimitResetInput
 from .manage_status import ManageStatus
 from .mcp_server import McpServer
 from .mcp_server_branding import McpServerBranding
@@ -432,6 +444,8 @@ from .speech import Speech
 from .speech_request import SpeechRequest
 from .speech_request_tags import SpeechRequestTags
 from .spend_bucket import SpendBucket
+from .spend_hard_limit_usage import SpendHardLimitUsage
+from .spend_hard_limit_window import SpendHardLimitWindow
 from .start_session_voice_request import StartSessionVoiceRequest
 from .stats_bucket import StatsBucket
 from .stored_connector_o_auth_client import StoredConnectorOAuthClient
@@ -444,6 +458,7 @@ from .sts_options_overwrites import StsOptionsOverwrites
 from .sts_options_turn_detection import StsOptionsTurnDetection
 from .stt_options import SttOptions
 from .stt_options_overwrites import SttOptionsOverwrites
+from .subject_usage import SubjectUsage
 from .suspend_telephony_request import SuspendTelephonyRequest
 from .sync_agent_request import SyncAgentRequest
 from .sync_agent_request_tags import SyncAgentRequestTags
@@ -756,6 +771,16 @@ __all__ = (
     "LeftOutConnector",
     "LibraryVoice",
     "LibraryVoices",
+    "Limit",
+    "LimitChange",
+    "LimitInForce",
+    "LimitInput",
+    "LimitInterval",
+    "LimitLevel",
+    "LimitPage",
+    "LimitResetInput",
+    "LimitSubject",
+    "LimitWindow",
     "LinkChannelRequest",
     "ListAgentLogsSeverity",
     "ListScheduledTasksState",
@@ -765,6 +790,8 @@ __all__ = (
     "LlmOptionsMetadata",
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
+    "ManageLimitInput",
+    "ManageLimitResetInput",
     "ManageStatus",
     "McpServer",
     "McpServerBranding",
@@ -936,6 +963,8 @@ __all__ = (
     "SpeechRequest",
     "SpeechRequestTags",
     "SpendBucket",
+    "SpendHardLimitUsage",
+    "SpendHardLimitWindow",
     "StartSessionVoiceRequest",
     "StatsBucket",
     "StoredConnectorOAuthClient",
@@ -948,6 +977,7 @@ __all__ = (
     "StsOptionsTurnDetection",
     "SttOptions",
     "SttOptionsOverwrites",
+    "SubjectUsage",
     "SuspendTelephonyRequest",
     "SyncAgentRequest",
     "SyncAgentRequestTags",
