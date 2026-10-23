@@ -43,6 +43,13 @@ func (s *RouterSuite) closedWith(ended error, code int) *websocket.CloseError {
 // router then held the connection. A router that hangs up as it sends its close lets a proxy
 // drop the frame; one that waits for the answer holds the socket for about closeWait.
 func (s *RouterSuite) unanswered(connection *websocket.Conn) (*websocket.CloseError, time.Duration) {
+	closed, began := s.closeUnanswered(connection)
+	return closed, s.heldSince(connection, began)
+}
+
+// closeUnanswered reads a socket to its close frame without answering it, and says when the
+// frame arrived.
+func (s *RouterSuite) closeUnanswered(connection *websocket.Conn) (*websocket.CloseError, time.Time) {
 	connection.SetCloseHandler(func(int, string) error { return nil })
 	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
 	var ended error
@@ -51,10 +58,14 @@ func (s *RouterSuite) unanswered(connection *websocket.Conn) (*websocket.CloseEr
 	}
 	var closed *websocket.CloseError
 	s.Require().ErrorAs(ended, &closed, "the socket ended without a close frame")
-	began := time.Now()
+	return closed, time.Now()
+}
+
+// heldSince says how long after began the router hung up the socket.
+func (s *RouterSuite) heldSince(connection *websocket.Conn, began time.Time) time.Duration {
 	_, err := connection.UnderlyingConn().Read(make([]byte, 64))
 	s.Require().ErrorIs(err, io.EOF, "the router still holds the socket")
-	return closed, time.Since(began)
+	return time.Since(began)
 }
 
 // heldUntilAnswered checks the router waited for an answer to its close, though not forever.

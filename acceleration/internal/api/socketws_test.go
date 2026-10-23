@@ -126,12 +126,28 @@ func (s *SocketSessionSuite) TestAConversationEndedByTheRouterWaitsForTheCallerT
 	connection, answered := s.starts(s.utils.uuid())
 	id := answered["session"].(map[string]any)["id"].(string)
 
-	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/sessions/"+id, nil, nil))
+	// The router closes the socket while the DELETE is still being answered, so the close is
+	// read as it arrives rather than after the DELETE returns.
+	deleted := s.deletes(id)
 
 	closed, held := s.unanswered(connection)
 	s.Equal(websocket.CloseNormalClosure, closed.Code)
 	s.Equal("the conversation is over", closed.Text)
 	s.heldUntilAnswered(held)
+	s.Equal(http.StatusNoContent, <-deleted)
+}
+
+// A caller that sends more after the router's close is still given time to answer it.
+func (s *SocketSessionSuite) TestACallerSpeakingAfterTheRoutersCloseIsGivenTimeToAnswerIt() {
+	connection, answered := s.starts(s.utils.uuid())
+	deleted := s.deletes(answered["session"].(map[string]any)["id"].(string))
+
+	closed, began := s.closeUnanswered(connection)
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "stop"}))
+
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+	s.heldUntilAnswered(s.heldSince(connection, began))
+	s.Equal(http.StatusNoContent, <-deleted)
 }
 
 // A caller's stop ends the conversation with the same close as the router ending it.
@@ -143,6 +159,13 @@ func (s *SocketSessionSuite) TestAStopEndsTheSocketWithTheConversationOver() {
 	_, ended := s.socketEnd(connection)
 	closed := s.closedWith(ended, websocket.CloseNormalClosure)
 	s.Equal("the conversation is over", closed.Text)
+}
+
+// deletes ends a session from the backend, answering the DELETE's status once it returns.
+func (s *SocketSessionSuite) deletes(id string) <-chan int {
+	status := make(chan int, 1)
+	go func() { status <- s.serverClient.do(http.MethodDelete, "/v1/agents/sessions/"+id, nil, nil) }()
+	return status
 }
 
 func (s *SocketSessionSuite) TestACallerWithNoCredentialsIsRefused() {
