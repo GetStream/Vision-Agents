@@ -26,13 +26,20 @@ BEGIN
     );
     -- Which rows count toward their grants, by usage id, asked by a router that holds them.
     CREATE INDEX IF NOT EXISTS limit_grant_uses_usage_idx ON limit_grant_uses (usage_id);
+    -- How far the reconcile has read each shard's rows naming a grant (shared database): every
+    -- row started by started_at, as far as it was written by then.
+    CREATE TABLE IF NOT EXISTS limit_grant_reconciles (
+        shard TEXT PRIMARY KEY,
+        started_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
 END $$;
 -- +goose StatementEnd
 
 -- Built without stopping writes, and only over the rows that name a grant, for the reconcile
--- that counts a row the writer wrote and could not count.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_idx ON requests
-    USING gin (limit_grants) WHERE limit_grants <> '{}';
+-- that counts a row the writer wrote and could not count, reading on from where it last got.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_idx ON requests (started_at, id)
+    WHERE limit_grants <> '{}';
 
 -- +goose Down
 DROP INDEX CONCURRENTLY IF EXISTS requests_limit_grants_idx;
@@ -40,6 +47,7 @@ DROP INDEX CONCURRENTLY IF EXISTS requests_limit_grants_idx;
 DO $$
 BEGIN
     SET LOCAL lock_timeout = '5s';
+    DROP TABLE IF EXISTS limit_grant_reconciles;
     DROP TABLE IF EXISTS limit_grant_uses;
     ALTER TABLE limit_grants DROP COLUMN IF EXISTS used_micros;
     ALTER TABLE requests DROP COLUMN IF EXISTS limit_grants;

@@ -42,10 +42,13 @@ const maxConns = 40
 type Store struct {
 	// db is the database every shard shares, and shard this one's, which is db for a
 	// deployment of one shard. peers are the other shards' (see shards.go).
-	db       *bun.DB
-	shard    *bun.DB
-	peers    []*bun.DB
-	LogDrops atomic.Int64
+	db    *bun.DB
+	shard *bun.DB
+	peers []*bun.DB
+	// shardNames names each of shards(), as Options.Shards does, for what is kept per shard
+	// in the shared database.
+	shardNames []string
+	LogDrops   atomic.Int64
 	// shapes is what each table an export carries looks like, read from the catalogue
 	// once rather than kept in a list here that a migration could leave behind.
 	shapes tableShapes
@@ -199,8 +202,8 @@ var usageIndexes = []struct{ name, create string }{
 	{"requests_category_spend_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_category_spend_idx ON requests (customer_id, started_at) " +
 		"INCLUDE (cost_micros, usage_categories) WHERE billable AND usage_categories <> '{}'"},
 	// The rows naming a grant, which a reconcile counts again (20261112121000_requests_limit_grants.sql).
-	{"requests_limit_grants_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_idx ON requests " +
-		"USING gin (limit_grants) WHERE limit_grants <> '{}'"},
+	{"requests_limit_grants_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_idx ON requests (started_at, id) " +
+		"WHERE limit_grants <> '{}'"},
 }
 
 // ensureUsageIndexes builds each usage index that is missing, dropping one a failed build left

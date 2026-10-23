@@ -191,27 +191,83 @@ func (s *ShardedStoreSuite) TestRowsInEveryShardCountTowardTheirGrant() {
 	s.EqualValues(600, s.used(grant.ID))
 }
 
+// uncounted writes a row naming the grants to the shard as a writer that dropped its count,
+// or stopped before it, leaves it.
+func (s *StoreSuite) uncounted(store *Store, startedAt time.Time, cost int64, grants ...int64) {
+	lost := Request{
+		UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", Provider: "openai", Model: "m",
+		StartedAt: startedAt, CostMicros: cost, Billable: true, Success: true, LimitGrants: grants,
+	}
+	s.Require().NoError(prepareRequest(&lost))
+	_, err := store.ShardDB().NewInsert().Model(&lost).Exec(s.ctx)
+	s.Require().NoError(err)
+}
+
+func (s *ShardedStoreSuite) reconcile() int {
+	added, err := s.store.ReconcileGrantUses(s.ctx)
+	s.Require().NoError(err)
+	return added
+}
+
 func (s *ShardedStoreSuite) TestAReconcileCountsARowItsWriterDidNot() {
 	grant := s.grant(LimitGrant{AmountMicros: 10_000})
 	s.grantRow(s.store, []int64{grant.ID}, 300, true)
-	// Written to the shard by a process that stopped before counting it.
-	lost := Request{
-		UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", Provider: "openai", Model: "m",
-		StartedAt: s.base, CostMicros: 70, Billable: true, Success: true, LimitGrants: []int64{grant.ID},
-	}
-	s.Require().NoError(prepareRequest(&lost))
-	_, err := s.other.ShardDB().NewInsert().Model(&lost).Exec(s.ctx)
-	s.Require().NoError(err)
+	s.uncounted(s.other, s.base, 70, grant.ID)
 	s.EqualValues(300, s.used(grant.ID))
 
-	added, err := s.store.ReconcileGrantUses(s.ctx, []int64{grant.ID})
-	s.Require().NoError(err)
-	s.Equal(1, added, "the row the writer counted is not counted again")
+	s.Equal(1, s.reconcile(), "the row the writer counted is not counted again")
 	s.EqualValues(370, s.used(grant.ID))
-	added, err = s.store.ReconcileGrantUses(s.ctx, []int64{grant.ID})
+	s.Zero(s.reconcile())
+	s.EqualValues(370, s.used(grant.ID))
+}
+
+func (s *ShardedStoreSuite) TestAReconcileReadsOnlyTheRowsSinceTheLastLessItsOverlap() {
+	grant := s.grant(LimitGrant{AmountMicros: 1_000_000})
+	for range grantReconcilePage + 1 {
+		s.uncounted(s.store, s.base, 1, grant.ID)
+	}
+	s.Equal(grantReconcilePage+1, s.reconcile(), "the first reads every row, page by page")
+	var shards []string
+	s.Require().NoError(s.store.DB().NewRaw("SELECT shard FROM limit_grant_reconciles ORDER BY shard").Scan(s.ctx, &shards))
+	s.Equal([]string{"here", "there"}, shards, "where it got in each shard is kept")
+
+	now := time.Now().UTC()
+	s.uncounted(s.store, s.base.Add(time.Minute), 10, grant.ID)
+	s.uncounted(s.store, now.Add(-grantReconcileOverlap/2), 100, grant.ID)
+	s.uncounted(s.other, now.Add(-grantReconcileOverlap/2), 1_000, grant.ID)
+	s.Equal(2, s.reconcile(), "a row started before the last reconcile less its overlap is not read again")
+	s.EqualValues(grantReconcilePage+1+100+1_000, s.used(grant.ID))
+}
+
+func (s *ShardedStoreSuite) TestOneRouterReconcilesAtATime() {
+	grant := s.grant(LimitGrant{AmountMicros: 10_000})
+	s.uncounted(s.store, s.base, 70, grant.ID)
+	other, err := s.store.DB().Conn(s.ctx)
 	s.Require().NoError(err)
+	defer other.Close()
+	_, err = other.ExecContext(s.ctx, "SELECT pg_advisory_lock(hashtextextended('limit_grant_reconciles', 0))")
+	s.Require().NoError(err)
+
+	added, err := s.store.ReconcileGrantUses(s.ctx)
+	s.ErrorIs(err, ErrReconcileBusy, "another router is at it")
 	s.Zero(added)
-	s.EqualValues(370, s.used(grant.ID))
+	s.Zero(s.used(grant.ID))
+
+	_, err = other.ExecContext(s.ctx, "SELECT pg_advisory_unlock(hashtextextended('limit_grant_reconciles', 0))")
+	s.Require().NoError(err)
+	s.Equal(1, s.reconcile())
+	s.EqualValues(70, s.used(grant.ID))
+}
+
+func (s *StoreSuite) TestWithOneDatabaseThereIsNothingToReconcile() {
+	if s.store.Sharded() {
+		return
+	}
+	grant := s.grant(LimitGrant{AmountMicros: 10_000})
+	s.uncounted(s.store, s.base, 70, grant.ID)
+	added, err := s.store.ReconcileGrantUses(s.ctx)
+	s.Require().NoError(err)
+	s.Zero(added, "the writer counts every row in the transaction that writes it")
 }
 
 func idsOf(grants []LimitGrant) []int64 {

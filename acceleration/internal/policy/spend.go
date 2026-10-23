@@ -3,6 +3,7 @@ package policy
 import (
 	"cmp"
 	"context"
+	"errors"
 	"slices"
 	"strconv"
 	"sync"
@@ -336,8 +337,7 @@ func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) 
 
 // grantsPass reads the live grants of every account with a limit, every Fresh, on a loop of its
 // own: a slow or failed read of them never delays or skips the limits and resets, which their
-// loop reads apart. Every reconcileEvery it also counts again, from the shards, the rows naming
-// each live grant, for a row a writer stopped before counting.
+// loop reads apart. With shards it first finds which held rows the reconcile counted.
 func (m *money) grantsPass(ctx context.Context) {
 	db := m.enforcer.config.DB()
 	if db == nil {
@@ -357,7 +357,6 @@ func (m *money) grantsPass(ctx context.Context) {
 	slices.Sort(keys)
 	m.countedByReconcile(ctx, db)
 	m.readGrants(ctx, db, keys)
-	m.reconcileGrants(ctx, db)
 }
 
 // readGrants reads the live grants of the accounts' organizations, within grantsTimeout, and
@@ -390,51 +389,24 @@ func (m *money) readGrants(ctx context.Context, db *store.Store, keys []string) 
 	}
 }
 
-// reconcileGrants counts again, from the shards, the rows naming each live grant last counted
-// reconcileEvery ago or never by this process. With one database the writer counts a row in the
-// transaction that writes it, so there is nothing to reconcile.
-func (m *money) reconcileGrants(ctx context.Context, db *store.Store) {
-	if !db.Sharded() {
+// reconcilePass counts toward their grants the rows the shards took since the last reconcile
+// that their writers did not, within reconcileTimeout, unless another router is at it. With one
+// database the writer counts a row in the transaction that writes it, so there is nothing to
+// reconcile. One cut short keeps how far it got, and the next goes on from there.
+func (m *money) reconcilePass(ctx context.Context) {
+	db := m.enforcer.config.DB()
+	if db == nil || !db.Sharded() {
 		return
 	}
-	now := time.Now()
-	live := map[int64]bool{}
-	var due []int64
-	m.mu.Lock()
-	for _, acct := range m.accounts {
-		for _, grant := range acct.grants {
-			id := grant.grant.ID
-			live[id] = true
-			if now.Sub(m.reconciled[id]) >= reconcileEvery {
-				due = append(due, id)
-			}
-		}
-	}
-	for id := range m.reconciled {
-		if !live[id] {
-			delete(m.reconciled, id)
-		}
-	}
-	m.mu.Unlock()
-	if len(due) == 0 {
-		return
-	}
-	slices.Sort(due)
-	call, cancel := context.WithTimeout(ctx, readTimeout)
-	counted, err := db.ReconcileGrantUses(call, slices.Compact(due))
+	call, cancel := context.WithTimeout(ctx, reconcileTimeout)
+	counted, err := db.ReconcileGrantUses(call)
 	cancel()
-	if err != nil {
-		m.failedRead("could not count the rows naming the customers' grants again", err, "grants", len(due))
-		return
-	}
 	if counted > 0 {
 		m.enforcer.logger.Warn("counted usage rows toward their grants that their writer had not", "rows", counted)
 	}
-	m.mu.Lock()
-	for _, id := range due {
-		m.reconciled[id] = now
+	if err != nil && !errors.Is(err, store.ErrReconcileBusy) && ctx.Err() == nil {
+		m.enforcer.logger.Error("could not count the rows naming the customers' grants again", "error", err)
 	}
-	m.mu.Unlock()
 }
 
 // keepLimits replaces an account's limits and resets, under m.mu. An account that has a limit

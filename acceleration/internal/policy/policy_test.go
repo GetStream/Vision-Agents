@@ -384,7 +384,7 @@ func (s *PolicySuite) TestWithShardsAGrantHoldStaysUntilItsRowCountsTowardTheGra
 	s.Require().NoError(err)
 	s.ErrorIs(admitted.Spend, ErrBudgetSpent, "the grant is not drawn twice meanwhile")
 
-	_, err = db.ReconcileGrantUses(s.ctx, []int64{grant.ID})
+	_, err = db.ReconcileGrantUses(s.ctx)
 	s.Require().NoError(err)
 	s.eventually(func() bool { return !held() }, 5*time.Second, 10*time.Millisecond, "let go once the reconcile counted it")
 	read, err := db.Grant(s.ctx, "", grant.ID)

@@ -3,7 +3,9 @@ package store
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -48,12 +50,24 @@ func OpenShards(options Options) (*Store, error) {
 		s.shard = connect(options.ShardDSN, maxConns)
 	}
 	own := cmp.Or(options.ShardDSN, options.DSN)
+	s.shardNames = []string{unnamedShard(own)}
 	for _, name := range slices.Sorted(maps.Keys(options.Shards)) {
-		if dsn := options.Shards[name]; dsn != "" && dsn != own {
+		switch dsn := options.Shards[name]; {
+		case dsn == own:
+			s.shardNames[0] = name
+		case dsn != "":
 			s.peers = append(s.peers, connect(dsn, peerConns))
+			s.shardNames = append(s.shardNames, name)
 		}
 	}
 	return s, nil
+}
+
+// unnamedShard names a shard Options.Shards does not: by a digest of its DSN, which says
+// nothing of it.
+func unnamedShard(dsn string) string {
+	sum := sha256.Sum256([]byte(dsn))
+	return "dsn:" + hex.EncodeToString(sum[:8])
 }
 
 // Sharded reports whether this shard's calls are kept apart from the shared database.

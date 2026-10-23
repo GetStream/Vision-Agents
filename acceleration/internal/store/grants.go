@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -373,34 +374,114 @@ func (s *Store) GrantUsesCounted(ctx context.Context, usageIDs []uuid.UUID) (map
 	return counted, nil
 }
 
-// ReconcileGrantUses counts toward the grants every billable row naming one of them, in every
-// shard, that is not counted yet: a row a writer wrote to its shard and stopped before counting
-// in the shared database. It reads requests_limit_grants_idx, and says how many it counted.
-func (s *Store) ReconcileGrantUses(ctx context.Context, grantIDs []int64) (int, error) {
-	if len(grantIDs) == 0 {
+const (
+	// grantReconcileOverlap is how far before where it last got the reconcile reads a shard
+	// again: a row written at most this long after it started is found. One written later,
+	// whose count its writer dropped too, is not.
+	grantReconcileOverlap = time.Hour
+	// grantReconcilePage is how many rows one read of a shard takes; where the reconcile got
+	// is kept after each, so one cut short goes on from there.
+	grantReconcilePage = 2_000
+)
+
+// ErrReconcileBusy is ReconcileGrantUses finding another router reconciling.
+var ErrReconcileBusy = errors.New("store: another router is reconciling grant uses")
+
+// ReconcileGrantUses counts toward their grants the billable rows naming one, in every shard,
+// that are not counted yet: a row whose writer wrote it to its shard and dropped, or stopped
+// before, counting it in the shared database. Each shard is read on from where the last
+// reconcile of it got (limit_grant_reconciles), less grantReconcileOverlap, in started_at
+// order (requests_limit_grants_idx). One router reconciles at a time, under an advisory lock
+// in the shared database: another finds ErrReconcileBusy. With one database the writer counts
+// every row as it writes it, so there is nothing to do. It says how many it counted.
+func (s *Store) ReconcileGrantUses(ctx context.Context) (int, error) {
+	if !s.Sharded() {
 		return 0, nil
 	}
-	type row struct {
-		Grant   int64     `bun:"grant"`
-		UsageID uuid.UUID `bun:"usage_id"`
-		Micros  int64     `bun:"micros"`
-	}
-	answers, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]row, error) {
-		var rows []row
-		err := db.NewRaw("SELECT g AS grant, r.usage_id, r.cost_micros AS micros "+
-			"FROM requests r, unnest(r.limit_grants) g "+
-			"WHERE r.limit_grants && ?::bigint[] AND r.limit_grants <> '{}' AND r.billable AND r.cost_micros > 0 "+
-			"AND r.usage_id IS NOT NULL AND g = ANY(?::bigint[])", pgdialect.Array(grantIDs), pgdialect.Array(grantIDs)).Scan(ctx, &rows)
-		return rows, err
-	})
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: reconcile grant uses: %w", err))
 	}
-	var uses []GrantUse
-	for _, shard := range answers {
-		for _, each := range shard {
-			uses = append(uses, GrantUse{GrantID: each.Grant, UsageID: each.UsageID, Micros: each.Micros})
+	defer tx.Rollback() //nolint:errcheck // it writes nothing; ending it lets go of the lock
+	var locked bool
+	if err := tx.QueryRowContext(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended('limit_grant_reconciles', 0))").Scan(&locked); err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: reconcile grant uses: lock: %w", err))
+	}
+	if !locked {
+		return 0, ErrReconcileBusy
+	}
+	now := time.Now().UTC()
+	shards := s.shards()
+	counted := make([]int, len(shards))
+	failed := make([]error, len(shards))
+	var wg sync.WaitGroup
+	for i, shard := range shards {
+		wg.Go(func() { counted[i], failed[i] = s.reconcileShard(ctx, shard, s.shardNames[i], now) })
+	}
+	wg.Wait()
+	total := 0
+	for _, n := range counted {
+		total += n
+	}
+	if err := errors.Join(failed...); err != nil {
+		return total, stack.Wrap(fmt.Errorf("store: reconcile grant uses: %w", err))
+	}
+	return total, nil
+}
+
+// reconcileShard is ReconcileGrantUses for one shard, read up to now.
+func (s *Store) reconcileShard(ctx context.Context, shard bun.IDB, name string, now time.Time) (int, error) {
+	var mark time.Time
+	err := s.db.NewRaw("SELECT started_at FROM limit_grant_reconciles WHERE shard = ?", name).Scan(ctx, &mark)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("shard %s: %w", name, err)
+	}
+	var after time.Time
+	var afterID int64
+	if !mark.IsZero() {
+		after = mark.Add(-grantReconcileOverlap)
+	}
+	counted := 0
+	for {
+		var rows []struct {
+			ID          int64     `bun:"id"`
+			StartedAt   time.Time `bun:"started_at"`
+			UsageID     uuid.UUID `bun:"usage_id"`
+			CostMicros  int64     `bun:"cost_micros"`
+			LimitGrants []int64   `bun:"limit_grants,array"`
+		}
+		err := shard.NewRaw("SELECT id, started_at, usage_id, cost_micros, limit_grants FROM requests "+
+			"WHERE limit_grants <> '{}' AND (started_at, id) > (?, ?) AND billable AND cost_micros > 0 AND usage_id IS NOT NULL "+
+			"ORDER BY started_at, id LIMIT ?", after, afterID, grantReconcilePage).Scan(ctx, &rows)
+		if err != nil {
+			return counted, fmt.Errorf("shard %s: %w", name, err)
+		}
+		var uses []GrantUse
+		for _, row := range rows {
+			for _, grant := range slices.Compact(slices.Sorted(slices.Values(row.LimitGrants))) {
+				uses = append(uses, GrantUse{GrantID: grant, UsageID: row.UsageID, Micros: row.CostMicros})
+			}
+		}
+		n, err := s.AddGrantUses(ctx, uses)
+		counted += n
+		if err != nil {
+			return counted, fmt.Errorf("shard %s: %w", name, err)
+		}
+		reached := now
+		if len(rows) == grantReconcilePage {
+			last := rows[len(rows)-1]
+			after, afterID = last.StartedAt, last.ID
+			if last.StartedAt.Before(now) {
+				reached = last.StartedAt
+			}
+		}
+		if _, err := s.db.NewRaw("INSERT INTO limit_grant_reconciles (shard, started_at) VALUES (?, ?) "+
+			"ON CONFLICT (shard) DO UPDATE SET started_at = GREATEST(limit_grant_reconciles.started_at, EXCLUDED.started_at), updated_at = now()",
+			name, reached).Exec(ctx); err != nil {
+			return counted, fmt.Errorf("shard %s: keep where it got: %w", name, err)
+		}
+		if len(rows) < grantReconcilePage {
+			return counted, nil
 		}
 	}
-	return s.AddGrantUses(ctx, uses)
 }

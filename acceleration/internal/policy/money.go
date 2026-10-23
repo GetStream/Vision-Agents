@@ -94,8 +94,10 @@ const (
 	passTimeout = time.Minute
 	// grantsTimeout bounds one read of the grants, on their own loop.
 	grantsTimeout = 2 * time.Second
-	// reconcileEvery is how often each live grant's rows are counted again from the shards.
-	reconcileEvery = 10 * time.Minute
+	// reconcileEvery is how often the rows the shards took since the last reconcile are
+	// counted toward their grants, on a loop of its own, each pass within reconcileTimeout.
+	reconcileEvery   = 10 * time.Minute
+	reconcileTimeout = 2 * time.Minute
 	// sumReads is how many subjects' spend is summed from Postgres at once, with no usage
 	// service. Each is a sum over the request rows of every shard since its window began, so a
 	// few at a time keep a slow Postgres from being asked for all of them together.
@@ -163,8 +165,6 @@ type money struct {
 	failModes map[string]usage.FailMode
 	// shippedAt is when the limits loop last asked the shard which held rows it shipped.
 	shippedAt time.Time
-	// reconciled is when each live grant's rows were last counted again from the shards.
-	reconciled map[int64]time.Time
 
 	kick, kickLimits, kickGrants chan struct{}
 	// ctx is the loops', which the first reads an admission waits on run under too (reads);
@@ -291,7 +291,6 @@ func (s *subjectSpend) spentIn(interval usage.Interval, start time.Time) int64 {
 func (m *money) start(e *Enforcer) {
 	m.enforcer, m.settings = e, e.settings
 	m.accounts, m.holdOf, m.failModes = map[string]*account{}, map[uuid.UUID]string{}, map[string]usage.FailMode{}
-	m.reconciled = map[int64]time.Time{}
 	if m.settings.Mode == config.LimitsOff {
 		return
 	}
@@ -300,11 +299,13 @@ func (m *money) start(e *Enforcer) {
 	m.ctx, m.cancel = ctx, cancel
 	m.firstSlots = make(chan struct{}, firstBatches)
 	enforcers.Store(e, struct{}{})
-	m.loops.Add(3)
+	m.loops.Add(4)
 	go m.every(ctx, m.settings.Fresh, m.kick, m.pass)
 	go m.every(ctx, m.settings.SpendEvery, m.kickLimits, m.limitsPass)
-	// Grants have a loop of their own, so a slow read of them never holds up the limits'.
+	// Grants have a loop of their own, so a slow read of them never holds up the limits', and
+	// so does their reconcile, so a long one never holds up reading them.
 	go m.every(ctx, m.settings.Fresh, m.kickGrants, m.grantsPass)
+	go m.every(ctx, reconcileEvery, nil, m.reconcilePass)
 }
 
 // stop ends the loops and waits for their passes to finish.
