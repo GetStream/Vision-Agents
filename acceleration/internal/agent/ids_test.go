@@ -199,3 +199,84 @@ func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 	}
 	assert.True(t, failedResult(placeholderResult("Caller")))
 }
+
+func TestAnIDATextResultGaveIsPassedOn(t *testing.T) {
+	// τ-bench retail: find_user_id_by_name_zip answers with the bare ID, which is not JSON.
+	tools := []string{"find_user_id_by_name_zip", "get_user_details"}
+	history := []llm.Message{
+		{Role: llm.User, Content: "First name, n o a h. Last name, i t o. ZIP, nine eight one eight seven."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "find_user_id_by_name_zip"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: "noah_ito_3850"},
+	}
+	call := func(arguments string) llm.ToolCall {
+		return llm.ToolCall{Name: "get_user_details", Arguments: arguments}
+	}
+
+	_, _, _, unfound := unfoundID(history, call(`{"user_id":"noah_ito_3850"}`), tools)
+	assert.False(t, unfound)
+	_, _, _, unfound = unfoundID(history, call(`{"user_id":"noah_ito_3851"}`), tools)
+	assert.True(t, unfound, "a different ID is still one nothing gave")
+
+	quoted := []llm.Message{
+		history[0],
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_user_details"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: unfoundIDResult("user_id", "noah_ito_3850", nil)},
+	}
+	_, _, _, unfound = unfoundID(quoted, call(`{"user_id":"noah_ito_3850"}`), tools)
+	assert.True(t, unfound, "a refusal quoting the ID does not make it returned")
+}
+
+func TestAnIDTheCallerReadOutIsPassedOn(t *testing.T) {
+	// τ-bench airline callers read the user ID out, separators by name, as the transcriber
+	// wrote them.
+	tools := []string{"get_user_details", "get_reservation_details"}
+	call := func(arguments string) llm.ToolCall {
+		return llm.ToolCall{Name: "get_user_details", Arguments: arguments}
+	}
+	for said, id := range map[string]string{
+		"User ID is omar underscore davis underscore three eight one seven.":                            "omar_davis_3817",
+		"Sure. User ID is i v a n underscore r o s s i underscore eight five five five.":                "ivan_rossi_8555",
+		"Customer S o p h i a underscore t a y l o r underscore nine zero six five. That's my user ID.": "sophia_taylor_9065",
+	} {
+		history := []llm.Message{{Role: llm.User, Content: said}}
+		_, _, _, unfound := unfoundID(history, call(`{"user_id":"`+id+`"}`), tools)
+		assert.False(t, unfound, said)
+	}
+	history := []llm.Message{{Role: llm.User, Content: "User ID is omar underscore davis underscore three eight one seven."}}
+	_, _, _, unfound := unfoundID(history, call(`{"user_id":"omar_davis_3818"}`), tools)
+	assert.True(t, unfound, "a digit the caller did not say is still not theirs")
+}
+
+func TestANumberReadOutInDashedGroupsIsOneNumber(t *testing.T) {
+	// τ³ telecom: the caller gave the line as 555-123-2002 and the lookup was refused.
+	history := []llm.Message{{Role: llm.User, Content: "Yeah. It's five five five dash one two three dash two zero zero two."}}
+	for arguments, unheard := range map[string]bool{
+		`{"phone_number":"5551232002"}`:   false,
+		`{"phone_number":"555-123-2002"}`: false,
+		`{"phone_number":"5551232003"}`:   true,
+		`{"phone_number":"1232002555"}`:   true,
+	} {
+		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "get_customer_by_phone", Arguments: arguments})
+		assert.Equal(t, unheard, got, arguments)
+	}
+}
+
+func TestANameTheCallerSpelledIsBookedThoughAnotherSpellingIsClose(t *testing.T) {
+	// Each is what the transcriber wrote on a benchmark call where the name was refused.
+	for said, arguments := range map[string]string{
+		"Hi. This is Dana Fisher. That's f i s c h e r. I need to book a flight to New York":     `{"passenger_name":"Dana Fischer"}`,
+		"Lay Wilson. That's l e i w i l s o n. ZIP is three two two five five":                   `{"first_name":"Lei","last_name":"Wilson"}`,
+		"N n o a h. First name, n o a h. Last name, i t o.":                                      `{"first_name":"Noah","last_name":"Ito"}`,
+		"Noah Ito. That's n o a a last Last name, i t o. First name, n o a h. Last name, i t o.": `{"first_name":"Noah","last_name":"Ito"}`,
+		"Sure. First First name i i v a n Last name, h e r n a n d e z. No, just i v a n":        `{"first_name":"Ivan","last_name":"Hernandez"}`,
+		"Okay. It's j o eight n s m i t h. Uh, do you need my birthday too?":                     `{"full_name":"John Smith"}`,
+	} {
+		_, _, got := misspelledName([]llm.Message{{Role: llm.User, Content: said}},
+			llm.ToolCall{Name: "lookup", Arguments: arguments})
+		assert.False(t, got, said)
+	}
+	_, spelled, got := misspelledName([]llm.Message{{Role: llm.User, Content: "That's f i s c h e r. I need a flight."}},
+		llm.ToolCall{Name: "book_flight", Arguments: `{"passenger_name":"Dana Fisher"}`})
+	assert.True(t, got, "the transcriber's Fisher is still not the Fischer spelled")
+	assert.Equal(t, "fischeri", spelled)
+}

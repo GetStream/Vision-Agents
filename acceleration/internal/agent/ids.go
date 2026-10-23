@@ -28,13 +28,24 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 	}
 	var said strings.Builder
 	var results []any
+	// texts are results that are not JSON objects or lists: τ-bench's find_user_id_by_email
+	// answers with the bare ID, noah_ito_3850, under no key to look it up by.
+	var texts []string
 	for _, message := range history {
 		switch message.Role {
 		case llm.User:
-			said.WriteString(" " + message.Content + " " + digitsFor(message.Content))
+			said.WriteString(" " + message.Content + " " + withSpokenSeparators(digitsFor(message.Content)))
 		case llm.ToolResult:
+			if failedResult(message.Content) {
+				// A refusal quotes the value it refused, which does not make it returned.
+				continue
+			}
 			var result any
-			if json.Unmarshal([]byte(message.Content), &result) == nil {
+			if json.Unmarshal([]byte(message.Content), &result) != nil {
+				texts = append(texts, message.Content)
+			} else if text, bare := result.(string); bare {
+				texts = append(texts, text)
+			} else {
 				results = append(results, result)
 			}
 		}
@@ -69,7 +80,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 				}
 			})
 		}
-		if !returned {
+		if !returned && !slices.ContainsFunc(texts, func(result string) bool { return holdsValue(result, wanted) }) {
 			return name, text, ids, true
 		}
 	}
@@ -273,7 +284,7 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 	for _, message := range history {
 		switch message.Role {
 		case llm.User:
-			sources = append(sources, message.Content, digitsFor(message.Content))
+			sources = append(sources, message.Content, withSpokenSeparators(digitsFor(message.Content)))
 			for _, number := range digitRun.FindAllString(digitsFor(message.Content), -1) {
 				if len(number) >= 3 && !slices.Contains(heard, number) {
 					heard = append(heard, number)
@@ -337,6 +348,13 @@ func unheardResult(key, value string, heard []string) string {
 // misspelledName reports a name argument that is not the name the caller spelled out
 // letter by letter. The caller said "The name is Okafor, o k a f o r" and every model booked
 // the transcriber's "Alkafor" or "Alcophor".
+//
+// A name that some spelling holds letter for letter was spelled, and is let through even
+// where another spelling is close to it. A run of single letters also picks up the letters
+// either side of a name ("f i s c h e r. I need" reads as fischeri, "l e i w i l s o n" as
+// one name), and the transcriber hears the same letters differently from one spelling to
+// the next ("n o a h", then "n o a a"). Holding a name to whichever close spelling came
+// first refused Noah, Ivan, Smith and Fischer as the callers had spelled them.
 func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled string, misspelled bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -348,7 +366,7 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 			continue
 		}
 		for _, match := range spelledOut.FindAllStringSubmatch(message.Content, -1) {
-			spellings = append(spellings, strings.Join(strings.FieldsFunc(match[1], func(r rune) bool { return !unicode.IsLetter(r) }), ""))
+			spellings = append(spellings, strings.ToLower(strings.Join(strings.FieldsFunc(match[1], func(r rune) bool { return !unicode.IsLetter(r) }), "")))
 		}
 	}
 	if len(spellings) == 0 {
@@ -361,9 +379,11 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 		}
 		for _, word := range strings.Fields(text) {
 			word = alphanumeric(word)
+			if len(word) < 3 || slices.ContainsFunc(spellings, func(spelling string) bool { return strings.Contains(spelling, word) }) {
+				continue
+			}
 			for _, spelling := range spellings {
-				spelling = strings.ToLower(spelling)
-				if word != spelling && len(word) >= 3 && closeTo(word, spelling) {
+				if closeTo(word, spelling) {
 					return text, spelling, true
 				}
 			}
@@ -540,6 +560,14 @@ func walkIDs(value any, at string, found func(at, id string)) {
 			found(at, fmt.Sprint(typed))
 		}
 	}
+}
+
+// holdsValue reports whether a result written as text gives wanted as one of its words, as
+// the bare noah_ito_3850 does. wanted is already alphanumeric.
+func holdsValue(result, wanted string) bool {
+	return slices.ContainsFunc(strings.FieldsFunc(result, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("_-#", r)
+	}), func(word string) bool { return alphanumeric(word) == wanted })
 }
 
 // alphanumeric lowercases text and drops everything but letters and digits, so "T-1842"
