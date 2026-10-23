@@ -885,7 +885,7 @@ func (s *AppsSuite) sealed() {
 
 // anotherNumber gives a customer one more number on a vendor.
 func (s *AppsSuite) anotherNumber(customer, vendor string) string {
-	e164 := "+1512" + uuid.NewString()[:7]
+	e164 := aNumber()
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
 		E164: e164, Vendor: vendor, Country: "US", CustomerID: customer, PurchasedAt: time.Now().UTC(),
 	}))
