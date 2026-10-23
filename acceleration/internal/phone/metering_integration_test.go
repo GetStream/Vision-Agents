@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -482,6 +483,39 @@ func (s *MeteringSuite) TestAnUnansweredPlacedCallWhoseAgentJoinWasDeliveredIsNo
 	s.answered(answered.CallType, answered.CallID, "phone-1")
 	s.ended(answered.CallType, answered.CallID)
 	s.Zero(s.logs.count("ERROR", unhooked), "an answered call is not checked")
+}
+
+// A participant event of a video call, which rings no phone, writes nothing: only a call with an
+// outbound leg ringing is checked for a hook that does not deliver them.
+func (s *MeteringSuite) TestAParticipantEventOfACallWithNoLegRingingRecordsNothing() {
+	video := "call-" + uuid.NewString()
+	for range 3 {
+		s.Require().NoError(s.service.Heard(s.ctx, everyApp, defaultCallType, video))
+	}
+	s.Zero(s.kept(video))
+
+	placed := s.place()
+	s.clock.advance(2 * heardRecheck)
+	s.Require().NoError(s.service.Heard(s.ctx, everyApp, placed.CallType, placed.CallID))
+	s.Equal(1, s.kept(placed.CallID))
+}
+
+// The sweep deletes every row kept for a day, in as many batches as it takes.
+func (s *MeteringSuite) TestTheSweepDeletesEveryRowKeptForADayInBatches() {
+	callID := "call-" + uuid.NewString()
+	old := s.clock.now().Add(-25 * time.Hour)
+	rows := make([]store.CallParticipant, legSweepBatch+1)
+	for i := range rows {
+		rows[i] = store.CallParticipant{Unpinned: true, CallType: defaultCallType, CallID: callID,
+			ParticipantSession: "phone-" + strconv.Itoa(i), JoinedAt: &old, RecordedAt: old}
+	}
+	_, err := s.store.ShardDB().NewInsert().Model(&rows).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	_, err = s.service.SweepLegs(s.ctx)
+	s.Require().NoError(err)
+
+	s.Zero(s.kept(callID))
 }
 
 // kept is how many joins and leaves of the call are kept for a leg yet to open.

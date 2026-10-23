@@ -1453,8 +1453,10 @@ placed, each transfer into it, a call that arrived) is a `call_legs` row. A plac
 transfer rings from when the vendor takes the dial and starts when the person's phone joins the
 Stream call (`call.session_participant_joined`), matched to its leg by the phone's number; a
 call that arrives starts at `call.session_started`, one leg per Stream session. Legs are timed by
-when Stream made each event, and a join or leave delivered before its leg is written is kept for
-a day (`call_participants`), so the leg starts from it. A leg ends when its phone leaves
+when Stream made each event (no earlier than the leg was dialled, and arrival time for an event
+made over an hour before it), and a join or leave delivered before its leg is written is kept
+for a day (`call_participants`) for the leg to take. A join delivered again after the call ended
+revives the leg the end left unanswered, billed once. A leg ends when its phone leaves
 (`call.session_participant_left`) or the call ends (`call.session_ended`), and is then a
 `call_minutes` row of its `call_seconds`, billed to whoever placed the call, or the app under
 `phone:inbound`, and priced by direction and country. A leg that never connected bills nothing. A

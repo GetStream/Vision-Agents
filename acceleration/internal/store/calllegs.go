@@ -326,7 +326,7 @@ func (s *Store) RecordParticipant(ctx context.Context, scope AppScope, kept Call
 // HeardCall records, in this shard, that the call hook delivered a participant event of the
 // call, anybody's: a row with no participant session. A hook subscribed to them delivers the
 // agent's own join on every placed call, so a placed call ending with none heard is a hook that
-// does not deliver them.
+// does not deliver them. Only a call with an outbound leg ringing (CallRinging) needs it.
 func (s *Store) HeardCall(ctx context.Context, scope AppScope, callType, callID string, now time.Time) error {
 	_, err := s.shard.NewInsert().Model(&CallParticipant{
 		StreamAppPK: scope.App, Unpinned: scope.Unpinned, CallType: callType, CallID: callID,
@@ -336,6 +336,21 @@ func (s *Store) HeardCall(ctx context.Context, scope AppScope, callType, callID 
 		return stack.Wrap(fmt.Errorf("store: heard call: %w", err))
 	}
 	return nil
+}
+
+// CallRinging reports whether the call has an outbound leg, in any shard, still ringing: the
+// calls HeardCall is worth recording for.
+func (s *Store) CallRinging(ctx context.Context, scope AppScope, callType, callID string) (bool, error) {
+	ringing, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (bool, error) {
+		return db.NewSelect().Model((*CallLeg)(nil)).
+			Where("call_type = ?", callType).Where("call_id = ?", callID).
+			Where("ended_at IS NULL").Where("started_at IS NULL").Where("direction = ?", Outbound).
+			ApplyQueryBuilder(scope.where).Exists(ctx)
+	})
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: call ringing: %w", err))
+	}
+	return slices.Contains(ringing, true), nil
 }
 
 // CallHeard reports whether the call hook delivered any participant event of the call

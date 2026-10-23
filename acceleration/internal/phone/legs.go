@@ -192,21 +192,36 @@ func (s *Service) EndLegs(ctx context.Context, scope store.AppScope, callType, c
 	return nil
 }
 
+// heardRecheck is how long a call found with no outbound leg ringing is not asked about again,
+// so a video call with many participants costs a read a minute, and a placed call whose agent
+// joined before its leg was written is still heard by the agent's later events.
+const heardRecheck = time.Minute
+
 // Heard records that the call hook delivered a participant event of a call, anybody's, which
-// is what tells a hook subscribed to them from one that is not (checkHooked). A process records
-// each call once an hour, so a call with many participants costs one write.
+// is what tells a hook subscribed to them from one that is not (checkHooked). Only a call with
+// an outbound leg still ringing is recorded, which is the only one checked: a process records
+// each such call once an hour, and asks after any other call at most once every heardRecheck.
 func (s *Service) Heard(ctx context.Context, scope store.AppScope, callType, callID string) error {
 	if s.store == nil {
 		return nil
 	}
 	key := strconv.FormatInt(scope.App, 10) + ":" + strconv.FormatBool(scope.Unpinned) + ":" + callType + ":" + callID
-	if !s.heard.first(key, s.now()) {
+	now := s.now()
+	if !s.heard.first(key, now, heardRecheck) {
 		return nil
 	}
-	if err := s.store.HeardCall(ctx, scope, callType, callID, s.now()); err != nil {
+	ringing, err := s.store.CallRinging(ctx, scope, callType, callID)
+	if err != nil || !ringing {
+		if err != nil {
+			s.heard.forget(key)
+		}
+		return err
+	}
+	if err := s.store.HeardCall(ctx, scope, callType, callID, now); err != nil {
 		s.heard.forget(key)
 		return err
 	}
+	s.heard.remember(key, now.Add(time.Hour))
 	return nil
 }
 
@@ -228,7 +243,7 @@ func (s *Service) checkHooked(ctx context.Context, scope store.AppScope, callTyp
 		return
 	}
 	leg := ended[index]
-	if heard || !s.unhooked.first(strconv.FormatInt(leg.StreamAppPK, 10), s.now()) {
+	if heard || !s.unhooked.first(strconv.FormatInt(leg.StreamAppPK, 10), s.now(), time.Hour) {
 		return
 	}
 	s.logger.Error("call hook does not deliver participant events; re-run cmd/phone hooks",
@@ -237,40 +252,51 @@ func (s *Service) checkHooked(ctx context.Context, scope store.AppScope, callTyp
 			"placed calls and transfers in this app never connect, and their minutes are not billed")
 }
 
-// recently remembers keys for an hour, and at most recentlyMost of them, so a burst of new
-// ones forgets the oldest rather than grow without bound.
+// recently remembers keys until a time each, and at most recentlyMost of them, so a burst of
+// new ones forgets the oldest rather than grow without bound.
 type recently struct {
-	mu   sync.Mutex
-	seen map[string]time.Time
+	mu    sync.Mutex
+	until map[string]time.Time
 }
 
 const recentlyMost = 10_000
 
-// first reports whether key was not seen in the hour before now, and remembers it from now if so.
-func (r *recently) first(key string, now time.Time) bool {
+// first reports whether key is not remembered at now, and remembers it for long if so.
+func (r *recently) first(key string, now time.Time, long time.Duration) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if at, ok := r.seen[key]; ok && now.Sub(at) < time.Hour {
+	if until, ok := r.until[key]; ok && now.Before(until) {
 		return false
 	}
-	if r.seen == nil {
-		r.seen = map[string]time.Time{}
+	r.rememberLocked(key, now, now.Add(long))
+	return true
+}
+
+// remember remembers key until until.
+func (r *recently) remember(key string, until time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rememberLocked(key, time.Time{}, until)
+}
+
+func (r *recently) rememberLocked(key string, now, until time.Time) {
+	if r.until == nil {
+		r.until = map[string]time.Time{}
 	}
-	if len(r.seen) >= recentlyMost {
-		maps.DeleteFunc(r.seen, func(_ string, at time.Time) bool { return now.Sub(at) >= time.Hour })
-		if len(r.seen) >= recentlyMost {
-			clear(r.seen)
+	if _, ok := r.until[key]; !ok && len(r.until) >= recentlyMost {
+		maps.DeleteFunc(r.until, func(_ string, until time.Time) bool { return !now.Before(until) })
+		if len(r.until) >= recentlyMost {
+			clear(r.until)
 		}
 	}
-	r.seen[key] = now
-	return true
+	r.until[key] = until
 }
 
 // forget drops key, so it is first again.
 func (r *recently) forget(key string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.seen, key)
+	delete(r.until, key)
 }
 
 // settleLegs bills the legs that ended whose phone joined. One that never connected was not
@@ -318,10 +344,15 @@ func (s *Service) SweepLegs(ctx context.Context) (int, error) {
 	if err := s.rebill(ctx, now); err != nil {
 		return len(ended), err
 	}
-	if _, err := s.store.DeleteCallParticipants(ctx, now.Add(-keepParticipantsFor), legSweepBatch); err != nil {
-		return len(ended), err
+	for {
+		deleted, err := s.store.DeleteCallParticipants(ctx, now.Add(-keepParticipantsFor), legSweepBatch)
+		if err != nil {
+			return len(ended), err
+		}
+		if deleted < legSweepBatch {
+			return len(ended), nil
+		}
 	}
-	return len(ended), nil
 }
 
 // rebill writes the row of each leg that ended lately and has none, under the usage id it
