@@ -1162,7 +1162,9 @@ func (s *AppsSuite) TestACallsCustomIsOnItsStreamCall() {
 	s.Require().NoError(err)
 	made := s.own.Call(placed.CallType, placed.CallID)
 	s.Require().NotNil(made, "the call the leg lands in is made before it is dialled")
-	s.Equal(map[string]any{"lead": "42"}, made["data"].(map[string]any)["custom"])
+	data, ok := made["data"].(map[string]any)
+	s.Require().True(ok, "the call was created with data")
+	s.Equal(map[string]any{"lead": "42"}, data["custom"])
 }
 
 func (s *AppsSuite) TestTheVendorIsGivenTheSessionAsTheCallID() {
@@ -1244,4 +1246,21 @@ func (s *AppsSuite) TestATransferFromANumberWithALiveCallPlaces() {
 	s.Require().NoError(err)
 	s.Len(s.own.Trunks(), 1)
 	s.Equal(placed.CallID, s.vendor.dialed.CallID, "the human joins the call the agent is on")
+}
+
+func (s *AppsSuite) TestAFailedTransferFromTheCallsOwnNumberKeepsTheCallsRow() {
+	s.sealed()
+	placed, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	s.vendor.err = errors.New("the vendor refused")
+
+	_, err = s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550002222",
+		CallID: placed.CallID, CallType: placed.CallType, StreamApp: placed.StreamApp,
+	})
+
+	s.Require().Error(err)
+	resources, err := s.store.CallResourcesInApp(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID)
+	s.Require().NoError(err)
+	s.Len(resources, 1, "the call's own leg is still live")
 }

@@ -125,13 +125,16 @@ func (s *StoreSuite) TestReleasingANumberClearsItsAttachedAt() {
 }
 
 func (s *StoreSuite) TestTwoCallResourcesMayShareATrunk() {
+	var recorded []*CallResource
 	for _, call := range []string{"call-1", "call-2"} {
-		s.Require().NoError(s.store.RecordCallResource(s.ctx, &CallResource{
+		resource := &CallResource{
 			TrunkID: "shared-trunk", RouteID: "route-1", CallType: "default", CallID: call, CustomerID: "acme", Shared: true,
-		}))
+		}
+		s.Require().NoError(s.store.RecordCallResource(s.ctx, resource))
+		recorded = append(recorded, resource)
 	}
 
-	s.Require().NoError(s.store.DeleteCallResource(s.ctx, "default", "call-1", "shared-trunk"))
+	s.Require().NoError(s.store.DeleteCallResource(s.ctx, recorded[0].ID))
 
 	gone, err := s.store.CallResourcesInApp(s.ctx, AppScope{Unpinned: true}, "default", "call-1")
 	s.Require().NoError(err)
@@ -225,4 +228,21 @@ func (s *StoreSuite) TestDeletingATrunkLeavesAnotherCustomersTrunkAlone() {
 		}))
 
 	s.Equal([]string{"trunk-theirs"}, s.trunkIDs(theirs))
+}
+
+func (s *StoreSuite) TestDeletingALegKeepsAnotherLegOfTheCallOnTheSameTrunk() {
+	legs := make([]*CallResource, 2)
+	for i := range legs {
+		legs[i] = &CallResource{
+			TrunkID: "shared-trunk", RouteID: "route-1", CallType: "default", CallID: "call-1", CustomerID: "acme", Shared: true,
+		}
+		s.Require().NoError(s.store.RecordCallResource(s.ctx, legs[i]))
+	}
+
+	s.Require().NoError(s.store.DeleteCallResource(s.ctx, legs[1].ID))
+
+	kept, err := s.store.CallResourcesInApp(s.ctx, AppScope{Unpinned: true}, "default", "call-1")
+	s.Require().NoError(err)
+	s.Require().Len(kept, 1)
+	s.Equal(legs[0].ID, kept[0].ID)
 }

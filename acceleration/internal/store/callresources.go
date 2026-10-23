@@ -35,12 +35,11 @@ func (s *Store) RecordCallResource(ctx context.Context, resource *CallResource) 
 	return nil
 }
 
-// DeleteCallResource forgets one call's use of a trunk, for a leg that was never placed.
-func (s *Store) DeleteCallResource(ctx context.Context, callType, callID, trunkID string) error {
+// DeleteCallResource forgets one leg's row, for a leg that was never placed. It is named by
+// its id because a call's legs on one shared trunk have the same call and trunk.
+func (s *Store) DeleteCallResource(ctx context.Context, id int64) error {
 	_, err := s.shard.NewDelete().Model((*CallResource)(nil)).
-		Where("call_type = ?", callType).
-		Where("call_id = ?", callID).
-		Where("trunk_id = ?", trunkID).
+		Where("id = ?", id).
 		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: delete call resource: %w", err))

@@ -751,8 +751,8 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	var trunkID, routeID string
 	committed := false
 	if shared {
-		// The number's rule names no call, so the call and what the agent reads on it are
-		// made here, before the leg arrives.
+		// The number's rule carries no custom data, so a call that has some is created with
+		// it here, before the leg arrives; otherwise the leg creates the call.
 		if len(request.Custom) > 0 {
 			if err := stream.CreateCall(ctx, callType, callID, request.Custom); err != nil {
 				return Placed{}, err
@@ -1129,7 +1129,7 @@ func (s *Service) sharedLine(ctx context.Context, stream *Stream, pin int64, pro
 // forgetCallResource deletes the row of a leg on a shared line that was never placed.
 // Best-effort: a failure is logged, never returned, so it cannot mask the dial's own.
 func (s *Service) forgetCallResource(ctx context.Context, resource *store.CallResource) {
-	if err := s.store.DeleteCallResource(ctx, resource.CallType, resource.CallID, resource.TrunkID); err != nil {
+	if err := s.store.DeleteCallResource(ctx, resource.ID); err != nil {
 		s.logger.Error("could not delete the row of a leg that did not place",
 			"trunk", resource.TrunkID, "call", resource.CallID, "error", err)
 	}
@@ -1241,9 +1241,15 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		callType = defaultCallType
 	}
 
-	line, shared, err := s.sharedLine(ctx, stream, request.StreamApp, provider, held)
-	if err != nil {
-		return Dialed{}, stack.Wrap(err)
+	var line TrunkLine
+	var shared bool
+	// The number's shared rule routes into defaultCallType only, so a call of another type
+	// takes a rule of its own pinned to it.
+	if callType == defaultCallType {
+		line, shared, err = s.sharedLine(ctx, stream, request.StreamApp, provider, held)
+		if err != nil {
+			return Dialed{}, stack.Wrap(err)
+		}
 	}
 	var trunkID, routeID string
 	var bridge Bridge
