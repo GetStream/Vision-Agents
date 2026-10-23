@@ -499,9 +499,14 @@ func (e *Enforcer) decide(ctx context.Context, customerID string) decision {
 	decided, err := e.configuration(reading, customerID)
 	cancel()
 	if err != nil {
+		// This request is admitted, which is what a budget the customer set for itself can
+		// afford; its money is read apart. Nothing is kept, so the next request reads again,
+		// and a read in the background keeps the decision when it lands.
 		e.logger.Error("could not read a customer's policies, allowing the request",
 			"customer", customerID, "error", err)
 		decided.unread = err
+		e.warm(customerID)
+		return decided
 	}
 	decided.read, decided.used = now, now
 	e.mu.Lock()

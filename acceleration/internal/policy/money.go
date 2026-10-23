@@ -15,7 +15,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
@@ -35,6 +34,22 @@ var ErrSuspended = errors.New("policy: this organization is suspended; contact s
 // ErrSystemLimit is billable work asked for by an organization that has spent its spend hard
 // limit for the day or the month (usage.Limits.SpendHardLimit), whatever its credit.
 var ErrSystemLimit = errors.New("policy: the organization's spend hard limit is reached")
+
+// Code is the short code a refusal of money is known by, as the API answers it and a campaign
+// records it, or "" for any other error.
+func Code(err error) string {
+	switch {
+	case errors.Is(err, ErrSuspended):
+		return "account_suspended"
+	case errors.Is(err, ErrNoCredits):
+		return "insufficient_credits"
+	case errors.Is(err, ErrSystemLimit):
+		return "system_limit_reached"
+	case errors.Is(err, ErrBudgetSpent):
+		return "spend_limit_reached"
+	}
+	return ""
+}
 
 // refused is a refusal of one of the kinds above, which reads as its message alone.
 type refused struct {
@@ -68,9 +83,6 @@ const (
 	// of every shard since its window began, so a few at a time keep a slow Postgres from
 	// being asked for all of them together.
 	budgetReads = 4
-	// maxHolds is the most holds one account keeps apart. Past it, the oldest are carried as
-	// one per app, which counts the same money and lets go of it no sooner.
-	maxHolds = 10_000
 	// logEvery spaces a failed read's error, and each organization's refusals in the log.
 	logEvery = time.Minute
 )
@@ -155,23 +167,25 @@ type account struct {
 	// read is when the standing last landed, zero until the first. standingFrom and
 	// measuredFrom are when the last standing that landed, and the last read of every budget
 	// that landed, were asked for: each counts every row its ledger had by then.
-	read         time.Time
-	standingFrom time.Time
-	measuredFrom time.Time
+	// standingFailed and measureFailed are when each last could not be read.
+	read           time.Time
+	standingFrom   time.Time
+	measuredFrom   time.Time
+	standingFailed time.Time
+	measureFailed  time.Time
 	// wanted is when this process first asked for it, and used when it last did.
 	wanted time.Time
 	used   time.Time
-	// holds is what this process recorded that the ledger may not count yet, by usage id.
-	holds map[uuid.UUID]*hold
-}
-
-// readFrom is when the last read of everything the account counts was asked for: its standing,
-// and its budgets when it has any.
-func (a *account) readFrom() time.Time {
-	if a.budgeted && a.measuredFrom.Before(a.standingFrom) {
-		return a.measuredFrom
-	}
-	return a.standingFrom
+	// holds is what this process recorded that the ledgers may not count yet, by usage id,
+	// with its folds; folded is each usage id a fold carries, and folds the fold open for
+	// each state.
+	holds  map[uuid.UUID]*hold
+	folded map[uuid.UUID]folded
+	folds  map[fold]uuid.UUID
+	// held is what the holds count against the balance, and windows what they count against
+	// the spend hard limit and the budgets, kept as holds come and go so admission reads a sum.
+	held    int64
+	windows map[window]int64
 }
 
 // measured is a budget and what was spent against it at the last read.
@@ -197,21 +211,6 @@ func keyOf(budget scoped) budgetKey {
 type scope struct {
 	kind store.PolicyScope
 	id   string
-}
-
-// hold is money one unit of work has spent, kept off the balance until the ledger counts it.
-// Keyed by the row's usage id, so recording or acking it twice changes nothing. A hold made
-// before the work starts, or one another router shares, would take the same shape.
-type hold struct {
-	// scopes are the organization and the app.
-	scopes []scope
-	micros int64
-	// expires is PendingTTL after the hold was made. A hold no ack reaches, such as a row
-	// another router's sweeper shipped, is let go once a read asked for after it has landed:
-	// that read counts the row if anything does. Until one lands, it is kept.
-	expires time.Time
-	// ackedAt is when the ledger was known to have the row, zero until then.
-	ackedAt time.Time
 }
 
 // start begins the loops, unless money is not enforced at all.
@@ -360,7 +359,9 @@ func (m *money) pass(ctx context.Context) {
 				m.failModes[standing.OrganizationTier] = standing.Tier.FailMode
 			}
 		}
-		if !unread[key] {
+		if unread[key] {
+			acct.standingFailed = now
+		} else {
 			acct.standingFrom = readFrom
 		}
 		acct.budgeted = len(budgets[key]) > 0
@@ -369,7 +370,7 @@ func (m *money) pass(ctx context.Context) {
 }
 
 // measurePass sums every budget the decisions in use hold, a few at a time, then lets go of the
-// holds the reads now count.
+// holds the sums now count. It also asks the shard which held rows it has shipped.
 //
 // It runs every BudgetEvery rather than every Fresh. A sum reads the request rows of every
 // shard since the window began, up to a month of them, while what this router spends is held
@@ -379,6 +380,7 @@ func (m *money) pass(ctx context.Context) {
 func (m *money) measurePass(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, passTimeout)
 	defer cancel()
+	m.shipped(ctx)
 	_, budgets := m.inUse(time.Now())
 	if len(budgets) == 0 {
 		return
@@ -396,95 +398,13 @@ func (m *money) measurePass(ctx context.Context) {
 		}
 		acct.measured = remeasured(acct.measured, list, spent)
 		acct.budgeted = true
-		if !unmeasured[key] {
+		if unmeasured[key] {
+			acct.measureFailed = now
+		} else {
 			acct.measuredFrom = readFrom
 		}
 		m.release(key, acct, now)
 	}
-}
-
-// release lets go of the account's holds a landed read counts, under m.mu: one acked before the
-// last read of everything the account counts was asked for, and one no ack reached that was
-// made PendingTTL before it. A hold waits however long no read lands, since what it holds
-// is spend the balance read last does not know of. Past maxHolds the oldest are carried as
-// one per app.
-func (m *money) release(key string, acct *account, now time.Time) {
-	readFrom := acct.readFrom()
-	var expired, waiting, waited int64
-	for id, held := range acct.holds {
-		switch {
-		case !held.ackedAt.IsZero() && held.ackedAt.Before(readFrom):
-		case !readFrom.Before(held.expires):
-			if held.ackedAt.IsZero() {
-				expired += held.micros
-			}
-		default:
-			if !now.Before(held.expires) {
-				waiting++
-				waited += held.micros
-			}
-			continue
-		}
-		delete(acct.holds, id)
-		delete(m.holdOf, id)
-	}
-	logger := m.enforcer.logger
-	if expired > 0 {
-		logger.Warn("usage held against an organization expired before the ledger counted it",
-			append(who(key), "micros", expired, "pending_ttl", m.settings.PendingTTL)...)
-	}
-	if waiting > 0 && m.waiting.due(key, logEvery) {
-		logger.Warn("usage held against an organization is past its pending_ttl with no read of its money since, so it is kept",
-			append(who(key), "holds", waiting, "micros", waited, "last_read", readFrom)...)
-	}
-	if len(acct.holds) > maxHolds {
-		m.carry(key, acct)
-	}
-}
-
-// carry folds the account's oldest holds into one per app, until it keeps half of maxHolds
-// apart, under m.mu. A carried hold has no ack and expires with the last of those it carries,
-// so it counts the same money and lets go of it no sooner than they would have.
-func (m *money) carry(key string, acct *account) {
-	ids := make([]uuid.UUID, 0, len(acct.holds))
-	for id := range acct.holds {
-		ids = append(ids, id)
-	}
-	slices.SortFunc(ids, func(a, b uuid.UUID) int { return acct.holds[a].expires.Compare(acct.holds[b].expires) })
-	var folded, micros int64
-	for _, id := range ids[:len(ids)-maxHolds/2] {
-		held := acct.holds[id]
-		app := held.app()
-		carried := uuid.NewSHA1(uuid.NameSpaceOID, []byte("carried\x00"+key+"\x00"+app))
-		if id == carried {
-			continue
-		}
-		into := acct.holds[carried]
-		if into == nil {
-			into = &hold{scopes: held.scopes}
-			acct.holds[carried] = into
-		}
-		into.micros += held.micros
-		if into.expires.Before(held.expires) {
-			into.expires = held.expires
-		}
-		folded++
-		micros += held.micros
-		delete(acct.holds, id)
-		delete(m.holdOf, id)
-	}
-	m.enforcer.logger.Warn("an organization holds more usage than the router keeps apart, so the oldest is carried as one per app",
-		append(who(key), "holds", folded, "micros", micros, "kept", maxHolds/2)...)
-}
-
-// app is the app whose work the hold is.
-func (h *hold) app() string {
-	for _, whose := range h.scopes {
-		if whose.kind == store.ScopeApp {
-			return whose.id
-		}
-	}
-	return ""
 }
 
 // standings reads the organizations' standings, each with the tier its last request carried,
@@ -617,93 +537,6 @@ func (m *money) oldest() time.Duration {
 	return oldest
 }
 
-// Spent holds what a unit of work recorded here cost against its owner's organization and app,
-// under the row's usage id, until a read that counts the row lands. Holding it again replaces
-// the amount and leaves its ack as it was. It never waits.
-func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) {
-	if e == nil || owner.CustomerID == "" || usageID == uuid.Nil || micros <= 0 || e.money.off() {
-		return
-	}
-	organization := owner.OrganizationID
-	if decided, ok := e.decided(owner.CustomerID); ok && decided.organization != "" {
-		organization = decided.organization
-	}
-	if organization == "" {
-		organization = appAccount(owner.CustomerID)
-	}
-	m := &e.money
-	now := time.Now()
-	m.mu.Lock()
-	acct := m.accounts[organization]
-	if acct == nil {
-		acct = &account{wanted: now}
-		m.accounts[organization] = acct
-	}
-	acct.used = now
-	if acct.holds == nil {
-		acct.holds = map[uuid.UUID]*hold{}
-	}
-	if previous, ok := m.holdOf[usageID]; ok && previous != organization {
-		if other := m.accounts[previous]; other != nil {
-			if moved := other.holds[usageID]; moved != nil {
-				acct.holds[usageID] = moved
-			}
-			delete(other.holds, usageID)
-		}
-	}
-	held := acct.holds[usageID]
-	if held == nil {
-		held = &hold{}
-		acct.holds[usageID] = held
-	}
-	held.scopes = []scope{{kind: store.ScopeOrganization, id: organization}, {kind: store.ScopeApp, id: owner.CustomerID}}
-	held.micros, held.expires = micros, now.Add(m.settings.PendingTTL)
-	m.holdOf[usageID] = organization
-	m.mu.Unlock()
-}
-
-// Acked notes the rows the usage service has. A hold kept for one of them is dropped once a read
-// asked for after now has landed; an id this process holds nothing for, as another router's
-// row, is ignored. It is WriterOptions.Shipped and SweeperOptions.Shipped.
-func (e *Enforcer) Acked(acked []routing.Acked) {
-	if e == nil || e.money.off() {
-		return
-	}
-	e.money.settled(acked, true)
-}
-
-// Written notes the rows the shard has. That is the ledger an organization's money is read from
-// when there is no usage service, and always the ledger of an app's own account, which the
-// usage service never bills; an organization's holds with a usage service wait for its ack. It
-// is WriterOptions.Written.
-func (e *Enforcer) Written(written []routing.Acked) {
-	if e == nil || e.money.off() {
-		return
-	}
-	e.money.settled(written, e.settings.Usage == nil)
-}
-
-// settled notes that the ledger has the rows, for the holds of an app's own account, and of an
-// organization's too when billedToo.
-func (m *money) settled(rows []routing.Acked, billedToo bool) {
-	now := time.Now()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, row := range rows {
-		key, ok := m.holdOf[row.UsageID]
-		if !ok || (!billedToo && billed(key)) {
-			continue
-		}
-		acct := m.accounts[key]
-		if acct == nil {
-			continue
-		}
-		if held := acct.holds[row.UsageID]; held != nil && held.ackedAt.IsZero() {
-			held.ackedAt = now
-		}
-	}
-}
-
 // spendable is what the organization's money says of the app's work: a refusal of everything
 // for a suspended organization, and otherwise why it may spend no money, if it may not. In
 // shadow, both are counted and logged as would refuse and neither is returned; off, neither is
@@ -742,7 +575,7 @@ func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend err
 	}
 	acct.used = now
 	refusal, spend, reason := m.refusal(acct, billed(organization), appID, decided, now)
-	why, balance, held, read := acct.standing.StatusReason, acct.standing.BalanceMicros, acct.pending(scope{}), acct.read
+	why, balance, held, read := acct.standing.StatusReason, acct.standing.BalanceMicros, acct.held, acct.read
 	m.mu.Unlock()
 
 	shadow := m.settings.Mode == config.LimitsShadow
@@ -794,13 +627,14 @@ func (m *money) refusal(acct *account, isBilled bool, appID string, decided deci
 	if billing && now.Sub(acct.read) > m.settings.MaxStale && standing.Tier.FailMode != usage.FailOpen {
 		return nil, errUnreadable, reasonUnreadable
 	}
-	pending := acct.pending(scope{})
-	if billing && standing.BalanceMicros-pending <= 0 {
+	// The balance counts every hold; a limit or a budget only those made in the window it is
+	// in now.
+	if billing && standing.BalanceMicros-acct.held <= 0 {
 		return nil, errNoBalance, reasonNoCredit
 	}
 	clock := m.settings.Now()
 	for _, interval := range []usage.Interval{usage.Daily, usage.Monthly} {
-		if err := overHardLimit(standing, interval, pending, clock); err != nil {
+		if err := overHardLimit(standing, interval, acct.heldAgainstLimit(interval, clock), clock); err != nil {
 			return nil, err, string(interval) + "_spend_hard_limit"
 		}
 	}
@@ -811,24 +645,11 @@ func (m *money) refusal(acct *account, isBilled bool, appID string, decided deci
 		}
 		read := acct.measured[index]
 		read.budget = budget.budget
-		if err := over(read, acct.pending(scope{kind: budget.scope, id: budget.id}), clock); err != nil {
+		if err := over(read, acct.heldAgainstBudget(budget, clock), clock); err != nil {
 			return nil, err, reasonBudget
 		}
 	}
 	return nil, nil, ""
-}
-
-// pending is the sum of the account's holds that count against whose, or all of them for the
-// zero scope. A hold counts until a read lets go of it, however old it is.
-func (a *account) pending(whose scope) int64 {
-	var sum int64
-	for _, held := range a.holds {
-		if whose != (scope{}) && !slices.Contains(held.scopes, whose) {
-			continue
-		}
-		sum += held.micros
-	}
-	return sum
 }
 
 // overHardLimit is the refusal for an organization with no room left under its spend hard limit
@@ -899,6 +720,14 @@ func appAccount(appID string) string { return appAccountPrefix + appID }
 
 // billed reports whether an account is an organization's, which the usage service bills.
 func billed(key string) bool { return !strings.HasPrefix(key, appAccountPrefix) }
+
+// noun is what an account is in a log message: an organization's, or an app's own.
+func noun(key string) string {
+	if billed(key) {
+		return "organization"
+	}
+	return "app"
+}
 
 // who names an account in a log line: the organization, or the app whose own account it is.
 func who(key string) []any {

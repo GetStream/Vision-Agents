@@ -137,15 +137,53 @@ func (s *PolicySuite) read(enforcer *Enforcer, organization string) {
 	}, 5*time.Second, 5*time.Millisecond, "the account is read")
 }
 
-// pending is what the organization has held against it now.
-func pending(enforcer *Enforcer, organization string) int64 {
+// pending is what the account still holds in either ledger.
+func pending(enforcer *Enforcer, key string) int64 {
+	return heldWhere(enforcer, key, func(*hold) bool { return true })
+}
+
+// balanceHeld is what the account holds against its balance and spend hard limit.
+func balanceHeld(enforcer *Enforcer, key string) int64 {
+	return heldWhere(enforcer, key, func(h *hold) bool { return h.balance })
+}
+
+// budgetHeld is what the account holds against its budgets.
+func budgetHeld(enforcer *Enforcer, key string) int64 {
+	return heldWhere(enforcer, key, func(h *hold) bool { return h.budget })
+}
+
+func heldWhere(enforcer *Enforcer, key string, counts func(*hold) bool) int64 {
 	enforcer.money.mu.Lock()
 	defer enforcer.money.mu.Unlock()
-	acct := enforcer.money.accounts[organization]
+	acct := enforcer.money.accounts[key]
 	if acct == nil {
 		return 0
 	}
-	return acct.pending(scope{})
+	var sum int64
+	for _, held := range acct.holds {
+		if counts(held) {
+			sum += held.micros
+		}
+	}
+	return sum
+}
+
+// consistent checks that the running totals admission reads are what the holds add up to.
+func (s *PolicySuite) consistent(enforcer *Enforcer, key string) {
+	enforcer.money.mu.Lock()
+	defer enforcer.money.mu.Unlock()
+	acct := enforcer.money.accounts[key]
+	if acct == nil {
+		return
+	}
+	again := &account{}
+	for _, held := range acct.holds {
+		again.count(key, held, 1)
+	}
+	s.Equal(again.held, acct.held, "the balance's running total")
+	if len(again.windows)+len(acct.windows) > 0 {
+		s.Equal(again.windows, acct.windows, "the windows' running totals")
+	}
 }
 
 // available is the organization's balance as an admission counts it: the standing's, less what
@@ -157,7 +195,7 @@ func available(enforcer *Enforcer, organization string) int64 {
 	if acct == nil {
 		return 0
 	}
-	return acct.standing.BalanceMicros - acct.pending(scope{})
+	return acct.standing.BalanceMicros - acct.held
 }
 
 // owner is who the app's work is recorded under.
@@ -541,7 +579,7 @@ func (s *PolicySuite) TestAnUnackedHoldExpires() {
 
 	s.eventually(func() bool { return pending(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond)
 	s.eventually(func() bool {
-		return strings.Contains(enforcer.logs.String(), "expired before the ledger counted it") &&
+		return strings.Contains(enforcer.logs.String(), "expired before the usage service was known to count it") &&
 			strings.Contains(enforcer.logs.String(), "micros=1250000")
 	}, 5*time.Second, 10*time.Millisecond, "and how much is logged")
 }
@@ -565,14 +603,137 @@ func (s *PolicySuite) TestAHoldOutlivesAnOutageOfTheUsageService() {
 			app := s.app
 			s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend == nil }, 4*quick.PendingTTL, 10*time.Millisecond,
 				"an open tier answers on its last balance, less what was spent since, however long the outage")
-			s.EqualValues(1_000_000, pending(enforcer.Enforcer, s.org))
-			s.Contains(enforcer.logs.String(), "with no read of its money since, so it is kept")
+			s.EqualValues(1_000_000, balanceHeld(enforcer.Enforcer, s.org))
+			s.Contains(enforcer.logs.String(), "with no read of its balance to count it, so it is kept")
 
 			enforcer.front.down.Store(false)
-			s.eventually(func() bool { return pending(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
-				"let go once a read lands, which counts the row if the ledger has it")
+			recovered := time.Now()
+			s.read(enforcer.Enforcer, s.org)
+			if acked {
+				s.eventually(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
+					"an acked row is in the first standing asked for after the ack")
+				s.NotContains(enforcer.logs.String(), "expired before")
+				return
+			}
+			s.EqualValues(1_000_000, balanceHeld(enforcer.Enforcer, s.org),
+				"the first read after an outage may come before the sweeper ships the backlog")
+			s.never(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 },
+				quick.PendingTTL/3, 10*time.Millisecond, "its timer starts again from the recovery")
+			s.eventually(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
+				"let go PendingTTL after the recovery, once a read lands")
+			s.GreaterOrEqual(time.Since(recovered), quick.PendingTTL-quick.Fresh, "from the last failed read, at most Fresh before")
+			s.Contains(enforcer.logs.String(), "expired before the usage service was known to count it")
+			s.consistent(enforcer.Enforcer, s.org)
 		})
 	}
+}
+
+func (s *PolicySuite) TestAnUnackedHoldGoesOnceTheShardSaysItShipped() {
+	enforcer := s.billed(func(settings *Settings) { settings.PendingTTL = time.Hour })
+	s.usage().Credit(s.T(), s.org, 1_000_000)
+	enforcer.Join(s.app, s.org, openTier)
+	s.read(enforcer.Enforcer, s.org)
+	usageID := uuid.Must(uuid.NewV7())
+	enforcer.Spent(s.owner(), usageID, 1_000_000)
+	s.Require().ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrNoCredits)
+
+	// Another router's sweeper ships the row, so no ack of it reaches this one.
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &store.Request{
+		UsageID: usageID, Modality: "llm", CustomerID: s.app, Provider: "openai", Model: "gpt-5.6-luna",
+		StartedAt: time.Now().UTC(), CostMicros: 1_000_000, Success: true, ToShip: true,
+	}))
+	s.Require().NoError(s.store.RecordShipment(s.ctx, []uuid.UUID{usageID}, nil))
+
+	s.eventually(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
+		"let go once a standing asked for after the shard said so lands, long before its timer")
+	s.NotContains(enforcer.logs.String(), "expired before")
+}
+
+func (s *PolicySuite) TestBalanceHoldsGoOnTheStandingsWhileBudgetsCannotBeRead() {
+	enforcer := s.billed()
+	s.usage().Credit(s.T(), s.org, 1_000_000)
+	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
+		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 10_000_000, Interval: store.BudgetDaily}}))
+	enforcer.Join(s.app, s.org, openTier)
+	s.read(enforcer.Enforcer, s.org)
+	locked, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer locked.Rollback() //nolint:errcheck // nothing was written
+	_, err = locked.ExecContext(s.ctx, "LOCK TABLE requests IN ACCESS EXCLUSIVE MODE")
+	s.Require().NoError(err)
+
+	usageID := uuid.Must(uuid.NewV7())
+	enforcer.Spent(s.owner(), usageID, 400_000)
+	enforcer.Acked([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 400_000}})
+	enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 400_000}})
+
+	s.eventually(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
+		"the balance counts it once the usage service does")
+	s.NoError(s.admit(enforcer.Enforcer, s.app).Spend, "no insufficient_credits for spend the balance already counts")
+	s.EqualValues(400_000, budgetHeld(enforcer.Enforcer, s.org), "the budgets wait for a sum that counts it")
+
+	s.Require().NoError(locked.Rollback())
+	s.eventually(func() bool { return budgetHeld(enforcer.Enforcer, s.org) == 0 }, 10*time.Second, 10*time.Millisecond,
+		"and let it go once one lands")
+	s.consistent(enforcer.Enforcer, s.org)
+}
+
+func (s *PolicySuite) TestBudgetHoldsGoOnTheShardWhileTheUsageServiceIsDown() {
+	enforcer := s.billed()
+	s.usage().Credit(s.T(), s.org, 10_000_000)
+	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
+		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}}))
+	enforcer.Join(s.app, s.org, openTier)
+	s.read(enforcer.Enforcer, s.org)
+	enforcer.front.down.Store(true)
+
+	usageID := uuid.Must(uuid.NewV7())
+	enforcer.Spent(s.owner(), usageID, 400_000)
+	s.spend(s.app, 400_000)
+	enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 400_000}})
+
+	s.eventually(func() bool { return budgetHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
+		"the budget's sum counts the written row, so it is not counted twice")
+	s.EqualValues(400_000, balanceHeld(enforcer.Enforcer, s.org), "the balance waits for the usage service")
+	s.consistent(enforcer.Enforcer, s.org)
+}
+
+func (s *PolicySuite) TestAHoldMadeBeforeMidnightCountsAgainstTheBalanceButNotTheNewDay() {
+	var clock atomic.Pointer[time.Time]
+	enforcer := s.billed(func(settings *Settings) {
+		settings.PendingTTL = time.Hour
+		settings.Now = func() time.Time {
+			if moved := clock.Load(); moved != nil {
+				return *moved
+			}
+			return time.Now()
+		}
+	})
+	s.usage().Credit(s.T(), s.org, 10_000_000)
+	s.usage().SetLimits(s.T(), s.org, spendHardLimit(new(int64(1_000_000)), nil))
+	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
+		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 5_000_000, Interval: store.BudgetDaily}}))
+	enforcer.Join(s.app, s.org, openTier)
+	s.read(enforcer.Enforcer, s.org)
+	enforcer.front.down.Store(true)
+	enforcer.Spent(s.owner(), uuid.Must(uuid.NewV7()), 1_000_000)
+	s.ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrSystemLimit, "today's limit counts today's hold")
+
+	_, midnight := usage.Window(usage.Daily, time.Now())
+	tomorrow := midnight.Add(time.Second)
+	clock.Store(&tomorrow)
+
+	s.NoError(s.admit(enforcer.Enforcer, s.app).Spend, "yesterday's hold is not spent against today's limit")
+	s.EqualValues(9_000_000, available(enforcer.Enforcer, s.org), "but the balance still counts it")
+	enforcer.money.mu.Lock()
+	acct := enforcer.money.accounts[s.org]
+	today := acct.heldAgainstBudget(scoped{scope: store.ScopeApp, id: s.app,
+		budget: store.Budget{LimitMicros: 5_000_000, Interval: store.BudgetDaily}}, tomorrow)
+	yesterday := acct.heldAgainstBudget(scoped{scope: store.ScopeApp, id: s.app,
+		budget: store.Budget{LimitMicros: 5_000_000, Interval: store.BudgetDaily}}, midnight.Add(-time.Second))
+	enforcer.money.mu.Unlock()
+	s.Zero(today, "nor against today's budget")
+	s.EqualValues(1_000_000, yesterday, "it stays in the window it was made in")
 }
 
 func (s *PolicySuite) TestAnAccountKeepsAtMostSoManyHoldsApart() {
@@ -580,18 +741,103 @@ func (s *PolicySuite) TestAnAccountKeepsAtMostSoManyHoldsApart() {
 	enforcer.Join(s.app, s.org, openTier)
 	s.read(enforcer.Enforcer, s.org)
 	enforcer.front.down.Store(true)
-	for range maxHolds + 10 {
-		enforcer.Spent(s.owner(), uuid.Must(uuid.NewV7()), 3)
-	}
+	ids := s.fold(enforcer)
 
+	s.EqualValues(3*len(ids), pending(enforcer.Enforcer, s.org), "folding them counts the same money")
+	s.consistent(enforcer.Enforcer, s.org)
+	s.Contains(enforcer.logs.String(), "so the oldest is folded")
+
+	enforcer.Spent(s.owner(), ids[0], 3)
+	s.EqualValues(3*len(ids), pending(enforcer.Enforcer, s.org), "a folded row recorded again is held once")
+	s.consistent(enforcer.Enforcer, s.org)
+}
+
+func (s *PolicySuite) TestAFoldedHoldKeepsItsAck() {
+	for _, when := range []string{"before folding", "after folding"} {
+		s.Run(when, func() {
+			s.SetupTest()
+			enforcer := s.billed(func(settings *Settings) { settings.PendingTTL = time.Hour })
+			s.usage().Credit(s.T(), s.org, 1_000_000_000)
+			enforcer.Join(s.app, s.org, openTier)
+			s.read(enforcer.Enforcer, s.org)
+			enforcer.front.down.Store(true)
+			var ids []uuid.UUID
+			if when == "before folding" {
+				ids = s.hold(enforcer, maxHolds+10)
+				s.ack(enforcer, ids)
+				s.folded(enforcer)
+			} else {
+				ids = s.fold(enforcer)
+				s.ack(enforcer, ids)
+			}
+			s.consistent(enforcer.Enforcer, s.org)
+
+			enforcer.front.down.Store(false)
+			s.eventually(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
+				"every acked row goes with the first standing after its ack, folded or not")
+			s.NotContains(enforcer.logs.String(), "expired before", "an acked fold is not taken for one the ledger never had")
+			s.consistent(enforcer.Enforcer, s.org)
+		})
+	}
+}
+
+func (s *PolicySuite) TestAPolicyReadThatFailsAdmitsOnceAndIsNotKept() {
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil)
+	locked, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer locked.Rollback() //nolint:errcheck // nothing was written
+	_, err = locked.ExecContext(s.ctx, "LOCK TABLE policies IN ACCESS EXCLUSIVE MODE")
+	s.Require().NoError(err)
+
+	started := time.Now()
+	admitted, err := enforcer.Admit(s.ctx, s.app)
+
+	s.Require().NoError(err, "admitted on a read that did not land")
+	s.NoError(admitted.Spend)
+	s.Less(time.Since(started), 2*joinTimeout, "bounded by its own timeout")
+	_, kept := enforcer.decided(s.app)
+	s.False(kept, "nothing unread is kept to answer the next request")
+
+	s.Require().NoError(locked.Rollback())
+	_, err = enforcer.Admit(s.ctx, s.app)
+	s.Require().NoError(err)
+	_, kept = enforcer.decided(s.app)
+	s.True(kept, "the next request reads them, and keeps what it read")
+}
+
+// hold holds n rows of 3 micros each against the suite's organization.
+func (s *PolicySuite) hold(enforcer *reading, n int) []uuid.UUID {
+	ids := make([]uuid.UUID, n)
+	for i := range ids {
+		ids[i] = uuid.Must(uuid.NewV7())
+		enforcer.Spent(s.owner(), ids[i], 3)
+	}
+	return ids
+}
+
+// fold holds more rows than an account keeps apart and waits for the oldest to be folded.
+func (s *PolicySuite) fold(enforcer *reading) []uuid.UUID {
+	ids := s.hold(enforcer, maxHolds+10)
+	s.folded(enforcer)
+	return ids
+}
+
+func (s *PolicySuite) folded(enforcer *reading) {
 	s.eventually(func() bool {
 		enforcer.money.mu.Lock()
 		defer enforcer.money.mu.Unlock()
-		return len(enforcer.money.accounts[s.org].holds) <= maxHolds/2+1
-	}, 5*time.Second, 10*time.Millisecond, "the oldest are carried as one")
+		return len(enforcer.money.accounts[s.org].folded) > 0
+	}, 5*time.Second, 10*time.Millisecond, "the oldest are folded")
+}
 
-	s.EqualValues(3*(maxHolds+10), pending(enforcer.Enforcer, s.org), "carrying them counts the same money")
-	s.Contains(enforcer.logs.String(), "carried as one per app")
+func (s *PolicySuite) ack(enforcer *reading, ids []uuid.UUID) {
+	acked := make([]routing.Acked, len(ids))
+	for i, id := range ids {
+		acked[i] = routing.Acked{UsageID: id, OrganizationID: s.org, CostMicros: 3}
+	}
+	enforcer.Acked(acked)
 }
 
 func (s *PolicySuite) TestStandingsStayFreshWhenBudgetsCannotBeRead() {
