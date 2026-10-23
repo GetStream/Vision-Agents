@@ -110,6 +110,22 @@ func TestALimitsHoldOutlastsAUsageServiceThatAcksNothing(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(acked), 15*time.Millisecond, "about PendingTTL after the acks came back")
 }
 
+func TestAnAcklessHoldIsKeptAtMostSoLong(t *testing.T) {
+	e, acct := holding(t)
+	e.money.settings.PendingTTL, e.money.settings.Fresh = 10*time.Millisecond, time.Millisecond
+	acct.limited = true
+	spend(e, 5)
+
+	time.Sleep(30 * time.Millisecond)
+	acct.spentFrom = time.Now()
+	e.money.release(heldOrg, acct, time.Now())
+	require.EqualValues(t, 5, limitsHeldOf(acct), "kept past PendingTTL while nothing is acked")
+	time.Sleep(acklessAges * 10 * time.Millisecond)
+	acct.spentFrom = time.Now()
+	e.money.release(heldOrg, acct, time.Now())
+	require.Zero(t, limitsHeldOf(acct), "let go past acklessAges PendingTTLs, acks or not")
+}
+
 func TestAnIdleAccountGivesItsFoldedIDsBackToTheProcess(t *testing.T) {
 	e, acct := holding(t)
 	e.money.settings.Idle = time.Millisecond
