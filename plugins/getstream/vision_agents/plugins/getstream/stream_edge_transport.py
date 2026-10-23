@@ -3,7 +3,7 @@ import logging
 import os
 import time
 import webbrowser
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlencode
 
 import aiortc
@@ -28,16 +28,12 @@ from getstream.video.async_call import Call as StreamCall
 from getstream.video.rtc import AudioStreamTrack, ConnectionManager
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
-    Participant as StreamParticipant,
-)
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
     TrackType as StreamTrackType,
 )
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 
-from . import sfu_events
-from ._track_resolver import TrackResolver
+from .remote_video_track import RemoteVideoTrack
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
@@ -46,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 # Conversion maps and functions for getstream -> core types
-_TRACK_TYPE_MAP = {
+_TRACK_TYPE_MAP: dict[int, TrackType] = {
     StreamTrackType.TRACK_TYPE_UNSPECIFIED: TrackType.UNSPECIFIED,
     StreamTrackType.TRACK_TYPE_VIDEO: TrackType.VIDEO,
     StreamTrackType.TRACK_TYPE_AUDIO: TrackType.AUDIO,
@@ -55,22 +51,27 @@ _TRACK_TYPE_MAP = {
 }
 
 
-def _to_core_track_type(stream_track_type: StreamTrackType.ValueType) -> TrackType:
+def _to_core_track_type(stream_track_type: rtc.TrackType) -> TrackType:
     """Convert getstream TrackType to core TrackType."""
-    type_ = _TRACK_TYPE_MAP.get(stream_track_type)
+    # rtc.TrackType is not hashable; its int is the protobuf TrackType value.
+    type_ = _TRACK_TYPE_MAP.get(int(stream_track_type))
     if type_ is None:
         raise ValueError(f"Unknown track type: {stream_track_type}")
     return type_
 
 
+def _track_id(session_id: str, track_type: rtc.TrackType) -> str:
+    """Build the core track id; the SDK keeps one RemoteTrack per session and type."""
+    return f"{session_id}:{int(track_type)}"
+
+
 def _to_core_participant(
-    participant: sfu_events.Participant | StreamParticipant | None,
+    participant: rtc.RemoteParticipant | None,
 ) -> Participant | None:
-    """Convert plugin or protobuf participant to core Participant type.
+    """Convert a getstream RemoteParticipant to core Participant type.
 
     Args:
-        participant: Plugin's sfu_events.Participant wrapper, protobuf
-            StreamParticipant, or None
+        participant: RemoteParticipant from the SDK, or None
 
     Returns:
         Core Participant with original and user_id, or None
@@ -78,13 +79,7 @@ def _to_core_participant(
     if participant is None:
         return None
 
-    # These fields are required in the actual pb2 object
-    assert participant.user_id is not None, "user_id must be set"
-    assert participant.track_lookup_prefix is not None, (
-        "track_lookup_prefix must be set"
-    )
-
-    unique_id = f"{participant.user_id}__{participant.track_lookup_prefix}"
+    unique_id = f"{participant.user_id}__{participant.session_id}"
     return Participant(original=participant, user_id=participant.user_id, id=unique_id)
 
 
@@ -133,7 +128,7 @@ class StreamConnection(Connection):
         except Exception as e:
             logger.error(f"Error during connection close: {e}")
 
-    def _on_participant_change(self, participants: list[StreamParticipant]) -> None:
+    def _on_participant_change(self, participants: list[rtc.RemoteParticipant]) -> None:
         # Get all participants except the agent itself.
         other_participants = [
             p for p in participants if p.user_id != self._connection.user_id
@@ -163,22 +158,21 @@ class StreamEdge(EdgeTransport[StreamCall]):
         version = get_vision_agents_version()
         self.client = AsyncStream(user_agent=f"stream-vision-agents-{version}")
         # self.events is inherited from EdgeTransport (with required events already registered)
-        self.events.register_events_from_module(sfu_events)
         self.events.register_events_from_module(getstream.models, "call.")
         self.conversation: Optional[StreamConversation] = None
         self.channel_type = "messaging"
         self._agent_user_id: str | None = None
-        self._track_resolver = TrackResolver()
+        # Dropping the last reference to a RemoteTrack unsubscribes it, so the
+        # tracks are kept until their participant leaves.
+        self._remote_tracks: dict[str, rtc.RemoteTrack] = {}
+        # Track ids that are unpublished (muted) now; the RemoteTrack resumes after unmute.
+        self._unpublished: set[str] = set()
+        # Sessions that left the call. The SDK sends tracks and SFU events on
+        # separate streams, so a track_added can arrive after participant_left.
+        self._left_sessions: set[str] = set()
 
         self._real_connection: Optional[ConnectionManager] = None
         self._call: Optional[StreamCall] = None
-
-        # Register event handlers
-        self.events.subscribe(self._on_track_published)
-        self.events.subscribe(self._on_track_removed)
-        self.events.subscribe(self._on_call_ended)
-        self.events.subscribe(self._on_sfu_participant_joined)
-        self.events.subscribe(self._on_sfu_participant_left)
 
     @property
     def _connection(self) -> ConnectionManager:
@@ -186,103 +180,62 @@ class StreamEdge(EdgeTransport[StreamCall]):
             raise ValueError("Edge connection is not set")
         return self._real_connection
 
-    async def _on_track_published(self, event: sfu_events.TrackPublishedEvent):
-        """Handle track published events from SFU - spawn TrackAddedEvent with correct type."""
-        if not event.payload:
+    async def _on_track_added(self, track: rtc.RemoteTrack):
+        """Keep the remote track and spawn TrackAddedEvent."""
+        participant = track.participant
+        if participant.session_id in self._left_sessions:
             return
-
-        if event.participant and event.participant.user_id:
-            user_id = event.participant.user_id
-            session_id = event.participant.session_id
-        else:
-            user_id = event.payload.user_id
-            session_id = event.payload.session_id
-
-        if not user_id or not session_id or user_id == self._agent_user_id:
-            return
-
-        stream_track_type = event.payload.type
-        track_id = await self._track_resolver.resolve(
-            user_id=user_id,
-            session_id=session_id,
-            stream_track_type=stream_track_type,
-        )
-        if track_id is None:
-            # Participant left mid-resolve; nothing to wire up.
-            return
-
+        track_id = _track_id(participant.session_id, track.track_type)
+        self._remote_tracks[track_id] = track
+        self._unpublished.discard(track_id)
         self.events.send(
             events.TrackAddedEvent(
                 plugin_name="getstream",
                 track_id=track_id,
-                track_type=_to_core_track_type(stream_track_type),
-                participant=_to_core_participant(event.participant),
+                track_type=_to_core_track_type(track.track_type),
+                participant=_to_core_participant(participant),
             )
         )
 
-    async def _on_track_removed(
-        self, event: sfu_events.ParticipantLeftEvent | sfu_events.TrackUnpublishedEvent
-    ):
-        """Handle track unpublished and participant left events."""
-        if not event.payload:
+    async def _on_track_published(self, event: rtc.TrackPublished):
+        """Spawn TrackAddedEvent when an unpublished track is published again."""
+        track_id = _track_id(event.session_id, event.track_type)
+        # The first publish of a track arrives as track_added.
+        if track_id not in self._unpublished:
             return
-
-        participant = event.participant
-        if participant and participant.user_id:
-            user_id = participant.user_id
-            session_id = participant.session_id
-        else:
-            user_id = event.payload.user_id
-            session_id = event.payload.session_id
-
-        if not user_id or not session_id:
-            return
-
-        # Cancel on full leave.
-        if isinstance(event, sfu_events.ParticipantLeftEvent):
-            self._track_resolver.cancel(user_id=user_id, session_id=session_id)
-
-        # Determine which tracks to remove
-        if isinstance(event, sfu_events.TrackUnpublishedEvent):
-            # Single track
-            tracks_to_remove = [event.payload.type]
-            event_desc = "Track unpublished"
-        else:
-            # ParticipantLeftEvent - all published tracks
-            tracks_to_remove = cast(
-                list[StreamTrackType.ValueType],
-                list(
-                    (event.participant.published_tracks if event.participant else None)
-                    or []
+        self._unpublished.discard(track_id)
+        self.events.send(
+            events.TrackAddedEvent(
+                plugin_name="getstream",
+                track_id=track_id,
+                track_type=_to_core_track_type(event.track_type),
+                participant=_to_core_participant(
+                    self._remote_tracks[track_id].participant
                 ),
             )
-            event_desc = "Participant left"
+        )
 
-        track_names = [StreamTrackType.Name(t) for t in tracks_to_remove]
-        logger.info(f"{event_desc}: {user_id}, tracks: {track_names}")
-
-        for stream_track_type in tracks_to_remove:
-            track_id = self._track_resolver.unpublish(
-                user_id=user_id,
-                session_id=session_id,
-                stream_track_type=stream_track_type,
+    async def _on_track_unpublished(self, event: rtc.TrackUnpublished):
+        """Spawn TrackRemovedEvent and keep the track for a later unmute."""
+        track_id = _track_id(event.session_id, event.track_type)
+        track = self._remote_tracks.get(track_id)
+        if track is None or track_id in self._unpublished:
+            return
+        self._unpublished.add(track_id)
+        logger.info(
+            f"Track unpublished: {event.user_id}, "
+            f"track: {StreamTrackType.Name(int(event.track_type))}"
+        )
+        self.events.send(
+            events.TrackRemovedEvent(
+                plugin_name="getstream",
+                track_id=track_id,
+                track_type=_to_core_track_type(event.track_type),
+                participant=_to_core_participant(track.participant),
             )
-            if track_id is None:
-                logger.debug(
-                    f"Track not found: user={user_id} session={session_id} "
-                    f"type={StreamTrackType.Name(stream_track_type)}"
-                )
-                continue
-            self.events.send(
-                events.TrackRemovedEvent(
-                    plugin_name="getstream",
-                    track_id=track_id,
-                    track_type=_to_core_track_type(stream_track_type),
-                    participant=_to_core_participant(participant),
-                )
-            )
+        )
 
-    async def _on_call_ended(self, event: sfu_events.CallEndedEvent):
+    async def _on_call_ended(self, event: rtc.CallEnded):
         if self._call is None:
             return
         self.events.send(
@@ -292,9 +245,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
             )
         )
 
-    async def _on_sfu_participant_joined(
-        self, event: sfu_events.ParticipantJoinedEvent
-    ):
+    async def _on_sfu_participant_joined(self, event: rtc.ParticipantJoined):
         core_participant = _to_core_participant(event.participant)
         if core_participant is None:
             return
@@ -310,8 +261,31 @@ class StreamEdge(EdgeTransport[StreamCall]):
             )
         )
 
-    async def _on_sfu_participant_left(self, event: sfu_events.ParticipantLeftEvent):
-        core_participant = _to_core_participant(event.participant)
+    async def _on_sfu_participant_left(self, event: rtc.ParticipantLeft):
+        participant = event.participant
+        self._left_sessions.add(participant.session_id)
+        track_ids = [
+            track_id
+            for track_id, track in self._remote_tracks.items()
+            if track.participant.session_id == participant.session_id
+        ]
+        logger.info(f"Participant left: {participant.user_id}, tracks: {track_ids}")
+        for track_id in track_ids:
+            track = self._remote_tracks.pop(track_id)
+            if track_id in self._unpublished:
+                # TrackRemovedEvent was already sent at unpublish.
+                self._unpublished.discard(track_id)
+                continue
+            self.events.send(
+                events.TrackRemovedEvent(
+                    plugin_name="getstream",
+                    track_id=track_id,
+                    track_type=_to_core_track_type(track.track_type),
+                    participant=_to_core_participant(participant),
+                )
+            )
+
+        core_participant = _to_core_participant(participant)
         if core_participant is None:
             return
         if core_participant.user_id == self._agent_user_id:
@@ -397,9 +371,8 @@ class StreamEdge(EdgeTransport[StreamCall]):
         This method:
         - Configures WebRTC subscription for audio/video tracks
         - Joins the call with the agent's user ID
-        - Sets up track and audio event handlers
-        - Re-emits participant and track events for the agent to consume
-        - Establishes the connection and republishes existing tracks
+        - Maps participant, track, audio and call events to core events
+        - Establishes the connection
 
         Args:
             agent: The Agent instance joining the call.
@@ -425,16 +398,6 @@ class StreamEdge(EdgeTransport[StreamCall]):
         # Store immediately so close() can clean up if join is interrupted
         self._real_connection = connection
 
-        @connection.on("track_added")
-        async def on_track(track_id, track_type, user):
-            # Wait for SFU to confirm type before spawning TrackAddedEvent
-            self._track_resolver.register(
-                track_id=track_id,
-                user_id=user.user_id if user else None,
-                session_id=user.session_id if user else None,
-                webrtc_kind=track_type,
-            )
-
         self.events.silent(events.AudioReceivedEvent)
 
         @connection.on("audio")
@@ -447,20 +410,18 @@ class StreamEdge(EdgeTransport[StreamCall]):
                 )
             )
 
-        # Re-emit certain events from the underlying RTC stack
-        # for the Agent to subscribe.
-        connection.on("participant_joined", self.events.send)
-        connection.on("participant_left", self.events.send)
-        connection.on("track_published", self.events.send)
-        connection.on("track_unpublished", self.events.send)
-        connection.on("call_ended", self.events.send)
+        # Registered before the connection starts: the SDK sends participant_joined
+        # and track_added for the participants who are already in the call.
+        connection.on("track_added", self._on_track_added)
+        connection.on("track_published", self._on_track_published)
+        connection.on("track_unpublished", self._on_track_unpublished)
+        connection.on("participant_joined", self._on_sfu_participant_joined)
+        connection.on("participant_left", self._on_sfu_participant_left)
+        connection.on("call_ended", self._on_call_ended)
 
+        self._call = call
         # Start the connection
         await connection.__aenter__()
-        self._call = call
-        # Re-publish already published tracks in case somebody is already on the call when we joined.
-        # Otherwise, we won't get the video track from participants joined before us.
-        await connection.republish_tracks()
 
         standardize_connection = StreamConnection(connection)
         return standardize_connection
@@ -475,10 +436,11 @@ class StreamEdge(EdgeTransport[StreamCall]):
         )  # default to webrtc framerate
 
     def add_track_subscriber(self, track_id: str) -> Optional[aiortc.VideoStreamTrack]:
-        subscriber = self._connection.subscriber_pc.add_track_subscriber(track_id)
-        if subscriber is not None:
-            subscriber = cast(aiortc.VideoStreamTrack, subscriber)
-        return subscriber
+        track = self._remote_tracks.get(track_id)
+        if track is None:
+            return None
+        # Each call gets an independent frame stream.
+        return RemoteVideoTrack(track.video_frames())
 
     async def publish_tracks(
         self,
@@ -512,6 +474,9 @@ class StreamEdge(EdgeTransport[StreamCall]):
             except Exception:
                 logger.exception("Error during connection leave")
             self._real_connection = None
+        self._remote_tracks.clear()
+        self._unpublished.clear()
+        self._left_sessions.clear()
         if self.client:
             await self.client.aclose()
         self._call = None
@@ -582,7 +547,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
             "token": token,
             "skip_lobby": "true",
             "user_name": name,
-            "video_encoder": "h264",  # Use H.264 instead of VP8 for better compatibility
+            "video_encoder": "vp8",  # The Rust SDK decodes only VP8 and VP9, not H.264
             "bitrate": 12000000,
             "w": 1920,
             "h": 1080,

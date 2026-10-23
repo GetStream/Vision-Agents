@@ -296,6 +296,7 @@ class Agent:
         self._audio_consumer_task: Optional[asyncio.Task] = None
         self._audio_producer_task: Optional[asyncio.Task] = None
         self._metrics_broadcast_task: Optional[asyncio.Task] = None
+        self._call_ended_close_task: Optional[asyncio.Task] = None
 
         # Metrics broadcasting settings
         self._broadcast_metrics = broadcast_metrics
@@ -382,7 +383,9 @@ class Agent:
             if self._call_ended_event is not None:
                 self._call_ended_event.set()
 
-            await self.close()
+            # Not awaited here: close() ends with events.shutdown(), which cancels
+            # and waits for this handler task.
+            self._call_ended_close_task = asyncio.create_task(self.close())
 
     async def simple_response(
         self,
@@ -756,10 +759,10 @@ class Agent:
         tasks, the call connection, STT/TTS services, and stops turn detection.
         It is safe to call multiple times.
         """
-        if self._close_lock.locked() or self._closed:
-            return
-
         async with self._close_lock:
+            # A concurrent caller waits here until the running close finishes.
+            if self._closed:
+                return
             # This is how to make sure the `_stop()` coroutine is definitely finished even if the outer
             # task is cancelled.
             # Run _stop() in a shielded task
