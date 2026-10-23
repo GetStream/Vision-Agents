@@ -286,8 +286,8 @@ func (s *PricingSuite) TestAModelWithoutAPriceIsBillableAndLoggedOnce() {
 func (s *PricingSuite) TestAModelWithoutAPriceIsLoggedAgainOnceTheIntervalHasPassed() {
 	list := s.list()
 	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	list.now = func() time.Time { return clock }
-	list.unpricedEvery = time.Minute
+	list.unpriced.now = func() time.Time { return clock }
+	list.unpriced.every = time.Minute
 	item := Item{Modality: "memory", Provider: "mem0", Model: "search"}
 
 	list.Quote(item, Quantities{})

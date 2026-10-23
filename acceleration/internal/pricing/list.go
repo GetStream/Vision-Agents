@@ -25,11 +25,21 @@ type List struct {
 	// markup is the list's markup in basis points, added to every entry with none of its own.
 	markup int64
 	logger *slog.Logger
-	// warned is when each unpriced item was last logged, so a busy one is not logged on
-	// every row. It is logged again once unpricedEvery has passed, by now.
-	warned        sync.Map
-	unpricedEvery time.Duration
-	now           func() time.Time
+	// unpriced is when each unpriced item was last logged. Lists read one after another
+	// share it (Active), so a list read again does not log the same item again.
+	unpriced *unpricedLog
+}
+
+// unpricedLog is when each unpriced item was last logged, so a busy one is not logged on
+// every row. It is logged again once every has passed, by now.
+type unpricedLog struct {
+	warned sync.Map
+	every  time.Duration
+	now    func() time.Time
+}
+
+func newUnpricedLog() *unpricedLog {
+	return &unpricedLog{every: 10 * time.Minute, now: time.Now}
 }
 
 // NewList checks the entries and returns the list they make. version names it on every
@@ -42,7 +52,7 @@ func NewList(version string, entries []Entry, markupBps int64, logger *slog.Logg
 	if !ValidMarkup(markupBps) {
 		return nil, fmt.Errorf("pricing: a list markup of %d basis points, outside 0 to %d", markupBps, MaxMarkupBps)
 	}
-	list := &List{version: version, entries: map[key][]Entry{}, markup: markupBps, logger: logger, unpricedEvery: 10 * time.Minute, now: time.Now}
+	list := &List{version: version, entries: map[key][]Entry{}, markup: markupBps, logger: logger, unpriced: newUnpricedLog()}
 	for _, entry := range entries {
 		if err := validate(entry); err != nil {
 			return nil, err
@@ -196,20 +206,21 @@ func (l *List) versionOf(entry Entry, matched bool) string {
 	}
 }
 
-// warn logs an unpriced item unless it was logged within unpricedEvery. Rows are priced
+// warn logs an unpriced item unless it was logged within the log's interval. Rows are priced
 // from many goroutines, so the time is swapped in rather than read and then written.
 func (l *List) warn(item Item) {
-	now := l.now()
+	log := l.unpriced
+	now := log.now()
 	k := keyOf(item)
 	for {
-		last, seen := l.warned.LoadOrStore(k, now)
+		last, seen := log.warned.LoadOrStore(k, now)
 		if !seen {
 			break
 		}
-		if now.Sub(last.(time.Time)) < l.unpricedEvery {
+		if now.Sub(last.(time.Time)) < log.every {
 			return
 		}
-		if l.warned.CompareAndSwap(k, last, now) {
+		if log.warned.CompareAndSwap(k, last, now) {
 			break
 		}
 	}

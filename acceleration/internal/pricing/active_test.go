@@ -97,6 +97,19 @@ func (s *PricingSuite) TestActiveFollowsTheSourceAndKeepsTheLastListWhenItFails(
 	s.Equal(1, strings.Count(s.logs.String(), "could not read the price list"))
 }
 
+func (s *PricingSuite) TestAnUnpricedItemIsLoggedOnceAcrossReads() {
+	active := s.active(&answers{queued: []answer{{entries: []Entry{versioned("c1")}}}}, time.Hour, false)
+	item := Item{Modality: "runtime", Provider: "stream", Model: "voice"}
+
+	active.Quote(item, Quantities{Seconds: 60})
+	s.Require().NoError(active.Reload(context.Background()))
+	s.Require().NoError(active.Reload(context.Background()))
+	active.Quote(item, Quantities{Seconds: 60})
+
+	s.Equal(1, strings.Count(s.logs.String(), "billable work has no price"),
+		"a list read again within the interval does not log the item again")
+}
+
 func (s *PricingSuite) TestAScheduledChangeStartsOnTime() {
 	at := time.Now().Add(200 * time.Millisecond)
 	prices := s.active(scheduled{at: at, before: []Entry{versioned("a")}, after: []Entry{versioned("b")}}, time.Minute, false)

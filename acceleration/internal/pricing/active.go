@@ -70,6 +70,8 @@ type Active struct {
 
 	current  atomic.Pointer[List]
 	upcoming atomic.Pointer[[]UpcomingEntry]
+	// unpriced is when each unpriced item was last logged, shared by every list read.
+	unpriced *unpricedLog
 	// read is whether any read succeeded, and entries whether one answered an entry.
 	read, entries atomic.Bool
 
@@ -104,6 +106,9 @@ func NewActive(ctx context.Context, options ActiveOptions) *Active {
 		// An empty list cannot be refused.
 		fallback, _ = NewList(ActiveVersion, nil, 0, logger)
 	}
+	// Every list read after the fallback logs an unpriced item as the fallback did, so one
+	// logged a moment ago is not logged again because the list was read again.
+	a.unpriced = fallback.unpriced
 	a.current.Store(fallback)
 	_ = a.reload(ctx, time.Now())
 	go a.loop()
@@ -150,6 +155,9 @@ func (a *Active) reload(ctx context.Context, at time.Time) error {
 	var list *List
 	if err == nil && len(entries) > 0 {
 		list, err = NewList(ActiveVersion, WithLocal(entries, a.local), markup, a.logger)
+		if list != nil {
+			list.unpriced = a.unpriced
+		}
 	}
 	if err != nil {
 		if !a.failing {
