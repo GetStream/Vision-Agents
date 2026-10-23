@@ -53,10 +53,10 @@ type Spec struct {
 	// the Router sets once it found the channel's channel_threads row (api.threadSession,
 	// api.threadConversation). No request sets it.
 	Thread bool
-	// ThreadPerson is the person a thread on a line of one person answers (SMS, WhatsApp,
-	// iMessage by Linq): the Stream user the channel bridge writes their messages as. The
-	// scheduling tools are offered for them, and ThreadChannel is the thread channel their
-	// tasks keep. Only the Router sets them (api.threadSession); a Slack thread has neither.
+	// ThreadPerson is the person a thread on a line of one person answers (SMS, WhatsApp): the
+	// Stream user the channel bridge writes their messages as. The scheduling tools are offered
+	// for them, and ThreadChannel is the thread channel their tasks keep.
+	// Only the Router sets them (api.threadSession); a Slack or Linq thread has neither.
 	ThreadPerson     string
 	ThreadChannel    string
 	ContextTruncated bool

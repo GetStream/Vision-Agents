@@ -4,6 +4,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -182,6 +184,47 @@ func (s *TelnyxChannelSuite) TestTwoPeopleOnOneLineNeverReachEachOthersTasks() {
 	s.toldTheModel(`"cancelled":"Stretch"`)
 	_, err = s.store.ScheduledTask(context.Background(), s.customerID(), task.ID)
 	s.ErrorIs(err, store.ErrNoScheduledTask)
+}
+
+// The thread belongs to the person texting, so someone else writing in it (the customer's
+// backend, posting as an app user) is not offered the tools, nor reaches that user's tasks,
+// and the reply still goes to the person's number. Neither the app user's tasks nor the
+// person's own are listed to the writer.
+func (s *TelnyxChannelSuite) TestSomeoneElseWritingInAPersonsThreadIsNotOfferedTheTools() {
+	s.schedulingOn(&s.config)
+	person := "+13125550001"
+	s.planTool("schedule_task", stretchInTwoHours)
+	channel := s.smsTurn(person, "remind me to stretch in two hours")
+	s.customersTasks(1)
+	next := time.Now().Add(2 * time.Hour).UTC()
+	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: "alice", CallerKind: "server",
+		Title: "Alice private review", Instructions: "x", StartLocal: next, Timezone: "Europe/Amsterdam",
+		NextRunAt: &next, Channels: []string{"conversation"}}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
+
+	s.planTool("list_scheduled_tasks", `{}`)
+	sent, replies := len(s.telnyx.sent()), s.repliesIn(channel)
+	message := maps.Clone(s.chat.Delivered(channel)[0])
+	message["id"] = store.NewID()
+	message["text"] = "what tasks have I got"
+	message["user"] = map[string]any{"id": "alice"}
+	data, _ := s.chat.Channel(channel)
+	payload, err := json.Marshal(map[string]any{
+		"type": "message.new", "cid": "agent:" + channel, "channel_id": channel, "channel_type": "agent",
+		"channel_custom": data["custom"], "message": message,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", string(payload)))
+	s.answeredAfter(channel, replies)
+	took := s.took(sent + 1)
+	s.Equal(person, took[len(took)-1].to)
+
+	s.scheduledMu.Lock()
+	defer s.scheduledMu.Unlock()
+	for _, model := range s.scheduled {
+		s.False(model.heard(task.ID), "the model was told the app user's task")
+		s.False(model.heard(`"tasks":`), "the model was told a list of tasks")
+	}
 }
 
 // The same person texting the same number of another customer reaches none of the first
