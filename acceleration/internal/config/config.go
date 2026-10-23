@@ -397,7 +397,24 @@ type CodeSandbox struct {
 	// ProxyPublicURL is the proxy as a sandbox reaches it, http://<IPv4 address>:port, which the
 	// proxy broker needs, with ProxyCACert.
 	ProxyPublicURL string `koanf:"proxy_public_url"`
+	// IdleStop is how long a sandbox runs no code before Daytona stops it, after which only its
+	// disk is billed, and StoppedDelete how long a stopped one is kept before Daytona deletes
+	// it. The next run starts a stopped sandbox again, or makes a new one. Both are whole
+	// minutes, as Daytona takes them, and the sandbox meter keeps the same clock. The defaults
+	// are Daytona's own 15 idle minutes and an hour stopped: a conversation that comes back
+	// within the hour finds its files and installed packages where it left them.
+	IdleStop      time.Duration `koanf:"idle_stop"`
+	StoppedDelete time.Duration `koanf:"stopped_delete"`
+	// Deployment names this deployment on every sandbox its routers make, as the
+	// stream.deployment label, so deployments sharing a Daytona organization tell their
+	// sandboxes apart. The sandbox job (router usage sandboxes) refuses to run without it and
+	// touches only sandboxes carrying it. Empty labels nothing, and the job leaves the
+	// sandboxes alone.
+	Deployment string `koanf:"deployment"`
 }
+
+// sandboxDeployment is what code_sandbox.deployment may hold: a Daytona label value.
+var sandboxDeployment = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
 // secretPrefix is what code_sandbox.secret_prefix may hold. Secrets are named
 // va_<prefix>_<session>_..., so a prefix with an underscore in it would make one router's
@@ -497,6 +514,9 @@ var variables = map[string]string{
 	"code_sandbox.proxy_ca_cert":    "ROUTER_CODE_SANDBOX_PROXY_CA_CERT",
 	"code_sandbox.proxy_ca_key":     "ROUTER_CODE_SANDBOX_PROXY_CA_KEY",
 	"code_sandbox.proxy_public_url": "ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL",
+	"code_sandbox.idle_stop":        "ROUTER_CODE_SANDBOX_IDLE_STOP",
+	"code_sandbox.stopped_delete":   "ROUTER_CODE_SANDBOX_STOPPED_DELETE",
+	"code_sandbox.deployment":       "ROUTER_CODE_SANDBOX_DEPLOYMENT",
 
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
@@ -531,7 +551,7 @@ func Defaults() Config {
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes:    Episodes{IdleAfter: time.Hour},
 		Sandbox:     Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
-		CodeSandbox: CodeSandbox{Broker: CodeSandboxBrokerDaytona},
+		CodeSandbox: CodeSandbox{Broker: CodeSandboxBrokerDaytona, IdleStop: 15 * time.Minute, StoppedDelete: time.Hour},
 		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
 		// 2026-10-09): «we do recommend you design your apps with a limit of 1 request per
 		// second for any given API call». slack_bot and github are the built-ins with an
@@ -722,6 +742,20 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: code_sandbox.proxy_addr is set, so code_sandbox.proxy_ca_cert and proxy_ca_key " +
 			"(ROUTER_CODE_SANDBOX_PROXY_CA_CERT, ROUTER_CODE_SANDBOX_PROXY_CA_KEY) must hold the CA the proxy signs with")
 	}
+	// Daytona takes whole minutes, and the meter bills by the same clock: a fraction would
+	// have one stop the sandbox before the other.
+	for setting, interval := range map[string]time.Duration{
+		"code_sandbox.idle_stop (ROUTER_CODE_SANDBOX_IDLE_STOP)":           c.CodeSandbox.IdleStop,
+		"code_sandbox.stopped_delete (ROUTER_CODE_SANDBOX_STOPPED_DELETE)": c.CodeSandbox.StoppedDelete,
+	} {
+		if interval < time.Minute || interval%time.Minute != 0 {
+			return fmt.Errorf("config: %s is a whole number of minutes, at least one, got %s", setting, interval)
+		}
+	}
+	if c.CodeSandbox.Deployment != "" && !sandboxDeployment.MatchString(c.CodeSandbox.Deployment) {
+		return fmt.Errorf("config: code_sandbox.deployment (ROUTER_CODE_SANDBOX_DEPLOYMENT) is up to 63 lowercase letters, "+
+			"digits, '.', '_' and '-', starting with a letter or digit, got %q", c.CodeSandbox.Deployment)
+	}
 	if c.Agent.FlowHedge < 0 {
 		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)
 	}
@@ -903,6 +937,9 @@ func (c Config) export() error {
 		"code_sandbox.proxy_ca_cert":    c.CodeSandbox.ProxyCACert,
 		"code_sandbox.proxy_ca_key":     c.CodeSandbox.ProxyCAKey,
 		"code_sandbox.proxy_public_url": c.CodeSandbox.ProxyPublicURL,
+		"code_sandbox.idle_stop":        c.CodeSandbox.IdleStop.String(),
+		"code_sandbox.stopped_delete":   c.CodeSandbox.StoppedDelete.String(),
+		"code_sandbox.deployment":       c.CodeSandbox.Deployment,
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),
