@@ -27,6 +27,7 @@ services:
   router:
     build:
       context: ./acceleration
+    image: vision-agents-router
     # Provider credentials come from the repo-root .env; the two below are the
     # ones that differ inside the network and so are set here instead.
     env_file:
@@ -40,6 +41,40 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # The usage service, from the router's image, on a database of its own. Nothing calls it
+  # until the router is given ROUTER_USAGE_URL.
+  usage-db:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: postgres
+    command: >-
+      sh -c "psql -h postgres -U postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = 'usage'\" | grep -q 1
+      || psql -h postgres -U postgres -c 'CREATE DATABASE usage'"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Runs the router's image, which only the router builds: `docker compose build router`.
+  usage:
+    image: vision-agents-router
+    pull_policy: never
+    entrypoint: ["usage"]
+    environment:
+      USAGE_POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/usage?sslmode=disable
+      USAGE_REDIS_URL: redis://redis:6379
+      USAGE_INGEST_TOKEN: ${USAGE_INGEST_TOKEN:-local-usage-token}
+    ports:
+      - "8070:8070"
+    healthcheck:
+      test: ["CMD", "usage", "healthcheck"]
+      interval: 5s
+      retries: 10
+    depends_on:
+      usage-db:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 

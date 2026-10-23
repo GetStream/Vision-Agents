@@ -1386,6 +1386,35 @@ at error instead, because an access log at a busy deployment is the one stream n
 all of. A preflight is not logged, and the query string is never logged: a socket names its
 customer there and a telephony vendor names a token.
 
+### The usage service
+
+`cmd/usage` is a second binary in the same image, with a database of its own. Producers ship
+it usage events (`POST /v1/events`); it records each once by its `usage_id`, adds it to what
+every subject the event names (its organization, app, key, user, and each category across
+the organization and within the app) spent in the current daily, weekly, bi-weekly and
+monthly window, and writes those totals to Redis before it answers, as
+`usage:{<org>}:<subject>:<ids>` hashes with one `<interval>:<YYYYMMDD>` field per window.
+Routers read the current window's field from Redis, and read through `POST /v1/windows` when
+that field is missing, not only when the key is: a key written in an earlier window holds that
+window's field alone. The ack's `mirrored` says whether Redis took a batch's totals; sending
+the batch again rewrites them. It never prices: an event carries what the work cost. Nothing
+ships to it yet.
+
+```bash
+USAGE_POSTGRES_DSN='postgres://postgres:postgres@localhost:55432/usage?sslmode=disable' \
+USAGE_INGEST_TOKEN=local-usage-token USAGE_REDIS_URL=redis://localhost:56379 \
+  go run ./cmd/usage            # or `docker compose build router && docker compose up usage`
+go run ./cmd/usage --help       # every setting
+```
+
+The service checks its own alerts, sends them to Sentry (`usage_alert:<name>`) and logs them.
+A rejected event, a batch refused whole for what it holds (`batch_refused`: a 400, 413 or 422,
+any 4xx but a 401), ingest failing and Redis refusing the totals page. A router's events
+arriving late warns (other producers ship late by design and are not measured), and so does
+a batch sent without the ingest token (`batch_unauthorized`, a 401): a misconfigured
+producer, or no producer at all. `usage_batches_refused_total{status}` counts both kinds of
+refusal.
+
 ## Transcripts, memory and phone
 
 **Transcripts.** With `STREAM_API_KEY` and `STREAM_API_SECRET` set, `cmd/agent` writes every
@@ -1640,6 +1669,10 @@ uv run ../sdks/swift/generate.py
 (cd ../sdks/js && npm run types)
 (cd ../dashboard && npm run types)
 ```
+
+The usage service's operations are a spec of their own, `internal/usage/server/openapi.yaml`,
+which no SDK is generated from. Render it from the service's binary, whose error responses it
+describes: `go run ./cmd/usage openapi`.
 
 The Swift client is generated from a filter rather than from the whole spec, and
 `generate.py --check` fails if anything in that filter is not marked `x-client-accessible`.
