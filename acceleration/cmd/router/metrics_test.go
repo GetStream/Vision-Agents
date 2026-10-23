@@ -59,7 +59,7 @@ func (s *MetricsSuite) scrape() (*http.Response, error) {
 }
 
 func (s *MetricsSuite) TestMetricsAreServedAsOpenMetrics() {
-	stop := serveMetrics(s.addr, slog.New(slog.DiscardHandler))
+	stop, _ := serveMetrics(s.addr, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(stop)
 
 	var response *http.Response
@@ -78,7 +78,7 @@ func (s *MetricsSuite) TestMetricsAreServedAsOpenMetrics() {
 }
 
 func (s *MetricsSuite) TestMetricsStopBeingServedWhenStopped() {
-	stop := serveMetrics(s.addr, slog.New(slog.DiscardHandler))
+	stop, _ := serveMetrics(s.addr, slog.New(slog.DiscardHandler))
 	s.Require().Eventually(func() bool {
 		response, err := s.scrape()
 		if err != nil {
@@ -94,11 +94,36 @@ func (s *MetricsSuite) TestMetricsStopBeingServedWhenStopped() {
 	s.Error(err, "the listener still answers after the router stopped it")
 }
 
+func (s *MetricsSuite) TestHandingOverFreesTheAddressAndSaysSoOnce() {
+	lines := &logged{}
+	stop, handOver := serveMetrics(s.addr, slog.New(slog.NewTextHandler(lines, nil)))
+	s.Require().Eventually(func() bool {
+		response, err := s.scrape()
+		if err != nil {
+			return false
+		}
+		response.Body.Close()
+		return true
+	}, 5*time.Second, 10*time.Millisecond, "the metrics listener never answered")
+
+	handOver()
+	handOver()
+	stop()
+
+	successor, err := net.Listen("tcp", s.addr)
+	s.Require().NoError(err, "the address was still held after the hand-over")
+	s.Require().NoError(successor.Close())
+	s.Equal(1, strings.Count(lines.String(), "stopped serving metrics for the router taking over"))
+	s.Contains(lines.String(), "level=INFO msg=\"stopped serving metrics for the router taking over\" address="+s.addr)
+	s.NotContains(lines.String(), "level=WARN")
+}
+
 func (s *MetricsSuite) TestNoAddressOpensNoListener() {
 	lines := &logged{}
 
-	stop := serveMetrics("", slog.New(slog.NewTextHandler(lines, nil)))
+	stop, handOver := serveMetrics("", slog.New(slog.NewTextHandler(lines, nil)))
 	defer stop()
+	handOver()
 
 	// With an empty address the server would listen on ":http" and either log that it is
 	// serving or fail to bind and log a warning.
@@ -108,7 +133,7 @@ func (s *MetricsSuite) TestNoAddressOpensNoListener() {
 
 func (s *MetricsSuite) TestStoppedMetricsDoNotWarnAboutNotServing() {
 	lines := &logged{}
-	stop := serveMetrics(s.addr, slog.New(slog.NewTextHandler(lines, nil)))
+	stop, _ := serveMetrics(s.addr, slog.New(slog.NewTextHandler(lines, nil)))
 	s.Require().Eventually(func() bool {
 		response, err := s.scrape()
 		if err != nil {

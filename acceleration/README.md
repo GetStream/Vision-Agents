@@ -103,7 +103,7 @@ the other commands that read them there.
 | `ROUTER_NODE_ADVERTISE` | `host:port` this node's peers reach it at. Unset works it out from this host's own address and `ROUTER_ADDR`'s port, which is right wherever a pod is reachable from its peers. See [More than one node](#more-than-one-node) |
 | `ROUTER_NODE_LISTEN`    | A second listen address, for this node's peers only. Unset means they use `ROUTER_ADDR`. Set it when two routers share one `ROUTER_ADDR`, so a request for a draining router's session still reaches it |
 | `ROUTER_LISTEN_FD`      | A listening socket inherited from a supervisor, served instead of `ROUTER_ADDR`, so an old and a new router take connections from one queue |
-| `ROUTER_SHUTDOWN_DRAIN` | How long a stopping router keeps its sessions after it stops taking work, e.g. `1h`. Unset ends them once HTTP has drained (10s). A second signal ends the wait |
+| `ROUTER_SHUTDOWN_DRAIN` | How long a stopping router keeps its sessions after it stops taking work, e.g. `1h`. Unset ends them once HTTP has drained (10s). A second signal ends the wait. A draining router stops serving metrics when the drain starts, so a router started after it on the same `ROUTER_METRICS_ADDR` serves them |
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |

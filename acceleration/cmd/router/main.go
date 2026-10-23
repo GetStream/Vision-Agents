@@ -1403,7 +1403,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if settings.PprofAddr != "" {
 		go servePprof(settings.PprofAddr, logger)
 	}
-	stopMetrics := serveMetrics(settings.MetricsAddr, logger)
+	stopMetrics, handOverMetrics := serveMetrics(settings.MetricsAddr, logger)
 	defer stopMetrics()
 
 	select {
@@ -1412,13 +1412,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 	case <-ctx.Done():
 		logger.Info("shutting down", "drain", settings.Shutdown.Drain)
 		return stopServing(stopping{
-			public:    httpServer,
-			peers:     peerServer,
-			drainWork: server.Drain,
-			held:      func() int { return running(sessions, scheduler) },
-			telephony: telephony,
-			drain:     settings.Shutdown.Drain,
-			logger:    logger,
+			public:          httpServer,
+			peers:           peerServer,
+			drainWork:       server.Drain,
+			held:            func() int { return running(sessions, scheduler) },
+			telephony:       telephony,
+			handOverMetrics: handOverMetrics,
+			drain:           settings.Shutdown.Drain,
+			logger:          logger,
 		})
 	}
 }
@@ -1448,7 +1449,11 @@ type stopping struct {
 	// still running.
 	held      func() int
 	telephony *phone.Service
-	drain     time.Duration
+	// handOverMetrics stops the metrics listener when a drain starts, so the router taking
+	// over on the same address is the one scraped. Without a drain the caller stops it at
+	// exit.
+	handOverMetrics func()
+	drain           time.Duration
 	// grace is how long the requests still open on a closing listener get to finish; zero
 	// means shutdownGrace.
 	grace  time.Duration
@@ -1461,11 +1466,11 @@ const drainPoll = 250 * time.Millisecond
 // stopServing stops taking work, then lets what is running finish.
 //
 // Without a drain it hangs up the calls through customers' own SIP trunks, then drains HTTP,
-// both inside the grace: the drain gets whatever the hangup left of it. With one, the
-// public listener closes first and the sessions this process holds, phone calls included,
-// keep going until they end or the drain runs out, still answering their peers' requests.
-// A second signal stops waiting. The sessions left are ended by the caller's
-// sessions.Shutdown either way.
+// both inside the grace: the drain gets whatever the hangup left of it, and metrics are
+// served until the process exits. With one, the metrics and public listeners close first
+// and the sessions this process holds, phone calls included, keep going until they end or
+// the drain runs out, still answering their peers' requests. A second signal stops
+// waiting. The sessions left are ended by the caller's sessions.Shutdown either way.
 func stopServing(s stopping) error {
 	s.drainWork()
 	grace := cmp.Or(s.grace, shutdownGrace)
@@ -1483,6 +1488,9 @@ func stopServing(s stopping) error {
 	timeout := time.NewTimer(s.drain)
 	defer timeout.Stop()
 
+	if s.handOverMetrics != nil {
+		s.handOverMetrics()
+	}
 	httpCtx, cancel := context.WithTimeout(context.Background(), grace)
 	if err := s.public.Shutdown(httpCtx); err != nil {
 		s.logger.Warn("requests were still running when the public listener closed", "error", err)
