@@ -276,9 +276,11 @@ type Agent struct {
 	toolHolds map[string]*toolHold
 	// skillFiles are the files of each skill a written conversation loaded, by skill, and
 	// writtenFiles the ones already put in the sandbox, so run_code writes a skill's
-	// scripts once and again only when the skill has changed.
-	skillFiles   map[string]map[string]string
-	writtenFiles map[string]map[string]string
+	// scripts once and again only when the skill has changed, or the sandbox has: they were
+	// written into sandboxGeneration.
+	skillFiles        map[string]map[string]string
+	writtenFiles      map[string]map[string]string
+	sandboxGeneration int
 	// speculations are replies started before the flow controller ruled on their words,
 	// held until it does, by candidate. speculating is the id their rows share, kept from the
 	// first speculative reply to a turn of the caller's until the turn is answered.

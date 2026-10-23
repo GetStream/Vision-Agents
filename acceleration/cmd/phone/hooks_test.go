@@ -108,7 +108,8 @@ func (s *HooksSuite) TestMovingOffAGoneTunnelPointsTheNewOneInTheSameRun() {
 	for _, hook := range s.chat.EventHooks("test") {
 		events[*hook.WebhookUrl] = hook.EventTypes
 	}
-	s.Equal([]string{"call.session_started", "call.session_ended"}, events["https://new.ngrok-free.dev/v1/phone/hooks/stream"])
+	s.Equal([]string{"call.session_started", "call.session_ended",
+		"call.session_participant_joined", "call.session_participant_left"}, events["https://new.ngrok-free.dev/v1/phone/hooks/stream"])
 	s.Equal([]string{"message.new"}, events["https://new.ngrok-free.dev/v1/chat/hooks/stream"])
 	s.Contains(said, "messages now go to https://new.ngrok-free.dev/v1/chat/hooks/stream")
 }

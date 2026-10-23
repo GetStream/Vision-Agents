@@ -50,6 +50,34 @@ const usageCommands = `usage: router usage <command>
                              namespace the key holds, whichever shard or router wrote it, so one
                              run per shard would read each base once per shard (writing it once).
                              Needs TURBOPUFFER_API_KEY. Writes the database
+  numbers --from time        bill each month of a held number after the month it was bought in,
+                             on the day of the month it was bought, at the price its vendor quoted,
+                             owned by its app under job:number_rental: the months that began since
+                             --from (RFC 3339, required) and in the last 35 days and have no row.
+                             A month that began before --from is never billed. A rerun writes
+                             nothing twice. A number with no price is billed as work with no price
+                             and alerted on as number_unpriced; a run that cannot read the numbers
+                             is alerted on as number_rental_missed and fails. Run it hourly, once
+                             per deployment. Writes the database
+  dlc --from time            bill each calendar month of every 10DLC campaign a vendor holds,
+                             after the three charged when it was registered, owned by its app
+                             under job:dlc_fees: this month and the last, if they began since
+                             --from (RFC 3339, required) and have no row. A run that cannot read
+                             the campaigns is alerted on as dlc_fees_missed and fails. Run it
+                             daily, once per deployment. Writes the database
+  sandboxes [--reconcile [--day YYYY-MM-DD]]
+                             delete this shard's sandboxes (labelled stream.env=SENTRY_ENVIRONMENT
+                             and stream.router=its shard) whose session has closed, or that have no
+                             session, once 10 minutes old. Run it hourly, once per shard. With
+                             --reconcile, first check a day of each sandbox's billed vCPU, memory
+                             and disk seconds against Daytona's records (the day before yesterday:
+                             they lag up to 48 hours): what was billed short is recorded from
+                             Daytona's figures, owned by the sandbox's labels' app under
+                             job:sandbox_reconcile; more than 5% (or 60 units) apart is logged and
+                             alerted on as sandbox_mismatch naming the day. Run that daily. A
+                             rerun records nothing twice. Needs DAYTONA_API_KEY, and
+                             DAYTONA_ORGANIZATION_ID unless the key can list a sandbox. Writes the
+                             database
 `
 
 const (
@@ -130,6 +158,12 @@ func runUsage(args []string, settings config.Config, out io.Writer) error {
 		return runUsageReship(ctx, args[1:], settings, out)
 	case "storage":
 		return runUsageStorage(ctx, args[1:], settings, out)
+	case "numbers":
+		return runUsageNumbers(ctx, args[1:], settings, out)
+	case "dlc":
+		return runUsageDLC(ctx, args[1:], settings, out)
+	case "sandboxes":
+		return runUsageSandboxes(ctx, args[1:], settings, out)
 	default:
 		return fmt.Errorf("unknown usage command %q\n\n%s", args[0], usageCommands)
 	}

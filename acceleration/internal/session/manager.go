@@ -31,7 +31,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -136,8 +135,12 @@ type ManagerOptions struct {
 	// as on a deployment with connectors off, opens none: a required binding fails the
 	// session, and an optional one is reported unavailable.
 	Connectors Connectors
+	// Sandboxes makes each session's sandbox, billed from when it is made until it is deleted.
+	// Nil makes them unlabelled, on Daytona's default lifecycle, billed through a recorder of
+	// the manager's own on Writer, as runtime is.
+	Sandboxes *metered.Sandboxes
 	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
-	// code in a sandbox, daytona.BrokerName or egress.BrokerName.
+	// code in a sandbox, metered.SandboxSecretsBroker or egress.BrokerName.
 	SandboxBroker string
 	// SandboxProxy is the store, URL and CA certificate of egress.BrokerName's proxy; the
 	// session fills in the rest.
@@ -266,7 +269,27 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	case options.Store != nil || options.Live != nil:
 		manager.runtime = routing.NewRecorder(routing.Runtime, options.Store, options.Live, options.Pricer, options.Logger)
 	}
+	if options.Sandboxes == nil {
+		// On runtime's writer, so Shutdown drains the sandboxes' last slices with runtime's.
+		var recorder *routing.Recorder
+		if manager.runtime != nil {
+			recorder = manager.runtime.For(routing.Sandbox)
+		}
+		manager.options.Sandboxes = metered.NewSandboxes(metered.SandboxesOptions{Recorder: recorder, Logger: options.Logger})
+	}
 	return manager, nil
+}
+
+// owner is who a session's own time is billed to: its runtime and its sandbox's.
+func owner(spec Spec) routing.Owner {
+	return routing.Owner{
+		CustomerID:  spec.CustomerID,
+		Attribution: spec.Attribution,
+		Caller:      spec.Caller,
+		AgentID:     spec.AgentID,
+		CallID:      spec.CallID,
+		Tags:        spec.Tags,
+	}
 }
 
 // runtimeProvider is who runtime rows are billed under: the deployment itself, which no
@@ -282,17 +305,10 @@ func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 	return routing.StartSlices(routing.SliceOptions{
 		Recorder: m.runtime,
 		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode},
-		Owner: routing.Owner{
-			CustomerID:  spec.CustomerID,
-			Attribution: spec.Attribution,
-			Caller:      spec.Caller,
-			AgentID:     spec.AgentID,
-			CallID:      spec.CallID,
-			Tags:        spec.Tags,
-		},
-		Kind:  string(routing.Runtime),
-		ID:    spec.ID,
-		Every: m.sliceEvery,
+		Owner:    owner(spec),
+		Kind:     string(routing.Runtime),
+		ID:       spec.ID,
+		Every:    m.sliceEvery,
 	})
 }
 
@@ -1508,15 +1524,15 @@ func (m *Manager) box(spec Spec, connectors *dispatcher) (sandbox.Sandbox, error
 	if spec.Sandbox != daytonaProvider {
 		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox))
 	}
-	options := daytona.Options{Config: spec.SandboxOptions, Logger: m.logger}
+	asked := metered.SandboxSpec{Config: spec.SandboxOptions}
 	if connectors != nil && len(connectors.grants) > 0 {
 		broker, err := m.broker(spec, connectors)
 		if err != nil {
 			return nil, err
 		}
-		options.Grants, options.Broker = connectors.grants, broker
+		asked.Grants, asked.Broker = connectors.grants, broker
 	}
-	return daytona.New(options)
+	return m.options.Sandboxes.Open(owner(spec), asked)
 }
 
 // reading reports whether this session has anything to look things up in, which is a

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -24,25 +26,40 @@ const signatureHeader = "X-Signature"
 //
 // The SDK's own event structs are not used to decode, only to verify: its Timestamp reads
 // epoch nanoseconds and writes RFC 3339, so a delivery carrying one format fails to parse
-// as the other and would be refused as though it were unsigned. Nothing here needs a
-// timestamp off the wire — a call event arrives while the phone is still ringing, so when it
-// was received is when it started — and the fields that are needed are a few strings.
+// as the other and would be refused as though it were unsigned. The one timestamp read,
+// created_at, is read here in either format (eventTime), and the rest are a few strings.
 type callEvent struct {
 	CallCid string `json:"call_cid"`
 	// SessionID is Stream's own session of the call, which its call stats are kept under.
 	SessionID string `json:"session_id"`
+	// CreatedAt is when Stream made the event (eventTime), which a call's legs are timed by:
+	// a delivery can be late, or come before one made earlier.
+	CreatedAt json.RawMessage `json:"created_at"`
 	Call      struct {
 		// Custom is whatever was put on the Stream call. Stream takes arbitrary JSON here.
 		Custom map[string]any `json:"custom"`
 		// Session lists who is in the call, which is where the caller's number is.
 		Session *struct {
-			Participants []struct {
-				User struct {
-					ID string `json:"id"`
-				} `json:"user"`
-			} `json:"participants"`
+			Participants []callParticipant `json:"participants"`
 		} `json:"session"`
 	} `json:"call"`
+	// Participant is who joined or left, on a participant event.
+	Participant *callParticipant `json:"participant"`
+}
+
+// callParticipant is somebody in a call: a phone is a user named sip-<number>, and its user
+// session is what names it on the event saying it left.
+type callParticipant struct {
+	UserSessionID string `json:"user_session_id"`
+	User          struct {
+		ID string `json:"id"`
+	} `json:"user"`
+}
+
+// phone reports whether the participant is a phone, on a call over SIP.
+func (p callParticipant) phone() bool {
+	_, ok := phone.CallerNumber(p.User.ID)
+	return ok
 }
 
 // receiveCallEvent takes the call events Stream sends and turns an arriving phone call into
@@ -56,7 +73,8 @@ type callEvent struct {
 // Every outcome short of something that did not come from Stream is a 200. Stream retries a
 // non-2xx, and none of the reasons this cannot place a call — no worker waiting, a call
 // belonging to nobody — get better on a second delivery, while the caller is on the line for
-// the whole of it.
+// the whole of it. The one exception is a phone's join or leave the database could not take:
+// its minutes are lost unless Stream delivers it again, so it is answered 503.
 func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	if !s.hooksConfigured() {
 		// Refusing is the only safe answer: without the secret there is no way to tell
@@ -106,6 +124,18 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 			s.logCallSites(ended)
 		}
 
+	case getstream.EventTypeCallSessionParticipantJoined, getstream.EventTypeCallSessionParticipantLeft:
+		var event callEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			writeError(w, invalidRequest("could not read that call event"))
+			return
+		}
+		if !s.phoneJoinedOrLeft(r, origin, eventType, event) {
+			// Stream delivers it again, which a join or leave already recorded is nothing to.
+			writeError(w, unavailable("could not record that call event"))
+			return
+		}
+
 	default:
 		s.logger.Debug("ignoring a call event", "type", eventType)
 	}
@@ -148,6 +178,25 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		s.logger.Debug("no number reaches an arriving call",
 			"call", event.CallCid, "stream_app", origin.app, "error", err)
 		return
+	}
+	// The caller is on the line from here, whether an agent answers or the call is refused
+	// and ended below, and the vendor bills every second of it. No key placed it, so its
+	// minutes are the app's, and priced by the country of the number rung. One leg per Stream
+	// session, however often or late this is delivered; a delivery another node handed over
+	// was opened there.
+	if s.phone != nil && !node.Forwarded(r.Context()) {
+		caller := phoneCallerOf(event)
+		s.phone.OpenLeg(r.Context(), routing.Owner{
+			CustomerID:  number.CustomerID,
+			Attribution: routing.Attribution{APIKey: routing.OriginPhoneInbound},
+			Tags:        number.Tags,
+		}, store.CallLeg{
+			StreamAppPK: number.StreamAppPK, CallType: callType, CallID: callID,
+			StreamSessionID: event.SessionID, ParticipantSession: caller.UserSessionID, Vendor: number.Vendor,
+			Direction: store.Inbound, LocalNumber: number.E164, RemoteNumber: caller.number,
+			Country:  cmp.Or(number.Country, phone.Country(number.E164)),
+			DialedAt: eventTime(event.CreatedAt),
+		}, true)
 	}
 	// A suspension that cannot be read refuses the call too: it is there to stop fraud that
 	// costs money.
@@ -225,6 +274,11 @@ func (s *Server) releaseEndedCall(r *http.Request, origin hookOrigin, event call
 	if err := s.phone.ReleaseCall(r.Context(), origin.scope(), callType, callID); err != nil {
 		s.logger.Error("could not release an ended call's resources", "call", event.CallCid, "error", err)
 	}
+	// Every leg of the call ends with it, and is billed for its minutes. A leg whose end is
+	// lost here is ended by the sweep, at the longest a call is billed for.
+	if err := s.phone.EndLegs(r.Context(), origin.scope(), callType, callID, eventTime(event.CreatedAt)); err != nil {
+		s.logger.Error("could not end an ended call's legs", "call", event.CallCid, "error", err)
+	}
 }
 
 // endRefusedTimeout bounds ending a refused call at Stream, which runs after the hook answers.
@@ -275,15 +329,64 @@ func (s *Server) endCallEpisodes(r *http.Request, origin hookOrigin, event callE
 // call is dispatched the moment it starts, and the agent joining it will see the participant
 // whether or not this did.
 func callerOf(event callEvent) string {
+	return phoneCallerOf(event).number
+}
+
+// phoneCaller is the phone in a call, and its user session there.
+type phoneCaller struct {
+	number        string
+	UserSessionID string
+}
+
+// phoneCallerOf is the first phone among the participants an event lists, or nobody.
+func phoneCallerOf(event callEvent) phoneCaller {
 	if event.Call.Session == nil {
-		return ""
+		return phoneCaller{}
 	}
 	for _, participant := range event.Call.Session.Participants {
 		if caller, ok := phone.CallerNumber(participant.User.ID); ok {
-			return caller
+			return phoneCaller{number: caller, UserSessionID: participant.UserSessionID}
 		}
 	}
-	return ""
+	return phoneCaller{}
+}
+
+// phoneJoinedOrLeft starts the leg of a phone that joined a call, which is when a placed call
+// or a transfer was answered, and ends and bills the leg of one that left. Anybody else coming
+// and going, as every participant of every video call in the app does, changes nothing. It
+// reports false when the join or leave could not be recorded, which loses the leg's minutes
+// unless Stream delivers it again.
+func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType string, event callEvent) bool {
+	if s.phone == nil || event.Participant == nil {
+		return true
+	}
+	callType, callID, split := strings.Cut(event.CallCid, ":")
+	if !split {
+		return true
+	}
+	// Anybody's, the agent's above all, says the hook delivers participant events, which a
+	// placed call that ends unanswered is checked for.
+	if err := s.phone.Heard(r.Context(), origin.scope(), callType, callID); err != nil {
+		s.logger.Warn("could not record that the call hook delivers participant events", "call", event.CallCid, "error", err)
+	}
+	if !event.Participant.phone() {
+		return true
+	}
+	participant := event.Participant.UserSessionID
+	var err error
+	if eventType == getstream.EventTypeCallSessionParticipantJoined {
+		number, _ := phone.CallerNumber(event.Participant.User.ID)
+		err = s.phone.Connect(r.Context(), origin.scope(), callType, callID, event.SessionID, participant, number,
+			eventTime(event.CreatedAt))
+	} else {
+		err = s.phone.Left(r.Context(), origin.scope(), callType, callID, participant, eventTime(event.CreatedAt))
+	}
+	if err != nil {
+		s.logger.Error("could not record a phone joining or leaving a call; Stream is asked to deliver it again", "type", eventType,
+			"call", event.CallCid, "error", err)
+		return false
+	}
+	return true
 }
 
 // customOf narrows the call's custom data to the strings a worker can read.

@@ -380,6 +380,97 @@ type CallResource struct {
 	CreatedAt   time.Time `bun:"created_at,notnull"`
 }
 
+// What ended a call leg.
+const (
+	// LegLeft is the leg's phone leaving the call.
+	LegLeft = "left"
+	// LegEnded is the call ending with the leg still on it.
+	LegEnded = "ended"
+	// LegSwept is the sweep ending a leg nothing said had ended.
+	LegSwept = "swept"
+	// LegUnanswered is a leg that ended without its phone ever joining.
+	LegUnanswered = "unanswered"
+)
+
+// CallLeg is one leg of a phone call, from when its phone joined the call until it left or the
+// call ended, which is what its minutes are billed by. Who it is billed to is kept from when
+// it opened, so the minutes of a placed call stay with the key that placed it.
+type CallLeg struct {
+	bun.BaseModel `bun:"table:call_legs,alias:cl"`
+
+	ID               int64    `bun:"id,pk,autoincrement"`
+	CustomerID       string   `bun:"customer_id,notnull"`
+	OrganizationID   string   `bun:"organization_id,notnull"`
+	OrganizationTier string   `bun:"organization_tier,notnull"`
+	APIKey           string   `bun:"api_key,notnull"`
+	UserID           string   `bun:"user_id,notnull"`
+	UsageCategories  []string `bun:"usage_categories,array,nullzero"`
+	// StreamAppPK is the Stream app the call is in. Zero, stored as NULL, is the
+	// deployment's own app.
+	StreamAppPK int64  `bun:"stream_app_pk,nullzero"`
+	CallType    string `bun:"call_type,notnull"`
+	CallID      string `bun:"call_id,notnull"`
+	// StreamSessionID is Stream's session of the call, and ParticipantSession the user session
+	// of the leg's phone in it. Empty until known.
+	StreamSessionID    string `bun:"stream_session_id,notnull"`
+	ParticipantSession string `bun:"participant_session,notnull"`
+	Vendor             string `bun:"vendor,notnull"`
+	// Direction is Inbound or Outbound.
+	Direction    string `bun:"direction,notnull"`
+	LocalNumber  string `bun:"local_number,notnull"`
+	RemoteNumber string `bun:"remote_number,notnull"`
+	// Country is what the leg's minutes are priced by: where an outbound leg rang, and the
+	// country of the number an inbound one rang. Empty when unknown.
+	Country string            `bun:"country,notnull"`
+	AgentID string            `bun:"agent_id,notnull"`
+	Tags    map[string]string `bun:"tags,type:jsonb,nullzero"`
+	// DialedAt is when the vendor took the dial, or the call arrived. StartedAt is when the
+	// leg's phone joined, nil while it rings; EndedAt nil while the leg is open; EndReason
+	// what ended it (LegLeft and the rest).
+	DialedAt  time.Time  `bun:"dialed_at,notnull"`
+	StartedAt *time.Time `bun:"started_at"`
+	EndedAt   *time.Time `bun:"ended_at"`
+	EndReason string     `bun:"end_reason,notnull"`
+}
+
+// Connected reports whether the leg's phone ever joined the call, which is what makes it billed.
+func (l CallLeg) Connected() bool { return l.StartedAt != nil }
+
+// Used is how long an ended leg was connected, in seconds, a started second counting whole:
+// what a vendor bills its minutes from. A leg still open, or never connected, has used nothing.
+func (l CallLeg) Used() pricing.Quantities {
+	if l.StartedAt == nil || l.EndedAt == nil || !l.EndedAt.After(*l.StartedAt) {
+		return pricing.Quantities{pricing.CallSeconds: 0}
+	}
+	lasted := l.EndedAt.Sub(*l.StartedAt)
+	seconds := int64(lasted / time.Second)
+	if lasted%time.Second != 0 {
+		seconds++
+	}
+	return pricing.Quantities{pricing.CallSeconds: seconds}
+}
+
+// CallParticipant is a phone's join or leave of a call that no leg was waiting for when it
+// was delivered, kept for the leg that opens later (OpenCallLeg) and for the phone's join
+// that comes after its leave (ConnectCallLeg). One with no participant session is the call
+// hook having delivered a participant event of the call (HeardCall).
+type CallParticipant struct {
+	bun.BaseModel `bun:"table:call_participants,alias:cp"`
+
+	ID int64 `bun:"id,pk,autoincrement"`
+	// StreamAppPK and Unpinned are the scope of the hook that delivered it.
+	StreamAppPK        int64  `bun:"stream_app_pk,nullzero"`
+	Unpinned           bool   `bun:"unpinned,notnull"`
+	CallType           string `bun:"call_type,notnull"`
+	CallID             string `bun:"call_id,notnull"`
+	ParticipantSession string `bun:"participant_session,notnull"`
+	// Number is off the phone's participant id, empty when it named none.
+	Number     string     `bun:"number,notnull"`
+	JoinedAt   *time.Time `bun:"joined_at"`
+	LeftAt     *time.Time `bun:"left_at"`
+	RecordedAt time.Time  `bun:"recorded_at,notnull"`
+}
+
 // AgentConfig is a named set of the decisions a session is created with.
 //
 // It holds only what a caller would otherwise repeat on every call. Everything that is
@@ -1136,7 +1227,7 @@ type VoiceBinding struct {
 	SyncedAt *time.Time `bun:"synced_at,nullzero"`
 }
 
-// Which way a call went.
+// Which way a call, a leg of one or a text went.
 const (
 	// Inbound is somebody ringing the agent.
 	Inbound = "inbound"

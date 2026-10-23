@@ -9,6 +9,6 @@
 // outside these packages that names a vendor-facing type, or imports a vendor's package,
 // fails go test.
 //
-// Knowledge and memory are here. Each other component moves in with the change that meters
-// it.
+// Knowledge, memory and sandboxes are here. Each other component moves in with the change that
+// meters it.
 package metered

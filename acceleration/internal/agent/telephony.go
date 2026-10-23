@@ -832,9 +832,25 @@ func (a *Agent) runCode(ctx context.Context, call llm.ToolCall) (string, []sandb
 }
 
 // writeSkillFiles puts the files of each skill loaded so far that brought scripts into the
-// sandbox under skills/<name>/, unless they are already there as they now are.
+// sandbox under skills/<name>/, unless they are already there as they now are. A sandbox made
+// again, after its provider deleted it, gets all of them again.
 func (a *Agent) writeSkillFiles(ctx context.Context) error {
 	a.mu.Lock()
+	scripted := slices.ContainsFunc(slices.Collect(maps.Values(a.skillFiles)), func(files map[string]string) bool {
+		return len(harness.Scripts(slices.Collect(maps.Keys(files)))) > 0
+	})
+	a.mu.Unlock()
+	if !scripted {
+		return nil
+	}
+	generation, err := a.options.Sandbox.Ready(ctx)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	if generation != a.sandboxGeneration {
+		a.writtenFiles, a.sandboxGeneration = nil, generation
+	}
 	stale := map[string]map[string]string{}
 	for name, files := range a.skillFiles {
 		if len(harness.Scripts(slices.Collect(maps.Keys(files)))) > 0 && !maps.Equal(a.writtenFiles[name], files) {

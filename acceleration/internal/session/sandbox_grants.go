@@ -7,8 +7,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -57,11 +57,10 @@ func (m *Manager) broker(spec Spec, d *dispatcher) (sandbox.CredentialBroker, er
 		return nil, stack.Wrap(errors.New("session: a connector binding sets sandbox, and this router has no " +
 			"code_sandbox.secret_prefix (ROUTER_CODE_SANDBOX_SECRET_PREFIX) to name its secrets with"))
 	}
-	if m.options.SandboxBroker != daytona.BrokerName {
+	if m.options.SandboxBroker != metered.SandboxSecretsBroker {
 		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox broker called %q", m.options.SandboxBroker))
 	}
-	return daytona.NewSecrets(daytona.SecretsOptions{Prefix: m.options.SandboxSecretPrefix, Session: spec.ID,
-		Tokens: m.sandboxTokens(d.schemes), Logger: m.logger})
+	return metered.SandboxSecrets(m.options.SandboxSecretPrefix, spec.ID, m.sandboxTokens(d.schemes), m.logger)
 }
 
 // behindProxy refuses a sandbox config the egress proxy cannot serve. Every request goes there,

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -160,6 +161,34 @@ func (s *SlicesSuite) TestSlicesSumToTheRunRoundedUp() {
 	}
 }
 
+func (s *SlicesSuite) TestASliceAcrossMidnightIsSplitAtIt() {
+	options, at := s.faked("voice")
+	before := time.Date(2026, 10, 23, 23, 59, 30, 0, time.UTC)
+	at.start, at.at = before, before
+	run := StartSlices(options)
+
+	at.to(60*time.Second + 400*time.Millisecond)
+	run.next()
+	at.to(24*time.Hour + 90*time.Second)
+	run.Stop()
+
+	rows := s.rows(options)
+	midnight := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
+	s.Require().Len(rows, 4, "each slice that crosses a midnight is one row per day")
+	s.Equal([]int64{30, 30, 86_370, 60}, seconds(rows), "the run adds up all the same")
+	s.Equal([]time.Time{before, midnight, before.Add(60*time.Second + 400*time.Millisecond), midnight.Add(24 * time.Hour)},
+		[]time.Time{rows[0].StartedAt.UTC(), rows[1].StartedAt.UTC(), rows[2].StartedAt.UTC(), rows[3].StartedAt.UTC()},
+		"each dated within the day it covers")
+	s.EqualValues(30_000, *rows[0].DurationMs)
+	ids := map[string]bool{}
+	for i, row := range rows {
+		s.Equal(strconv.Itoa(i), row.Attributes[AttributeSlice])
+		s.Equal(UsageID("runtime", options.ID, run.run, strconv.Itoa(i)), row.UsageID, "numbered in turn, so writing it twice bills it once")
+		ids[row.UsageID.String()] = true
+	}
+	s.Len(ids, 4)
+}
+
 func (s *SlicesSuite) TestSwitchEndsTheSliceAndChangesTheModel() {
 	options, at := s.faked("text")
 	run := StartSlices(options)
@@ -258,7 +287,38 @@ func (s *SlicesSuite) TestANilRunRecordsNothing() {
 	var run *Slices
 	s.NotPanics(func() {
 		run.Switch("voice")
+		run.Attribute("orphan", "true")
 		run.Stop()
 		run.Cancel()
 	})
+}
+
+func (s *SlicesSuite) TestWhatASliceUsedFollowsItsModelAndAttributesFollowTheRun() {
+	options, at := s.faked("running")
+	options.Quantities = func(model string, seconds int64) pricing.Quantities {
+		if model == "stopped" {
+			return pricing.Quantities{pricing.DiskGBSeconds: 3 * seconds}
+		}
+		return pricing.Quantities{pricing.VCPUSeconds: seconds, pricing.DiskGBSeconds: 3 * seconds}
+	}
+	options.Attributes = map[string]string{"sandbox_id": "sandbox-1"}
+	run := StartSlices(options)
+
+	at.to(30 * time.Second)
+	run.Switch("stopped")
+	at.to(45 * time.Second)
+	run.Attribute("orphan", "true")
+	run.Attribute("orphan", "true")
+	at.to(61 * time.Second)
+	run.Stop()
+
+	rows := s.rows(options)
+	s.Require().Len(rows, 3, "marking a run that is already marked ends nothing")
+	s.Equal(pricing.Quantities{pricing.VCPUSeconds: 30, pricing.DiskGBSeconds: 90}, rows[0].Meters)
+	s.Equal(pricing.Quantities{pricing.DiskGBSeconds: 45}, rows[1].Meters, "stopped holds disk alone")
+	s.Equal(pricing.Quantities{pricing.DiskGBSeconds: 48}, rows[2].Meters)
+	for i, row := range rows {
+		s.Equal("sandbox-1", row.Attributes["sandbox_id"], "every slice carries the run's attributes")
+		s.Equal(i == 2, row.Attributes["orphan"] == "true", "and from the mark on, the mark")
+	}
 }
