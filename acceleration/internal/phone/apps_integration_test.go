@@ -1491,3 +1491,18 @@ func (s *AppsSuite) TestMoreNumbersLiningAtOnceThanThePoolHasConnectionsAllLine(
 	s.Require().Len(trunks, 1)
 	s.ElementsMatch(numbers, s.deployment.TrunkNumbers(trunks[0]))
 }
+
+func (s *AppsSuite) TestANumberMarkedAttachedWithNoTrunkIsAttachedAgain() {
+	s.sealed()
+	_, err := s.store.DB().NewUpdate().Table("phone_numbers").Set("attached_at = ?", time.Now().UTC()).
+		Where("customer_id = ?", s.customer).Where("e164 = ?", s.e164).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.NotEmpty(attached.TrunkID)
+	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(attached.TrunkID))
+	s.Equal(attached.TrunkID, s.number().StreamTrunkID)
+	s.Equal(s.e164, s.vendor.inbound.E164, "the vendor is told to send calls to the line")
+}

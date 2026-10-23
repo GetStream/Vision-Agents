@@ -721,6 +721,21 @@ func (s *DataMoveSuite) TestAMovedNumberLeavesItsBridgePasswordBehind() {
 	s.ErrorIs(err, ErrNoNumber, "it arrives needing to be attached again")
 }
 
+func (s *DataMoveSuite) TestAMovedNumberArrivesNotAttached() {
+	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000113", Vendor: "telnyx", Country: "US", CustomerID: "acme",
+	}))
+	s.Require().NoError(s.source.AttachNumber(s.ctx, "acme", "+15550000113", NumberAttachment{
+		TrunkID: "trunk-1", RouteID: "route-1", CallType: "default",
+	}))
+
+	s.move("acme", "acme")
+
+	moved, err := s.destination.Number(s.ctx, "acme", "+15550000113")
+	s.Require().NoError(err)
+	s.Nil(moved.AttachedAt)
+}
+
 func (s *DataMoveSuite) TestAMovedNumberIsHeldWhereItArrives() {
 	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
 		E164: "+15550000111", Vendor: "plivo", Country: "US", CustomerID: "acme",

@@ -611,7 +611,7 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 
 	// The same request is sent on every run of a program waiting for calls, so a number
 	// already attached in this app is answered with what it has.
-	if held.AttachedAt != nil && held.StreamAppPK == pin {
+	if held.AttachedAt != nil && held.StreamTrunkID != "" && held.StreamAppPK == pin {
 		return Attached{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID,
 			Bridge: Bridge{URI: held.BridgeURI}}, nil
 	}
