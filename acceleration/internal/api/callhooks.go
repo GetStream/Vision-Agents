@@ -26,13 +26,15 @@ const signatureHeader = "X-Signature"
 //
 // The SDK's own event structs are not used to decode, only to verify: its Timestamp reads
 // epoch nanoseconds and writes RFC 3339, so a delivery carrying one format fails to parse
-// as the other and would be refused as though it were unsigned. Nothing here needs a
-// timestamp off the wire — a call event arrives while the phone is still ringing, so when it
-// was received is when it started — and the fields that are needed are a few strings.
+// as the other and would be refused as though it were unsigned. The one timestamp read,
+// created_at, is read here in either format (eventTime), and the rest are a few strings.
 type callEvent struct {
 	CallCid string `json:"call_cid"`
 	// SessionID is Stream's own session of the call, which its call stats are kept under.
 	SessionID string `json:"session_id"`
+	// CreatedAt is when Stream made the event (eventTime), which a call's legs are timed by:
+	// a delivery can be late, or come before one made earlier.
+	CreatedAt json.RawMessage `json:"created_at"`
 	Call      struct {
 		// Custom is whatever was put on the Stream call. Stream takes arbitrary JSON here.
 		Custom map[string]any `json:"custom"`
@@ -192,7 +194,8 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 			StreamAppPK: number.StreamAppPK, CallType: callType, CallID: callID,
 			StreamSessionID: event.SessionID, ParticipantSession: caller.UserSessionID, Vendor: number.Vendor,
 			Direction: store.Inbound, LocalNumber: number.E164, RemoteNumber: caller.number,
-			Country: cmp.Or(number.Country, phone.Country(number.E164)),
+			Country:  cmp.Or(number.Country, phone.Country(number.E164)),
+			DialedAt: eventTime(event.CreatedAt),
 		}, true)
 	}
 	// A suspension that cannot be read refuses the call too: it is there to stop fraud that
@@ -273,7 +276,7 @@ func (s *Server) releaseEndedCall(r *http.Request, origin hookOrigin, event call
 	}
 	// Every leg of the call ends with it, and is billed for its minutes. A leg whose end is
 	// lost here is ended by the sweep, at the longest a call is billed for.
-	if err := s.phone.EndLegs(r.Context(), origin.scope(), callType, callID); err != nil {
+	if err := s.phone.EndLegs(r.Context(), origin.scope(), callType, callID, eventTime(event.CreatedAt)); err != nil {
 		s.logger.Error("could not end an ended call's legs", "call", event.CallCid, "error", err)
 	}
 }
@@ -365,9 +368,10 @@ func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType
 	var err error
 	if eventType == getstream.EventTypeCallSessionParticipantJoined {
 		number, _ := phone.CallerNumber(event.Participant.User.ID)
-		err = s.phone.Connect(r.Context(), origin.scope(), callType, callID, event.SessionID, participant, number)
+		err = s.phone.Connect(r.Context(), origin.scope(), callType, callID, event.SessionID, participant, number,
+			eventTime(event.CreatedAt))
 	} else {
-		err = s.phone.Left(r.Context(), origin.scope(), callType, callID, participant)
+		err = s.phone.Left(r.Context(), origin.scope(), callType, callID, participant, eventTime(event.CreatedAt))
 	}
 	if err != nil {
 		s.logger.Error("could not record a phone joining or leaving a call; Stream is asked to deliver it again", "type", eventType,

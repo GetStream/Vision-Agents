@@ -404,13 +404,18 @@ func (s *CallHooksSuite) arriving(cid string) string {
 }
 
 func arrivingCall(cid string) string {
+	return arrivingCallAt(cid, time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC))
+}
+
+// arrivingCallAt is arrivingCall made by Stream at at.
+func arrivingCallAt(cid string, at time.Time) string {
 	id := cid[strings.Index(cid, ":")+1:]
 	callType := cid[:strings.Index(cid, ":")]
 	return fmt.Sprintf(`{
   "type": "call.session_started",
   "call_cid": %q,
   "session_id": "session-1",
-  "created_at": "2026-08-27T12:00:00Z",
+  "created_at": %q,
   "call": {
     "cid": %q,
     "id": %q,
@@ -424,7 +429,7 @@ func arrivingCall(cid string) string {
       ]
     }
   }
-}`, cid, cid, id, callType)
+}`, cid, at.UTC().Format(time.RFC3339Nano), cid, id, callType)
 }
 
 // nothingReaches fails when a call arrives on a channel that should stay empty.

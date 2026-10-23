@@ -41,10 +41,10 @@ const AttributeEndedBy = "ended_by"
 
 // OpenLeg records a leg of a call, billed to owner once its phone has joined: the request that
 // placed it, or the app whose number a caller rang. An outbound leg rings until its phone joins
-// (Connect); pass started for one already connected, as a call that arrived is. Its country is
-// where it rang unless the leg names its own. An inbound leg its Stream session already has is
-// not opened again. A leg that cannot be recorded is logged, since the call is already up and
-// its minutes are lost.
+// (Connect); pass started for one already connected, as a call that arrived is, from the leg's
+// DialedAt, when the event announcing it was made, or now. Its country is where it rang unless
+// the leg names its own. An inbound leg its Stream session already has is not opened again. A
+// leg that cannot be recorded is logged, since the call is already up and its minutes are lost.
 func (s *Service) OpenLeg(ctx context.Context, owner routing.Owner, leg store.CallLeg, started bool) {
 	if s.store == nil {
 		return
@@ -66,7 +66,7 @@ func (s *Service) OpenLeg(ctx context.Context, owner routing.Owner, leg store.Ca
 	if leg.Country == "" {
 		leg.Country = Country(leg.RemoteNumber)
 	}
-	leg.DialedAt = s.now()
+	leg.DialedAt = s.eventAt(leg.DialedAt)
 	if started {
 		leg.StartedAt = &leg.DialedAt
 	}
@@ -86,17 +86,18 @@ func (s *Service) OpenLeg(ctx context.Context, owner routing.Owner, leg store.Ca
 
 // Connect starts the leg of a phone that joined a call: the caller of a call that arrived, or
 // the person a placed call or a transfer rang, who has answered, told apart by the phone's
-// number, empty when unknown. Its minutes run from now. A phone already given its leg, by an
-// earlier delivery, starts nothing.
+// number, empty when unknown. Its minutes run from at, when the event saying so was made, or
+// now when that is zero. A phone already given its leg, by an earlier delivery, starts nothing.
 //
 // Stream does not order its call events, so a join no leg is waiting for yet is kept for the
 // leg that opens later, and a phone whose leave came first has its leg ended at that leave,
 // rather than open, and billed, until the call ends.
-func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, callID, sessionID, participant, number string) error {
+func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, callID, sessionID, participant, number string,
+	at time.Time) error {
 	if s.store == nil || participant == "" {
 		return nil
 	}
-	at := s.now()
+	at = s.eventAt(at)
 	left, err := s.store.ParticipantLeft(ctx, scope, callType, callID, participant)
 	if err != nil {
 		return err
@@ -126,13 +127,14 @@ func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, c
 	return s.store.ForgetParticipant(ctx, scope, callType, callID, participant)
 }
 
-// Left ends the leg of a phone that left a call, and bills its minutes. A leave no leg has the
-// phone of is kept, for the phone's join delivered after it and for the leg that opens later.
-func (s *Service) Left(ctx context.Context, scope store.AppScope, callType, callID, participant string) error {
+// Left ends the leg of a phone that left a call at at (or now, when zero), and bills its
+// minutes. A leave no leg has the phone of is kept, for the phone's join delivered after it
+// and for the leg that opens later.
+func (s *Service) Left(ctx context.Context, scope store.AppScope, callType, callID, participant string, at time.Time) error {
 	if s.store == nil || participant == "" {
 		return nil
 	}
-	at := s.now()
+	at = s.eventAt(at)
 	ended, err := s.store.EndParticipantLeg(ctx, scope, callType, callID, participant, at)
 	if err != nil {
 		return err
@@ -158,14 +160,14 @@ func (s *Service) Left(ctx context.Context, scope store.AppScope, callType, call
 	return nil
 }
 
-// EndLegs ends the legs of a call that ended, in the app the event about it came from, and
-// bills each whose phone joined for its minutes. A leg already ended, by its phone leaving, an
-// earlier delivery of the same event, or the sweep, is not billed again.
-func (s *Service) EndLegs(ctx context.Context, scope store.AppScope, callType, callID string) error {
+// EndLegs ends the legs of a call that ended at at (or now, when zero), in the app the event
+// about it came from, and bills each whose phone joined for its minutes. A leg already ended,
+// by its phone leaving, an earlier delivery of the same event, or the sweep, is not billed again.
+func (s *Service) EndLegs(ctx context.Context, scope store.AppScope, callType, callID string, at time.Time) error {
 	if s.store == nil {
 		return nil
 	}
-	ended, err := s.store.EndCallLegs(ctx, scope, callType, callID, s.now())
+	ended, err := s.store.EndCallLegs(ctx, scope, callType, callID, s.eventAt(at))
 	if err != nil {
 		return err
 	}
@@ -320,7 +322,18 @@ func legOwner(leg store.CallLeg) routing.Owner {
 	}
 }
 
-// now is the service's clock, which legs are timed by.
+// eventAt is when a call event says it happened, which its legs are timed by, since Stream may
+// deliver one late or before one made earlier. An event that says nothing, or names a time
+// still to come on this clock, happened now.
+func (s *Service) eventAt(at time.Time) time.Time {
+	now := s.now()
+	if at.IsZero() || at.After(now) {
+		return now
+	}
+	return at
+}
+
+// now is the service's clock, which legs are timed by when an event says nothing.
 func (s *Service) now() time.Time {
 	if s.clock != nil {
 		return s.clock()

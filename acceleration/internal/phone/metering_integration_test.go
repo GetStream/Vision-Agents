@@ -110,12 +110,22 @@ func (s *MeteringSuite) place() Placed {
 
 // answered is the phone of a call joining it, as the participant event says.
 func (s *MeteringSuite) answered(callType, callID, participant string) {
-	s.Require().NoError(s.service.Connect(s.ctx, everyApp, callType, callID, "session-1", participant, ""))
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, callType, callID, "session-1", participant, "", time.Time{}))
 }
 
 // joined is a phone of number joining a call, as the participant event says.
 func (s *MeteringSuite) joined(callType, callID, participant, number string) {
-	s.Require().NoError(s.service.Connect(s.ctx, everyApp, callType, callID, "session-1", participant, number))
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, callType, callID, "session-1", participant, number, time.Time{}))
+}
+
+// left is a phone leaving a call, as the participant event says.
+func (s *MeteringSuite) left(callType, callID, participant string) {
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, callType, callID, participant, time.Time{}))
+}
+
+// ended is the call ending, as session_ended says.
+func (s *MeteringSuite) ended(callType, callID string) {
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, callType, callID, time.Time{}))
 }
 
 // arrived opens the inbound leg of a call to the suite's number, as a session_started that
@@ -154,7 +164,7 @@ func (s *MeteringSuite) TestATransfersPhoneConnectsItsOwnLegNotAnInboundOneWitho
 	s.joined(defaultCallType, callID, "human-1", "+15125550124")
 	s.clock.advance(2 * time.Minute)
 
-	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "human-1"))
+	s.left(defaultCallType, callID, "human-1")
 
 	legs := s.legsOf(callID)
 	s.Equal("human-1", legs[store.Outbound].ParticipantSession, "the human's number is the transfer's")
@@ -164,7 +174,7 @@ func (s *MeteringSuite) TestATransfersPhoneConnectsItsOwnLegNotAnInboundOneWitho
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 120}, s.row(ModelCallMinutes).Meters)
 
 	s.clock.advance(time.Minute)
-	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, defaultCallType, callID))
+	s.ended(defaultCallType, callID)
 	minutes := s.rowsWhen(ModelCallMinutes, 2)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 250}, minutes[0].Meters, "the caller's every second, from when it arrived")
 	s.Equal("inbound", minutes[0].Attributes[AttributeDirection])
@@ -177,7 +187,7 @@ func (s *MeteringSuite) TestALeaveBeforeItsJoinEndsTheLegItConnects() {
 	s.arrived(callID)
 	s.transfer(callID, "+15125550124")
 
-	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "human-1"))
+	s.left(defaultCallType, callID, "human-1")
 	s.Len(s.openLegs(), 2, "no leg is the phone's yet")
 	s.clock.advance(time.Second)
 	s.joined(defaultCallType, callID, "human-1", "+15125550124")
@@ -187,7 +197,7 @@ func (s *MeteringSuite) TestALeaveBeforeItsJoinEndsTheLegItConnects() {
 	s.NotNil(legs[store.Outbound].EndedAt, "the phone had already left")
 	s.Zero(s.row(ModelCallMinutes).Meters[pricing.CallSeconds])
 	s.clock.advance(time.Hour)
-	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, defaultCallType, callID))
+	s.ended(defaultCallType, callID)
 	minutes := s.rowsWhen(ModelCallMinutes, 2)
 	s.Zero(minutes[1].Meters[pricing.CallSeconds], "the transfer, which the call ending did not bill again")
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 3601}, minutes[0].Meters, "the caller")
@@ -200,7 +210,7 @@ func (s *MeteringSuite) TestAJoinAndLeaveBeforeTheirLegEndItAsItOpens() {
 	callID := "call-" + uuid.NewString()
 	s.joined(defaultCallType, callID, "human-1", "+15125550124")
 	s.clock.advance(40 * time.Second)
-	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "human-1"))
+	s.left(defaultCallType, callID, "human-1")
 	s.clock.advance(time.Second)
 
 	s.transfer(callID, "+15125550124")
@@ -220,7 +230,7 @@ func (s *MeteringSuite) TestAJoinBeforeTheOutboundLegIsWrittenStartsItFromTheJoi
 	s.transfer(callID, "+15125550124")
 	s.clock.advance(time.Minute)
 	s.joined(defaultCallType, callID, "human-1", "+15125550124")
-	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, defaultCallType, callID))
+	s.ended(defaultCallType, callID)
 
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 65}, s.row(ModelCallMinutes).Meters, "from when the phone joined")
 	s.Zero(s.kept(callID), "the join was taken")
@@ -252,8 +262,8 @@ func (s *MeteringSuite) TestACallersJoinBeforeSessionStartedIsTakenByTheInboundL
 
 	s.joined(defaultCallType, callID, "human-1", "15125550124")
 	s.clock.advance(time.Minute)
-	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "human-1"))
-	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "caller-1"))
+	s.left(defaultCallType, callID, "human-1")
+	s.left(defaultCallType, callID, "caller-1")
 
 	legs := s.legsOf(callID)
 	s.Equal("caller-1", legs[store.Inbound].ParticipantSession)
@@ -286,8 +296,36 @@ func (s *MeteringSuite) TestAStoreThatCannotBeReachedFailsTheJoinAndTheLeave() {
 	service, err := NewService(ServiceOptions{Registry: s.service.registry, Store: unreachable, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 
-	s.Error(service.Connect(s.ctx, everyApp, defaultCallType, "call-1", "session-1", "human-1", "+15125550124"))
-	s.Error(service.Left(s.ctx, everyApp, defaultCallType, "call-1", "human-1"))
+	s.Error(service.Connect(s.ctx, everyApp, defaultCallType, "call-1", "session-1", "human-1", "+15125550124", time.Time{}))
+	s.Error(service.Left(s.ctx, everyApp, defaultCallType, "call-1", "human-1", time.Time{}))
+}
+
+// Legs are timed by when Stream made each event, not when it was delivered: a join delivered
+// late, a leave delivered before it, and a session_ended delivered a minute after the call.
+func (s *MeteringSuite) TestLegsAreTimedByWhenTheirEventsWereMade() {
+	callID := "call-" + uuid.NewString()
+	made := s.clock.now()
+	s.service.OpenLeg(s.ctx, routing.Owner{CustomerID: s.customer, Attribution: routing.Attribution{APIKey: routing.OriginPhoneInbound}},
+		store.CallLeg{CallType: defaultCallType, CallID: callID, StreamSessionID: "session-1", Vendor: s.vendor.vendor,
+			Direction: store.Inbound, LocalNumber: s.e164, Country: "US", DialedAt: made}, true)
+	s.transfer(callID, "+15125550124")
+	s.clock.advance(5 * time.Minute)
+
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "human-1", made.Add(100*time.Second)))
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, defaultCallType, callID, "session-1", "human-1", "+15125550124",
+		made.Add(40*time.Second)))
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, defaultCallType, callID, made.Add(4*time.Minute)))
+
+	minutes := s.rowsWhen(ModelCallMinutes, 2)
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 240}, minutes[0].Meters, "the caller, from the session_started made at the start")
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 60}, minutes[1].Meters, "the human, from their join to their leave")
+
+	later := "call-" + uuid.NewString()
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, defaultCallType, later, "session-1", "human-2", "",
+		s.clock.now().Add(time.Hour)))
+	var kept store.CallParticipant
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&kept).Where("call_id = ?", later).Scan(s.ctx))
+	s.Equal(s.clock.now(), kept.JoinedAt.UTC(), "a time still to come on the service's clock is taken as now")
 }
 
 // kept is how many joins and leaves of the call are kept for a leg yet to open.
@@ -304,7 +342,7 @@ func (s *MeteringSuite) TestAPlacedCallIsBilledForItsMinutesFromWhenItWasAnswere
 	s.answered(placed.CallType, placed.CallID, "phone-1")
 	s.clock.advance(61 * time.Second)
 
-	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID))
+	s.ended(placed.CallType, placed.CallID)
 
 	dial := s.row(ModelDial)
 	s.True(dial.Success)
@@ -321,7 +359,7 @@ func (s *MeteringSuite) TestACallNobodyAnsweredBillsNothing() {
 	placed := s.place()
 	s.clock.advance(time.Minute)
 
-	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID))
+	s.ended(placed.CallType, placed.CallID)
 
 	s.row(ModelDial)
 	s.Never(func() bool { return len(s.rows(ModelCallMinutes)) > 0 }, time.Second, 50*time.Millisecond)
@@ -334,9 +372,9 @@ func (s *MeteringSuite) TestALegEndsWhenItsPhoneLeaves() {
 	s.answered(placed.CallType, placed.CallID, "phone-1")
 	s.clock.advance(30 * time.Second)
 
-	s.Require().NoError(s.service.Left(s.ctx, everyApp, placed.CallType, placed.CallID, "phone-1"))
+	s.left(placed.CallType, placed.CallID, "phone-1")
 	s.clock.advance(time.Minute)
-	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID))
+	s.ended(placed.CallType, placed.CallID)
 
 	minutes := s.row(ModelCallMinutes)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 30}, minutes.Meters, "billed until the phone hung up, not the call")
@@ -363,7 +401,7 @@ func (s *MeteringSuite) TestATransferIsALegOfTheCallItJoins() {
 	s.answered(defaultCallType, callID, "human-1")
 	s.clock.advance(3 * time.Minute)
 
-	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, defaultCallType, callID))
+	s.ended(defaultCallType, callID)
 
 	minutes := s.row(ModelCallMinutes)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 180}, minutes.Meters)
@@ -377,7 +415,7 @@ func (s *MeteringSuite) TestALegLeftOpenIsClosedAtFourHoursAndNotBilled() {
 
 	_, err := s.service.SweepLegs(s.ctx)
 	s.Require().NoError(err)
-	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID),
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID, time.Time{}),
 		"the session_ended that comes late ends nothing")
 
 	minutes := s.row(ModelCallMinutes)
@@ -450,7 +488,7 @@ func (s *MeteringSuite) TestEveryLegOfAnEndedCallCountsTowardTheSandboxsMinutes(
 	s.answered(placed.CallType, placed.CallID, "human-1")
 	s.clock.advance(6 * time.Minute)
 
-	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID))
+	s.ended(placed.CallType, placed.CallID)
 
 	usage, err := s.service.gate.Usage(s.ctx, s.customer)
 	s.Require().NoError(err)

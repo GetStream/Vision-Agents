@@ -147,23 +147,32 @@ type hookStamp struct {
 // fresh reports whether an event was made recently enough to act on. One that says nothing
 // readable about when it was made is taken as made now.
 func (h hookStamp) fresh(now time.Time) bool {
-	if len(h.CreatedAt) == 0 {
-		return true
+	at := eventTime(h.CreatedAt)
+	return at.IsZero() || now.Sub(at) <= hookStaleAfter
+}
+
+// eventTime is when Stream made an event, from its created_at: RFC 3339, or epoch nanoseconds
+// or milliseconds. Zero when it says nothing readable.
+func eventTime(createdAt json.RawMessage) time.Time {
+	if len(createdAt) == 0 {
+		return time.Time{}
 	}
 	var text string
-	if json.Unmarshal(h.CreatedAt, &text) == nil {
+	if json.Unmarshal(createdAt, &text) == nil {
 		at, err := time.Parse(time.RFC3339Nano, text)
-		return err != nil || now.Sub(at) <= hookStaleAfter
+		if err != nil {
+			return time.Time{}
+		}
+		return at
 	}
 	var number int64
-	if json.Unmarshal(h.CreatedAt, &number) == nil && number > 0 {
-		at := time.Unix(0, number)
+	if json.Unmarshal(createdAt, &number) == nil && number > 0 {
 		if number < 1e15 {
-			at = time.UnixMilli(number)
+			return time.UnixMilli(number)
 		}
-		return now.Sub(at) <= hookStaleAfter
+		return time.Unix(0, number)
 	}
-	return true
+	return time.Time{}
 }
 
 // firstDelivery reports whether a hook is the first delivery of its event, which is the one

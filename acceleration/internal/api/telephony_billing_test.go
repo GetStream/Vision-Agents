@@ -258,6 +258,25 @@ func (s *TelephonyBillingSuite) TestAPhoneLeavingEndsItsLeg() {
 	s.Len(s.rows(phone.ModelCallMinutes), 1, "the call ending ends nothing more")
 }
 
+// A leg is timed by when Stream made each event, not when it was delivered.
+func (s *TelephonyBillingSuite) TestALegIsTimedByWhenItsEventsWereMade() {
+	callID := s.placedLeg("+15125550123", routing.Attribution{APIKey: s.app.key})
+	made := s.clock.now()
+	s.clock.advance(time.Minute)
+
+	s.Require().Equal(http.StatusOK, s.participantAt("left", callID, "sip-+15125550123", "phone-1", made.Add(40*time.Second)))
+	s.Require().Equal(http.StatusOK, s.participantAt("joined", callID, "sip-+15125550123", "phone-1", made.Add(10*time.Second)))
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 30}, s.phoneRows(phone.ModelCallMinutes, 1)[store.Outbound].Meters)
+
+	_, arrived := s.attached()
+	made = s.clock.now()
+	s.clock.advance(5 * time.Second)
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCallAt("default:"+arrived, made)))
+	s.clock.advance(2 * time.Minute)
+	s.Require().Equal(http.StatusOK, s.endMadeAt(arrived, made.Add(61*time.Second)))
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 61}, s.phoneRows(phone.ModelCallMinutes, 2)[store.Inbound].Meters)
+}
+
 // A join or leave the database could not take is answered 503, so Stream delivers it again.
 func (s *TelephonyBillingSuite) TestAJoinOrLeaveTheDatabaseCouldNotTakeIsAnswered503() {
 	unreachable, err := store.Open("postgres://postgres:postgres@127.0.0.1:1/none?sslmode=disable")
@@ -455,13 +474,19 @@ func (s *telephonyBilling) placedLeg(remote string, attribution routing.Attribut
 }
 
 // participant delivers a signed call.session_participant_<joined or left> for one of the call's
-// participants, as Stream would.
+// participants, as Stream would, made now on the suite's clock.
 func (s *telephonyBilling) participant(what, callID, user, userSession string) int {
+	return s.participantAt(what, callID, user, userSession, s.clock.now())
+}
+
+// participantAt is participant made by Stream at at, whenever it is delivered.
+func (s *telephonyBilling) participantAt(what, callID, user, userSession string, at time.Time) int {
+	stamp := at.UTC().Format(time.RFC3339Nano)
 	return s.signedly("/v1/phone/hooks/stream", fmt.Sprintf(
 		`{"type":"call.session_participant_%s","call_cid":"default:%s","session_id":"session-1",`+
-			`"created_at":"2026-08-27T12:00:30Z","participant":{"user_session_id":%q,"role":"user",`+
-			`"joined_at":"2026-08-27T12:00:30Z","user":{"id":%q}}}`,
-		what, callID, userSession, user))
+			`"created_at":%q,"participant":{"user_session_id":%q,"role":"user",`+
+			`"joined_at":%q,"user":{"id":%q}}}`,
+		what, callID, stamp, userSession, stamp, user))
 }
 
 // otherRouterWithPhone is a second node of the deployment, serving the phone hooks with the
@@ -470,15 +495,22 @@ func (s *telephonyBilling) otherRouterWithPhone() (*httptest.Server, *Server) {
 	return s.otherRouter(dispatch.NewPool())
 }
 
+// arriveAt delivers the call's session_started, made now on the suite's clock.
 func (s *telephonyBilling) arriveAt(callID string) int {
-	return s.signedly("/v1/phone/hooks/stream", arrivingCall("default:"+callID))
+	return s.signedly("/v1/phone/hooks/stream", arrivingCallAt("default:"+callID, s.clock.now()))
 }
 
+// endAt delivers the call's session_ended, made now on the suite's clock.
 func (s *telephonyBilling) endAt(callID string) int {
+	return s.endMadeAt(callID, s.clock.now())
+}
+
+// endMadeAt is endAt made by Stream at at, whenever it is delivered.
+func (s *telephonyBilling) endMadeAt(callID string, at time.Time) int {
 	return s.signedly("/v1/phone/hooks/stream", fmt.Sprintf(
 		`{"type":"call.session_ended","call_cid":"default:%s","session_id":"session-1",`+
-			`"created_at":"2026-08-27T12:05:00Z","call":{"cid":"default:%s","id":"%s","type":"default","custom":{}}}`,
-		callID, callID, callID))
+			`"created_at":%q,"call":{"cid":"default:%s","id":"%s","type":"default","custom":{}}}`,
+		callID, at.UTC().Format(time.RFC3339Nano), callID, callID))
 }
 
 // phoneRows waits for the app's want rows of one telephony model and answers them by direction.
