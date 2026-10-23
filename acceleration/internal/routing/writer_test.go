@@ -526,6 +526,38 @@ func (s *WriterSuite) TestAGateThatKnowsNoOrganizationKeepsTheRowsOwn() {
 	s.Equal("from-the-owner", s.written(1)[0].OrganizationID)
 }
 
+func (s *WriterSuite) TestTheGatesTierReplacesTheOneTheRowWasOpenedWith() {
+	writer := s.newWriter(nil)
+	row := s.row(func(request *store.Request) { request.OrganizationTier = "tier-a" })
+	row.gate = admitting(Admission{OrganizationID: "o1", OrganizationTier: "tier-b"})
+
+	writer.enqueue(row)
+
+	s.Equal("tier-b", s.written(1)[0].OrganizationTier, "the organization's tier now, not when the session opened")
+}
+
+func (s *WriterSuite) TestAGateThatKnowsNoTierKeepsTheRowsOwn() {
+	writer := s.newWriter(nil)
+	row := s.row(func(request *store.Request) { request.OrganizationTier = "tier-a" })
+	row.gate = admitting(Admission{OrganizationID: "o1"})
+
+	writer.enqueue(row)
+
+	s.Equal("tier-a", s.written(1)[0].OrganizationTier)
+}
+
+func (s *WriterSuite) TestTheWritersGateAnswersForARecorderWithNone() {
+	writer := s.newWriter(func(options *WriterOptions) {
+		options.Gate = admitting(Admission{OrganizationID: "o1", OrganizationTier: "tier-b"})
+	})
+
+	writer.enqueue(s.row(nil))
+
+	rows := s.written(1)
+	s.Equal("o1", rows[0].OrganizationID)
+	s.Equal("tier-b", rows[0].OrganizationTier)
+}
+
 func (s *WriterSuite) TestWithNoUsageServiceRowsAreNotQueued() {
 	writer := s.newWriter(nil)
 
@@ -551,7 +583,8 @@ func (s *WriterSuite) TestTheWriterMarksAMissingKeyUnattributed() {
 	s.Equal("key-1", rows[1].APIKey)
 	s.Equal(1.0, testutil.ToFloat64(usageUnattributed)-before)
 	s.Contains(s.logs.String(), "agent=agent-without-a-key", "the log names where the owner site that missed it is")
-	s.Contains(s.logs.String(), `level=WARN msg="usage row recorded with no api key or origin"`)
+	s.Contains(s.logs.String(), `level=ERROR msg="usage row recorded with no api key or origin"`)
+	s.Contains(s.logs.String(), "usage_id="+keyless.request.UsageID.String(), "the log names the row")
 	keys := map[uuid.UUID]string{}
 	for _, event := range s.events(service) {
 		keys[event.UsageID] = event.APIKey
@@ -716,7 +749,7 @@ func (s *WriterSuite) TestARecordedStatKeepsItsUsageIDAndSession() {
 	writer := s.newWriter(nil)
 	recorder := NewRecorderOn(LLM, writer, nil, s.logger)
 	usageID := UsageID("call_leg", s.customer)
-	stat := Stat{Owner: Owner{CustomerID: s.customer, SessionID: "session-1"}, UsageID: usageID, StartedAt: time.Now().UTC(), Success: true}
+	stat := Stat{Owner: Owner{CustomerID: s.customer, Attribution: Attribution{SessionID: "session-1"}}, UsageID: usageID, StartedAt: time.Now().UTC(), Success: true}
 
 	recorder.Record(ProviderConfig{Provider: "openai", Model: "gpt"}, stat)
 	recorder.Record(ProviderConfig{Provider: "openai", Model: "gpt"}, stat)

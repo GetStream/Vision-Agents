@@ -103,7 +103,7 @@ func run(options options, logger *slog.Logger) error {
 	// file is finalised or playback is allowed to finish.
 	defer audioSink.Close()
 
-	session, err := router.Start(ctx, ttsrouter.Request{
+	session, err := router.Start(routing.WithAttribution(ctx, routing.Attribution{APIKey: routing.CLIOrigin("say")}), ttsrouter.Request{
 		CustomerID:    options.customerID,
 		Tags:          options.tags,
 		Target:        options.target,

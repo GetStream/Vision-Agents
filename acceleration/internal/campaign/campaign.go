@@ -243,6 +243,7 @@ func (r *Runner) ring(
 	spec.Navigating = true
 	spec.Instructions = say(spec.Instructions, contact.Instructions)
 	spec.Tags = merge(spec.Tags, campaign.Tags)
+	spec.Attribution = scheduledBy(campaign)
 	spec.Phone = &session.PhoneSpec{
 		Number:       campaign.FromNumber,
 		To:           contact.ToNumber,
@@ -266,10 +267,17 @@ func (r *Runner) ring(
 // the session the phone service chooses, which is opened with that id.
 func placing(campaign store.Campaign, contact store.Contact) phone.CallRequest {
 	return phone.CallRequest{
-		Owner: routing.Owner{CustomerID: campaign.CustomerID, Tags: campaign.Tags},
+		Owner: routing.Owner{CustomerID: campaign.CustomerID, Attribution: scheduledBy(campaign), Tags: campaign.Tags},
 		From:  campaign.FromNumber,
 		To:    contact.ToNumber,
 	}
+}
+
+// scheduledBy owns a campaign's calls as whoever scheduled it: the key, the user and the usage
+// categories of the request that created it. One created before campaigns kept a key reads
+// back job:campaign (the migration); one that names none now is a gap the writer reports.
+func scheduledBy(campaign store.Campaign) routing.Attribution {
+	return routing.Attribution{APIKey: campaign.APIKey, UserID: campaign.UserID, UsageCategories: campaign.UsageCategories}
 }
 
 // meet opens the session under the id the call was placed for, so the agent is in the call

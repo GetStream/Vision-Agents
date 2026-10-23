@@ -100,7 +100,7 @@ func run(options options, logger *slog.Logger) error {
 	}
 	defer cleanup()
 
-	session, err := router.Start(ctx, llmrouter.Request{
+	session, err := router.Start(routing.WithAttribution(ctx, routing.Attribution{APIKey: routing.CLIOrigin("chat")}), llmrouter.Request{
 		CustomerID:    options.customerID,
 		Tags:          options.tags,
 		Target:        options.target,

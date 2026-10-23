@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -99,7 +100,7 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 			s.logger.Error("could not let go of a thread's turn; it runs out instead", "channel", thread.ChannelID, "error", err)
 		}
 	}()
-	turn, cancelTurn := context.WithTimeout(context.Background(), askTimeout)
+	turn, cancelTurn := context.WithTimeout(routing.WithAttribution(context.Background(), chatHookAttribution(thread.CustomerID, event)), askTimeout)
 	defer cancelTurn()
 
 	// A session a caller opened on the channel through the API answers there; otherwise this
@@ -179,6 +180,7 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 	spec.PersistConversation = true
 	spec.ConversationID = chatlog.ChannelType + ":" + thread.ChannelID
 	spec.Thread = true
+	spec.Attribution = chatHookAttribution(customerID, event)
 	return s.sessions.Create(conversation.RouterOpensThread(ctx, spec.ConversationID), spec)
 }
 

@@ -1243,6 +1243,12 @@ type Campaign struct {
 	CreatedAt   time.Time         `bun:"created_at,notnull"`
 	StartedAt   *time.Time        `bun:"started_at"`
 	FinishedAt  *time.Time        `bun:"finished_at"`
+
+	// APIKey, UserID and UsageCategories are who scheduled the campaign, as the request that
+	// created it named them: the calls it places later are owned by them.
+	APIKey          string   `bun:"api_key,notnull"`
+	UserID          string   `bun:"user_id,notnull"`
+	UsageCategories []string `bun:"usage_categories,array,nullzero"`
 }
 
 // Contact is one person to ring, and what became of ringing them.
@@ -1654,10 +1660,15 @@ type AgentSession struct {
 	AgentID        string `bun:"agent_id,notnull"`
 	ConversationID string `bun:"conversation_id,notnull"`
 	// UserID is whose session it is; CallerKind says what that name is worth.
-	UserID      string `bun:"user_id,notnull"`
-	CallerKind  string `bun:"caller_kind,notnull"`
-	Title       string `bun:"title,notnull"`
-	Description string `bun:"description,notnull"`
+	UserID     string `bun:"user_id,notnull"`
+	CallerKind string `bun:"caller_kind,notnull"`
+	// APIKey and UsageCategories are the key, or origin, and the categories the session was
+	// opened with, which its usage is recorded under for its whole life. A session carried on
+	// from its row keeps them; one from before they were kept has no key.
+	APIKey          string   `bun:"api_key,notnull"`
+	UsageCategories []string `bun:"usage_categories,array,nullzero"`
+	Title           string   `bun:"title,notnull"`
+	Description     string   `bun:"description,notnull"`
 	// Project is what the conversation belongs to, a column as well as a cost tag so a
 	// list grouped by project needs no JSON unpacking.
 	Project string `bun:"project,notnull"`

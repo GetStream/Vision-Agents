@@ -222,7 +222,8 @@ func (s *PriceListsSuite) TestAQuotedCostIsResoldWithTheMarkup() {
 	recorder := routing.NewRecorder(routing.Phone, s.store, nil, s.prices, slog.New(slog.DiscardHandler))
 
 	recorder.Record(routing.ProviderConfig{Provider: "telnyx", Model: "number"}, routing.Stat{
-		Owner: routing.Owner{CustomerID: customer}, StartedAt: time.Now(), CostMicros: 1_000_000, Success: true,
+		Owner:     routing.Owner{CustomerID: customer, Attribution: routing.Attribution{APIKey: s.app.key}},
+		StartedAt: time.Now(), CostMicros: 1_000_000, Success: true,
 	})
 	recorder.Close()
 

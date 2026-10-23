@@ -207,7 +207,7 @@ func (s *Server) buyPhoneNumber(ctx context.Context, request *buyPhoneNumberRequ
 	purchase := phone.Purchase{
 		Vendor: request.Body.Vendor,
 		E164:   request.Body.E164,
-		Owner:  routing.Owner{CustomerID: customerID, Tags: tags},
+		Owner:  routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx), Tags: tags},
 	}
 	if request.Body.Country != nil {
 		purchase.Country = *request.Body.Country
@@ -295,7 +295,7 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	}
 
 	call := phone.CallRequest{
-		Owner: routing.Owner{CustomerID: customerID, Tags: tags},
+		Owner: routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx), Tags: tags},
 		From:  request.Body.From,
 		To:    request.Body.To,
 	}
@@ -390,7 +390,7 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 
 	// The human is brought into the session's call, which is named after it.
 	transfer := phone.TransferRequest{
-		Owner:    routing.Owner{CustomerID: customerID, Tags: tags},
+		Owner:    routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx), Tags: tags},
 		From:     request.Body.From,
 		To:       request.Body.To,
 		CallID:   request.Body.SessionId,
@@ -685,7 +685,7 @@ func (s *Server) addTrunkNumber(ctx context.Context, request *addTrunkNumberRequ
 	// Tags are checked by the service with the number, so a bad one is answered
 	// "sip_trunk: invalid: <reason>" like the rest.
 	number, err := s.phone.AddTrunkNumber(ctx, phone.TrunkNumber{
-		Owner:   routing.Owner{CustomerID: customerID, Tags: phoneTags(request.Body.Tags)},
+		Owner:   routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx), Tags: phoneTags(request.Body.Tags)},
 		TrunkID: request.Id,
 		E164:    request.Body.E164,
 		Country: request.Body.Country,

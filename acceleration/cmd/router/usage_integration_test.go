@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -69,7 +70,7 @@ func (s *UsageCommandsSuite) lostLog() (path string, lost uuid.UUID) {
 	writer.Close(ctx)
 	lost = uuid.Must(uuid.NewV7())
 	routing.NewRecorderOn(routing.LLM, writer, nil, logger).Record(routing.ProviderConfig{Provider: "openai", Model: "gpt"}, routing.Stat{
-		Owner:   routing.Owner{CustomerID: "app-1", SessionID: "session-1", Tags: routing.Tags{"project": `a "quoted" one`}},
+		Owner:   routing.Owner{CustomerID: "app-1", Attribution: routing.Attribution{SessionID: "session-1"}, Tags: routing.Tags{"project": `a "quoted" one`}},
 		UsageID: lost, StartedAt: time.Now().UTC(), Usage: routing.Usage{OutputTokens: 10}, ErrorMessage: "cut off\nmid line",
 	})
 	s.Require().Contains(log.String(), `msg="usage row lost" reason=shutdown`)
@@ -102,6 +103,28 @@ func (s *UsageCommandsSuite) TestReplayWritesLostRowsOnce() {
 	s.True(rows[0].ToShip, "queued for the sweeper, with a usage service")
 	s.Equal(routing.Unattributed, rows[0].APIKey, "the writer's defaults, which the row was lost before it got")
 	s.Equal(usageservice.DefaultTier, rows[0].OrganizationTier)
+}
+
+func (s *UsageCommandsSuite) TestAReplayedRowWithAUserTheUsageServiceWouldRefuseIsWrittenWithoutIt() {
+	lost := store.Request{
+		UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", APIKey: "key-a", UserID: "auth0|x",
+		Provider: "openai", Model: "gpt", StartedAt: time.Now().UTC(), Success: true,
+	}
+	row, err := json.Marshal(lost)
+	s.Require().NoError(err)
+	// As a router from before the rule would have logged it.
+	var log bytes.Buffer
+	slog.New(slog.NewTextHandler(&log, nil)).Error("usage row lost", "reason", "shutdown", "usage_id", lost.UsageID, "row", string(row))
+	path := filepath.Join(s.T().TempDir(), "router.log")
+	s.Require().NoError(os.WriteFile(path, log.Bytes(), 0o600))
+
+	s.Require().NoError(runUsage([]string{"replay", "--from", path}, s.settings, &bytes.Buffer{}))
+
+	rows := s.requests()
+	s.Require().Len(rows, 1)
+	s.Equal(lost.UsageID, rows[0].UsageID)
+	s.Empty(rows[0].UserID)
+	s.Equal("key-a", rows[0].APIKey)
 }
 
 func (s *UsageCommandsSuite) TestWithNoUsageServiceAReplayedRowIsNotQueued() {

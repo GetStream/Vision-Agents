@@ -576,21 +576,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	defer stopAlerts()
 	stopMeteringAlerts := startMeteringAlerts(ctx, source, shard, logger)
 	defer stopMeteringAlerts()
-	// Every recorder of the process writes through this one writer, so there is one queue to
-	// drain at shutdown. Deferred here, it closes after everything that records and before
-	// the store and Redis.
-	usageWriter := routing.NewWriter(routing.WriterOptions{
-		Store: pgStore, Live: liveClient, Logger: logger, Usage: usageClient, Source: source,
-	})
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), usageDrainTimeout)
-		defer cancel()
-		usageWriter.Close(ctx)
-	}()
-	if usageClient != nil {
-		stopSweeper := startUsageSweeper(ctx, routing.SweeperOptions{Store: pgStore, Usage: usageClient, Source: source, Logger: logger})
-		defer stopSweeper()
-	}
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
 	sandboxProxy, err := newSandboxProxy(settings.CodeSandbox, liveClient, connectorResolver, connectors.Schemes, logger)
 	if err != nil {
@@ -643,6 +628,23 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		gate = policies
+	}
+
+	// Every recorder of the process writes through this one writer, so there is one queue to
+	// drain at shutdown. Deferred here, it closes after everything that records and before
+	// the policies it asks, the store and Redis. The policies say whose a row is, and its
+	// organization's tier, for a recorder with no gate of its own.
+	usageWriter := routing.NewWriter(routing.WriterOptions{
+		Store: pgStore, Live: liveClient, Logger: logger, Gate: gate, Usage: usageClient, Source: source,
+	})
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), usageDrainTimeout)
+		defer cancel()
+		usageWriter.Close(ctx)
+	}()
+	if usageClient != nil {
+		stopSweeper := startUsageSweeper(ctx, routing.SweeperOptions{Store: pgStore, Usage: usageClient, Source: source, Logger: logger})
+		defer stopSweeper()
 	}
 
 	limiter, err := newDailyLimiter(liveClient, quota.Limits{

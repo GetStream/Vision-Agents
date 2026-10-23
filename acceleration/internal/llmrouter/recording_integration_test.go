@@ -108,7 +108,9 @@ func (s *RecordingSuite) recordedFor(name string, params llm.ResponseParams, res
 func (s *RecordingSuite) recordedVia(ctx context.Context, name string, provider Provider, params llm.ResponseParams) (store.Request, int64, error) {
 	customer := uuid.NewString()
 	recorder := routing.NewRecorder(routing.LLM, s.store, nil, s.prices, slog.New(slog.NewTextHandler(s.logs, nil)))
-	session := newSession(provider, s.builtIn(name), routing.Owner{CustomerID: customer}, recorder, nil)
+	// A key, as every owner site names one: a row without one is logged as an error.
+	owner := routing.Owner{CustomerID: customer, Attribution: routing.Attribution{APIKey: "key-a"}}
+	session := newSession(provider, s.builtIn(name), owner, recorder, nil)
 
 	var told int64
 	params.ID = "r1"

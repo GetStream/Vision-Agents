@@ -53,6 +53,9 @@ const (
 	phoneConfigEnvVar = "ROUTER_PHONE_CONFIG"
 )
 
+// cliAttribution owns what a command buys and dials: an operator ran it, and no key started it.
+var cliAttribution = routing.Attribution{APIKey: routing.CLIOrigin("phone")}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -288,7 +291,7 @@ func buy(ctx context.Context, arguments []string) error {
 		Vendor:  *vendor,
 		E164:    *number,
 		Country: *country,
-		Owner:   routing.Owner{CustomerID: *customer, Tags: tags.Tags},
+		Owner:   routing.Owner{CustomerID: *customer, Attribution: cliAttribution, Tags: tags.Tags},
 	})
 	if err != nil {
 		return err
@@ -357,7 +360,7 @@ func dial(ctx context.Context, arguments []string) error {
 	defer cleanup()
 
 	placed, err := service.Call(ctx, phone.CallRequest{
-		Owner:         routing.Owner{CustomerID: *customer, Tags: tags.Tags},
+		Owner:         routing.Owner{CustomerID: *customer, Attribution: cliAttribution, Tags: tags.Tags},
 		From:          *from,
 		To:            *to,
 		SessionID:     *sessionID,
@@ -401,7 +404,7 @@ func transfer(ctx context.Context, arguments []string) error {
 	defer cleanup()
 
 	placed, err := service.Transfer(ctx, phone.TransferRequest{
-		Owner:    routing.Owner{CustomerID: *customer, Tags: tags.Tags},
+		Owner:    routing.Owner{CustomerID: *customer, Attribution: cliAttribution, Tags: tags.Tags},
 		From:     *from,
 		To:       *to,
 		CallID:   *sessionID,

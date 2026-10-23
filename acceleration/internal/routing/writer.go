@@ -28,8 +28,7 @@ const (
 	retryMost  = 30 * time.Second
 	// A batch that keeps failing is logged at most every errorLogEvery.
 	errorLogEvery = 10 * time.Second
-	// unattributedLogEvery spaces the warning naming a row with no key, which before every
-	// owner names one is every row.
+	// unattributedLogEvery spaces the error naming a row with no key.
 	unattributedLogEvery = time.Minute
 	// lookupTimeout bounds asking the gate whose one customer's rows are.
 	lookupTimeout = time.Second
@@ -56,6 +55,7 @@ type Writer struct {
 	store        *store.Store
 	live         *live.Client
 	logger       *slog.Logger
+	gate         Gate
 	shipper      *shipper
 	writeTimeout time.Duration
 	queueSize    int64
@@ -94,6 +94,9 @@ type WriterOptions struct {
 	Store  *store.Store
 	Live   *live.Client
 	Logger *slog.Logger
+	// Gate says whose a row is, its organization and that organization's tier, for a row whose
+	// recorder has no gate of its own. Optional.
+	Gate Gate
 	// Usage is the usage service the written rows are shipped to. Nil: rows are written with
 	// to_ship false and never shipped.
 	Usage *usage.Client
@@ -130,6 +133,7 @@ func NewWriter(options WriterOptions) *Writer {
 		store:        options.Store,
 		live:         options.Live,
 		logger:       logger,
+		gate:         options.Gate,
 		writeTimeout: timeout,
 		queueSize:    int64(size),
 		queue:        make(chan queued, size),
@@ -313,6 +317,9 @@ func (w *Writer) writeBatch(batch []queued) {
 	rows := make([]pending, len(batch))
 	for i, next := range batch {
 		rows[i] = pending{request: w.prepare(next.request), gate: next.gate}
+		if next.gate == nil {
+			rows[i].gate = w.gate
+		}
 	}
 	if w.ctx.Err() != nil {
 		w.lose(requestsOf(rows), lostShutdown, nil)
@@ -353,15 +360,21 @@ func (w *Writer) prepare(request store.Request) store.Request {
 	if request.APIKey == "" {
 		request.APIKey = Unattributed
 		usageUnattributed.Inc()
+		// Every site that owns work names a key or an origin, so this is one that was missed;
+		// the row is what tells which.
 		if w.throttled(&w.unattributedLogged, unattributedLogEvery) {
-			w.logger.Warn("usage row recorded with no api key or origin",
-				"modality", request.Modality, "provider", request.Provider,
-				"purpose", request.Purpose, "agent", request.AgentID)
+			w.logger.Error("usage row recorded with no api key or origin",
+				"usage_id", request.UsageID, "customer_id", request.CustomerID, "modality", request.Modality,
+				"provider", request.Provider, "model", request.Model, "purpose", request.Purpose,
+				"agent", request.AgentID, "session", request.SessionID)
 		}
 	}
 	if request.OrganizationTier == "" {
 		request.OrganizationTier = usage.DefaultTier
 	}
+	// A recorder's row has had RecordedUser applied; one that slipped past would be refused by
+	// the usage service whole, so it is never written with the id.
+	request.UserID = RecordedUser(request.UserID)
 	return request
 }
 
@@ -426,6 +439,9 @@ func (w *Writer) attribute(rows []pending) int {
 		row.request.Tags = got.admission.Labelled(row.request.Tags)
 		if got.admission.OrganizationID != "" {
 			row.request.OrganizationID = got.admission.OrganizationID
+		}
+		if got.admission.OrganizationTier != "" {
+			row.request.OrganizationTier = got.admission.OrganizationTier
 		}
 	}
 	return failed

@@ -94,7 +94,7 @@ func (e *Enforcer) Screener(classifier *decisionrouter.Router) func(context.Cont
 // judge asks the classifier about every harm at once. A classifier that cannot be reached
 // or leaves a harm unanswered lets the response stand, and says so in the log.
 func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router, owner routing.Owner, text string) error {
-	ctx, cancel := context.WithTimeout(ctx, screenTimeout)
+	ctx, cancel := context.WithTimeout(routing.WithAttribution(ctx, owner.Attribution), screenTimeout)
 	defer cancel()
 
 	session, err := classifier.Start(ctx, decisionrouter.Request{

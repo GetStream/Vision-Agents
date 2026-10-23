@@ -373,6 +373,9 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	spec.ConversationID = identity.ConversationID
 	spec.Caller = routing.Caller{UserID: identity.UserID}
 	spec.CallerKind = auth.KindAuthenticated
+	// No key started it: the person texted one of the app's numbers.
+	spec.Attribution = routing.Attribution{APIKey: routing.OriginPhoneInbound,
+		UserID: identity.UserID, CallerKind: routing.CallerUser}
 	// The conversation is kept in Stream Chat like any other, and this is what says it was
 	// held over a channel, so a dashboard or an inbox can tell it from one typed in an app.
 	if spec.Custom == nil {

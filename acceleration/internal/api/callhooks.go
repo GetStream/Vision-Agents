@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -72,6 +73,8 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// What the event starts here, an ended call's episode summaries, no key started.
+	r = r.WithContext(routing.WithAttribution(r.Context(), routing.Attribution{APIKey: routing.OriginHookVideo}))
 
 	eventType := getstream.GetEventType(payload)
 	if eventType == "" {

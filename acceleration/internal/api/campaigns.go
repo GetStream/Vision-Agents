@@ -73,12 +73,17 @@ func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequ
 		return nil, errUnknownConfig
 	}
 
+	// The calls it places later are owned by whoever scheduled it.
+	scheduler := routing.AttributionFrom(ctx)
 	campaign := store.Campaign{
-		CustomerID:  customerID,
-		Name:        strings.TrimSpace(request.Body.Name),
-		ConfigID:    request.Body.ConfigId,
-		FromNumber:  request.Body.FromNumber,
-		Concurrency: value(request.Body.Concurrency),
+		CustomerID:      customerID,
+		Name:            strings.TrimSpace(request.Body.Name),
+		ConfigID:        request.Body.ConfigId,
+		FromNumber:      request.Body.FromNumber,
+		Concurrency:     value(request.Body.Concurrency),
+		APIKey:          scheduler.APIKey,
+		UserID:          scheduler.UserID,
+		UsageCategories: scheduler.UsageCategories,
 	}
 	if request.Body.Tags != nil {
 		campaign.Tags = *request.Body.Tags

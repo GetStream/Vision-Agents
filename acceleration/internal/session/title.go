@@ -16,6 +16,7 @@ import (
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
 // titleTarget names conversations. A fast tier: a title is a few words, and it is written
@@ -158,7 +159,7 @@ func (s *Session) retitle(ctx context.Context, said []spoken) error {
 }
 
 func (t *titler) ask(ctx context.Context, spec Spec, id string, said []spoken) (title, error) {
-	session, err := t.llm.Start(ctx, llmrouter.Request{
+	session, err := t.llm.Start(routing.WithAttribution(ctx, spec.Attribution), llmrouter.Request{
 		CustomerID: spec.CustomerID,
 		AgentID:    spec.AgentID,
 		Tags:       spec.Tags,

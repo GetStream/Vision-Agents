@@ -102,6 +102,11 @@ type Spec struct {
 	// anonymous caller may go by any name, so the name alone cannot be what one person's
 	// conversation is kept from another by. The API fills it in from the credential.
 	CallerKind auth.Kind
+	// Attribution is who every row the session writes is billed to and asked for by: the key
+	// it was opened with, its user and its usage categories, kept for its whole life, and its
+	// own id. Create takes it from the context it is given when the spec names no key, which
+	// is the request's (routing.AttributionFrom).
+	Attribution routing.Attribution
 	// ConfigID names the agent config this session was created from, so a call can later
 	// say what the agent was configured as. Empty for a session that spelled itself out.
 	ConfigID string

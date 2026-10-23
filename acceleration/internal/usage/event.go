@@ -182,10 +182,11 @@ func (e Event) Check(now time.Time) *Rejection {
 		}
 	}
 	for _, id := range [][2]string{{"organization_id", e.OrganizationID}, {"app_id", e.AppID}, {"api_key", e.APIKey}, {"user_id", e.UserID}} {
-		if len(id[1]) > MaxIDLength {
+		switch IDProblem(id[1]) {
+		case ReasonIDLength:
 			return reject(ReasonIDLength, "%s is %d bytes, at most %d", id[0], len(id[1]), MaxIDLength)
-		}
-		if found, ok := keyCharacter(id[1]); ok {
+		case ReasonSeparator:
+			found, _ := keyCharacter(id[1])
 			return reject(ReasonSeparator, "%s contains %s", id[0], found)
 		}
 	}
@@ -195,6 +196,21 @@ func (e Event) Check(now time.Time) *Rejection {
 		return reject(ReasonText, "%s contains a NUL character", name)
 	}
 	return nil
+}
+
+// IDProblem is why an organization, app, key or user id cannot be one an event names, as the
+// Reason Check rejects the whole event with (ReasonIDLength, ReasonSeparator or ReasonText),
+// or empty when it can. A producer applies it before it records an id it was given.
+func IDProblem(id string) string {
+	switch {
+	case len(id) > MaxIDLength:
+		return ReasonIDLength
+	case strings.ContainsAny(id, separator+"{}"):
+		return ReasonSeparator
+	case strings.ContainsRune(id, 0):
+		return ReasonText
+	}
+	return ""
 }
 
 // nul finds the first field holding a NUL character.

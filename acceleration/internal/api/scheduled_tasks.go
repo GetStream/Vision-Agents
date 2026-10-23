@@ -11,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -158,8 +159,11 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 	if strings.TrimSpace(body.Instructions) == "" {
 		return nil, invalidRequest("instructions cannot be empty")
 	}
+	// Every occurrence is owned by the key and the categories that scheduled it.
+	scheduler := routing.AttributionFrom(ctx)
 	task := store.ScheduledTask{
 		CustomerID: customerID, UserID: userID, CallerKind: string(auth.KindServer),
+		APIKey: scheduler.APIKey, UsageCategories: scheduler.UsageCategories,
 		Title: strings.TrimSpace(body.Title), Instructions: body.Instructions,
 		State: store.ScheduledTaskActive, CreatedBy: "api",
 	}

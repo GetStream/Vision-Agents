@@ -550,7 +550,7 @@ func (s *ScheduledTasksSuite) TestTheAgentMovesATaskPastItsNextRunUnderAQuarterH
 
 func (s *ScheduledTasksSuite) seedListedTask(config string, user *testClient, state string) {
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
 		StartLocal: time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), Timezone: "Europe/Amsterdam", State: state,
 	}
@@ -639,7 +639,7 @@ func (s *ScheduledTasksSuite) TestTheAgentListsRunningTasksFirstAndSaysWhenThere
 	user := s.data.createUser()
 	seed := func(state string) string {
 		task := store.ScheduledTask{
-			CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+			CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 			CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
 			StartLocal: time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), Timezone: "Europe/Amsterdam", State: state,
 		}
@@ -910,7 +910,7 @@ func (s *ScheduledTasksSuite) TestATaskWithNoSessionYetOpensOneAtItsFirstOccurre
 	now := time.Now()
 	next := now.Add(-time.Minute)
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
@@ -935,7 +935,7 @@ func (s *ScheduledTasksSuite) TestATaskThatComesDueOnACallWaitsForTheCallToEnd()
 	now := time.Now()
 	next := now.Add(-time.Minute)
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
@@ -964,7 +964,7 @@ func (s *ScheduledTasksSuite) TestADueTaskIsHandedToTheNodeHoldingItsConversatio
 	now := time.Now()
 	next := now.Add(-time.Minute)
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
@@ -1026,7 +1026,7 @@ func (s *ScheduledTasksSuite) TestAConfigThatCannotBeReadIsNotReportedAsDeletedO
 	// being gone: that is a failure of the lookup, not an unknown config.
 	user := s.data.createUser()
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), UserID: user.userID,
+		CustomerID: s.customerID(), UserID: user.userID, APIKey: s.app.key,
 		CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
 		StartLocal: time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second), Timezone: "Europe/Amsterdam",
 		State: store.ScheduledTaskPaused,
@@ -1882,6 +1882,29 @@ func (s *ScheduledTasksSuite) TestRunningATaskByHandDeliversWithoutMovingTheSche
 	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path, nil, &read))
 	s.Equal(created.NextRunAt, read.NextRunAt, "running by hand does not move the schedule")
 	s.NotNil(read.LastRunAt)
+}
+
+func (s *ScheduledTasksSuite) TestATaskRunsAsTheKeyThatScheduledIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	scheduler := s.serverClient.actingFor(user)
+	scheduler.header.Set(auth.UsageCategoriesHeader, "project:reminders")
+	var created ScheduledTask
+	s.Require().Equal(http.StatusCreated, scheduler.do(http.MethodPost, "/v1/agents/scheduled-tasks", taskRequest(config), &created))
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/run", nil, nil))
+
+	var rows []store.Request
+	s.Require().Eventually(func() bool {
+		rows = nil
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(s.T().Context())
+		return err == nil && len(rows) > 0
+	}, 30*time.Second, 250*time.Millisecond, "the run recorded nothing")
+	for _, row := range rows {
+		s.Equal(s.app.key, row.APIKey, "%s %s", row.Modality, row.Purpose)
+		s.Equal(user.userID, row.UserID)
+		s.Equal([]string{"project:reminders"}, row.UsageCategories)
+	}
 }
 
 func (s *ScheduledTasksSuite) TestDeletingATaskDeletesItsRuns() {
