@@ -181,7 +181,7 @@ ticket comments (AI-1842, AI-1843).
 | Nothing at all, and the router logs nothing | The profile's `webhook_url` points somewhere else (an old tunnel) | Read the profile (step 1). Point it at the router (step 5) |
 | The proxy answers 401 «api_key is required» | The staging proxy does not pass the route | The route passed on 2026-10-23. See the `connectors` skill, «When it does not work» |
 | The router answers 401 «not signed by the provider» to Telnyx | Wrong signing secret, or a clock older than 5 min | Register the provider app again with `TELNYX_PUBLIC_KEY` (step 2) |
-| 200, but no reply | No connection has this number, no config binds it, or two configs bind it | `GET /v1/agents/connections?connector_id=telnyx`, then the configs' `connectors`: exactly one config binds the connection |
+| 200, but no reply | No connection has this number, or no config binds it. Two configs that bind it: the oldest answers, so the newer one stays silent | `GET /v1/agents/connections?connector_id=telnyx`, then the configs' `connectors`: exactly one config binds the connection |
 | 200, but no reply, and the binding is right | The sandbox gate holds the text back, or the person has an opt-out | See «What the bridge does to a text» |
 | No reply to STOP, START or HELP | Telnyx answered it, not the agent | Expected. Read `autoresponse_type` in the webhook |
 | No reply after an earlier STOP | The person has an opt-out | Text START, or remove the opt-out |
