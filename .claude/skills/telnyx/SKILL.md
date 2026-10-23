@@ -80,7 +80,8 @@ curl -s "$R/v1/agents/connections?connector_id=telnyx&$K" "${A[@]}" | jq '.items
 ```
 
 Telnyx's own API takes `Authorization: Bearer $TELNYX_API_KEY` at `https://api.telnyx.com/v2`.
-In a `filter[...]` query, write the number's `+` as `%2B`.
+In a `filter[...]` query, write the number's `+` as `%2B`, and call curl with `-g`: without it,
+curl reads the brackets as a pattern, and `-s` hides the error.
 
 ## Set up a line
 
@@ -90,7 +91,7 @@ before you go to the next step.
 1. **Read the number's messaging profile, and write down its `webhook_url`.** You need it to
    go back.
    ```bash
-   curl -s -H "Authorization: Bearer $TELNYX_API_KEY" "https://api.telnyx.com/v2/phone_numbers?filter[phone_number]=%2B12187021098" | jq '.data[] | {id, messaging_profile_id}'
+   curl -sg -H "Authorization: Bearer $TELNYX_API_KEY" "https://api.telnyx.com/v2/phone_numbers?filter[phone_number]=%2B12187021098" | jq '.data[] | {id, messaging_profile_id}'
    curl -s -H "Authorization: Bearer $TELNYX_API_KEY" "https://api.telnyx.com/v2/messaging_profiles/$PROFILE" | jq '.data | {name, webhook_url, webhook_failover_url}'
    curl -s -H "Authorization: Bearer $TELNYX_API_KEY" "https://api.telnyx.com/v2/messaging_profiles/$PROFILE/phone_numbers" | jq '.meta.total_results'
    ```
@@ -108,7 +109,8 @@ before you go to the next step.
    curl -s -X PUT "$R/v1/agents/connections/$CONN/credentials?$K" "${A[@]}" \
      -d "$(jq -n --arg t "$TELNYX_API_KEY" '{expected_revision: 1, values: {token: $t}}')" | jq '{status, account_id}'   # connected
    ```
-4. **Bind it to a config.** A channel binding must say `"tools": []`, or the create is a 400.
+4. **Bind it to a config.** Every binding must send `tools` (`internal/api/configs.go:2281`).
+   A channel binding has no tools, so it sends `"tools": []`.
    Turn on `scheduling` only if you want reminders.
    ```bash
    curl -s -X POST "$R/v1/agents/configs?$K" "${A[@]}" -d "$(jq -n --arg c "$CONN" '{
@@ -168,16 +170,19 @@ ticket comments (AI-1842, AI-1843).
 - **One turn per thread.** A session the hook opens is closed after the turn
   (`api/threadhooks.go` `answerThread`). The next text, or a reminder that comes due, reopens
   the conversation from the channel.
-- **A refused send is sent again** after 2 s, 10 s and 30 s (`Options.RetryBackoff`).
+- **Some failed sends are sent again**, after 2 s, 10 s and 30 s (`Options.RetryBackoff`): no
+  answer, a 5xx, a 429, or a refusal the scheme reads as transient or rate limited. Any other
+  refusal, such as a 4xx, is not sent again (`internal/channelbridge/bridge.go:754-777`).
 
 ## When a text gets no answer
 
 | What you see | Where it stopped | What to do |
 | --- | --- | --- |
 | Nothing at all, and the router logs nothing | The profile's `webhook_url` points somewhere else (an old tunnel) | Read the profile (step 1). Point it at the router (step 5) |
-| The proxy answers 401 «api_key is required» | The staging proxy does not pass the route | The route passed on 2026-10-23. Check the gateway's allowlist (`deploy` skill) |
+| The proxy answers 401 «api_key is required» | The staging proxy does not pass the route | The route passed on 2026-10-23. See the `connectors` skill, «When it does not work» |
 | The router answers 401 «not signed by the provider» to Telnyx | Wrong signing secret, or a clock older than 5 min | Register the provider app again with `TELNYX_PUBLIC_KEY` (step 2) |
-| 200, but no reply | No connection has this number, or no config binds it | `GET /v1/agents/connections?connector_id=telnyx`, then the configs' `connectors` |
+| 200, but no reply | No connection has this number, no config binds it, or two configs bind it | `GET /v1/agents/connections?connector_id=telnyx`, then the configs' `connectors`: exactly one config binds the connection |
+| 200, but no reply, and the binding is right | The sandbox gate holds the text back, or the person has an opt-out | See «What the bridge does to a text» |
 | No reply to STOP, START or HELP | Telnyx answered it, not the agent | Expected. Read `autoresponse_type` in the webhook |
 | No reply after an earlier STOP | The person has an opt-out | Text START, or remove the opt-out |
 | The agent answers, but the time is wrong | The config's `default_timezone` | Set it, or name the zone in the text (AI-1910) |
