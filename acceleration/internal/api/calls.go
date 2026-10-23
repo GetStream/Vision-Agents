@@ -105,7 +105,7 @@ func (s *Server) attachUsage(ctx context.Context, customerID string, call store.
 		return
 	}
 
-	spent, err := s.store.CallUsage(ctx, customerID, call.AgentID, call.StartedAt, call.EndedAt)
+	spent, err := s.store.CallUsage(ctx, customerID, call.AgentID, call.ID, call.StartedAt, call.EndedAt)
 	if err != nil {
 		s.logger.Error("could not read what a call spent", "call", call.ID, "error", err)
 		return
@@ -133,7 +133,7 @@ func (s *Server) getCallTokens(ctx context.Context, request *getCallTokensReques
 	if err != nil {
 		return nil, errUnknownCall
 	}
-	used, err := s.store.CallTokens(ctx, customerID, call.AgentID, call.StartedAt, call.EndedAt)
+	used, err := s.store.CallTokens(ctx, customerID, call.AgentID, call.ID, call.StartedAt, call.EndedAt)
 	if err != nil {
 		return nil, err
 	}

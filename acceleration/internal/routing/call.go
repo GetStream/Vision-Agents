@@ -125,6 +125,22 @@ func (m Meter) settle(stat *Stat, work pricing.Metered) {
 	stat.Use(work.Used())
 	stat.VendorCost(work)
 	stat.ProviderCost(work)
+	stat.Describe(work)
+}
+
+// Attributed is work that says more about itself than what it used, such as the size of the
+// pictures drawn, which the price list can key on. What it says goes on its row.
+type Attributed interface {
+	Attributes() map[string]string
+}
+
+// Describe adds what the work says about itself to the stat's attributes, when it says.
+func (s *Stat) Describe(work any) {
+	if attributed, ok := work.(Attributed); ok {
+		for name, value := range attributed.Attributes() {
+			s.Attribute(name, value)
+		}
+	}
 }
 
 func (m Meter) record(stat Stat) {

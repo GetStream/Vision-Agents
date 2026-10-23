@@ -2,8 +2,12 @@ package agent
 
 import (
 	"context"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -21,6 +25,11 @@ import (
 // same words releases it. Any other ruling drops it, which costs the tokens of a reply
 // nobody hears.
 type speculation struct {
+	// id is what the reply's usage row shares with every other speculative reply to the same
+	// turn of the caller's, and kept is set once the reply is spoken: a reply thrown away is
+	// billed all the same, and tagged so it can be found.
+	id      string
+	kept    atomic.Bool
 	ready   candidate
 	turn    harness.Turn
 	harness *harness.Harness
@@ -85,7 +94,11 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		instructions = joinNotes(instructions, severalSpeakers)
 	}
 	ctx, cancel := context.WithCancel(a.ctx)
+	if a.speculating == "" {
+		a.speculating = uuid.NewString()
+	}
 	spec := &speculation{
+		id:      a.speculating,
 		ready:   ready,
 		harness: current,
 		history: len(a.history),
@@ -101,6 +114,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		release:   make(chan bool, 1),
 		unified:   unified,
 	}
+	spec.turn.Attributes = spec.attributes
 	a.speculations[ready.ID] = spec
 	a.pumps.Add(1)
 	a.mu.Unlock()
@@ -128,8 +142,12 @@ func (a *Agent) runSpeculation(spec *speculation) {
 	case <-spec.ctx.Done():
 	}
 	if !speak {
+		// Read out to its end, which is what records it: what it generated before it was
+		// dropped is billed.
 		if stream != nil {
 			stream.Close()
+			for stream.Next() {
+			}
 		}
 		spec.harness.Forget()
 		return
@@ -165,12 +183,18 @@ func (a *Agent) runSpeculation(spec *speculation) {
 // was not written with, when the conversation moved on while the flow controller decided,
 // or when something else took the floor in the meantime: those are answered the ordinary
 // way, from the start.
-func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
+//
+// When it is not used, speculated is the id of the speculative replies thrown away on the
+// turn, which the answer asked for instead shares, and empty when nothing was speculated.
+func (a *Agent) adoptSpeculation(ready candidate, note string) (adopted bool, speculated string) {
 	a.mu.Lock()
+	// The turn is answered here, with the reply started for it or another, so whatever is
+	// speculated on next is a turn of its own.
+	speculated, a.speculating = a.speculating, ""
 	spec, known := a.speculations[ready.ID]
 	if !known {
 		a.mu.Unlock()
-		return false
+		return false, speculated
 	}
 	delete(a.speculations, ready.ID)
 	usable := (note == "" || spec.unified && note == ambiguousNote) && !a.closed && !a.generating && !a.switching.Load() &&
@@ -178,7 +202,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 	if !usable {
 		a.mu.Unlock()
 		spec.drop()
-		return false
+		return false, spec.id
 	}
 	a.keepTurnLocked(ready.Participant, ready.Said())
 	a.speakingTurn = ready.ID
@@ -194,15 +218,33 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 
 	// The model is counted as starting now, when the ruling came back, so the decision is
 	// still measured in full and the head start shows up as a shorter wait for the model.
-	adopted := time.Now()
+	at := time.Now()
 	a.turns.started(ready.ID, kindCaller)
 	a.turns.begin(ready.ID, ready.Participant, ready.ReadyAt, ready.RevisedAt, ready.STTLatencyMs)
-	a.turns.modelStarted(ready.ID, adopted)
+	a.turns.modelStarted(ready.ID, at)
 	a.emitter.Send(Responding{TurnID: ready.ID, Participant: ready.Participant, Prompt: ready.Said()})
 	a.logger.Debug("answering with a reply started before the ruling",
-		"turn", ready.ID, "head_start_ms", adopted.Sub(spec.startedAt).Milliseconds())
+		"turn", ready.ID, "head_start_ms", at.Sub(spec.startedAt).Milliseconds())
+	spec.kept.Store(true)
 	spec.release <- true
-	return true
+	return true, ""
+}
+
+// stopSpeculating ends the turn speculative replies were being started for, which a ruling
+// not to answer it does: whatever is speculated on next is a turn of its own.
+func (a *Agent) stopSpeculating() {
+	a.mu.Lock()
+	a.speculating = ""
+	a.mu.Unlock()
+}
+
+// attributes are what the reply's usage row says about it: the turn it speculated on, and
+// whether it was spoken.
+func (s *speculation) attributes() map[string]string {
+	return map[string]string{
+		routing.AttributeSpeculation: s.id,
+		routing.AttributeKept:        strconv.FormatBool(s.kept.Load()),
+	}
 }
 
 // dropSpeculation drops the reply started for a turn the ruling did not answer.

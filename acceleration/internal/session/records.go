@@ -87,6 +87,93 @@ type recorder interface {
 	Flush(ctx context.Context) error
 }
 
+// sessionRecords is the writer a manager keeps its sessions in: what each session records, and
+// the rows the manager writes around it.
+type sessionRecords interface {
+	recorder
+	// Opened says a session started, offered tools.
+	Opened(row store.AgentSession, tools []store.ToolDefinition)
+	// Closed says when it ended.
+	Closed(id string, at time.Time)
+	// Close writes what is queued and stops the writer.
+	Close()
+}
+
+// pending is what a session records through. What it says is held until the session's row is
+// written, which is once it has joined its call, so a session that fails to open leaves no
+// row, and nothing it said is written ahead of the row it belongs to. It is handed to the
+// session before anything reads it, and then never replaced.
+type pending struct {
+	next recorder
+
+	mu     sync.Mutex
+	opened bool
+	held   []func(recorder)
+}
+
+// open writes the session's row with write, then what was held, and passes everything after
+// straight through.
+func (o *pending) open(write func()) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	write()
+	for _, held := range o.held {
+		held(o.next)
+	}
+	o.held, o.opened = nil, true
+}
+
+// pass hands write to the recorder once the session has opened, and holds it until then.
+func (o *pending) pass(write func(recorder)) {
+	o.mu.Lock()
+	if !o.opened {
+		o.held = append(o.held, write)
+		o.mu.Unlock()
+		return
+	}
+	o.mu.Unlock()
+	write(o.next)
+}
+
+func (o *pending) Responding(row store.AgentResponse) {
+	o.pass(func(r recorder) { r.Responding(row) })
+}
+
+func (o *pending) Responded(id, status, failure string, at time.Time) {
+	o.pass(func(r recorder) { r.Responded(id, status, failure, at) })
+}
+
+func (o *pending) Item(item store.AgentResponseItem) {
+	o.pass(func(r recorder) { r.Item(item) })
+}
+
+func (o *pending) Described(customerID, id, title, description string, custom map[string]any) {
+	o.pass(func(r recorder) { r.Described(customerID, id, title, description, custom) })
+}
+
+func (o *pending) SawVideo(id string) {
+	o.pass(func(r recorder) { r.SawVideo(id) })
+}
+
+func (o *pending) Voiced(id, callID, callType string) {
+	o.pass(func(r recorder) { r.Voiced(id, callID, callType) })
+}
+
+func (o *pending) Chose(customerID, id, name, connectionID string) {
+	o.pass(func(r recorder) { r.Chose(customerID, id, name, connectionID) })
+}
+
+// Flush waits for what was written; a session not yet open has written nothing.
+func (o *pending) Flush(ctx context.Context) error {
+	o.mu.Lock()
+	opened := o.opened
+	o.mu.Unlock()
+	if !opened {
+		return nil
+	}
+	return o.next.Flush(ctx)
+}
+
 // sessionRecorder writes sessions, turns and items to Postgres off the conversation's path.
 //
 // Same trade as the call recorder and for the same reason: a caller must never wait on a

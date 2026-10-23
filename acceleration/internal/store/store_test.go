@@ -564,7 +564,7 @@ func (s *StoreSuite) TestACallAddsUpWhatEveryOneOfItsRequestsSpent() {
 		InputTokens: 9000, OutputTokens: 9000, CostMicros: 90000, Success: true,
 	}))
 
-	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", s.base, nil)
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", "session-1", s.base, nil)
 
 	s.Require().NoError(err)
 	s.Equal(CallUsage{
@@ -573,8 +573,36 @@ func (s *StoreSuite) TestACallAddsUpWhatEveryOneOfItsRequestsSpent() {
 	}, spent)
 }
 
+func (s *StoreSuite) TestACallsRuntimeIsItsOwnSessionsAndNoRequest() {
+	// Two sessions of one agent at once: the call's models are keyed by agent and window, but
+	// its time is its own session's.
+	for _, row := range []Request{
+		{Modality: "llm", SessionID: "session-1", Provider: "openai", Model: "gpt-5.6-sol", InputTokens: 100, CostMicros: 50},
+		{Modality: RuntimeModality, SessionID: "session-1", Provider: "stream", Model: "voice", CostMicros: 600},
+		{Modality: RuntimeModality, SessionID: "session-2", Provider: "stream", Model: "voice", CostMicros: 900},
+	} {
+		row.CustomerID, row.AgentID, row.StartedAt, row.Success = "acme", "agent-1", s.base.Add(time.Second), true
+		s.Require().NoError(s.store.RecordRequest(s.ctx, &row))
+	}
+
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", "session-1", s.base, nil)
+	s.Require().NoError(err)
+	s.EqualValues(650, spent.CostMicros, "the model's and this session's time, not the other session's")
+	s.EqualValues(1, spent.Requests, "runtime is no request")
+
+	used, err := s.store.CallTokens(s.ctx, "acme", "agent-1", "session-1", s.base, nil)
+	s.Require().NoError(err)
+	var cost, requests int64
+	for _, model := range used {
+		cost += model.CostMicros
+		requests += model.Requests
+	}
+	s.EqualValues(650, cost)
+	s.EqualValues(1, requests)
+}
+
 func (s *StoreSuite) TestACallThatMadeNoRequestsSpentNothing() {
-	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-with-no-work", s.base, nil)
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-with-no-work", "session-1", s.base, nil)
 
 	s.Require().NoError(err)
 	s.Equal(CallUsage{}, spent)
@@ -593,7 +621,7 @@ func (s *StoreSuite) TestWhatWasSpentAfterACallEndedIsNotTheCallsToPayFor() {
 		InputTokens: 7000, CostMicros: 8000, Success: true,
 	}))
 
-	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", s.base, &ended)
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", "session-1", s.base, &ended)
 
 	s.Require().NoError(err)
 	s.Equal(int64(300), spent.InputTokens)

@@ -194,7 +194,11 @@ func (r *Router) draw(
 		return generation, err
 	}
 	generation.Images = result.Images
-	generation.CostMicros = r.Quote(config, result.Used()).CostMicros
+	// Priced as its row is, size included.
+	var stat routing.Stat
+	stat.Use(result.Used())
+	stat.Describe(result)
+	generation.CostMicros = r.Recorder().QuoteStat(config, stat).CostMicros
 	return generation, nil
 }
 

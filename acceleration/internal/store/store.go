@@ -890,12 +890,12 @@ SELECT
     date_trunc('%s', started_at) AS bucket,
     %s AS value,
     COALESCE(SUM(cost_micros), 0) AS cost_micros_total,
-    COUNT(*) AS request_count
+    %s AS request_count
 FROM requests
 WHERE customer_id = ?
   AND started_at >= ? AND started_at < ?
   AND tags @> ?::jsonb%s
-GROUP BY 1, 2`, granularity.truncateUnit(), valueExpr, narrowed)
+GROUP BY 1, 2`, granularity.truncateUnit(), valueExpr, requestCount, narrowed)
 
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]spendRow, error) {
 		var rows []spendRow
@@ -974,27 +974,28 @@ func (s *Store) CustomerTagKeys(
 
 	// Coverage is measured against every request in the window, labelled or not, because a
 	// key on half the traffic breaks down half the bill and reading it as the whole of it
-	// is the mistake this number exists to prevent.
+	// is the mistake this number exists to prevent. Runtime is spend and not requests.
 	type shardTags struct {
-		total  int64
-		values []tagValueRow
+		rows, total int64
+		values      []tagValueRow
 	}
 	answers, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (shardTags, error) {
 		var read shardTags
 		err := db.NewSelect().
 			Table("requests").
 			ColumnExpr("COUNT(*)").
+			ColumnExpr(requestCount).
 			Where("customer_id = ?", customerID).
 			Where("started_at >= ?", from).
 			Where("started_at < ?", to).
 			Where("tags @> ?::jsonb", string(filter)).
-			Scan(ctx, &read.total)
-		if err != nil || read.total == 0 {
+			Scan(ctx, &read.rows, &read.total)
+		if err != nil || read.rows == 0 {
 			return read, err
 		}
 		err = db.NewRaw(`
 SELECT tag.key AS key, tag.value AS value,
-       SUM(r.cost_micros) AS cost_micros_total, COUNT(*) AS request_count
+       SUM(r.cost_micros) AS cost_micros_total, `+requestCount+` AS request_count
 FROM requests AS r
 CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
 WHERE r.customer_id = ?
@@ -1007,11 +1008,12 @@ GROUP BY tag.key, tag.value`, customerID, from, to, string(filter)).Scan(ctx, &r
 		return nil, stack.Wrap(fmt.Errorf("store: customer tag keys: %w", err))
 	}
 
-	var total int64
+	var rows, total int64
 	type valueKey struct{ key, value string }
 	var order []valueKey
 	values := map[valueKey]*tagValueRow{}
 	for _, answer := range answers {
+		rows += answer.rows
 		total += answer.total
 		for _, row := range answer.values {
 			k := valueKey{row.Key, row.Value}
@@ -1023,7 +1025,7 @@ GROUP BY tag.key, tag.value`, customerID, from, to, string(filter)).Scan(ctx, &r
 			values[k].RequestCount += row.RequestCount
 		}
 	}
-	if total == 0 {
+	if rows == 0 {
 		return nil, nil
 	}
 
@@ -1051,7 +1053,9 @@ GROUP BY tag.key, tag.value`, customerID, from, to, string(filter)).Scan(ctx, &r
 	var summaries []TagKeySummary
 	for _, name := range keys {
 		key := byKey[name]
-		key.Coverage = float64(key.RequestCount) / float64(total)
+		if total > 0 {
+			key.Coverage = float64(key.RequestCount) / float64(total)
+		}
 		rows := ranked[name]
 		slices.SortFunc(rows, func(a, b tagValueRow) int {
 			return cmp.Or(cmp.Compare(b.CostMicrosTotal, a.CostMicrosTotal),
@@ -1060,9 +1064,12 @@ GROUP BY tag.key, tag.value`, customerID, from, to, string(filter)).Scan(ctx, &r
 		for _, row := range rows[:min(topTagValues, len(rows))] {
 			// A deployment with no prices configured records every row at zero, so a share of
 			// spend would be a division by nothing. Requests are what is left to rank by.
-			share := float64(row.RequestCount) / float64(key.RequestCount)
-			if key.CostMicrosTotal > 0 {
+			var share float64
+			switch {
+			case key.CostMicrosTotal > 0:
 				share = float64(row.CostMicrosTotal) / float64(key.CostMicrosTotal)
+			case key.RequestCount > 0:
+				share = float64(row.RequestCount) / float64(key.RequestCount)
 			}
 			key.TopValues = append(key.TopValues, TagValueSummary{
 				Value:           row.Value,

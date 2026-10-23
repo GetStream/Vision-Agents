@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -177,6 +178,11 @@ type Session struct {
 	unwatched     *time.Timer
 	state         State
 	modality      string
+	// runtime bills every second the session is open, at the rate of runtimeMode: text while
+	// it is held in writing, voice on a call, and video once the user's video was seen on
+	// that call. Unlike modality it moves back down when a call ends.
+	runtime     *routing.Slices
+	runtimeMode string
 	// timeout is the timer that ends the session (SetTimeout), nil when it has none, and
 	// timeoutArmed changes whenever the timeout is set, cleared or stopped by closing, so one
 	// that was moved or cleared while it was firing does not end the session.
@@ -290,6 +296,10 @@ func (s *Session) SawVideo() {
 	s.mu.Lock()
 	seen := s.modality == store.ModalityVideo
 	s.modality = store.ModalityVideo
+	if s.runtimeMode == store.ModalityVoice {
+		s.runtimeMode = store.ModalityVideo
+		s.runtime.Switch(s.runtimeMode)
+	}
 	s.mu.Unlock()
 	if !seen && s.records != nil {
 		s.records.SawVideo(s.id)
@@ -1073,6 +1083,11 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 	if voice && s.modality == store.ModalityText {
 		s.modality = store.ModalityVoice
 	}
+	s.runtimeMode = store.ModalityText
+	if voice {
+		s.runtimeMode = store.ModalityVoice
+	}
+	s.runtime.Switch(s.runtimeMode)
 	// A call is held whoever is watching the socket, so the countdown a conversation in
 	// writing ends on is stopped, and started again once the call is left unwatched.
 	if s.unwatched != nil {
@@ -1262,6 +1277,9 @@ func (s *Session) Close() error {
 }
 
 func (s *Session) close() error {
+	// The last slice is written before anything else closes, however long the rest takes.
+	s.runtime.Stop()
+
 	s.mu.Lock()
 	s.closing = true
 	s.stopTimeout()

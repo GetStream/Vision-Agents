@@ -85,6 +85,11 @@ func newSession(
 // response cost as it is drained, which is why a caller must drain it even after closing
 // it: an abandoned response still generated tokens.
 func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	return s.attempt(ctx, params, nil)
+}
+
+// attempt is create for one attempt of a hedged request, which its row names.
+func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge *hedgeAttempt) (*llm.Stream, error) {
 	startedAt := time.Now().UTC()
 
 	ctx, span := tracer.Start(ctx, "llm.provider.create",
@@ -97,7 +102,7 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if err != nil {
 		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
 		code := createErrorCode(ctx)
-		s.recorder.Record(s.config, routing.Stat{
+		stat := routing.Stat{
 			Owner:        s.owner,
 			StartedAt:    startedAt,
 			OperationID:  params.ID,
@@ -107,7 +112,9 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 			Success:      false,
 			ErrorCode:    code,
 			ErrorMessage: err.Error(),
-		})
+		}
+		label(&stat, params, hedge)
+		s.recorder.Record(s.config, stat)
 		slog.Info("model call timing", "call", s.owner.CallID, "operation", params.ID,
 			"purpose", params.Purpose, "turn", params.TurnID,
 			"provider", s.config.Provider, "model", s.config.Model,
@@ -121,7 +128,25 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	}
 	createdAt := time.Now()
 	charged := s.charged(ctx)
-	return stream.Observe(func(event llm.Event) { s.observe(startedAt, createdAt, params, event, charged) }), nil
+	return stream.Observe(func(event llm.Event) { s.observe(startedAt, createdAt, params, hedge, event, charged) }), nil
+}
+
+// label puts on a response's row what its caller and its hedge say about it. The response
+// is kept only if nothing that could throw it away did: a speculative reply that was dropped
+// is not kept however its hedge ended, and neither is a hedge's losing attempt.
+func label(stat *routing.Stat, params llm.ResponseParams, hedge *hedgeAttempt) {
+	if params.Attributes != nil {
+		for name, value := range params.Attributes() {
+			stat.Attribute(name, value)
+		}
+	}
+	id, kept, hedged := hedge.outcome()
+	if !hedged {
+		return
+	}
+	stat.Attribute(routing.AttributeHedge, id)
+	kept = kept && stat.Attributes[routing.AttributeKept] != "false"
+	stat.Attribute(routing.AttributeKept, strconv.FormatBool(kept))
 }
 
 // Provider is the provider serving this session.
@@ -178,7 +203,7 @@ func (s *Session) Close() error {
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, event llm.Event, charged routing.Caller) {
+func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, charged routing.Caller) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
@@ -230,6 +255,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	stat.LatencyMs = measuredLatency(response, ttftMs)
 	stat.Success = served(response)
 	stat.ErrorCode = errorCode(response)
+	label(&stat, params, hedge)
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
 			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
