@@ -21,22 +21,22 @@ func TestBridgeSuite(t *testing.T) {
 }
 
 func (s *BridgeSuite) TestAnAuthorIsTheSameUserOnEveryMessage() {
-	s.Equal(authorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"), authorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"))
+	s.Equal(AuthorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"), AuthorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"))
 }
 
 // One Slack workspace can install two customers' apps; its person is a user of each, never
 // one user both customers write as.
 func (s *BridgeSuite) TestTheSamePersonForAnotherCustomerIsAnotherUser() {
-	s.NotEqual(authorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"), authorUserID("globex", "slack_bot", "T0000TEAM", "U0000ALICE"))
+	s.NotEqual(AuthorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"), AuthorUserID("globex", "slack_bot", "T0000TEAM", "U0000ALICE"))
 }
 
 func (s *BridgeSuite) TestPartsThatJoinAlikeAreStillTwoUsers() {
-	s.NotEqual(authorUserID("acme", "slack_bot", "T0", "0U"), authorUserID("acme", "slack_bot", "T00", "U"))
+	s.NotEqual(AuthorUserID("acme", "slack_bot", "T0", "0U"), AuthorUserID("acme", "slack_bot", "T00", "U"))
 }
 
 // A phone number's "+" or any provider's id stays out of the user id.
 func (s *BridgeSuite) TestAnAuthorUserIDKeepsToLettersDigitsUnderscoreAndHyphen() {
-	s.Regexp(regexp.MustCompile(`^[A-Za-z0-9_-]+$`), authorUserID("acme", "linq", "+12025550100", "+12025550199"))
+	s.Regexp(regexp.MustCompile(`^[A-Za-z0-9_-]+$`), AuthorUserID("acme", "linq", "+12025550100", "+12025550199"))
 }
 
 func (s *BridgeSuite) TestABridgeNeedsAStoreStreamTransportsAndAResolver() {

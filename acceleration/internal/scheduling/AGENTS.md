@@ -21,6 +21,7 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
         internal/store/scheduled_tasks.go  (tables: scheduled_tasks, scheduled_task_runs)
         migrations/20261105120000_scheduled_tasks.sql
         migrations/20261105130000_scheduled_tasks_wake.sql  (scheduled_tasks_wake_idx)
+        migrations/20261106120000_scheduled_task_thread.sql (channel_thread)
                  |
                  |  ClaimDueScheduledTasks (FOR UPDATE SKIP LOCKED, lease, claim_id)
                  v
@@ -147,6 +148,21 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksSuite/TestGuestsAndAnonymousCallersAreNotOfferedTheTools`,
   `TestScheduledTasksSuite/TestAnIncognitoSessionIsNotOfferedTheTools`,
   `TestScheduledTasksSuite/TestAnAgentWithoutSchedulingOnIsNotOfferedTheTools`.
+- **A thread on a line of one person schedules for the person who wrote (AI-1842).** An SMS
+  (`telnyx`) or WhatsApp thread session (`api.threadSession`, `personalThreads`) is offered
+  the tools when its person writes, and not when someone else in the thread does; the task's `user_id` is the Stream user the bridge writes the person as
+  (`channelbridge.authorUserID`: per customer, line and person), `caller_kind` `server`, and
+  `channel_thread` its thread channel. A Slack thread is shared and is offered none. Delivery
+  back to the thread is AI-1843: until then such a task's run fails `delivery_failed`
+  (the ended thread session is not reopened, `sessions.go` `reopenedFromRow`).
+  `TestTelnyxChannelSuite/TestAPersonTextingTheLineSchedulesATaskThatKeepsTheirThread`,
+  `TestTelnyxChannelSuite/TestTwoPeopleOnOneLineNeverReachEachOthersTasks`,
+  `TestTelnyxChannelSuite/TestTheSamePersonOnAnotherCustomersLineReachesNoneOfTheTasks`,
+  `TestTelnyxChannelSuite/TestSomeoneElseWritingInAPersonsThreadIsNotOfferedTheTools`,
+  `TestTelnyxChannelSuite/TestAZoneNamedInOneRoundIsTheNextRoundsTasks`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadSchedulesForThePersonWhoWrote`,
+  `TestLinqChannelSuite/TestALinqChatIsNotOfferedTheTools`,
+  `TestSlackChannelSuite/TestASlackThreadIsNotOfferedTheTools`.
 - **A caller's own tool with a scheduling name keeps the name.**
   `TestScheduledTasksSuite/TestACallersOwnScheduleTaskKeepsTheName`.
 - **Another user's task is a 404.** `TestScheduledTasksSuite/TestTheOwnerReachesATaskItsBackendMadeAndAnotherUserDoesNot`.
