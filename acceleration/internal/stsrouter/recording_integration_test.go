@@ -69,7 +69,7 @@ func (s *RecordingSuite) recorded(name string, usage sts.Usage) store.Request {
 	customer := uuid.NewString()
 	recorder := routing.NewRecorder(routing.STS, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	provider := newStubSTS()
-	session := newSession(provider, s.builtIn(name), routing.Owner{CustomerID: customer}, recorder)
+	session := newSession(provider, s.builtIn(name), routing.Owner{CustomerID: customer}, recorder, recorder.For(routing.LLM))
 
 	provider.emitter.Send(sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()})
 	provider.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1, Usage: usage})

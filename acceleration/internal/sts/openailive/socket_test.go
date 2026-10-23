@@ -486,6 +486,61 @@ func (s *OpenAILiveSocketSuite) TestCloseWaitsForSessionClosed() {
 	s.True(disconnected[0].Clean)
 }
 
+// TestTheSessionsSecondsAndItsBackendAreReported uses what a recorded 30-second session on
+// a gpt-5.6-luna backend was sent: a backend response of 890 tokens in and 31 out, 10 of them
+// thinking, the session's seconds at 13 and 28, and 29 as it closed. The seconds are sent as
+// numbers with a fraction, as the Live API sent "seconds":2.0 when probed on 2026-10-23.
+func (s *OpenAILiveSocketSuite) TestTheSessionsSecondsAndItsBackendAreReported() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Backend: "gpt-5.6-luna"})
+
+	for _, frame := range []string{
+		`{"type":"session.usage.updated","usage":{"seconds":13.0},"context_window":{"usage_ratio":0.0096}}`,
+		`{"type":"response.event","event":{"type":"response.completed","response":{"id":"resp_1",` +
+			`"model":"gpt-5.6-luna-2026-09-30","status":"completed","service_tier":"default","usage":{"input_tokens":890,` +
+			`"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":31,` +
+			`"output_tokens_details":{"reasoning_tokens":10},"total_tokens":921}}}}`,
+		`{"type":"session.usage.updated","usage":{"seconds":27.6}}`,
+	} {
+		s.Require().NoError(conn.WriteMessage(websocket.TextMessage, []byte(frame)))
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- provider.Close() }()
+	s.Equal(map[string]any{"type": "session.close"}, s.nextFrame(conn))
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage,
+		[]byte(`{"type":"session.closed","reason":"close_requested","usage":{"seconds":29.0}}`)))
+	s.Require().NoError(<-closed)
+
+	var seconds []int64
+	var backend []sts.BackendUsage
+	var disconnected int
+	for event := range provider.Events() {
+		switch typed := event.(type) {
+		case sts.SessionUsage:
+			seconds = append(seconds, typed.Seconds)
+		case sts.BackendUsage:
+			backend = append(backend, typed)
+		case sts.Disconnected:
+			disconnected++
+		}
+	}
+	s.Equal([]int64{13, 28, 29}, seconds, "each running total as the vendor counts it, rounded, the last as it closed")
+	s.Equal(1, disconnected, "session.closed is read, seconds and all")
+	s.Equal([]sts.BackendUsage{{
+		ResponseID:  "resp_1",
+		Model:       "gpt-5.6-luna",
+		ServiceTier: "default",
+		Usage: llm.Usage{
+			InputTokens:         890,
+			OutputTokens:        31,
+			OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: 10},
+			TotalTokens:         921,
+		},
+	}}, backend, "reported as the model the session delegated to")
+	s.True(CapabilitiesFor(DefaultModel).SessionBilled)
+}
+
 // TestCloseGivesUpAfterTwoSeconds: a server that never answers session.close holds Close
 // for closeGrace and no longer.
 func (s *OpenAILiveSocketSuite) TestCloseGivesUpAfterTwoSeconds() {

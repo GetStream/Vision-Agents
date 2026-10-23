@@ -65,12 +65,14 @@ stt:
         retention: none
 
     # Gemini 3.5 Transcribe over the Live API. It detects the language itself and claims
-    # 85+ of them; the list here is the ones this deployment routes on. Billed per token
-    # rather than per hour of audio: $3.50/1M audio in at 25 tokens a second, plus
-    # $21.00/1M text out, which Google puts at about $0.009 an audio minute.
+    # 85+ of them; the list here is the ones this deployment routes on. Google bills it per
+    # token: $3.50/1M audio in at 25 tokens a second ($0.005 a minute), plus $21.00/1M text
+    # out at the 175 tokens a minute Google estimates ($0.004). The Live API reports no
+    # usage for it, on a turn or as the session closes, so it is billed by the audio the
+    # router streams to it, at Google's own blended estimate of $0.009 an audio minute.
     - provider: gemini
       model: gemini-3.5-transcribe-live
-      description: "Detects the language itself and can tidy the transcript as it writes it. About -e.009 an audio minute."
+      description: "Detects the language itself and can tidy the transcript as it writes it. About $0.009 an audio minute."
       benchmark: { word_error_rate: 0.04, latency_ms: 395 }
       languages:
         [
@@ -401,8 +403,9 @@ stt:
     # from one to the other. English only: they say multilingual is coming, and until it
     # does ink-whisper is where the other languages are, on the batch endpoint.
     #
-    # Billed in credits at three a second of audio, silence included, which at the entry
-    # self-serve rate of $50 a million credits is the figure below.
+    # Billed by the second of audio input, silence included, at Cartesia's published rate of
+    # $0.00672757 a minute (about $0.40365 an hour). A turn says nothing of how long it was, so
+    # the audio the router streams to it is the bill.
     - provider: cartesia
       model: ink-2
       description: "Cartesia's live transcriber with its own turn detection, much like Flux. English only."
@@ -2141,8 +2144,8 @@ sts:
     # unless overwrites name another in backend_model. Tools therefore run while the model
     # keeps talking. It debuted top of the Artificial Analysis speech-to-speech index at
     # 81.5 with a GPT-6 Astra backend, but at 1.24-1.34s to first audio there. The voice
-    # layer is $0.05 a minute of session, billed per second, priced here by the caller's
-    # audio; the backend's tokens are billed on top and not counted, so this undercounts.
+    # layer is $0.05 a minute of session, billed per second as the session reports them;
+    # each backend response is billed on top as an LLM row of the backend model.
     # OpenAI publish no language list, so these are the languages their voices are named
     # for: English, Portuguese, German, French, Hindi, Japanese and Korean.
     # They do not train on API traffic. Retention is unknown: the Live API is missing
@@ -2161,9 +2164,9 @@ sts:
     # xAI's Grok Voice 3.0 over its OpenAI-compatible socket, first on the Artificial
     # Analysis speech-to-speech index at 86.9 and 0.81s to first audio, and the top of their
     # tau-Voice board among full-duplex models at 71.6%. Same socket, session and events
-    # as the 2.0 below. It does not see, and it reports no usage, so it is priced by the
-    # caller's audio: $0.08 a minute of session, which undercounts the model's own speaking
-    # time. xAI's API terms match their transcription ones: no training, thirty days.
+    # as the 2.0 below. It does not see. It is priced by the audio xAI says it bills, the
+    # caller's and the model's, at $0.08 a minute, and $0.004 a typed turn. xAI's API terms
+    # match their transcription ones: no training, thirty days.
     - provider: xai
       model: grok-voice-3.0
       description: "xAI's Grok Voice 3.0, top of the Artificial Analysis speech-to-speech board and under a second to first audio. Cannot see."
@@ -2177,10 +2180,11 @@ sts:
 
     # xAI's previous Grok Voice, which xAI deprecated when 3.0 above replaced it at the same
     # price. Kept, as Gemini 3.1 Flash Live is, so a config that names it does not start
-    # failing before xAI retire it. Priced as at its launch, $0.05 a minute of caller audio.
+    # failing before xAI retire it. Priced as at its launch, $0.05 a minute of the audio xAI
+    # bills, and $0.004 a typed turn as 3.0 is.
     - provider: xai
       model: grok-voice-think-fast-2.0
-      description: "xAI's previous Grok Voice, now deprecated. Fast, cannot see, and priced by the minute of caller audio."
+      description: "xAI's previous Grok Voice, now deprecated. Fast, cannot see, and priced by the minute of audio xAI bills."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency

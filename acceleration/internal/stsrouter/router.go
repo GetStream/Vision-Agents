@@ -72,6 +72,9 @@ type Request struct {
 // Router selects a speech-to-speech provider and opens conversations.
 type Router struct {
 	*routing.Router[sts.STS]
+	// backend records the text models voices hand their reasoning to. It is one for the
+	// router, so what it logs at most once in a while is logged that seldom.
+	backend *routing.Recorder
 }
 
 // New validates the options and returns a Router.
@@ -108,7 +111,7 @@ func New(options Options) (*Router, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Router{Router: core}, nil
+	return &Router{Router: core, backend: core.Recorder().For(routing.LLM)}, nil
 }
 
 // Start selects a provider and opens a conversation, falling back to the next candidate
@@ -135,7 +138,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSession(provider, config, core.Owner(), r.Recorder()), nil
+	return newSession(provider, config, core.Owner(), r.Recorder(), r.backend), nil
 }
 
 // declared reports the first thing a config promises of a model that the code behind it

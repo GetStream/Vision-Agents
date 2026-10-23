@@ -351,13 +351,6 @@ func (s *LLMRouterSuite) TestSessionReportsWhatTheModelAccepts() {
 	s.Equal([]string{"low"}, session.Capabilities().ReasoningEfforts)
 }
 
-func (s *LLMRouterSuite) TestSessionExposesTheUnderlyingProvider() {
-	session, provider := s.newSession()
-
-	s.Same(provider, session.LLM(),
-		"provider-specific features stay reachable through the session")
-}
-
 func (s *LLMRouterSuite) TestClosingTheSessionClosesTheProvider() {
 	session, provider := s.newSession()
 

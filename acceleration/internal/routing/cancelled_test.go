@@ -22,7 +22,7 @@ func TestACancelledRequestStillAddsWhatItSpentToTheLiveCounters(t *testing.T) {
 	latency := 120.0
 	cancelled := store.Request{
 		Modality: "llm", CustomerID: "acme", Provider: "alpha", Model: "quick",
-		LatencyMs: &latency, InputTokens: 10, OutputTokens: 4, CostMicros: 18,
+		LatencyMs: &latency, InputTokens: 10, OutputTokens: 4, CostMicros: 18, Billable: true,
 		ErrorCode: ErrorCancelled,
 	}
 	usage := liveUsage(cancelled)
@@ -42,5 +42,16 @@ func TestACancelledRequestStillAddsWhatItSpentToTheLiveCounters(t *testing.T) {
 	failed.ErrorCode = "provider_error"
 	if liveUsage(failed).Cancelled {
 		t.Fatal("a request the provider failed was handed to the live counters as cancelled")
+	}
+}
+
+func TestWorkThatMeasuresNoProviderIsSpentAndKeptOutOfHealth(t *testing.T) {
+	seconds := store.Request{Modality: "sts", CustomerID: "acme", Provider: "openai", Model: "gpt-live-1",
+		CostMicros: 10_833, Success: true, Billable: true}
+
+	usage := queued{request: seconds, unmeasured: true}.live()
+
+	if !usage.Cancelled || usage.CostMicros != 10_833 {
+		t.Fatalf("a session's seconds were measured as a request of its provider, or not spent: %+v", usage)
 	}
 }

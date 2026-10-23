@@ -5,6 +5,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -134,6 +135,12 @@ type Usage struct {
 	// ReasoningTokens is the part of the output spent thinking, shown and never priced on
 	// its own: the output tokens include it.
 	ReasoningTokens int64
+	// BilledAudioMs is the audio the vendor bills for the reply, by its own count, where it
+	// keeps one: xAI's growth in billable_audio_seconds since the last reply. AudioBilled says
+	// the vendor keeps it, so it replaces the caller's audio on the row even at zero, which is
+	// a reply too short to move the vendor's rounded figure.
+	BilledAudioMs int64
+	AudioBilled   bool
 }
 
 // ResponseComplete settles one reply. It is the natural unit of billable work, the way
@@ -176,6 +183,40 @@ type ToolCancel struct {
 }
 
 func (ToolCancel) isSTSEvent() {}
+
+// SessionUsage is how long the vendor says the session has been open, in whole seconds since it
+// started, for a vendor that bills the session's time rather than its replies (GPT-Live). Each
+// report is cumulative, and the last comes as the session closes.
+type SessionUsage struct {
+	Seconds int64
+}
+
+func (SessionUsage) isSTSEvent() {}
+
+// BackendUsage is one response of the text model a voice hands its reasoning and tools to,
+// which the vendor bills on top of the voice at that model's rates. ResponseID is the vendor's,
+// so a response reported twice is billed once.
+type BackendUsage struct {
+	ResponseID  string
+	Model       string
+	ServiceTier string
+	Usage       llm.Usage
+}
+
+func (BackendUsage) isSTSEvent() {}
+
+// TranscriptionUsage is what writing down one caller turn cost, for a vendor that bills its
+// transcriber apart from the conversation (OpenAI Realtime's input transcription): its
+// tokens, or AudioMs for a transcriber billed by the second of audio. ItemID is the turn's,
+// so a turn reported twice is billed once.
+type TranscriptionUsage struct {
+	ItemID  string
+	Model   string
+	Usage   Usage
+	AudioMs int64
+}
+
+func (TranscriptionUsage) isSTSEvent() {}
 
 // SessionExpiring warns that the vendor is about to cut the session off. A provider that
 // can resume does so on its own; one that cannot lets this be the caller's warning.

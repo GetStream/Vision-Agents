@@ -28,10 +28,17 @@ type Meter struct {
 	// CostMicros sets the cost outright, for a fee the vendor quoted, such as a number's
 	// month. Zero prices what the work used from the price list.
 	CostMicros int64
-	// Free records the work priced as usual and not billed, for work that is given away.
+	// Free records work that is given away at no cost and not billed, with what it would have
+	// cost in attributes.free_cost_micros.
 	Free bool
 	// Attributes are stored with the row, such as the session a row belongs to.
 	Attributes map[string]string
+	// OperationID names what the row is part of, such as the voice session whose seconds it
+	// bills. Empty names nothing.
+	OperationID string
+	// Unmeasured keeps the row out of its provider's health, for work settled after the fact
+	// that times nothing the provider did (Stat.Unmeasured).
+	Unmeasured bool
 }
 
 // Call makes one request to a vendor and records it however it ends: one row for a result, an
@@ -74,7 +81,8 @@ func Settle(meter Meter, work pricing.Metered) error {
 
 // stat is the row of work the meter records, before it has used anything.
 func (m Meter) stat(started time.Time) Stat {
-	stat := Stat{Owner: m.Owner, UsageID: m.UsageID, StartedAt: started.UTC(), Free: m.Free}
+	stat := Stat{Owner: m.Owner, UsageID: m.UsageID, StartedAt: started.UTC(), Free: m.Free, OperationID: m.OperationID,
+		Unmeasured: m.Unmeasured}
 	for name, value := range m.Attributes {
 		stat.Attribute(name, value)
 	}

@@ -1356,6 +1356,27 @@ speech-to-audio path.
 per number, so the provider and route paths do not serve those modalities while the
 statistics paths do.
 
+**No vendor is called without its usage being recorded.** The routers' sessions count what
+they can see (the audio streamed to a transcriber, the characters sent to a voice, the
+prompt and what came back from a model) and bill that, marked `usage_estimated`, when the
+vendor says nothing; request-and-response work goes through `routing.Call`, and work billed
+after the fact through `routing.Settle`. A session hands its vendor to nobody. A
+speech-to-speech session also bills what its vendor reports on the side: GPT-Live's seconds
+(`session_seconds`) and its backend model's responses (LLM rows with
+`attributes.parent_session`), OpenAI Realtime's input transcription (a row of
+`gpt-4o-mini-transcribe`), and the audio xAI bills and its typed turns (`audio_ms`,
+`messages`). `internal/metered/guard_test.go`, part of `go test ./...`, fails a file that holds
+a vendor-facing type or imports a vendor's package outside the routers, `internal/metered`
+and the services that meter their own work, and a model vendor that runs no suite. So adding a
+vendor is:
+
+1. one package under its modality implementing the modality's interface, whose tests embed
+   the modality's suite (`llmsuite`, `sttsuite`, `ttssuite`, `stssuite`, `searchsuite`,
+   `detectionsuite`, `imagegensuite`, `decisionmodelsuite`), which checks it reports what
+   it used;
+2. one `Register` call in the modality's router registry;
+3. its rates in `prices/vendor.json` (see [Prices](#prices)).
+
 **The audit log holds configuration, not traffic.** `audit_log` keeps one row per change to
 an agent config, skill, knowledge document, knowledge url, router config, plugin or policy:
 the fields that moved with the value on each side, which client the change came from
@@ -1826,8 +1847,7 @@ go run github.com/bufbuild/buf/cmd/buf@v1.73.0 generate
 - **Delegation is not tool calling.** Standardising a tool schema across providers is a
   bigger question than routing needs answered, and a tool call is the wrong shape for a
   phone call anyway: it blocks the reply on the result. The harness has the fast model ask
-  a slower one for help in its own words, in the middle of a sentence it goes on to finish;
-  `Session.LLM()` still reaches the provider's own `Client()` for anything else.
+  a slower one for help in its own words, in the middle of a sentence it goes on to finish.
 - **Costs come from the price list, not from the provider.** The recorder prices every row
   once, through one price list (`internal/pricing`) of the vendors' rates in
   `prices/vendor.json` (see [Prices](#prices)). A model with no price reports a cost of zero

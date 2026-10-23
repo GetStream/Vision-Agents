@@ -50,6 +50,9 @@ type Suite struct {
 	FacesOnly bool
 	// Embeds marks a provider that returns a vector on every box.
 	Embeds bool
+	// ReportsBilled marks a provider whose result says how many images it was charged for
+	// (detection.Result.Billed). One that does not is billed one image a request.
+	ReportsBilled bool
 
 	// Provider is built once and never closed: a detection provider holds no connection.
 	Provider detection.Provider
@@ -95,6 +98,18 @@ func (s *Suite) TestTheCatIsFoundAndItsBoxCoversIt() {
 	}
 	s.Greater((box.XMax-box.XMin)*(box.YMax-box.YMin), 0.1, "the cat fills most of the picture, so its box should too")
 	s.Greater(cats[0].Confidence, 0.0)
+}
+
+// TestTheWorkIsBilled: a provider that says how many images it was charged for says so for
+// every request, which is what the detection is billed by. One that does not is billed one
+// image a request, which needs nothing of it.
+func (s *Suite) TestTheWorkIsBilled() {
+	if !s.ReportsBilled {
+		s.T().Skip("billed one image a request, which the router counts")
+	}
+	found := s.Detect(detection.Request{Image: cat, Classes: []string{"cat", "dog"}})
+
+	s.GreaterOrEqual(found.Billed, 1, "the result should say how many images were charged for")
 }
 
 func (s *Suite) TestEveryFaceCarriesAnEmbedding() {

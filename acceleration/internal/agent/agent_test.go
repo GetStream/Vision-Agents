@@ -3907,6 +3907,7 @@ func (s *AgentSuite) TestReturnedWorkWaitsForTheReplacementVoice() {
 		defer s.agent.mu.Unlock()
 		return s.agent.utterances > 0
 	}, "the silent old voice did not keep its utterance open")
+	old := s.agent.voice()
 
 	s.voice.mu.Lock()
 	s.voice.unavailable = true
@@ -3939,7 +3940,7 @@ func (s *AgentSuite) TestReturnedWorkWaitsForTheReplacementVoice() {
 	openReplacement()
 	s.eventually(func() bool {
 		voice := s.agent.voice()
-		return voice != nil && voice.TTS() == s.replacement
+		return voice != nil && voice != old
 	}, "the replacement voice never became active")
 	var resultTurnID string
 	s.eventually(func() bool {
@@ -4007,6 +4008,7 @@ func (s *AgentSuite) TestACompletionFromALostVoiceDoesNotSettleReplacementSpeech
 		return len(s.voice.spoken()) > 0 && countOf[Responded](s.reported()) == 1 && s.agent.Busy()
 	}, "the old voice did not leave an utterance in flight")
 	oldSynthesisID := s.voice.spoken()[0].ID
+	old := s.agent.voice()
 
 	s.voice.emitter.Send(tts.Error{
 		Provider: "stub", Model: "stub-tts", Fatal: true, Err: errors.New("quota exceeded"),
@@ -4034,7 +4036,7 @@ func (s *AgentSuite) TestACompletionFromALostVoiceDoesNotSettleReplacementSpeech
 	openReplacement()
 	s.eventually(func() bool {
 		voice := s.agent.voice()
-		return voice != nil && voice.TTS() == s.replacement
+		return voice != nil && voice != old
 	}, "the replacement voice never became active")
 	newTurnID, err := s.agent.RespondTo(s.ctx, "second request", nil, options.LLM{})
 	s.Require().NoError(err)

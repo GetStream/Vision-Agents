@@ -117,5 +117,5 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSession(provider, config, core.Owner(), r.Recorder()), nil
+	return newSession(provider, config, core.Owner(), r.Recorder(), r.Logger()), nil
 }
