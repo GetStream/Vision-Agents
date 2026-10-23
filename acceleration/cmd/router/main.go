@@ -125,6 +125,12 @@ const (
 	// first, and the HTTP drain gets the rest of shutdownGrace, so both fit inside the
 	// orchestrator's termination grace period.
 	phoneHangupGrace = 5 * time.Second
+	// usageDrainTimeout is how long the usage writer has to write what is queued once
+	// everything that records has stopped: it starts after the HTTP drain, any session drain
+	// and sessions.Shutdown, and counts none of them. What is still queued after it is lost,
+	// and logged in full; what a kill at the end of the pod's termination grace period finds
+	// queued first is lost without a log line.
+	usageDrainTimeout = 15 * time.Second
 )
 
 // usage is what the binary does besides serving.
@@ -547,6 +553,15 @@ func run(settings config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
+	// Every recorder of the process writes through this one writer, so there is one queue to
+	// drain at shutdown. Deferred here, it closes after everything that records and before
+	// the store and Redis.
+	usageWriter := routing.NewWriter(routing.WriterOptions{Store: pgStore, Live: liveClient, Logger: logger})
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), usageDrainTimeout)
+		defer cancel()
+		usageWriter.Close(ctx)
+	}()
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
 	sandboxProxy, err := newSandboxProxy(settings.CodeSandbox, liveClient, connectorResolver, connectors.Schemes, logger)
 	if err != nil {
@@ -657,6 +672,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:     liveClient,
 			Gate:     gate,
 			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -676,6 +692,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:         liveClient,
 			Gate:         gate,
 			Pricer:       prices,
+			Writer:       usageWriter,
 			Logger:       logger,
 		})
 		if err != nil {
@@ -698,6 +715,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Voices:   resolver,
 			Gate:     gate,
 			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -715,6 +733,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Voices:    resolver,
 			Gate:      gate,
 			Pricer:    prices,
+			Writer:    usageWriter,
 			Logger:    logger,
 		})
 		if err != nil {
@@ -737,6 +756,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:     liveClient,
 			Gate:     gate,
 			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -772,6 +792,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Screen:     screen,
 			ReplyHedge: settings.Agent.ReplyHedge,
 			FlowHedge:  settings.Agent.FlowHedge,
+			Writer:     usageWriter,
 			Logger:     logger,
 		})
 		if err != nil {
@@ -790,6 +811,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:     liveClient,
 			Gate:     gate,
 			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -812,6 +834,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:     liveClient,
 			Gate:     gate,
 			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -833,6 +856,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:     liveClient,
 			Gate:     gate,
 			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -853,6 +877,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:     liveClient,
 			Gate:     gate,
 			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -889,7 +914,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
 	}
-	telephony, err := buildPhone(settings, vendorConfig, prices, pgStore, liveClient, streamClients, dlcGate, secrets, logger)
+	telephony, err := buildPhone(settings, vendorConfig, prices, pgStore, liveClient, usageWriter, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
@@ -932,7 +957,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
 		sessionConnectors, prices, logger)
 	if err != nil {
 		return err
@@ -1611,6 +1636,7 @@ func buildSessions(
 	pgStore *store.Store,
 	configs *appconfig.Store,
 	liveClient *live.Client,
+	usageWriter *routing.Writer,
 	directory *node.Directory,
 	telephony *phone.Service,
 	base *turbopuffer.Store,
@@ -1660,6 +1686,7 @@ func buildSessions(
 		Stream:             stream,
 		Store:              pgStore,
 		Live:               liveClient,
+		Writer:             usageWriter,
 		Logger:             logger,
 		Edge:               edgeFor(stream),
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
@@ -1809,6 +1836,7 @@ func buildPhone(
 	prices *pricing.List,
 	pgStore *store.Store,
 	liveClient *live.Client,
+	usageWriter *routing.Writer,
 	stream *streamapp.Clients,
 	gate *dlc.Gate,
 	secrets *auth.Sealer,
@@ -1820,7 +1848,7 @@ func buildPhone(
 
 	var recorder *routing.Recorder
 	if pgStore != nil || liveClient != nil {
-		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, prices, logger)
+		recorder = routing.NewRecorderOn(routing.Phone, usageWriter, prices, logger)
 	}
 
 	// Passwords of customers' own SIP trunks are sealed under the router's keyring. Without

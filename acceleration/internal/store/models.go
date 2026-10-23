@@ -5,6 +5,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -17,12 +18,29 @@ import (
 type Request struct {
 	bun.BaseModel `bun:"table:requests,alias:r"`
 
-	ID       int64  `bun:"id,pk,autoincrement"`
-	Modality string `bun:"modality,notnull"`
+	ID int64 `bun:"id,pk,autoincrement"`
+	// UsageID is the unit of work, chosen before the row is first written, so writing it
+	// again is a no-op rather than a second charge. Rows from before it was kept have none.
+	// RecordRequests refuses a row without one; nullzero leaves a missing one to the column's
+	// random default, which is what a router from before it gets.
+	UsageID  uuid.UUID `bun:"usage_id,type:uuid,nullzero"`
+	Modality string    `bun:"modality,notnull"`
 	// CustomerID owns the request. Every statistic is keyed by it.
 	CustomerID string `bun:"customer_id,notnull"`
+	// OrganizationID is who is billed for it. The rest say who asked: OrganizationTier as
+	// Stream sent it, APIKey the key or the origin of work no key started, UserID empty when
+	// there is none, and UsageCategories what the customer counts the work under (nil
+	// writes none). APIKey names a key, never holds its secret: a row the writer loses is
+	// logged in full.
+	OrganizationID   string   `bun:"organization_id,notnull"`
+	OrganizationTier string   `bun:"organization_tier,notnull"`
+	APIKey           string   `bun:"api_key,notnull"`
+	UserID           string   `bun:"user_id,notnull"`
+	UsageCategories  []string `bun:"usage_categories,array,nullzero"`
 	// AgentID is the agent the work was done for. Empty outside a conversation.
 	AgentID string `bun:"agent_id,nullzero"`
+	// SessionID is the agent session the work ran in, empty outside one.
+	SessionID string `bun:"session_id,notnull"`
 	// CallID is the call the work happened in. Empty outside a conversation.
 	CallID string `bun:"call_id,nullzero"`
 	// Tags are the customer's own cost labels, aggregated into the tag rollups so spend
@@ -66,6 +84,10 @@ type Request struct {
 	Success      bool   `bun:"success,notnull"`
 	ErrorCode    string `bun:"error_code,nullzero"`
 	ErrorMessage string `bun:"error_message,nullzero"`
+	// ToShip is true until the usage service has the row; ShipError is why it refused it.
+	ToShip    bool       `bun:"to_ship,notnull"`
+	ShippedAt *time.Time `bun:"shipped_at"`
+	ShipError string     `bun:"ship_error,notnull"`
 }
 
 // Quantities is what the row is priced by: the typed columns as pricing meters, the prompt

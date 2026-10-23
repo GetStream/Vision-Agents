@@ -1137,16 +1137,14 @@ func (s *RoutingSuite) TestABuildFailureThatIsNotAnOverwriteStillFailsOver() {
 	s.Equal("lush/multi", config.Name())
 }
 
-// capturingStats swaps the router's recorder for one that keeps every stat in its queue,
-// so a test can see what would have reached the shared health counters without writing
-// to them.
-func (s *RoutingSuite) capturingStats(router *Router[*stubProvider]) *Recorder {
+// capturingStats swaps the router's recorder for one whose writer keeps every stat in its
+// queue, so a test can see what would have reached the shared health counters without
+// writing to them.
+func (s *RoutingSuite) capturingStats(router *Router[*stubProvider]) *Writer {
 	router.recorder.Close()
-	done := make(chan struct{})
-	close(done)
-	recorder := &Recorder{live: &live.Client{}, pricer: router.recorder.pricer, queue: make(chan queued, 16), done: done}
-	router.recorder = recorder
-	return recorder
+	writer := &Writer{live: &live.Client{}, queue: make(chan queued, 16)}
+	router.recorder = &Recorder{pricer: router.recorder.pricer, writer: writer}
+	return writer
 }
 
 func (s *RoutingSuite) TestASettingTheModelRefusesLeavesItsHealthAlone() {

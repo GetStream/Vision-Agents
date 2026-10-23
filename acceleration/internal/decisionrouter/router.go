@@ -29,6 +29,7 @@ type Options struct {
 	Store    *store.Store
 	Live     *live.Client
 	Gate     routing.Gate
+	Writer   *routing.Writer
 	// Pricer prices every row recorded. Nil is routing.Prices of Config.
 	Pricer pricing.Pricer
 	Logger *slog.Logger
@@ -66,6 +67,7 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
 		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})

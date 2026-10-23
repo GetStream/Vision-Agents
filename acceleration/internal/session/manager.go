@@ -121,6 +121,9 @@ type ManagerOptions struct {
 	Live    *live.Client
 	// Pricer prices what an agent's memory and knowledge record. Nil prices nothing.
 	Pricer pricing.Pricer
+	// Writer is the process's usage writer, which a session's own recorders share. Nil
+	// gives each of them one of their own.
+	Writer *routing.Writer
 	// Directory is where this node says which sessions it is running, so the deployment's
 	// other nodes can forward what only this one can answer. Nil keeps a session
 	// reachable on this node alone.
@@ -674,6 +677,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			Store:              m.options.Store,
 			Live:               m.options.Live,
 			Pricer:             m.options.Pricer,
+			Writer:             m.options.Writer,
 			Logger:             m.logger,
 		})
 	}

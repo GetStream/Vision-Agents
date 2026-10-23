@@ -193,6 +193,29 @@ type CustomerUsage struct {
 // trip. Every counter is given the health window as its TTL, so health reflects recent
 // behaviour instead of all history and nothing has to be trimmed.
 func (c *Client) RecordRequest(ctx context.Context, usage Usage) error {
+	return c.RecordRequests(ctx, usage)
+}
+
+// RecordRequests is RecordRequest for many requests, in one round trip.
+func (c *Client) RecordRequests(ctx context.Context, usages ...Usage) error {
+	var commands []rueidis.Completed
+	for _, usage := range usages {
+		commands = append(commands, c.requestCommands(usage)...)
+	}
+	if len(commands) == 0 {
+		return nil
+	}
+
+	for _, response := range c.shard.DoMulti(ctx, commands...) {
+		if err := response.Error(); err != nil {
+			return fmt.Errorf("live: record request: %w", err)
+		}
+	}
+	return nil
+}
+
+// requestCommands are what one request adds to its provider's health and its customer's counters.
+func (c *Client) requestCommands(usage Usage) []rueidis.Completed {
 	healthKey := healthKey(usage.Modality, usage.Provider, usage.Model)
 	customerKey := customerKey(usage.Modality, usage.CustomerID)
 	ttl := int64(c.options.Window.Seconds())
@@ -230,16 +253,7 @@ func (c *Client) RecordRequest(ctx context.Context, usage Usage) error {
 		commands = append(commands, c.shard.B().Hset().Key(healthKey).FieldValue().
 			FieldValue("fatal_at_ms", strconv.FormatInt(time.Now().UnixMilli(), 10)).Build())
 	}
-	if len(commands) == 0 {
-		return nil
-	}
-
-	for _, response := range c.shard.DoMulti(ctx, commands...) {
-		if err := response.Error(); err != nil {
-			return fmt.Errorf("live: record request: %w", err)
-		}
-	}
-	return nil
+	return commands
 }
 
 // Health returns the recent behaviour of one provider and model within a modality. An

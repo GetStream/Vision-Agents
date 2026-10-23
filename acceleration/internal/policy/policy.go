@@ -69,6 +69,8 @@ type decision struct {
 	screen  bool
 	// ownApp is a customer that must act in a Stream app of its own.
 	ownApp bool
+	// organization is the one the app is in, empty while it is not known.
+	organization string
 	// messages and tokens are the daily limits per end user the app's policy sets, nil
 	// where it sets none.
 	messages *int64
@@ -98,7 +100,30 @@ func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admiss
 	ctx, span := tracer.Start(ctx, "policy.admit")
 	defer span.End()
 	decided := e.decide(ctx, customerID)
-	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, stack.Wrap(decided.refusal)
+	return routing.Admission{
+		DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags, OrganizationID: decided.organization,
+	}, stack.Wrap(decided.refusal)
+}
+
+// Attribute says who a customer's work is billed to and the tags their policies lay over it,
+// for a row written after the work. It reads no spend, and keeps no decision: a lookup that
+// fails is the caller's to try again, where Admit would keep allowing every request on the
+// decision a failed read made.
+func (e *Enforcer) Attribute(ctx context.Context, customerID string) (routing.Admission, error) {
+	if e == nil || customerID == "" {
+		return routing.Admission{}, nil
+	}
+	e.mu.Lock()
+	cached, ok := e.decisions[customerID]
+	e.mu.Unlock()
+	if ok && cached.unread == nil && time.Now().Before(cached.expires) {
+		return routing.Admission{Tags: cached.tags, OrganizationID: cached.organization}, nil
+	}
+	app, organization, organizationID, err := e.policies(ctx, customerID)
+	if err != nil {
+		return routing.Admission{}, stack.Wrap(err)
+	}
+	return routing.Admission{Tags: labelled(organization, app), OrganizationID: organizationID}, nil
 }
 
 // Limits returns what one of a customer's end users may spend in a day: the number the
@@ -204,15 +229,13 @@ func (e *Enforcer) decide(ctx context.Context, customerID string) decision {
 	return decided
 }
 
-// work reads the app's and the organization's policies and what each has spent.
-func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
-	app, err := e.config.Policy(ctx, store.ScopeApp, appID)
-	if err != nil {
-		return decision{}, err
+// policies reads the app's policy, the organization it is in and the organization's policy.
+func (e *Enforcer) policies(ctx context.Context, appID string) (app, organization store.PolicyDocument, organizationID string, err error) {
+	if app, err = e.config.Policy(ctx, store.ScopeApp, appID); err != nil {
+		return app, organization, "", err
 	}
-	organizationID, err := e.config.OrganizationOf(ctx, appID)
-	if err != nil {
-		return decision{}, err
+	if organizationID, err = e.config.OrganizationOf(ctx, appID); err != nil {
+		return app, organization, "", err
 	}
 	// An app seen for the first time is recorded under its organization in the background.
 	// Until that lands, the organization it came in under is the one whose floor applies:
@@ -220,21 +243,35 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 	if pending, ok := e.members.Load(appID); ok && organizationID == "" {
 		organizationID, _ = pending.(string)
 	}
-	var organization store.PolicyDocument
 	if organizationID != "" {
 		if organization, err = e.config.Policy(ctx, store.ScopeOrganization, organizationID); err != nil {
-			return decision{}, err
+			return app, organization, "", err
 		}
+	}
+	return app, organization, organizationID, nil
+}
+
+// labelled is the tags both policies lay over a request: the organization's over the app's, as
+// both are over the request's.
+func labelled(organization, app store.PolicyDocument) routing.Tags {
+	return routing.Admission{Tags: organization.Tags}.Labelled(app.Tags)
+}
+
+// work reads the app's and the organization's policies and what each has spent.
+func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
+	app, organization, organizationID, err := e.policies(ctx, appID)
+	if err != nil {
+		return decision{}, err
 	}
 
 	decided := decision{
 		floor:  organization.DataPolicy.Stricter(app.DataPolicy),
 		models: allowedByBoth(organization.AllowedModels, app.AllowedModels),
-		// The organization's tags are laid over the app's, as both are over the request's.
-		tags:   routing.Admission{Tags: organization.Tags}.Labelled(app.Tags),
+		tags:   labelled(organization, app),
 		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
-		ownApp: enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
+		ownApp:       enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
+		organization: organizationID,
 	}
 	if app.Quota != nil {
 		decided.messages = app.Quota.MessagesPerUserPerDay

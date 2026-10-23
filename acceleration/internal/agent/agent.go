@@ -235,6 +235,9 @@ type Options struct {
 	// so work with no price is logged once per process rather than once per agent.
 	Pricer pricing.Pricer
 	Logger *slog.Logger
+	// Writer is the process's usage writer, which memory and knowledge record through. Nil
+	// gives each of them one of their own over Store and Live.
+	Writer *routing.Writer
 }
 
 // Agent is a voice agent in one call.
@@ -666,7 +669,7 @@ func New(options Options) (*Agent, error) {
 			scope,
 			options.Incognito,
 			owner,
-			routing.NewRecorder(routing.Memory, options.Store, options.Live, options.Pricer, logger),
+			usageRecorder(routing.Memory, options, logger),
 			logger,
 		)
 	}
@@ -679,12 +682,21 @@ func New(options Options) (*Agent, error) {
 			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
 			options.KnowledgeLimit,
 			owner,
-			routing.NewRecorder(routing.Knowledge, options.Store, options.Live, options.Pricer, logger),
+			usageRecorder(routing.Knowledge, options, logger),
 			logger,
 		)
 	}
 
 	return agent, nil
+}
+
+// usageRecorder records a modality the agent calls itself, through the process's writer when
+// it has one.
+func usageRecorder(modality routing.Modality, options Options, logger *slog.Logger) *routing.Recorder {
+	if options.Writer != nil {
+		return routing.NewRecorderOn(modality, options.Writer, options.Pricer, logger)
+	}
+	return routing.NewRecorder(modality, options.Store, options.Live, options.Pricer, logger)
 }
 
 // finishTurn reports a measured exchange and records it.

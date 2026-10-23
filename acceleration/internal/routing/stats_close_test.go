@@ -5,16 +5,19 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 )
 
-func TestAStatRecordedAfterCloseIsDroppedNotAPanic(t *testing.T) {
-	recorder := newRecorder(STT, nil, &live.Client{}, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+func TestAStatRecordedAfterCloseIsLostLoudlyNotAPanic(t *testing.T) {
+	recorder := newRecorder(STT, nil, &live.Client{}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	recorder.Close()
+	before := testutil.ToFloat64(usageLost.WithLabelValues(lostShutdown))
 
 	recorder.Record(ProviderConfig{}, Stat{})
 
-	if got := recorder.dropped.Load(); got != 1 {
-		t.Fatalf("a stat recorded after Close was counted as dropped %d times, want 1", got)
+	if got := testutil.ToFloat64(usageLost.WithLabelValues(lostShutdown)) - before; got != 1 {
+		t.Fatalf("a stat recorded after Close was counted as lost %v times, want 1", got)
 	}
 }

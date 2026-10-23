@@ -64,11 +64,10 @@ func (s *RoutingSuite) TestATierThePriceListDoesNotNameIsLoggedOnce() {
 	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), nil)
 	s.Require().NoError(err)
 	logs := &bytes.Buffer{}
-	done := make(chan struct{})
-	close(done)
-	// It keeps every stat in its queue rather than writing it anywhere.
-	recorder := &Recorder{modality: LLM, live: &live.Client{}, pricer: list, logger: slog.New(slog.NewTextHandler(logs, nil)),
-		queue: make(chan queued, 16), done: done}
+	// Its writer runs no stage, so every stat stays in the queue rather than being written.
+	writer := &Writer{live: &live.Client{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		queue: make(chan queued, 16), queueSize: 16}
+	recorder := &Recorder{modality: LLM, writer: writer, pricer: list, logger: slog.New(slog.NewTextHandler(logs, nil))}
 
 	for _, tier := range []string{"turbo", "turbo", "flex", "default", ""} {
 		recorder.Record(provider, Stat{Usage: Usage{InputTokens: 1_000}, Attributes: map[string]string{"service_tier": tier}})
@@ -91,11 +90,10 @@ func (s *RoutingSuite) TestABuiltInModelsTiersAreNamedByTheVendorFile() {
 	}
 	s.Require().Equal("gpt-6-luna", luna.Model)
 	logs := &bytes.Buffer{}
-	done := make(chan struct{})
-	close(done)
-	// It keeps every stat in its queue rather than writing it anywhere.
-	recorder := &Recorder{modality: LLM, live: &live.Client{}, pricer: list, logger: slog.New(slog.NewTextHandler(logs, nil)),
-		queue: make(chan queued, 16), done: done}
+	// Its writer runs no stage, so every stat stays in the queue rather than being written.
+	writer := &Writer{live: &live.Client{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		queue: make(chan queued, 16), queueSize: 16}
+	recorder := &Recorder{modality: LLM, writer: writer, pricer: list, logger: slog.New(slog.NewTextHandler(logs, nil))}
 
 	for _, tier := range []string{"flex", "batch", "fast", "priority", "default"} {
 		recorder.Record(luna, Stat{Usage: Usage{InputTokens: 1_000}, Attributes: map[string]string{"service_tier": tier}})

@@ -5,19 +5,18 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
-	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// statQueueSize bounds how far the writer may fall behind before stats are dropped.
-const statQueueSize = 512
-
-// statWriteTimeout bounds a single write so a stuck backend cannot wedge the writer.
-const statWriteTimeout = 5 * time.Second
+// drainTimeout is how long a recorder's own writer may take to write what is queued when
+// the recorder closes.
+const drainTimeout = 15 * time.Second
 
 // unnamedTierEvery is how often a service tier the price list does not name is logged for
 // one model, so a busy one is not logged on every row.
@@ -37,6 +36,8 @@ type Owner struct {
 	AgentID string
 	// CallID is the call the work happened in. Empty outside a conversation.
 	CallID string
+	// SessionID is the agent session the work ran in. Empty outside one.
+	SessionID string
 	// Tags are the customer's own cost labels, carried onto every row so spend can be
 	// broken down by whatever the customer cares about.
 	Tags Tags
@@ -51,6 +52,9 @@ type Owner struct {
 // price.
 type Stat struct {
 	Owner
+	// UsageID names the unit of work, set by a caller that may record it more than once so
+	// it is written once. Zero gives the row an id of its own.
+	UsageID     uuid.UUID
 	StartedAt   time.Time
 	OperationID string
 	Purpose     string
@@ -87,56 +91,49 @@ type Stat struct {
 // before it was cut off is still billed.
 const ErrorCancelled = store.ErrorCancelled
 
-// Recorder writes stats to Postgres and Redis off the request path. A conversation must
-// never wait on a database, so recording is asynchronous and stats are the thing that
-// gets dropped when the backend cannot keep up.
+// Recorder prices stats and hands them to a Writer, which writes them to Postgres and Redis
+// off the request path. A conversation must never wait on a database, so recording only
+// queues.
 type Recorder struct {
 	modality Modality
-	store    *store.Store
-	live     *live.Client
 	pricer   pricing.Pricer
 	logger   *slog.Logger
 	// gate is where the tags a customer's policies lay over every row come from. Nil lays
 	// none.
 	gate Gate
 
-	queue chan queued
-	done  chan struct{}
-
-	// mu keeps a Record from sending on the queue once Close has closed it.
-	mu        sync.Mutex
-	closed    bool
-	closeOnce sync.Once
-	// dropped counts stats lost to a full queue or to a Record after Close, reported once on
-	// shutdown.
-	dropped atomic.Int64
+	writer *Writer
+	// own is a writer this recorder made, and so closes.
+	own bool
 	// tiersWarned is when each service tier the price list does not name was last logged,
 	// by provider, model and tier.
 	tiersWarned sync.Map
 }
 
-// NewRecorder starts the background writer. The pricer prices every row; nil prices
-// nothing, and logs every row as billable work with no price.
+// NewRecorder starts a writer of the recorder's own, closed with it. The pricer prices
+// every row; nil prices nothing, and logs every row as billable work with no price.
 func NewRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, pricer pricing.Pricer, logger *slog.Logger) *Recorder {
-	return newRecorder(modality, pgStore, liveClient, nil, pricer, logger)
+	return newRecorder(modality, pgStore, liveClient, nil, nil, pricer, logger)
 }
 
-func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, gate Gate, pricer pricing.Pricer, logger *slog.Logger) *Recorder {
+// NewRecorderOn records through a writer other recorders share, pricing as NewRecorder
+// does. Closing the recorder leaves the writer open.
+func NewRecorderOn(modality Modality, writer *Writer, pricer pricing.Pricer, logger *slog.Logger) *Recorder {
+	return newRecorder(modality, nil, nil, nil, writer, pricer, logger)
+}
+
+// newRecorder records through writer, or through one of its own over pgStore and liveClient
+// when writer is nil.
+func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, gate Gate, writer *Writer, pricer pricing.Pricer, logger *slog.Logger) *Recorder {
 	if pricer == nil {
 		// An empty list cannot be refused.
 		pricer, _ = pricing.NewList("none", nil, logger)
 	}
-	r := &Recorder{
-		modality: modality,
-		store:    pgStore,
-		live:     liveClient,
-		pricer:   pricer,
-		logger:   logger,
-		gate:     gate,
-		queue:    make(chan queued, statQueueSize),
-		done:     make(chan struct{}),
+	r := &Recorder{modality: modality, pricer: pricer, logger: logger, gate: gate, writer: writer}
+	if writer == nil {
+		r.writer = NewWriter(WriterOptions{Store: pgStore, Live: liveClient, Logger: logger})
+		r.own = true
 	}
-	go r.run()
 	return r
 }
 
@@ -151,10 +148,10 @@ func (r *Recorder) QuoteStat(config ProviderConfig, entry Stat) pricing.Quote {
 	return quote(r.pricer, r.modality, config, entry.Attributes, row(r.modality, config, entry).Quantities())
 }
 
-// Record queues a stat, pricing what its row holds and dropping it if the writer is too
-// far behind.
+// Record queues a stat, pricing what its row holds. It never waits: a stat the writer has
+// no room for is lost, loudly.
 func (r *Recorder) Record(config ProviderConfig, entry Stat) {
-	if r.store == nil && r.live == nil {
+	if !r.writer.records() {
 		return
 	}
 
@@ -169,19 +166,11 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		request.OutputCostMicros = min(priced.OutputCostMicros, entry.CostMicros)
 		request.Billable = priced.Billable || entry.CostMicros > 0
 	}
+	if request.UsageID == uuid.Nil {
+		request.UsageID = uuid.Must(uuid.NewV7())
+	}
 
-	// A caller still streaming at shutdown records after Close; that stat is dropped.
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		r.dropped.Add(1)
-		return
-	}
-	select {
-	case r.queue <- queued{request: request, fatal: entry.Fatal}:
-	default:
-		r.dropped.Add(1)
-	}
+	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal})
 }
 
 // warnUnnamedTier logs a service tier the vendor served at that the price list has no entry
@@ -223,9 +212,11 @@ func (r *Recorder) warnUnnamedTier(config ProviderConfig, attributes map[string]
 // stores.
 func row(modality Modality, config ProviderConfig, entry Stat) store.Request {
 	request := store.Request{
+		UsageID:           entry.UsageID,
 		Modality:          string(modality),
 		CustomerID:        entry.CustomerID,
 		AgentID:           entry.AgentID,
+		SessionID:         entry.SessionID,
 		CallID:            entry.CallID,
 		Tags:              entry.Tags,
 		Provider:          config.Provider,
@@ -277,58 +268,15 @@ func (s Stat) meters() pricing.Quantities {
 	return meters
 }
 
-// Close drains the queue and stops the writer.
+// Close writes what is queued and stops the writer when the recorder made it. A writer other
+// recorders share is left open.
 func (r *Recorder) Close() {
-	r.closeOnce.Do(func() {
-		r.mu.Lock()
-		r.closed = true
-		close(r.queue)
-		r.mu.Unlock()
-		<-r.done
-		if dropped := r.dropped.Load(); dropped > 0 {
-			r.logger.Warn("dropped stats because the writer fell behind or they were recorded after Close",
-				"modality", r.modality, "count", dropped)
-		}
-	})
-}
-
-func (r *Recorder) run() {
-	defer close(r.done)
-
-	for next := range r.queue {
-		ctx, cancel := context.WithTimeout(context.Background(), statWriteTimeout)
-		r.write(ctx, next)
-		cancel()
+	if !r.own {
+		return
 	}
-}
-
-// queued is a stat on its way to the writer: the row, and what only health reads.
-type queued struct {
-	request store.Request
-	fatal   bool
-}
-
-func (r *Recorder) write(ctx context.Context, next queued) {
-	request := next.request
-	if r.gate != nil {
-		// Only the tags are wanted here. A refusal is the budget, which the work being
-		// recorded has already got past.
-		admission, _ := r.gate.Admit(ctx, request.CustomerID)
-		request.Tags = admission.Labelled(request.Tags)
-	}
-	if r.store != nil {
-		if err := r.store.RecordRequest(ctx, &request); err != nil {
-			r.logger.Error("could not record request", "error", err)
-		}
-	}
-
-	if r.live != nil {
-		usage := liveUsage(request)
-		usage.Fatal = next.fatal
-		if err := r.live.RecordRequest(ctx, usage); err != nil {
-			r.logger.Error("could not update live counters", "error", err)
-		}
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+	defer cancel()
+	r.writer.Close(ctx)
 }
 
 // liveUsage is what a request adds to the live counters. A cancelled one is marked so, and the

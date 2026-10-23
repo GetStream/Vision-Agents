@@ -114,6 +114,7 @@ func NewRecordings(options Options) (*Recordings, error) {
 		Live:     options.Live,
 		Voices:   options.Voices,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
 		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
