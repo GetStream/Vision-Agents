@@ -113,6 +113,9 @@ type Price struct {
 	// PerMillionCachedInputTokens prices prompt tokens served from the provider's cache,
 	// which is cheaper than reading them afresh.
 	PerMillionCachedInputTokens float64 `yaml:"per_million_cached_input_tokens"`
+	// PerMillionCacheWriteInputTokens prices prompt tokens written into the provider's cache,
+	// which Anthropic bill above the fresh rate. Zero bills them as fresh input.
+	PerMillionCacheWriteInputTokens float64 `yaml:"per_million_cache_write_input_tokens"`
 	// PerMillionOutputTokens prices what the model generated.
 	PerMillionOutputTokens float64 `yaml:"per_million_output_tokens"`
 	// PerThousandRequests prices work a provider bills by the call rather than by what it
@@ -149,6 +152,9 @@ type Usage struct {
 	// CachedInputTokens is the part of the prompt the provider served from its cache. It
 	// is priced at the cheaper cached rate and excluded from the standard input rate.
 	CachedInputTokens int64
+	// CacheWriteInputTokens is the part of the prompt written into the provider's cache. It
+	// is priced at the write rate where the model has one, and as fresh input otherwise.
+	CacheWriteInputTokens int64
 	// OutputTokens is everything generated, reasoning included.
 	OutputTokens int64
 	// Images is how many pictures were drawn.
@@ -165,6 +171,11 @@ func (p Price) CostMicros(usage Usage) int64 {
 	// Cached tokens are a subset of the prompt, so they are billed once at their own rate
 	// rather than twice.
 	freshInputTokens := usage.InputTokens - usage.CachedInputTokens
+	writtenInputTokens := int64(0)
+	if p.PerMillionCacheWriteInputTokens > 0 {
+		writtenInputTokens = min(usage.CacheWriteInputTokens, max(freshInputTokens, 0))
+		freshInputTokens -= writtenInputTokens
+	}
 	if freshInputTokens < 0 {
 		freshInputTokens = 0
 	}
@@ -173,6 +184,7 @@ func (p Price) CostMicros(usage Usage) int64 {
 		p.PerAudioHour*float64(usage.AudioMs)/3_600_000 +
 		p.PerMillionInputTokens*float64(freshInputTokens)/1_000_000 +
 		p.PerMillionCachedInputTokens*float64(usage.CachedInputTokens)/1_000_000 +
+		p.PerMillionCacheWriteInputTokens*float64(writtenInputTokens)/1_000_000 +
 		p.PerMillionOutputTokens*float64(usage.OutputTokens)/1_000_000 +
 		p.PerImage*float64(usage.Images) +
 		p.PerMegapixel*float64(usage.Pixels)/1_000_000

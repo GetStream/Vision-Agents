@@ -1641,6 +1641,21 @@ func (s *RoutingSuite) TestCostBillsCachedPromptTokensOnlyOnce() {
 		"a prompt served entirely from cache costs only the cached rate")
 }
 
+func (s *RoutingSuite) TestCostBillsCacheWritesAtTheWriteRate() {
+	// Opus 5.5: $4 per million fresh, $0.20 read from cache, $5 written to it. Of a
+	// million-token prompt, 900k were read and 90k written, leaving 10k fresh.
+	price := Price{PerMillionInputTokens: 4, PerMillionCachedInputTokens: 0.2, PerMillionCacheWriteInputTokens: 5}
+
+	s.EqualValues(40_000+180_000+450_000, price.CostMicros(Usage{InputTokens: 1_000_000, CachedInputTokens: 900_000, CacheWriteInputTokens: 90_000}))
+}
+
+func (s *RoutingSuite) TestCostBillsCacheWritesAsFreshInputWithoutAWriteRate() {
+	// A provider that reports writes but does not charge extra for them.
+	price := Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.1}
+
+	s.EqualValues(550_000, price.CostMicros(Usage{InputTokens: 1_000_000, CachedInputTokens: 500_000, CacheWriteInputTokens: 400_000}))
+}
+
 func (s *RoutingSuite) TestCostIgnoresMoreCachedTokensThanPromptTokens() {
 	// A provider that reported nonsense should not produce a negative bill.
 	price := Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.1}
