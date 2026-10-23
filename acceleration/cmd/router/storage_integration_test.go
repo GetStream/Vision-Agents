@@ -35,7 +35,7 @@ func (s *UsageCommandsSuite) runStorage(server *turbopuffertest.Server, hour tim
 		APIKey: "test-key", BaseURL: server.URL, Cost: knowledgeCost(s.settings.Knowledge), Logger: logger,
 	})
 	s.Require().NoError(err)
-	recorder, stop, err := storageRecorder(s.ctx, s.settings, s.store, logger)
+	recorder, stop, err := jobRecorder(s.ctx, s.settings, s.store, routing.Knowledge, logger)
 	s.Require().NoError(err)
 	defer stop()
 	var out bytes.Buffer

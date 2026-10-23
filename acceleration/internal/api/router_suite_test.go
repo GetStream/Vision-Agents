@@ -1281,7 +1281,10 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 		Stream:            s.stream,
 		HookSecret:        suiteStreamSecret,
 		Secrets:           keyring,
-		Logger:            logger,
+		// The node's phone service is the suite's: the call hook a peer hands over answers
+		// the same database.
+		Phone:  s.router.phone,
+		Logger: logger,
 	})
 	s.Require().NoError(err)
 	other.Config.Handler = server.Handler()

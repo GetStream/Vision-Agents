@@ -18,10 +18,14 @@ const CallHookPath = "/v1/phone/hooks/stream"
 
 // callHookEvents are the events the router asks for.
 //
-// Only two, deliberately. An app-wide hook asking for everything would deliver every message
+// Only these, deliberately. An app-wide hook asking for everything would deliver every message
 // and reaction in the app to a path that answers phone calls, and every one of those is a
-// signature to check and a body to parse for nothing.
-var callHookEvents = []string{"call.session_started", "call.session_ended"}
+// signature to check and a body to parse for nothing. A participant joining and leaving is
+// when a phone answered and hung up, which is what its minutes are billed by.
+var callHookEvents = []string{
+	"call.session_started", "call.session_ended",
+	"call.session_participant_joined", "call.session_participant_left",
+}
 
 // webhookHookType is what Stream calls a hook delivered over HTTP, as opposed to SQS or SNS.
 const webhookHookType = "webhook"

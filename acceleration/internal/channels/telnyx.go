@@ -67,6 +67,10 @@ type telnyxDelivery struct {
 		Payload   struct {
 			ID   string `json:"id"`
 			Text string `json:"text"`
+			// Media are the files an MMS carried, each fetched from its URL.
+			Media []struct {
+				URL string `json:"url"`
+			} `json:"media"`
 			From struct {
 				PhoneNumber string `json:"phone_number"`
 			} `json:"from"`
@@ -88,7 +92,7 @@ func (p *telnyxProvider) Parse(body []byte) ([]Message, error) {
 		return nil, nil
 	}
 	message := delivered.Data.Payload
-	if message.Text == "" || message.From.PhoneNumber == "" {
+	if (message.Text == "" && len(message.Media) == 0) || message.From.PhoneNumber == "" {
 		return nil, nil
 	}
 	to := ""
@@ -102,6 +106,7 @@ func (p *telnyxProvider) Parse(body []byte) ([]Message, error) {
 		To:     to,
 		Thread: message.From.PhoneNumber,
 		Text:   message.Text,
+		Media:  len(message.Media),
 	}}, nil
 }
 

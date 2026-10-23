@@ -368,6 +368,9 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		return store.PhoneNumber{}, err
 	}
 
+	// Some vendors say what a number costs when it is offered and not when it is bought, so
+	// the offer is read first, while the number is still for sale.
+	quoted := s.quote(ctx, provider, purchase)
 	// A failed purchase is a row of its own; a bought number is billed by its months, the
 	// first of them below.
 	buying := routing.Meter{
@@ -382,6 +385,9 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	})
 	if err != nil {
 		return store.PhoneNumber{}, err
+	}
+	if bought.MonthlyCostMicros == 0 {
+		bought.MonthlyCostMicros = quoted
 	}
 
 	held := store.PhoneNumber{
@@ -790,12 +796,12 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 
 	committed = true
-	// The vendor bills the call from when it connects, which nothing here hears of, so its
-	// minutes run from now.
+	// The vendor bills the call from when the person answers, which is when their phone joins
+	// the Stream call: the leg rings until then, and one never answered is not billed.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
 		StreamAppPK: pin, CallType: callType, CallID: callID, Vendor: held.Vendor,
 		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
-	})
+	}, false)
 	sites := placedSites{streamSIPHost: BridgeHost(outbound.Bridge.URI)}
 	if trunk != nil {
 		sites.customerTrunkHost = trunk.Host
@@ -1203,11 +1209,12 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	}
 
 	committed = true
-	// The human's leg is a leg of the call it joins, billed to whoever transferred.
+	// The human's leg is a leg of the call it joins, billed to whoever transferred from when
+	// they answer.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
 		StreamAppPK: request.StreamApp, CallType: callType, CallID: request.CallID, Vendor: held.Vendor,
 		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
-	})
+	}, false)
 	if err := s.store.RecordCallResource(ctx, &store.CallResource{
 		TrunkID:     trunkID,
 		RouteID:     routeID,

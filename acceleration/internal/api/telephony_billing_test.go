@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -154,14 +156,68 @@ func (s *TelephonyBillingSuite) TestASessionEndedDeliveredTwiceBillsTheLegOnce()
 	s.Len(s.rows(phone.ModelCallMinutes), 1)
 }
 
+// A session_started delivered late, after the call ended, is the same Stream session: it opens
+// no second leg.
+func (s *TelephonyBillingSuite) TestASessionStartedArrivingAfterTheCallEndedOpensNoLeg() {
+	_, callID := s.attached()
+
+	s.Require().Equal(http.StatusOK, s.arriveAt(callID))
+	s.clock.advance(30 * time.Second)
+	s.Require().Equal(http.StatusOK, s.endAt(callID))
+	s.Require().Equal(http.StatusOK, s.arriveAt(callID), "delivered again, late")
+	s.clock.advance(time.Hour)
+	s.Require().Equal(http.StatusOK, s.endAt(callID))
+
+	s.phoneRows(phone.ModelCallMinutes, 1)
+	time.Sleep(time.Second)
+	s.Len(s.rows(phone.ModelCallMinutes), 1)
+	var legs []store.CallLeg
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&legs).Where("call_id = ?", callID).Scan(context.Background()))
+	s.Len(legs, 1)
+}
+
+// A call another node handed over was opened there, where it arrived: this node opens no leg
+// of its own, which would bill the call twice from two shards.
+func (s *TelephonyBillingSuite) TestAnArrivingCallAnotherNodeHandedOverOpensNoLegHere() {
+	_, callID := s.attached()
+	other, _ := s.otherRouterWithPhone()
+	body := arrivingCall("default:" + callID)
+	request, err := http.NewRequest(http.MethodPost, "/v1/phone/hooks/stream", strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(signatureHeader, sign(body, suiteStreamSecret))
+	credential, _ := s.sealer.Derive(node.CredentialPurpose)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	answer, err := node.NewForwarder(nil, credential).Ask(ctx, other.Listener.Addr().String(), request, []byte(body))
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
+	legs := func() []store.CallLeg {
+		var legs []store.CallLeg
+		s.Require().NoError(s.store.ShardDB().NewSelect().Model(&legs).Where("call_id = ?", callID).Scan(context.Background()))
+		return legs
+	}
+	s.Empty(legs())
+
+	// The same delivery straight from Stream is that node's to open.
+	direct, err := http.NewRequest(http.MethodPost, other.URL+"/v1/phone/hooks/stream", strings.NewReader(body))
+	s.Require().NoError(err)
+	direct.Header.Set("Content-Type", "application/json")
+	direct.Header.Set(signatureHeader, sign(body, suiteStreamSecret))
+	response, err := http.DefaultClient.Do(direct)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	s.Len(legs(), 1)
+}
+
 func (s *TelephonyBillingSuite) TestAPlacedCallsMinutesKeepTheKeyThatPlacedIt() {
-	callID := s.utils.uuid()
-	s.router.phone.OpenLeg(context.Background(), routing.Owner{
-		CustomerID: s.customerID(),
-		Attribution: routing.Attribution{APIKey: s.app.key, UserID: "u1", UsageCategories: []string{"support"},
-			OrganizationID: s.app.organization.ID},
-	}, store.CallLeg{CallType: "default", CallID: callID, Vendor: "telnyx", Direction: store.Outbound,
-		LocalNumber: "+15125550100", RemoteNumber: "+15125550123"})
+	callID := s.placedLeg("+15125550123", routing.Attribution{APIKey: s.app.key, UserID: "u1",
+		UsageCategories: []string{"support"}, OrganizationID: s.app.organization.ID})
+	s.clock.advance(20 * time.Second)
+	s.Require().Equal(http.StatusOK, s.participant("joined", callID, "sip-+15125550123", "phone-1"))
 	s.clock.advance(2 * time.Minute)
 
 	s.Require().Equal(http.StatusOK, s.endAt(callID))
@@ -170,15 +226,39 @@ func (s *TelephonyBillingSuite) TestAPlacedCallsMinutesKeepTheKeyThatPlacedIt() 
 	s.Equal(s.app.key, row.APIKey)
 	s.Equal("u1", row.UserID)
 	s.Equal([]string{"support"}, row.UsageCategories)
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 120}, row.Meters, "from when the phone joined")
 	s.Equal(int64(14_000), row.CostMicros, "two minutes at $0.007")
 }
 
+func (s *TelephonyBillingSuite) TestAPlacedCallNobodyAnsweredBillsNothing() {
+	callID := s.placedLeg("+15125550123", routing.Attribution{APIKey: s.app.key})
+	s.Require().Equal(http.StatusOK, s.participant("joined", callID, "agent-1", "agent-session"),
+		"the agent joining is nobody answering")
+	s.clock.advance(time.Minute)
+
+	s.Require().Equal(http.StatusOK, s.endAt(callID))
+
+	s.Never(func() bool { return len(s.rows(phone.ModelCallMinutes)) > 0 }, time.Second, 50*time.Millisecond)
+}
+
+func (s *TelephonyBillingSuite) TestAPhoneLeavingEndsItsLeg() {
+	callID := s.placedLeg("+15125550123", routing.Attribution{APIKey: s.app.key})
+	s.Require().Equal(http.StatusOK, s.participant("joined", callID, "sip-+15125550123", "phone-1"))
+	s.clock.advance(45 * time.Second)
+
+	s.Require().Equal(http.StatusOK, s.participant("left", callID, "sip-+15125550123", "phone-1"))
+
+	row := s.phoneRows(phone.ModelCallMinutes, 1)[store.Outbound]
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 45}, row.Meters)
+	s.clock.advance(time.Minute)
+	s.Require().Equal(http.StatusOK, s.endAt(callID))
+	time.Sleep(500 * time.Millisecond)
+	s.Len(s.rows(phone.ModelCallMinutes), 1, "the call ending ends nothing more")
+}
+
 func (s *TelephonyBillingSuite) TestALegOfACountryWithNoRateIsBillableWorkWithNoPrice() {
-	callID := s.utils.uuid()
-	s.router.phone.OpenLeg(context.Background(), routing.Owner{CustomerID: s.customerID(),
-		Attribution: routing.Attribution{APIKey: s.app.key}},
-		store.CallLeg{CallType: "default", CallID: callID, Vendor: "telnyx", Direction: store.Outbound,
-			LocalNumber: "+15125550100", RemoteNumber: "+5511912345678"})
+	callID := s.placedLeg("+5511912345678", routing.Attribution{APIKey: s.app.key})
+	s.Require().Equal(http.StatusOK, s.participant("joined", callID, "sip-+5511912345678", "phone-1"))
 	s.clock.advance(time.Minute)
 
 	s.Require().Equal(http.StatusOK, s.endAt(callID))
@@ -339,6 +419,32 @@ func (s *telephonyBilling) attached() (store.PhoneNumber, string) {
 		TrunkID: "trunk-" + s.utils.uuid(), CallType: "default", CallID: callID,
 	}))
 	return number, callID
+}
+
+// placedLeg is a call placed to remote, ringing, as the phone service records one the vendor
+// took, and the call it rings into.
+func (s *telephonyBilling) placedLeg(remote string, attribution routing.Attribution) string {
+	callID := s.utils.uuid()
+	s.router.phone.OpenLeg(context.Background(), routing.Owner{CustomerID: s.customerID(), Attribution: attribution},
+		store.CallLeg{CallType: "default", CallID: callID, Vendor: "telnyx", Direction: store.Outbound,
+			LocalNumber: "+15125550100", RemoteNumber: remote}, false)
+	return callID
+}
+
+// participant delivers a signed call.session_participant_<joined or left> for one of the call's
+// participants, as Stream would.
+func (s *telephonyBilling) participant(what, callID, user, userSession string) int {
+	return s.signedly("/v1/phone/hooks/stream", fmt.Sprintf(
+		`{"type":"call.session_participant_%s","call_cid":"default:%s","session_id":"session-1",`+
+			`"created_at":"2026-08-27T12:00:30Z","participant":{"user_session_id":%q,"role":"user",`+
+			`"joined_at":"2026-08-27T12:00:30Z","user":{"id":%q}}}`,
+		what, callID, userSession, user))
+}
+
+// otherRouterWithPhone is a second node of the deployment, serving the phone hooks with the
+// suite's phone service.
+func (s *telephonyBilling) otherRouterWithPhone() (*httptest.Server, *Server) {
+	return s.otherRouter(dispatch.NewPool())
 }
 
 func (s *telephonyBilling) arriveAt(callID string) int {

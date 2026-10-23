@@ -26,8 +26,8 @@ import (
 
 // MeteringSuite is what the phone service bills, written to real Postgres through a real
 // recorder priced from the vendor list: a placed call and a transfer as free dial rows and as
-// legs billed by the minute when they end, a leg nothing ended, and each month of a number.
-// The vendor is a stub named telnyx, and the service's clock is the suite's.
+// legs billed by the minute from when their phone joined, a leg nothing ended, and each month
+// of a number. The vendor is a stub named telnyx, and the service's clock is the suite's.
 type MeteringSuite struct {
 	suite.Suite
 	ctx      context.Context
@@ -99,22 +99,64 @@ func (s *MeteringSuite) owner() routing.Owner {
 	return routing.Owner{CustomerID: s.customer, Attribution: routing.Attribution{APIKey: "key-a", UserID: "u1"}}
 }
 
-func (s *MeteringSuite) TestAPlacedCallIsBilledForItsMinutesWhenItEnds() {
+var everyApp = store.AppScope{Unpinned: true}
+
+// place places a call from the suite's number.
+func (s *MeteringSuite) place() Placed {
 	placed, err := s.service.Call(s.ctx, CallRequest{Owner: s.owner(), From: s.e164, To: "+15125550123"})
 	s.Require().NoError(err)
+	return placed
+}
+
+// answered is the phone of a call joining it, as the participant event says.
+func (s *MeteringSuite) answered(callType, callID, participant string) {
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, callType, callID, "session-1", participant))
+}
+
+func (s *MeteringSuite) TestAPlacedCallIsBilledForItsMinutesFromWhenItWasAnswered() {
+	placed := s.place()
+	s.clock.advance(20 * time.Second)
+	s.answered(placed.CallType, placed.CallID, "phone-1")
 	s.clock.advance(61 * time.Second)
 
-	s.Require().NoError(s.service.EndLegs(s.ctx, store.AppScope{Unpinned: true}, placed.CallType, placed.CallID))
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID))
 
 	dial := s.row(ModelDial)
 	s.True(dial.Success)
 	s.False(dial.Billable, "placing a call is free: the vendor bills its minutes")
 	minutes := s.row(ModelCallMinutes)
-	s.Equal(pricing.Quantities{pricing.CallSeconds: 61}, minutes.Meters)
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 61}, minutes.Meters, "the ringing is not billed")
 	s.Equal(int64(14_000), minutes.CostMicros, "two started minutes at $0.007")
 	s.Equal("key-a", minutes.APIKey, "the minutes keep the key that placed the call")
 	s.Equal("u1", minutes.UserID)
 	s.Equal(map[string]string{"country": "US", "direction": "outbound", "measured_by": "router"}, minutes.Attributes)
+}
+
+func (s *MeteringSuite) TestACallNobodyAnsweredBillsNothing() {
+	placed := s.place()
+	s.clock.advance(time.Minute)
+
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID))
+
+	s.row(ModelDial)
+	s.Never(func() bool { return len(s.rows(ModelCallMinutes)) > 0 }, time.Second, 50*time.Millisecond)
+	s.Empty(s.openLegs())
+}
+
+func (s *MeteringSuite) TestALegEndsWhenItsPhoneLeaves() {
+	placed := s.place()
+	s.answered(placed.CallType, placed.CallID, "phone-1")
+	s.answered(placed.CallType, placed.CallID, "phone-1")
+	s.clock.advance(30 * time.Second)
+
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, placed.CallType, placed.CallID, "phone-1"))
+	s.clock.advance(time.Minute)
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID))
+
+	minutes := s.row(ModelCallMinutes)
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 30}, minutes.Meters, "billed until the phone hung up, not the call")
+	time.Sleep(300 * time.Millisecond)
+	s.Len(s.rows(ModelCallMinutes), 1, "the join delivered twice starts one leg")
 }
 
 func (s *MeteringSuite) TestAFailedDialIsARowThatIsNotBilledAndOpensNoLeg() {
@@ -133,57 +175,97 @@ func (s *MeteringSuite) TestATransferIsALegOfTheCallItJoins() {
 	callID := "call-" + uuid.NewString()
 	_, err := s.service.Transfer(s.ctx, TransferRequest{Owner: s.owner(), From: s.e164, To: "+15125550124", CallID: callID})
 	s.Require().NoError(err)
+	s.answered(defaultCallType, callID, "human-1")
 	s.clock.advance(3 * time.Minute)
 
-	s.Require().NoError(s.service.EndLegs(s.ctx, store.AppScope{Unpinned: true}, defaultCallType, callID))
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, defaultCallType, callID))
 
 	minutes := s.row(ModelCallMinutes)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 180}, minutes.Meters)
 	s.Equal(int64(21_000), minutes.CostMicros)
 }
 
-func (s *MeteringSuite) TestALegLeftOpenIsClosedAtFourHours() {
-	placed, err := s.service.Call(s.ctx, CallRequest{Owner: s.owner(), From: s.e164, To: "+15125550123"})
-	s.Require().NoError(err)
+func (s *MeteringSuite) TestALegLeftOpenIsClosedAtFourHoursAndNotBilled() {
+	placed := s.place()
+	s.answered(placed.CallType, placed.CallID, "phone-1")
 	s.clock.advance(MaxCallLength + time.Minute)
 
-	_, err = s.service.SweepLegs(s.ctx)
+	_, err := s.service.SweepLegs(s.ctx)
 	s.Require().NoError(err)
-	s.Require().NoError(s.service.EndLegs(s.ctx, store.AppScope{Unpinned: true}, placed.CallType, placed.CallID),
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID),
 		"the session_ended that comes late ends nothing")
 
 	minutes := s.row(ModelCallMinutes)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: int64(MaxCallLength / time.Second)}, minutes.Meters)
-	s.Equal(int64(240*7_000), minutes.CostMicros)
+	s.False(minutes.Billable, "nothing says how long it really lasted")
+	s.Zero(minutes.CostMicros)
+	s.Equal("1680000", minutes.Attributes[routing.AttributeFreeCostMicros], "priced, at 240 minutes")
+	s.Equal(store.LegSwept, minutes.Attributes[AttributeEndedBy])
+	time.Sleep(300 * time.Millisecond)
 	s.Len(s.rows(ModelCallMinutes), 1)
 }
 
-func (s *MeteringSuite) TestRecordingAnEndedLegAgainBillsNothing() {
-	placed, err := s.service.Call(s.ctx, CallRequest{Owner: s.owner(), From: s.e164, To: "+15125550123"})
+func (s *MeteringSuite) TestALegThatRangForFourHoursIsEndedUnansweredAndBillsNothing() {
+	s.place()
+	s.clock.advance(MaxCallLength + time.Minute)
+
+	_, err := s.service.SweepLegs(s.ctx)
 	s.Require().NoError(err)
+
+	s.Empty(s.openLegs())
+	s.Never(func() bool { return len(s.rows(ModelCallMinutes)) > 0 }, time.Second, 50*time.Millisecond)
+}
+
+func (s *MeteringSuite) TestRecordingAnEndedLegAgainBillsNothing() {
+	placed := s.place()
+	s.answered(placed.CallType, placed.CallID, "phone-1")
 	s.clock.advance(time.Minute)
-	ended, err := s.store.EndCallLegs(s.ctx, store.AppScope{Unpinned: true}, placed.CallType, placed.CallID, s.clock.now())
+	ended, err := s.store.EndCallLegs(s.ctx, everyApp, placed.CallType, placed.CallID, s.clock.now())
 	s.Require().NoError(err)
 	s.Require().Len(ended, 1)
 
-	s.service.settleLeg(s.ctx, ended[0])
-	s.service.settleLeg(s.ctx, ended[0])
+	s.service.settleLeg(s.ctx, ended[0], true)
+	s.service.settleLeg(s.ctx, ended[0], false)
 
 	s.row(ModelCallMinutes)
+	time.Sleep(300 * time.Millisecond)
 	s.Len(s.rows(ModelCallMinutes), 1, "the leg's usage id names it")
+}
+
+// A process that dies between ending a leg and writing its row leaves the leg ended and
+// unbilled: the sweep finds it and writes its row, once.
+func (s *MeteringSuite) TestALegWhoseRowWasLostIsRecordedAgainByTheSweep() {
+	placed := s.place()
+	s.answered(placed.CallType, placed.CallID, "phone-1")
+	s.clock.advance(90 * time.Second)
+	_, err := s.store.EndCallLegs(s.ctx, everyApp, placed.CallType, placed.CallID, s.clock.now())
+	s.Require().NoError(err)
+	s.clock.advance(10 * time.Minute)
+
+	_, err = s.service.SweepLegs(s.ctx)
+	s.Require().NoError(err)
+	minutes := s.row(ModelCallMinutes)
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 90}, minutes.Meters)
+	s.True(minutes.Billable)
+
+	_, err = s.service.SweepLegs(s.ctx)
+	s.Require().NoError(err)
+	time.Sleep(300 * time.Millisecond)
+	s.Len(s.rows(ModelCallMinutes), 1)
 }
 
 func (s *MeteringSuite) TestEveryLegOfAnEndedCallCountsTowardTheSandboxsMinutes() {
 	s.withSandbox(dlc.Sandbox{Enabled: true})
 	s.Require().NoError(s.service.gate.SetRecipients(s.ctx, s.customer, []string{"+15125550123", "+15125550124"}))
-	placed, err := s.service.Call(s.ctx, CallRequest{Owner: s.owner(), From: s.e164, To: "+15125550123"})
-	s.Require().NoError(err)
+	placed := s.place()
+	s.answered(placed.CallType, placed.CallID, "phone-1")
 	s.clock.advance(4 * time.Minute)
-	_, err = s.service.Transfer(s.ctx, TransferRequest{Owner: s.owner(), From: s.e164, To: "+15125550124", CallID: placed.CallID})
+	_, err := s.service.Transfer(s.ctx, TransferRequest{Owner: s.owner(), From: s.e164, To: "+15125550124", CallID: placed.CallID})
 	s.Require().NoError(err)
+	s.answered(placed.CallType, placed.CallID, "human-1")
 	s.clock.advance(6 * time.Minute)
 
-	s.Require().NoError(s.service.EndLegs(s.ctx, store.AppScope{Unpinned: true}, placed.CallType, placed.CallID))
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, placed.CallType, placed.CallID))
 
 	usage, err := s.service.gate.Usage(s.ctx, s.customer)
 	s.Require().NoError(err)
@@ -193,6 +275,20 @@ func (s *MeteringSuite) TestEveryLegOfAnEndedCallCountsTowardTheSandboxsMinutes(
 		s.Equal("true", minutes.Attributes[AttributeDLCSandbox])
 		s.NotEmpty(minutes.Attributes[routing.AttributeFreeCostMicros])
 	}
+}
+
+func (s *MeteringSuite) TestALegCarriesItsAppsOrganization() {
+	organization := "org-" + uuid.NewString()
+	_, err := s.store.DB().NewInsert().Model(&store.AppOrganization{
+		AppID: s.customer, OrganizationID: organization, SeenAt: time.Now().UTC(),
+	}).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	s.place()
+
+	legs := s.openLegs()
+	s.Require().Len(legs, 1)
+	s.Equal(organization, legs[0].OrganizationID, "an organization's open calls are counted from its legs")
 }
 
 func (s *MeteringSuite) TestABoughtNumberIsBilledItsFirstMonth() {
@@ -206,28 +302,76 @@ func (s *MeteringSuite) TestABoughtNumberIsBilledItsFirstMonth() {
 	s.Equal(bought.PurchasedAt, month.StartedAt.UTC())
 }
 
-func (s *MeteringSuite) TestANumberIsBilledEachMonthItIsHeld() {
+func (s *MeteringSuite) TestANumberWhosePriceIsOnlyInItsOfferIsBilledTheOffer() {
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.vendor.monthly = 0
+	s.vendor.offers = []Available{{E164: "+15125550000", MonthlyCostMicros: 9}, {E164: e164, MonthlyCostMicros: 1_500_000}}
+
+	bought, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: e164, Owner: s.owner()})
+	s.Require().NoError(err)
+
+	s.Equal(int64(1_500_000), bought.MonthlyCostMicros, "the number's own offer")
+	s.Equal(int64(1_500_000), s.row(ModelNumber).CostMicros)
+}
+
+func (s *MeteringSuite) TestANumberWithNoPriceIsBillableWorkWithNoPrice() {
+	s.vendor.monthly = 0
+
+	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: "+1512" + uuid.NewString()[:7], Owner: s.owner()})
+	s.Require().NoError(err)
+
+	month := s.row(ModelNumber)
+	s.True(month.Billable, "billable, so the alarm for work with no price goes off")
+	s.Zero(month.CostMicros)
+}
+
+func (s *MeteringSuite) TestANumberIsBilledEachMonthAfterTheOneItWasBoughtIn() {
+	// The suite's own number, which has no price, is not the one under test.
+	s.Require().NoError(s.store.ReleaseNumber(s.ctx, s.customer, s.e164, s.clock.now()))
 	bought, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: "+1512" + uuid.NewString()[:7], Owner: s.owner()})
 	s.Require().NoError(err)
 	s.row(ModelNumber)
-	s.clock.set(monthAfter(bought.PurchasedAt, 1).Add(time.Hour))
+	rentals := Rentals{Store: s.store, Recorder: s.recorder, Logger: slog.New(slog.DiscardHandler)}
+	from := bought.PurchasedAt.Add(-time.Hour)
 
-	_, err = s.service.BillRentals(s.ctx)
+	_, err = rentals.Bill(s.ctx, from, bought.PurchasedAt.Add(time.Hour))
 	s.Require().NoError(err)
-	_, err = s.service.BillRentals(s.ctx)
-	s.Require().NoError(err)
+	time.Sleep(300 * time.Millisecond)
+	s.Len(s.rows(ModelNumber), 1, "the month it was bought in is the purchase's, billed once")
 
-	months := s.rowsWhen(ModelNumber, 2)
-	s.Len(months, 2, "the month it was bought in and the next, each once")
+	next := monthAfter(bought.PurchasedAt, 1)
+	_, err = rentals.Bill(s.ctx, from, next.Add(time.Hour))
+	s.Require().NoError(err)
+	s.rowsWhen(ModelNumber, 2)
+	_, err = rentals.Bill(s.ctx, from, next.Add(2*time.Hour))
+	s.Require().NoError(err)
+	time.Sleep(300 * time.Millisecond)
+	months := s.rows(ModelNumber)
+	s.Len(months, 2, "a rerun bills nothing twice")
 	s.Equal(OriginNumberRental, months[1].APIKey)
-	s.Equal(monthAfter(bought.PurchasedAt, 1), months[1].StartedAt.UTC())
+	s.Equal(next, months[1].StartedAt.UTC())
 
-	s.Require().NoError(s.store.ReleaseNumber(s.ctx, s.customer, bought.E164, monthAfter(bought.PurchasedAt, 1).Add(2*time.Hour)))
-	s.clock.set(monthAfter(bought.PurchasedAt, 2).Add(time.Hour))
-	_, err = s.service.BillRentals(s.ctx)
+	s.Require().NoError(s.store.ReleaseNumber(s.ctx, s.customer, bought.E164, next.Add(2*time.Hour)))
+	_, err = rentals.Bill(s.ctx, from, monthAfter(bought.PurchasedAt, 2).Add(time.Hour))
 	s.Require().NoError(err)
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	s.Len(s.rows(ModelNumber), 2, "a number released is not billed again")
+}
+
+func (s *MeteringSuite) TestAMonthThatBeganBeforeFromIsNeverBilled() {
+	now := time.Now().UTC().Truncate(time.Second)
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: s.vendor.vendor, Country: "US", CustomerID: s.customer,
+		MonthlyCostMicros: 1_000_000, PurchasedAt: now.AddDate(0, -1, -10),
+	}))
+	rentals := Rentals{Store: s.store, Recorder: s.recorder, Logger: slog.New(slog.DiscardHandler)}
+
+	_, err := rentals.Bill(s.ctx, now.Add(-24*time.Hour), now)
+	s.Require().NoError(err)
+
+	s.Never(func() bool { return len(s.rows(ModelNumber)) > 0 }, time.Second, 50*time.Millisecond,
+		"the month that began ten days ago began before the job was switched on")
 }
 
 // row waits for the customer's one row of a model and reads it.

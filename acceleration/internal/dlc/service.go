@@ -272,8 +272,7 @@ func (s *Service) register(ctx context.Context, useCase store.UseCase) error {
 	}
 	var brand Brand
 	if profile.VendorBrandID == "" {
-		brand, err = routing.Call(ctx, s.feeMeter(ctx, ModelBrand, useCase.CustomerID,
-			map[string]string{AttributeEntityType: profile.LegalEntityType}),
+		brand, err = routing.Call(ctx, s.feeMeter(ctx, ModelBrand, useCase.CustomerID, nil),
 			func(ctx context.Context) (Brand, error) { return s.registrar.RegisterBrand(ctx, profile) })
 	} else {
 		brand, err = s.registrar.Brand(ctx, profile.VendorBrandID)
@@ -297,7 +296,7 @@ func (s *Service) register(ctx context.Context, useCase store.UseCase) error {
 		return s.store.MoveUseCase(ctx, &useCase, VendorPending, log)
 	}
 	campaign, err := routing.Call(ctx, s.feeMeter(ctx, ModelCampaign, useCase.CustomerID,
-		map[string]string{AttributeUseCaseType: useCase.UseCaseType}),
+		map[string]string{AttributeUseCaseType: useCaseType(useCase)}),
 		func(ctx context.Context) (Campaign, error) {
 			return s.registrar.RegisterCampaign(ctx, brand.ID, useCase, s.hookURL)
 		})
@@ -310,7 +309,7 @@ func (s *Service) register(ctx context.Context, useCase store.UseCase) error {
 	}
 	// A registrar charges a campaign's first months when it registers it.
 	s.billUpfront(useCase, s.now().UTC())
-	log.Notes, log.VendorPayload = "Registered as campaign "+campaign.ID+".", campaign.Raw
+	log.Notes, log.VendorPayload = registeredNote+campaign.ID+".", campaign.Raw
 	return s.store.MoveUseCase(ctx, &useCase, VendorPending, log)
 }
 

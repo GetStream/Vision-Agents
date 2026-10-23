@@ -2,6 +2,7 @@ package dlc
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,14 +22,21 @@ const (
 	ModelCampaignMonth = "dlc_campaign_month"
 )
 
-// The attributes those fees are priced by.
-const (
-	AttributeEntityType  = "entity_type"
-	AttributeUseCaseType = "use_case_type"
-)
+// AttributeUseCaseType is the campaign registry's use case a campaign's fees are priced by,
+// in capitals as the registry writes it.
+const AttributeUseCaseType = "use_case_type"
+
+// useCaseType is a use case's type as the price list names it, whatever case it was saved in.
+func useCaseType(useCase store.UseCase) string {
+	return strings.ToUpper(strings.TrimSpace(useCase.UseCaseType))
+}
 
 // UpfrontMonths is how many of a campaign's months a registrar charges when it registers it.
 const UpfrontMonths = 3
+
+// registeredNote begins the review entry a campaign's registration writes, before its id and a
+// full stop, which is when its months are billed from.
+const registeredNote = "Registered as campaign "
 
 // OriginFees is the origin of a registrar's fees when no request asked for the work: the
 // poller registering what a report or a review left waiting, and each month of a campaign.
@@ -87,7 +95,7 @@ func (s *Service) campaignMonth(useCase store.UseCase, month time.Time) routing.
 		UsageID: routing.UsageID("dlc_campaign", useCase.Vendor, useCase.VendorCampaignID,
 			month.Format("2006-01")),
 		BilledAt:   month,
-		Attributes: map[string]string{AttributeUseCaseType: useCase.UseCaseType},
+		Attributes: map[string]string{AttributeUseCaseType: useCaseType(useCase)},
 		Unmeasured: true,
 	}
 }
@@ -105,28 +113,44 @@ func (s *Service) billUpfront(useCase store.UseCase, registered time.Time) {
 	}
 }
 
-// BillCampaigns bills the current month of every campaign a vendor holds that has no row for
-// it yet, and reports how many it billed.
-func (s *Service) BillCampaigns(ctx context.Context) (int, error) {
+// BillCampaigns bills each calendar month of every campaign a vendor holds that began at or
+// after from, by the current month, and has no row yet, and reports how many it billed. A month
+// that began before from is never billed, so a first run does not bill what began before it.
+// It is run as a job, `router usage dlc`.
+func (s *Service) BillCampaigns(ctx context.Context, from time.Time) (int, error) {
 	if s.recorder == nil {
 		return 0, nil
 	}
-	useCases, err := s.store.UseCasesWithCampaigns(ctx, VendorPending, Approved)
+	campaigns, err := s.store.UseCasesWithCampaigns(ctx, registeredNote, VendorPending, Approved)
 	if err != nil {
 		return 0, err
 	}
 	now := s.now().UTC()
-	ids := make([]uuid.UUID, 0, len(useCases))
-	for _, useCase := range useCases {
-		ids = append(ids, s.campaignMonth(useCase, now).UsageID)
+	this := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	var due []routing.Meter
+	for _, campaign := range campaigns {
+		registered := campaign.RegisteredAt.UTC()
+		registeredMonth := time.Date(registered.Year(), registered.Month(), 1, 0, 0, 0, 0, time.UTC)
+		// This month and the last: a job that missed a month's runs still bills it. Never one
+		// before the campaign was registered, nor before from.
+		for _, month := range []time.Time{this.AddDate(0, -1, 0), this} {
+			meter := s.campaignMonth(campaign.UseCase, month)
+			if meter.BilledAt.Before(from) || month.Before(registeredMonth) {
+				continue
+			}
+			due = append(due, meter)
+		}
+	}
+	ids := make([]uuid.UUID, len(due))
+	for i, meter := range due {
+		ids[i] = meter.UsageID
 	}
 	recorded, err := s.store.RecordedUsage(ctx, ids)
 	if err != nil {
 		return 0, err
 	}
 	billed := 0
-	for _, useCase := range useCases {
-		meter := s.campaignMonth(useCase, now)
+	for _, meter := range due {
 		if recorded[meter.UsageID] {
 			continue
 		}
@@ -134,24 +158,6 @@ func (s *Service) BillCampaigns(ctx context.Context) (int, error) {
 		billed++
 	}
 	return billed, nil
-}
-
-// RunFees bills the campaigns' months at once and then every interval until ctx ends.
-func (s *Service) RunFees(ctx context.Context, every time.Duration) {
-	ticker := time.NewTicker(every)
-	defer ticker.Stop()
-	for {
-		if billed, err := s.BillCampaigns(ctx); err != nil {
-			s.logger.Error("could not bill the months of registered campaigns", "error", err)
-		} else if billed > 0 {
-			s.logger.Info("billed the months of registered campaigns", "months", billed)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 // settle records a fee billed with no request in hand.

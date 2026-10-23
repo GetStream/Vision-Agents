@@ -958,7 +958,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
-		go registrations.RunFees(ctx, phone.RentalEvery)
 	}
 	// Every text, call and number a customer pays for asks the same admission as a model.
 	if policies != nil {
@@ -970,10 +969,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	defer closePhone(telephony, logger)
 	if pgStore != nil {
-		// A call whose end was never announced stops billing at the longest a call is billed
-		// for, and each held number is billed for every month it is held.
+		// A call whose end was never announced is ended at the longest a call may last, and a
+		// leg whose row was lost is recorded again. Months of numbers and of 10DLC campaigns are
+		// billed by jobs of their own (router usage numbers, router usage dlc).
 		go telephony.RunLegSweep(ctx, phone.LegSweepEvery)
-		go telephony.RunRentals(ctx, phone.RentalEvery)
 	}
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup

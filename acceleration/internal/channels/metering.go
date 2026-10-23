@@ -90,8 +90,12 @@ func (s *Service) received(ctx context.Context, account store.ChannelAccount, me
 	})
 	meter.UsageID = routing.UsageID("text_in", Vendor(kind), message.ID)
 	meter.Unmeasured = true
+	// A text that carried files arrived as an MMS, billed as one whatever its words.
 	got := Sent{Messages: 1}
-	if kind == SMS {
+	switch {
+	case kind == SMS && message.Media > 0:
+		got.Media = 1
+	case kind == SMS:
 		got.Segments = Segments(message.Text)
 	}
 	if err := routing.Settle(meter, got); err != nil {
@@ -99,12 +103,23 @@ func (s *Service) received(ctx context.Context, account store.ChannelAccount, me
 	}
 }
 
-// deliver sends a reply over a provider and records it, a failure included, for owner.
+// deliver sends a reply over a provider and records it, a failure included, for owner. A reply
+// sent in parts whose later part failed is billed for the parts that went out, as the provider
+// bills them, and still answers its error.
 func (s *Service) deliver(ctx context.Context, line Account, provider Provider, to, thread string, reply Reply,
 	owner routing.Owner) error {
 	meter := s.textMeter(ctx, line.Kind, store.Outbound, to, owner)
+	var partly error
 	_, err := routing.Call(ctx, meter, func(ctx context.Context) (Sent, error) {
-		return provider.Send(ctx, line, thread, reply)
+		sent, err := provider.Send(ctx, line, thread, reply)
+		if err != nil && sent.Messages > 0 {
+			partly = err
+			return sent, nil
+		}
+		return sent, err
 	})
+	if partly != nil {
+		return partly
+	}
 	return err
 }

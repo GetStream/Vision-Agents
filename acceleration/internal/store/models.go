@@ -377,9 +377,21 @@ type CallResource struct {
 	CreatedAt   time.Time `bun:"created_at,notnull"`
 }
 
-// CallLeg is one leg of a phone call, from when it was connected until the call ended, which
-// is what its minutes are billed by. Who it is billed to is kept from when it opened, so the
-// minutes of a placed call stay with the key that placed it.
+// What ended a call leg.
+const (
+	// LegLeft is the leg's phone leaving the call.
+	LegLeft = "left"
+	// LegEnded is the call ending with the leg still on it.
+	LegEnded = "ended"
+	// LegSwept is the sweep ending a leg nothing said had ended.
+	LegSwept = "swept"
+	// LegUnanswered is a leg that ended without its phone ever joining.
+	LegUnanswered = "unanswered"
+)
+
+// CallLeg is one leg of a phone call, from when its phone joined the call until it left or the
+// call ended, which is what its minutes are billed by. Who it is billed to is kept from when
+// it opened, so the minutes of a placed call stay with the key that placed it.
 type CallLeg struct {
 	bun.BaseModel `bun:"table:call_legs,alias:cl"`
 
@@ -395,7 +407,11 @@ type CallLeg struct {
 	StreamAppPK int64  `bun:"stream_app_pk,nullzero"`
 	CallType    string `bun:"call_type,notnull"`
 	CallID      string `bun:"call_id,notnull"`
-	Vendor      string `bun:"vendor,notnull"`
+	// StreamSessionID is Stream's session of the call, and ParticipantSession the user session
+	// of the leg's phone in it. Empty until known.
+	StreamSessionID    string `bun:"stream_session_id,notnull"`
+	ParticipantSession string `bun:"participant_session,notnull"`
+	Vendor             string `bun:"vendor,notnull"`
 	// Direction is Inbound or Outbound.
 	Direction    string `bun:"direction,notnull"`
 	LocalNumber  string `bun:"local_number,notnull"`
@@ -405,18 +421,25 @@ type CallLeg struct {
 	Country   string            `bun:"country,notnull"`
 	AgentID   string            `bun:"agent_id,notnull"`
 	Tags      map[string]string `bun:"tags,type:jsonb,nullzero"`
-	StartedAt time.Time         `bun:"started_at,notnull"`
-	// EndedAt is nil while the leg is open.
-	EndedAt *time.Time `bun:"ended_at"`
+	// DialedAt is when the vendor took the dial, or the call arrived. StartedAt is when the
+	// leg's phone joined, nil while it rings; EndedAt nil while the leg is open; EndReason
+	// what ended it (LegLeft and the rest).
+	DialedAt  time.Time  `bun:"dialed_at,notnull"`
+	StartedAt *time.Time `bun:"started_at"`
+	EndedAt   *time.Time `bun:"ended_at"`
+	EndReason string     `bun:"end_reason,notnull"`
 }
 
-// Used is how long an ended leg lasted, in seconds, a started second counting whole: what a
-// vendor bills its minutes from. An open leg has used nothing yet.
+// Connected reports whether the leg's phone ever joined the call, which is what makes it billed.
+func (l CallLeg) Connected() bool { return l.StartedAt != nil }
+
+// Used is how long an ended leg was connected, in seconds, a started second counting whole:
+// what a vendor bills its minutes from. A leg still open, or never connected, has used nothing.
 func (l CallLeg) Used() pricing.Quantities {
-	if l.EndedAt == nil || !l.EndedAt.After(l.StartedAt) {
+	if l.StartedAt == nil || l.EndedAt == nil || !l.EndedAt.After(*l.StartedAt) {
 		return pricing.Quantities{pricing.CallSeconds: 0}
 	}
-	lasted := l.EndedAt.Sub(l.StartedAt)
+	lasted := l.EndedAt.Sub(*l.StartedAt)
 	seconds := int64(lasted / time.Second)
 	if lasted%time.Second != 0 {
 		seconds++

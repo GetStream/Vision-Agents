@@ -1,7 +1,6 @@
 package phone
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -644,19 +643,23 @@ func (s *PhoneSuite) TestAVendorErrorSaysEverythingTheLogNeeds() {
 	s.ErrorIs(unreached, cause)
 }
 
-func (s *PhoneSuite) TestAFailedNumberPurchaseIsNeitherBillableNorUnpriced() {
+// A number's month is priced by the vendor's quote, not by the list: with none, it is billable
+// work with no price. Only a number on the customer's own trunk costs nothing.
+func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
 	config := s.config()
-	logs := &bytes.Buffer{}
-	prices, err := pricing.NewList("config", PriceEntries(config), 0, slog.New(slog.NewTextHandler(logs, nil)))
+	prices, err := pricing.NewList("config", PriceEntries(config), 0, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 
-	for _, vendor := range append([]Vendor{{Vendor: SIPTrunkVendor}}, config.Vendors...) {
-		quote := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: "number"}, nil)
-		s.Zero(quote.CostMicros, vendor.Vendor)
-		s.False(quote.Billable, vendor.Vendor)
-		s.False(quote.Unpriced, vendor.Vendor)
+	own := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: SIPTrunkVendor, Model: ModelNumber}, nil)
+	s.False(own.Billable)
+	s.False(own.Unpriced)
+	for _, vendor := range config.Vendors {
+		quote := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, nil)
+		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
+		resold := prices.Quoted(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, 1_000_000)
+		s.Equal(int64(1_000_000), resold.CostMicros, vendor.Vendor)
+		s.True(resold.Billable, vendor.Vendor)
 	}
-	s.Empty(logs.String())
 }
 
 func (s *PhoneSuite) config() Config {

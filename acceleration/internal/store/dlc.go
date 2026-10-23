@@ -193,19 +193,31 @@ func (s *Store) UseCasesInStatus(ctx context.Context, status string, limit int, 
 	return useCases, nil
 }
 
+// RegisteredCampaign is a use case registered as a campaign at a vendor, and when it was:
+// the first vendor review entry whose notes are registered followed by the campaign's id and a
+// full stop, or when the use case was created where there is none.
+type RegisteredCampaign struct {
+	UseCase      `bun:",extend"`
+	RegisteredAt time.Time `bun:"registered_at"`
+}
+
 // UseCasesWithCampaigns is every use case registered as a campaign at a vendor and in one of
-// statuses: what a vendor bills a campaign's months for.
-func (s *Store) UseCasesWithCampaigns(ctx context.Context, statuses ...string) ([]UseCase, error) {
-	useCases := []UseCase{}
-	err := s.db.NewSelect().Model(&useCases).
-		Where("vendor_campaign_id <> ''").
-		Where("status IN (?)", bun.In(statuses)).
-		Order("id").
+// statuses, with when it was registered: what a vendor bills a campaign's months for.
+func (s *Store) UseCasesWithCampaigns(ctx context.Context, registered string, statuses ...string) ([]RegisteredCampaign, error) {
+	campaigns := []RegisteredCampaign{}
+	err := s.db.NewSelect().Model(&campaigns).
+		ColumnExpr("uc.*").
+		ColumnExpr(`COALESCE((SELECT min(rl.created_at) FROM dlc_review_logs AS rl
+			WHERE rl.use_case_id = uc.id AND rl.actor = 'vendor' AND rl.notes = ? || uc.vendor_campaign_id || '.'),
+			uc.created_at) AS registered_at`, registered).
+		Where("uc.vendor_campaign_id <> ''").
+		Where("uc.status IN (?)", bun.In(statuses)).
+		Order("uc.id").
 		Scan(ctx)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: use cases with campaigns: %w", err))
 	}
-	return useCases, nil
+	return campaigns, nil
 }
 
 // HasUseCaseIn reports whether an app holds a use case in any of statuses.

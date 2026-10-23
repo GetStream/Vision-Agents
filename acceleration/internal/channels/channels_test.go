@@ -303,6 +303,40 @@ func (s *TelnyxSuite) TestATextIsReadWithTheNumberItCameFrom() {
 	}, messages[0])
 }
 
+// An MMS carries its files in media, and one of files alone is still a message, billed as one.
+func (s *TelnyxSuite) TestAnMMSIsReadWithHowManyFilesItCarried() {
+	messages, err := s.provider.Parse([]byte(`{"data":{"event_type":"message.received",
+		"payload":{"id":"msg-3","text":"","type":"MMS",
+			"media":[{"url":"https://media/1.jpg","content_type":"image/jpeg"},{"url":"https://media/2.jpg"}],
+			"from":{"phone_number":"+13479018418"},"to":[{"phone_number":"+12187021098"}]}}}`))
+
+	s.Require().NoError(err)
+	s.Require().Len(messages, 1)
+	s.Equal(2, messages[0].Media)
+	s.Empty(messages[0].Text)
+}
+
+// A send that fails after its words went out says what it sent.
+func (s *TelnyxSuite) TestASendThatFailsPartwaySaysWhatWentOut() {
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if _, media := body["media_urls"]; media {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer failing.Close()
+	provider := &telnyxProvider{client: failing.Client(), baseURL: failing.URL}
+
+	sent, err := provider.Send(context.Background(), s.account, "+13479018418",
+		Reply{Text: "Here it is.", Files: []File{{URL: "https://files/render.png"}}})
+
+	s.Require().Error(err)
+	s.Equal(Sent{Messages: 1, Segments: 1}, sent)
+}
+
 // Telnyx reports on what this router sent down the same webhook, and that is not a question.
 func (s *TelnyxSuite) TestAReportOnTheRoutersOwnMessageIsNotAnswered() {
 	messages, err := s.provider.Parse([]byte(`{"data":{"event_type":"message.sent",

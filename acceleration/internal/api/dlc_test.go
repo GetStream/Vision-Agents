@@ -382,7 +382,7 @@ func (s *DLCSuite) TestARegisteredBrandAndCampaignAreBilledOnce() {
 	}, settleFor, 50*time.Millisecond, "the campaign's first months were not billed")
 
 	s.registrar10DLC.Poll(context.Background())
-	billed, err := s.registrar10DLC.BillCampaigns(context.Background())
+	billed, err := s.registrar10DLC.BillCampaigns(context.Background(), time.Now().AddDate(0, -2, 0))
 	s.Require().NoError(err)
 	s.Zero(billed, "the month the job finds is one already billed")
 	time.Sleep(500 * time.Millisecond)

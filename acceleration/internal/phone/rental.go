@@ -2,6 +2,7 @@ package phone
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,42 +12,90 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// RentalLookback is how far back the rental job looks for a month that began and was not
-// billed: a router that was down for a day still bills the numbers whose month began then.
-const RentalLookback = 72 * time.Hour
-
-// RentalEvery is how often the rental job runs. A month is billed once whatever the count.
-const RentalEvery = 6 * time.Hour
+// RentalLookback is how far back a rental run looks for a month that began and has no row: a
+// job that did not run for weeks still bills the months that began meanwhile.
+const RentalLookback = 35 * 24 * time.Hour
 
 // OriginNumberRental is the origin of the rows billing a held number's months after its first.
 var OriginNumberRental = routing.JobOrigin("number_rental")
 
+// quote is what the vendor offers the purchase's number at, read off a search for that number,
+// or 0 when the vendor cannot search for one number or names no price.
+func (s *Service) quote(ctx context.Context, provider Provider, purchase Purchase) int64 {
+	national := National(purchase.E164)
+	if national == "" {
+		return 0
+	}
+	search := Search{Country: purchase.Country, Prefix: national}
+	if search.Country == "" {
+		search.Country = Country(purchase.E164)
+	}
+	if len(search.Unsupported(provider)) > 0 {
+		search = Search{Country: search.Country, Contains: national}
+		if len(search.Unsupported(provider)) > 0 {
+			return 0
+		}
+	}
+	offers, err := provider.SearchNumbers(ctx, search)
+	if err != nil {
+		s.logger.Warn("could not read what a number is offered at before buying it", "vendor", purchase.Vendor, "error", err)
+		return 0
+	}
+	for _, offer := range offers {
+		if offer.E164 == purchase.E164 {
+			return offer.MonthlyCostMicros
+		}
+	}
+	return 0
+}
+
 // billMonth bills one month of a number to owner, at the price it was bought at. The month is
-// named by its usage id, so billing it again bills nothing. A number that costs nothing, as one
-// on the customer's own trunk, writes no row.
-func (s *Service) billMonth(number store.PhoneNumber, owner routing.Owner, month time.Time) {
-	if number.MonthlyCostMicros <= 0 {
+// named by its usage id, so billing it again bills nothing. A number on the customer's own
+// trunk costs nothing and writes no row; one whose price is not known is billable work with no
+// price, which raises the alarm, rather than a month given away.
+func billMonth(recorder *routing.Recorder, logger *slog.Logger, number store.PhoneNumber, owner routing.Owner,
+	month time.Time) {
+	if number.Vendor == SIPTrunkVendor {
 		return
 	}
 	meter := numberMonth(number, month)
-	meter.Recorder, meter.Owner = s.recorder, owner
+	meter.Recorder, meter.Owner = recorder, owner
 	if err := routing.Settle(meter, pricing.Quantities{}); err != nil {
-		s.logger.Error("could not bill a month of a number", "number", number.E164, "error", err)
+		logger.Error("could not bill a month of a number", "number", number.E164, "error", err)
 	}
 }
 
-// BillRentals bills each month of a held number that began within RentalLookback and has no
-// row yet, to the number's app, and reports how many it billed. The month a number was bought
-// in is billed when it is bought; this bills the ones after it.
-func (s *Service) BillRentals(ctx context.Context) (int, error) {
-	if s.store == nil || s.recorder == nil {
-		return 0, nil
+// billMonth bills a month of a number the service bought.
+func (s *Service) billMonth(number store.PhoneNumber, owner routing.Owner, month time.Time) {
+	billMonth(s.recorder, s.logger, number, owner, month)
+}
+
+// Rentals bills the months of held numbers after the one each was bought in, which the purchase
+// billed. It is run as a job, `router usage numbers`.
+type Rentals struct {
+	Store    *store.Store
+	Recorder *routing.Recorder
+	Logger   *slog.Logger
+}
+
+// Rented is what one rental run billed.
+type Rented struct {
+	// Months is how many months it billed, of which Unpriced at no price the vendor named.
+	Months   int
+	Unpriced []string
+}
+
+// Bill bills each month of a held number that began at or after from, within RentalLookback of
+// now, and has no row yet, to the number's app under OriginNumberRental. A month that began
+// before from is never billed, so a first run does not bill what began before it.
+func (r Rentals) Bill(ctx context.Context, from, now time.Time) (Rented, error) {
+	since := now.UTC().Add(-RentalLookback)
+	if from.After(since) {
+		since = from.UTC()
 	}
-	now := s.now().UTC()
-	since := now.Add(-RentalLookback)
-	held, err := s.store.NumbersHeldSince(ctx, since)
+	held, err := r.Store.NumbersHeldSince(ctx, since)
 	if err != nil {
-		return 0, err
+		return Rented{}, err
 	}
 	type due struct {
 		number store.PhoneNumber
@@ -55,7 +104,14 @@ func (s *Service) BillRentals(ctx context.Context) (int, error) {
 	var months []due
 	var ids []uuid.UUID
 	for _, number := range held {
-		for _, month := range MonthsBegun(number.PurchasedAt, since, now) {
+		if number.Vendor == SIPTrunkVendor {
+			continue
+		}
+		for _, month := range MonthsBegun(number.PurchasedAt, since.Add(-time.Nanosecond), now) {
+			// The month it was bought in is the purchase's to bill.
+			if !month.After(number.PurchasedAt.UTC()) {
+				continue
+			}
 			if number.ReleasedAt != nil && !month.Before(*number.ReleasedAt) {
 				continue
 			}
@@ -63,41 +119,26 @@ func (s *Service) BillRentals(ctx context.Context) (int, error) {
 			ids = append(ids, numberMonth(number, month).UsageID)
 		}
 	}
-	recorded, err := s.store.RecordedUsage(ctx, ids)
+	recorded, err := r.Store.RecordedUsage(ctx, ids)
 	if err != nil {
-		return 0, err
+		return Rented{}, err
 	}
-	billed := 0
-	for _, each := range months {
-		if recorded[numberMonth(each.number, each.month).UsageID] {
+	var rented Rented
+	for i, each := range months {
+		if recorded[ids[i]] {
 			continue
 		}
-		s.billMonth(each.number, routing.Owner{
+		billMonth(r.Recorder, r.Logger, each.number, routing.Owner{
 			CustomerID:  each.number.CustomerID,
 			Attribution: routing.Attribution{APIKey: OriginNumberRental},
 			Tags:        each.number.Tags,
 		}, each.month)
-		billed++
-	}
-	return billed, nil
-}
-
-// RunRentals bills rentals at once and then every interval until ctx ends.
-func (s *Service) RunRentals(ctx context.Context, every time.Duration) {
-	ticker := time.NewTicker(every)
-	defer ticker.Stop()
-	for {
-		if billed, err := s.BillRentals(ctx); err != nil {
-			s.logger.Error("could not bill the months of held numbers", "error", err)
-		} else if billed > 0 {
-			s.logger.Info("billed the months of held numbers", "months", billed)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+		rented.Months++
+		if each.number.MonthlyCostMicros <= 0 {
+			rented.Unpriced = append(rented.Unpriced, each.number.Vendor+" "+each.number.E164)
 		}
 	}
+	return rented, nil
 }
 
 // MonthsBegun is when each month of a purchase began, in (after, until]: the purchase's day
