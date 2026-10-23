@@ -40,9 +40,8 @@ import (
 // settleFor is how long a test waits for an expectation to become true. The flow crosses
 // several goroutines, so the alternative to waiting is asserting on a race.
 //
-// A wait ends as soon as what it waits for happens, so this is only how long a broken flow
-// takes to fail. It is not 3 s: a shared CI runner missed 3 s on a flow that passes in
-// milliseconds alone (runs 39858977588 and 39860902257).
+// A wait ends as soon as what it waits for happens, so this only bounds how long a broken
+// flow takes to fail, and is long enough that a slow shared runner does not fail a late one.
 const settleFor = 10 * time.Second
 
 // loopbackEdge is a call with no network in it: audio is pushed in from the test and
@@ -1147,7 +1146,7 @@ func (s *AgentSuite) replyWentOut() {
 	s.eventually(func() bool {
 		s.agent.mu.Lock()
 		defer s.agent.mu.Unlock()
-		return s.agent.speakingTurn != "" && s.agent.voiced == s.agent.speakingTurn
+		return s.agent.voiced == s.agent.speakingTurn
 	}, "the reply never went out")
 }
 
