@@ -110,7 +110,107 @@ func (s *MeteringSuite) place() Placed {
 
 // answered is the phone of a call joining it, as the participant event says.
 func (s *MeteringSuite) answered(callType, callID, participant string) {
-	s.Require().NoError(s.service.Connect(s.ctx, everyApp, callType, callID, "session-1", participant))
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, callType, callID, "session-1", participant, ""))
+}
+
+// joined is a phone of number joining a call, as the participant event says.
+func (s *MeteringSuite) joined(callType, callID, participant, number string) {
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, callType, callID, "session-1", participant, number))
+}
+
+// arrived opens the inbound leg of a call to the suite's number, as a session_started that
+// lists no caller does.
+func (s *MeteringSuite) arrived(callID string) {
+	s.service.OpenLeg(s.ctx, routing.Owner{CustomerID: s.customer, Attribution: routing.Attribution{APIKey: routing.OriginPhoneInbound}},
+		store.CallLeg{CallType: defaultCallType, CallID: callID, StreamSessionID: "session-1", Vendor: s.vendor.vendor,
+			Direction: store.Inbound, LocalNumber: s.e164, Country: "US"}, true)
+}
+
+// transfer rings human into the call.
+func (s *MeteringSuite) transfer(callID, human string) {
+	_, err := s.service.Transfer(s.ctx, TransferRequest{Owner: s.owner(), From: s.e164, To: human, CallID: callID})
+	s.Require().NoError(err)
+}
+
+// legsOf is the legs of the call, open or ended, by direction.
+func (s *MeteringSuite) legsOf(callID string) map[string]store.CallLeg {
+	var legs []store.CallLeg
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&legs).
+		Where("customer_id = ?", s.customer).Where("call_id = ?", callID).Scan(s.ctx))
+	byDirection := make(map[string]store.CallLeg, len(legs))
+	for _, leg := range legs {
+		byDirection[leg.Direction] = leg
+	}
+	s.Require().Len(byDirection, len(legs), "one leg each way")
+	return byDirection
+}
+
+func (s *MeteringSuite) TestATransfersPhoneConnectsItsOwnLegNotAnInboundOneWithoutItsCaller() {
+	callID := "call-" + uuid.NewString()
+	s.arrived(callID)
+	s.clock.advance(time.Minute)
+	s.transfer(callID, "+15125550124")
+	s.clock.advance(10 * time.Second)
+	s.joined(defaultCallType, callID, "human-1", "+15125550124")
+	s.clock.advance(2 * time.Minute)
+
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "human-1"))
+
+	legs := s.legsOf(callID)
+	s.Equal("human-1", legs[store.Outbound].ParticipantSession, "the human's number is the transfer's")
+	s.NotNil(legs[store.Outbound].EndedAt, "the human hung up")
+	s.Empty(legs[store.Inbound].ParticipantSession)
+	s.Nil(legs[store.Inbound].EndedAt, "the caller is still on the line")
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 120}, s.row(ModelCallMinutes).Meters)
+
+	s.clock.advance(time.Minute)
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, defaultCallType, callID))
+	minutes := s.rowsWhen(ModelCallMinutes, 2)
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 250}, minutes[0].Meters, "the caller's every second, from when it arrived")
+	s.Equal("inbound", minutes[0].Attributes[AttributeDirection])
+}
+
+func (s *MeteringSuite) TestALeaveBeforeItsJoinEndsNothing() {
+	callID := "call-" + uuid.NewString()
+	s.arrived(callID)
+	s.transfer(callID, "+15125550124")
+
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "human-1"))
+	s.Len(s.openLegs(), 2, "no leg is the phone's yet")
+	s.joined(defaultCallType, callID, "human-1", "+15125550124")
+	s.clock.advance(time.Minute)
+
+	legs := s.legsOf(callID)
+	s.Equal("human-1", legs[store.Outbound].ParticipantSession)
+	s.NotNil(legs[store.Outbound].StartedAt)
+	s.Empty(legs[store.Inbound].ParticipantSession)
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, defaultCallType, callID))
+	s.rowsWhen(ModelCallMinutes, 2)
+}
+
+// The caller's join delivered before the session_started that opens the inbound leg connects
+// nothing, and what joins after is told apart by its number. Hook numbers may lack the plus.
+func (s *MeteringSuite) TestAJoinBeforeItsLegExistsConnectsNothingAndLaterJoinsMatchTheirNumber() {
+	callID := "call-" + uuid.NewString()
+	s.joined(defaultCallType, callID, "caller-1", "15125550199")
+	s.Empty(s.openLegs())
+	s.arrived(callID)
+	s.transfer(callID, "+15125550124")
+	s.clock.advance(30 * time.Second)
+
+	s.joined(defaultCallType, callID, "human-1", "15125550124")
+	s.clock.advance(time.Minute)
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "human-1"))
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, defaultCallType, callID, "caller-1"))
+
+	legs := s.legsOf(callID)
+	s.NotNil(legs[store.Outbound].EndedAt)
+	s.Nil(legs[store.Inbound].EndedAt, "the caller's leave names no leg; the call ending ends it")
+	s.clock.advance(time.Minute)
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, defaultCallType, callID))
+	minutes := s.rowsWhen(ModelCallMinutes, 2)
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 150}, minutes[0].Meters, "the caller, until the call ended")
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 60}, minutes[1].Meters, "the transfer")
 }
 
 func (s *MeteringSuite) TestAPlacedCallIsBilledForItsMinutesFromWhenItWasAnswered() {

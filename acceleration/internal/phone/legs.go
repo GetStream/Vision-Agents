@@ -73,13 +73,14 @@ func (s *Service) OpenLeg(ctx context.Context, owner routing.Owner, leg store.Ca
 }
 
 // Connect starts the leg of a phone that joined a call: the caller of a call that arrived, or
-// the person a placed call or a transfer rang, who has answered. Its minutes run from now. A
-// phone already given its leg, by an earlier delivery, starts nothing.
-func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, callID, sessionID, participant string) error {
+// the person a placed call or a transfer rang, who has answered, told apart by the phone's
+// number, empty when unknown. Its minutes run from now. A phone already given its leg, by an
+// earlier delivery, starts nothing.
+func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, callID, sessionID, participant, number string) error {
 	if s.store == nil || participant == "" {
 		return nil
 	}
-	_, _, err := s.store.ConnectCallLeg(ctx, scope, callType, callID, sessionID, participant, s.now())
+	_, _, err := s.store.ConnectCallLeg(ctx, scope, callType, callID, sessionID, participant, number, s.now())
 	return err
 }
 

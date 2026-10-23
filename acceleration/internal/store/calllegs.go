@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,11 +50,14 @@ func (s *Store) OpenCallLeg(ctx context.Context, leg *CallLeg) (bool, error) {
 	return opened > 0, nil
 }
 
-// ConnectCallLeg gives a phone that joined a call, at at, the leg it is: the call's inbound
-// leg that does not know its phone yet, or else the oldest outbound leg still ringing, which
-// starts then. It reports false when the phone already has its leg, from an earlier delivery,
-// or no leg of the call is waiting for one.
-func (s *Store) ConnectCallLeg(ctx context.Context, scope AppScope, callType, callID, sessionID, participant string,
+// ConnectCallLeg gives a phone that joined a call, at at, the leg it is: the waiting leg whose
+// remote number is the phone's number, or when none is or the number is unknown, the call's
+// inbound leg that does not know its phone yet, or else the oldest outbound leg still ringing,
+// which starts then. Stream does not order its call events, so a call whose inbound leg opened
+// without its caller has a transfer's phone joining it, and only the number tells them apart.
+// It reports false when the phone already has its leg, from an earlier delivery, or no leg of
+// the call is waiting for one.
+func (s *Store) ConnectCallLeg(ctx context.Context, scope AppScope, callType, callID, sessionID, participant, number string,
 	at time.Time) (CallLeg, bool, error) {
 	at = at.UTC().Truncate(time.Microsecond)
 	known, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (bool, error) {
@@ -67,14 +71,29 @@ func (s *Store) ConnectCallLeg(ctx context.Context, scope AppScope, callType, ca
 	if slices.Contains(known, true) {
 		return CallLeg{}, false, nil
 	}
+	if number = strings.TrimPrefix(number, "+"); number != "" {
+		leg, connected, err := s.connectWaitingLeg(ctx, scope, callType, callID, sessionID, participant, at,
+			func(q *bun.SelectQuery) *bun.SelectQuery { return q.Where("ltrim(remote_number, '+') = ?", number) })
+		if err != nil || connected {
+			return leg, connected, err
+		}
+	}
+	return s.connectWaitingLeg(ctx, scope, callType, callID, sessionID, participant, at,
+		func(q *bun.SelectQuery) *bun.SelectQuery { return q })
+}
+
+// connectWaitingLeg gives the phone the first leg of the call, across the shards, that is
+// waiting for one and that narrow keeps.
+func (s *Store) connectWaitingLeg(ctx context.Context, scope AppScope, callType, callID, sessionID, participant string,
+	at time.Time, narrow func(*bun.SelectQuery) *bun.SelectQuery) (CallLeg, bool, error) {
 	for _, db := range s.shards() {
-		waiting := db.NewSelect().Model((*CallLeg)(nil)).Column("id").
+		waiting := narrow(db.NewSelect().Model((*CallLeg)(nil)).Column("id").
 			Where("call_type = ?", callType).Where("call_id = ?", callID).
 			Where("ended_at IS NULL").Where("participant_session = ''").
 			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
 				return q.Where("direction = ?", Inbound).WhereOr("started_at IS NULL")
 			}).
-			ApplyQueryBuilder(scope.where).
+			ApplyQueryBuilder(scope.where)).
 			OrderExpr("direction = ? DESC, dialed_at", Inbound).Limit(1).For("UPDATE SKIP LOCKED")
 		var connected []CallLeg
 		err := db.NewUpdate().Model((*CallLeg)(nil)).

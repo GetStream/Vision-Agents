@@ -357,7 +357,8 @@ func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType
 	participant := event.Participant.UserSessionID
 	var err error
 	if eventType == getstream.EventTypeCallSessionParticipantJoined {
-		err = s.phone.Connect(r.Context(), origin.scope(), callType, callID, event.SessionID, participant)
+		number, _ := phone.CallerNumber(event.Participant.User.ID)
+		err = s.phone.Connect(r.Context(), origin.scope(), callType, callID, event.SessionID, participant, number)
 	} else {
 		err = s.phone.Left(r.Context(), origin.scope(), callType, callID, participant)
 	}
