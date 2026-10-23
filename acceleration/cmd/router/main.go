@@ -947,7 +947,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 	go learnDeploymentApp(ctx, streamClients, logger)
 	go warnWithoutMessageHook(ctx, settings, streamClients, logger)
 
-	registrations, dlcGate, err := buildDLC(settings, pgStore, liveClient, logger)
+	// Texts, call minutes, numbers and 10DLC fees are all telephony rows, through one recorder.
+	var phoneRecorder *routing.Recorder
+	if pgStore != nil || liveClient != nil {
+		phoneRecorder = routing.NewRecorderOn(routing.Phone, usageWriter, prices, logger)
+	}
+	registrations, dlcGate, err := buildDLC(settings, pgStore, liveClient, phoneRecorder, logger)
 	if err != nil {
 		return err
 	}
@@ -958,11 +963,18 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if policies != nil {
 		dlcGate.Charging(policies)
 	}
-	telephony, err := buildPhone(settings, vendorConfig, prices, pgStore, liveClient, usageWriter, streamClients, dlcGate, secrets, logger)
+	telephony, err := buildPhone(settings, vendorConfig, pgStore, phoneRecorder, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
 	defer closePhone(telephony, logger)
+	if pgStore != nil {
+		// A call whose end was never announced is ended at the longest a call may last, and a
+		// leg whose row was lost is recorded again. Months of numbers and of 10DLC campaigns are
+		// billed by jobs of their own (router usage numbers, router usage dlc).
+		go telephony.RunLegSweep(ctx, phone.LegSweepEvery)
+		go checkCallHook(ctx, settings, logger)
+	}
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
@@ -1332,6 +1344,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 				Sessions: sessions,
 				Secrets:  options.Secrets,
 				Gate:     dlcGate,
+				Recorder: phoneRecorder,
 				Logger:   logger,
 			})
 			if err != nil {
@@ -1915,10 +1928,8 @@ func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities rou
 func buildPhone(
 	settings config.Config,
 	vendorConfig phone.Config,
-	prices pricing.Pricer,
 	pgStore *store.Store,
-	liveClient *live.Client,
-	usageWriter *routing.Writer,
+	recorder *routing.Recorder,
 	stream *streamapp.Clients,
 	gate *dlc.Gate,
 	secrets *auth.Sealer,
@@ -1926,11 +1937,6 @@ func buildPhone(
 ) (*phone.Service, error) {
 	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" {
 		logger.Warn("no stream credentials, numbers cannot be attached to a call in the deployment's app")
-	}
-
-	var recorder *routing.Recorder
-	if pgStore != nil || liveClient != nil {
-		recorder = routing.NewRecorderOn(routing.Phone, usageWriter, prices, logger)
 	}
 
 	// Passwords of customers' own SIP trunks are sealed under the router's keyring. Without
@@ -1955,6 +1961,38 @@ func buildPhone(
 	})
 }
 
+// callHookCheckTimeout bounds the one read of the deployment's app hooks at boot.
+const callHookCheckTimeout = 30 * time.Second
+
+// checkCallHook reads the hooks of the deployment's own app once, and logs at ERROR a hook to
+// this router's call events that does not ask for every one of them: one pointed before the
+// participant events were added, whose placed calls and transfers never connect and are not
+// billed until cmd/phone hooks is run again. Registered apps are not read here, which would be
+// a Stream request per app at every boot; the phone service logs theirs when a placed call ends
+// with no participant event delivered.
+func checkCallHook(ctx context.Context, settings config.Config, logger *slog.Logger) {
+	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" || settings.PublicURL == "" {
+		return
+	}
+	stream, err := phone.NewStream(phone.StreamOptions{APIKey: settings.Stream.APIKey, APISecret: settings.Stream.APISecret})
+	if err != nil {
+		logger.Warn("could not check the deployment's call hook", "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, callHookCheckTimeout)
+	defer cancel()
+	hooks, err := stream.CallHooks(ctx)
+	if err != nil {
+		logger.Warn("could not check the deployment's call hook", "error", err)
+		return
+	}
+	missing, found := phone.MissingCallHookEvents(hooks, strings.TrimSuffix(settings.PublicURL, "/")+phone.CallHookPath)
+	if found && len(missing) > 0 {
+		logger.Error("call hook does not deliver participant events; re-run cmd/phone hooks",
+			"stream_app", "deployment", "missing", missing)
+	}
+}
+
 // closePhone hangs up the calls this node holds through customers' own SIP trunks. Their
 // signalling runs through this process, so stopping without a BYE would leave both ends of
 // each call connected to nothing.
@@ -1977,6 +2015,7 @@ func buildDLC(
 	settings config.Config,
 	pgStore *store.Store,
 	liveClient *live.Client,
+	recorder *routing.Recorder,
 	logger *slog.Logger,
 ) (*dlc.Service, *dlc.Gate, error) {
 	if pgStore == nil {
@@ -1998,7 +2037,7 @@ func buildDLC(
 			"audio_minutes", settings.Sandbox.AudioMinutesPerDay)
 	}
 
-	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Logger: logger}
+	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Logger: logger}
 	if registrar, err := dlctelnyx.New(dlctelnyx.Options{}); err == nil {
 		options.Registrar = registrar
 	} else {

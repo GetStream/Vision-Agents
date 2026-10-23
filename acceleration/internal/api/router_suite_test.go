@@ -366,6 +366,14 @@ type RouterSuite struct {
 	registrar dlc.Registrar
 	// gate is what every text and call passes.
 	gate *dlc.Gate
+	// phoneRecorder is what texts, call minutes, numbers and 10DLC fees record through, priced
+	// from the vendor list as a router's first start prices them.
+	phoneRecorder *routing.Recorder
+	// phoneNow, set by a suite before it starts the harness, is the clock the phone service
+	// times call legs and months by. Nil is the wall clock.
+	phoneNow func() time.Time
+	// registrar10DLC is the router's 10DLC service, for a suite to poll and bill with.
+	registrar10DLC *dlc.Service
 	// manageOff builds the router with no manage key, as a deployment that never set
 	// ROUTER_AUTH_MANAGE_KEY has, for a suite about that to set before it starts the harness.
 	manageOff bool
@@ -504,6 +512,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.events = s.pluginEvents(sessions, public, logger)
 	// Every text, call and number asks the same admission as a model, as in cmd/router.
 	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies)
+	s.phoneRecorder = s.telephonyRecorder(logger)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
@@ -688,6 +697,7 @@ func (s *RouterSuite) channels(sessions *session.Manager, logger *slog.Logger) *
 		Secrets:   s.sealer,
 		Transport: redirected(s.channelAPI),
 		Gate:      s.gate,
+		Recorder:  s.phoneRecorder,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
@@ -699,10 +709,22 @@ func (s *RouterSuite) channels(sessions *session.Manager, logger *slog.Logger) *
 // reports back to the suite's own router.
 func (s *RouterSuite) registrations(listener *httptest.Server, logger *slog.Logger) *dlc.Service {
 	service, err := dlc.NewService(dlc.Options{
-		Store: s.store, Registrar: s.registrar, PublicURL: "http://" + listener.Listener.Addr().String(), Logger: logger,
+		Store: s.store, Registrar: s.registrar, PublicURL: "http://" + listener.Listener.Addr().String(),
+		Recorder: s.phoneRecorder, Logger: logger,
 	})
 	s.Require().NoError(err)
+	s.registrar10DLC = service
 	return service
+}
+
+// telephonyRecorder records telephony through a writer of its own, priced from the vendor
+// list, and writes what it holds when the suite ends.
+func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
+	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, logger)
+	s.Require().NoError(err)
+	recorder := routing.NewRecorder(routing.Phone, s.store, s.live, list, logger)
+	s.T().Cleanup(recorder.Close)
+	return recorder
 }
 
 // redirected dials one server whatever host is asked for, or nothing when there is none.
@@ -1095,13 +1117,12 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 	// here is the HTTP surface in front of them.
 	config, err := phone.DefaultConfig()
 	s.Require().NoError(err)
-	phonePrices, err := pricing.NewList("config", phone.PriceEntries(config), 0, logger)
-	s.Require().NoError(err)
 
 	service, err := phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(config),
 		Store:     s.store,
-		Recorder:  routing.NewRecorder(routing.Phone, s.store, s.live, phonePrices, logger),
+		Recorder:  s.phoneRecorder,
+		Now:       s.phoneNow,
 		Gate:      s.gate,
 		Sealer:    sealer,
 		SIPTrunks: siptrunk.New(siptrunk.Options{Logger: logger}),
@@ -1260,7 +1281,10 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 		Stream:            s.stream,
 		HookSecret:        suiteStreamSecret,
 		Secrets:           keyring,
-		Logger:            logger,
+		// The node's phone service is the suite's: the call hook a peer hands over answers
+		// the same database.
+		Phone:  s.router.phone,
+		Logger: logger,
 	})
 	s.Require().NoError(err)
 	other.Config.Handler = server.Handler()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -18,10 +19,14 @@ const CallHookPath = "/v1/phone/hooks/stream"
 
 // callHookEvents are the events the router asks for.
 //
-// Only two, deliberately. An app-wide hook asking for everything would deliver every message
+// Only these, deliberately. An app-wide hook asking for everything would deliver every message
 // and reaction in the app to a path that answers phone calls, and every one of those is a
-// signature to check and a body to parse for nothing.
-var callHookEvents = []string{"call.session_started", "call.session_ended"}
+// signature to check and a body to parse for nothing. A participant joining and leaving is
+// when a phone answered and hung up, which is what its minutes are billed by.
+var callHookEvents = []string{
+	"call.session_started", "call.session_ended",
+	"call.session_participant_joined", "call.session_participant_left",
+}
 
 // webhookHookType is what Stream calls a hook delivered over HTTP, as opposed to SQS or SNS.
 const webhookHookType = "webhook"
@@ -160,6 +165,36 @@ func WithCallHook(hooks []chat.Hook, url string) ([]chat.Hook, bool, error) {
 		Enabled:    &enabled,
 		EventTypes: callHookEvents,
 	}}), false, nil
+}
+
+// MissingCallHookEvents is the call events the app's enabled webhooks delivering under url (the
+// router's own CallHookPath, with or without an app after it) do not ask for, and whether any
+// such hook is there. A hook asking for nothing asks for everything.
+func MissingCallHookEvents(hooks []CallHook, url string) ([]string, bool) {
+	url = strings.TrimSpace(url)
+	var asked []string
+	found := false
+	for _, hook := range hooks {
+		if !hook.Enabled || (hook.HookType != "" && hook.HookType != webhookHookType) || url == "" ||
+			!strings.HasPrefix(hook.URL, url) {
+			continue
+		}
+		if len(hook.EventTypes) == 0 {
+			return nil, true
+		}
+		found = true
+		asked = append(asked, hook.EventTypes...)
+	}
+	if !found {
+		return nil, false
+	}
+	var missing []string
+	for _, event := range callHookEvents {
+		if !slices.Contains(asked, event) {
+			missing = append(missing, event)
+		}
+	}
+	return missing, true
 }
 
 // WithoutHook is hooks less every hook delivering to url, whatever it asks for, and whether
