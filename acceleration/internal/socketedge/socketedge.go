@@ -64,6 +64,9 @@ type Edge struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 	done     chan struct{}
+	// hearing counts the Hear calls between their check of left and their send, which Leave
+	// waits out before it closes inbound.
+	hearing sync.WaitGroup
 }
 
 // New returns an edge that has not been joined.
@@ -159,10 +162,14 @@ func (e *Edge) Hear(raw []byte) error {
 	pcm := audio.Resample(audio.FromBytes(raw, e.rate, 1), stt.SampleRate, 1)
 	e.mu.Lock()
 	left := e.left
+	if !left {
+		e.hearing.Add(1)
+	}
 	e.mu.Unlock()
 	if left {
 		return ErrLeft
 	}
+	defer e.hearing.Done()
 	select {
 	case e.inbound <- agent.InboundAudio{Participant: e.caller, Audio: pcm}:
 		return nil
@@ -187,6 +194,8 @@ func (e *Edge) Leave() error {
 	if joined {
 		<-e.done
 	}
+	// stop is closed, so a Hear waiting to send is released and none starts again.
+	e.hearing.Wait()
 	close(e.inbound)
 	return nil
 }
