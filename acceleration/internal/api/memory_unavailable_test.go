@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -205,6 +206,8 @@ func (f *flakyMem0) holds(appID, runID string) bool {
 
 func (f *flakyMem0) serve(w http.ResponseWriter, r *http.Request) {
 	if f.hang.Load() {
+		// The server notices a client hang-up only once the body is read.
+		_, _ = io.Copy(io.Discard, r.Body)
 		select {
 		case <-r.Context().Done():
 		case <-time.After(10 * time.Second):
