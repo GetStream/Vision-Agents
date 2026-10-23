@@ -1442,19 +1442,21 @@ func (s *AppsSuite) TestAPerCallTrunkOfARecentCallIsNotSwept() {
 	s.Len(s.deployment.Trunks(), 1)
 }
 
-func (s *AppsSuite) TestASharedCallsResourceIsNeverSwept() {
+func (s *AppsSuite) TestASharedCallWhoseCallNeverEndedLosesItsRowButNotItsLine() {
 	s.sealed()
 	placed, err := s.callFrom(s.e164)
 	s.Require().NoError(err)
 	s.backdate(placed.CallID, 7*time.Hour)
 
-	_, err = s.service.SweepCallResources(s.ctx, time.Now().Add(-6*time.Hour))
+	swept, err := s.service.SweepCallResources(s.ctx, time.Now().Add(-6*time.Hour))
 
 	s.Require().NoError(err)
+	s.Positive(swept)
 	s.Len(s.deployment.Trunks(), 1, "the number's other calls use it")
+	s.Len(s.deployment.Rules(), 1)
 	rows, err := s.store.CallResourcesInApp(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID)
 	s.Require().NoError(err)
-	s.Len(rows, 1)
+	s.Empty(rows)
 }
 
 func (s *AppsSuite) TestMoreNumbersLiningAtOnceThanThePoolHasConnectionsAllLine() {

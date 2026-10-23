@@ -1189,8 +1189,9 @@ func (s *Service) ReleaseCall(ctx context.Context, scope store.AppScope, callTyp
 	return nil
 }
 
-// SweepCallResources unwires the per-call trunks of calls older than before, whose end
-// hook never arrived, and returns how many it took down.
+// SweepCallResources forgets the calls older than before whose end hook never arrived, and
+// unwires their per-call trunks. It returns how many calls' rows it forgot. A shared line
+// belongs to its number, not the call, so it is left at Stream.
 func (s *Service) SweepCallResources(ctx context.Context, before time.Time) (int, error) {
 	if s.store == nil || (s.stream == nil && s.apps == nil) {
 		return 0, nil
@@ -1200,6 +1201,9 @@ func (s *Service) SweepCallResources(ctx context.Context, before time.Time) (int
 		return 0, fmt.Errorf("phone: sweep call resources: %w", err)
 	}
 	for _, resource := range stale {
+		if resource.Shared {
+			continue
+		}
 		s.unwire(ctx, resource.CustomerID, resource.StreamAppPK, resource.RouteID, resource.TrunkID, "a call never ended")
 	}
 	return len(stale), nil
