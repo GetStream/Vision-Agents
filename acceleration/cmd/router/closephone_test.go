@@ -333,16 +333,21 @@ func TestAShutdownThatFailsForAnotherReasonIsStillAnError(t *testing.T) {
 	require.ErrorIs(t, err, errUnclosable)
 }
 
-// draining is a router on its way down with a drain, a public and a peer listener, and a
-// session count the test decides.
+// draining is a router on its way down with a drain, a public, a peer and a metrics
+// listener, and a session count the test decides.
 type draining struct {
-	public, peers string
-	held          atomic.Int64
-	stopped       chan error
+	public, peers, metrics string
+	held                   atomic.Int64
+	stopped                chan error
 }
 
 func startDraining(t *testing.T, drain time.Duration) *draining {
 	t.Helper()
+	metrics := freeAddress(t)
+	stopMetrics, handOverMetrics := serveMetrics(metrics, slog.New(slog.DiscardHandler))
+	t.Cleanup(stopMetrics)
+	require.Eventually(t, func() bool { return servesMetrics(metrics) }, 5*time.Second, 10*time.Millisecond,
+		"the metrics listener never answered")
 	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	public, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -358,18 +363,19 @@ func startDraining(t *testing.T, drain time.Duration) *draining {
 	})
 	require.NoError(t, err)
 
-	d := &draining{public: public.Addr().String(), peers: peers.Addr().String(), stopped: make(chan error, 1)}
+	d := &draining{public: public.Addr().String(), peers: peers.Addr().String(), metrics: metrics, stopped: make(chan error, 1)}
 	d.held.Store(1)
 	go func() {
 		d.stopped <- stopServing(stopping{
-			public:    publicServer,
-			peers:     peerServer,
-			drainWork: func() {},
-			held:      func() int { return int(d.held.Load()) },
-			telephony: service,
-			drain:     drain,
-			grace:     shutdownGrace,
-			logger:    slog.New(slog.DiscardHandler),
+			public:          publicServer,
+			peers:           peerServer,
+			drainWork:       func() {},
+			held:            func() int { return int(d.held.Load()) },
+			telephony:       service,
+			handOverMetrics: handOverMetrics,
+			drain:           drain,
+			grace:           shutdownGrace,
+			logger:          slog.New(slog.DiscardHandler),
 		})
 	}()
 	require.Eventually(t, func() bool { return !answers(d.public) }, 5*time.Second, 10*time.Millisecond,
@@ -385,6 +391,67 @@ func answers(address string) bool {
 	}
 	_ = res.Body.Close()
 	return res.StatusCode == http.StatusNoContent
+}
+
+func servesMetrics(address string) bool {
+	client := http.Client{Timeout: time.Second}
+	res, err := client.Get("http://" + address + "/metrics")
+	if err != nil {
+		return false
+	}
+	_ = res.Body.Close()
+	return res.StatusCode == http.StatusOK
+}
+
+func TestADrainingRouterFreesItsMetricsAddressForTheRouterTakingOver(t *testing.T) {
+	d := startDraining(t, time.Hour)
+
+	require.Eventually(t, func() bool {
+		successor, err := net.Listen("tcp", d.metrics)
+		if err != nil {
+			return false
+		}
+		_ = successor.Close()
+		return true
+	}, time.Second, 10*time.Millisecond, "the draining router kept its metrics address")
+	require.True(t, answers(d.peers), "a draining router stopped answering for its sessions")
+	select {
+	case <-d.stopped:
+		t.Fatal("the router stopped while it still held a session")
+	default:
+	}
+
+	d.held.Store(0)
+	select {
+	case err := <-d.stopped:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the router kept draining after its last session ended")
+	}
+}
+
+func TestARouterWithoutADrainServesMetricsUntilItStops(t *testing.T) {
+	public, _ := servingNothing(t)
+	metrics := freeAddress(t)
+	stopMetrics, handOverMetrics := serveMetrics(metrics, slog.New(slog.DiscardHandler))
+	t.Cleanup(stopMetrics)
+	require.Eventually(t, func() bool { return servesMetrics(metrics) }, 5*time.Second, 10*time.Millisecond,
+		"the metrics listener never answered")
+
+	err := stopServing(stopping{
+		public:          public,
+		drainWork:       func() {},
+		held:            func() int { return 0 },
+		telephony:       idlePhone(t),
+		handOverMetrics: handOverMetrics,
+		grace:           testGrace,
+		logger:          slog.New(slog.DiscardHandler),
+	})
+
+	require.NoError(t, err)
+	require.True(t, servesMetrics(metrics), "metrics stopped before the router exited")
+	stopMetrics()
+	require.False(t, servesMetrics(metrics), "metrics outlived the router")
 }
 
 func TestADrainingRouterStillAnswersItsPeersUntilItsLastSessionEnds(t *testing.T) {
