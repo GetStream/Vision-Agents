@@ -275,8 +275,9 @@ type watcherCommand struct {
 // readCommands applies what the caller sends, which is tool results and the handful of
 // things it can do to the conversation.
 //
-// A frame it cannot read is reported and skipped rather than closing the socket: dropping
-// the connection over one bad message would take the tool calls in flight with it.
+// A command of a type it does not know is reported and skipped rather than closing the
+// socket: dropping the connection over one bad message would take the tool calls in flight
+// with it. A frame that is not JSON it can read ends the socket.
 //
 // It returns nil once a command closed the session, errUnreadableFrame for a frame that is not
 // a command, and the read's own error when the connection ended.
