@@ -148,7 +148,7 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 		return nil, err
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, refusedRequest(err)
 	}
 	return &forkSessionResponse{Body: sessionOf(created)}, nil
 }
@@ -472,7 +472,7 @@ func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Sessi
 		return nil, nil, err
 	}
 	if err != nil {
-		return nil, nil, invalidRequest(err.Error())
+		return nil, nil, refusedRequest(err)
 	}
 	events, detach := reopened.Watch()
 	return reopened, func() { go holdUntilAnswered(reopened, events, detach) }, nil

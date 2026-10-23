@@ -620,22 +620,31 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 
 	// Budgets, data policies and prompt injection screening are stored per organization
-	// and app, so a deployment without a database enforces none of them.
-	var policies *policy.Enforcer
+	// and app, so a deployment without a database enforces none of them, and may run only
+	// with limits off. Money is read from the usage service, and from Postgres without one.
+	warnLimits(settings, logger)
+	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
+		return err
+	}
+	policies, err := newPolicies(settings, configs, usageClient, logger)
+	if err != nil {
+		return err
+	}
 	var gate routing.Gate
-	if configs != nil {
-		if policies, err = policy.New(configs, logger); err != nil {
-			return err
-		}
-		gate = policies
+	var shipped, written func([]routing.Acked)
+	if policies != nil {
+		defer policies.Close()
+		gate, shipped, written = policies, policies.Acked, policies.Written
 	}
 
 	// Every recorder of the process writes through this one writer, so there is one queue to
 	// drain at shutdown. Deferred here, it closes after everything that records and before
 	// the policies it asks, the store and Redis. The policies say whose a row is, and its
-	// organization's tier, for a recorder with no gate of its own.
+	// organization's tier, for a recorder with no gate of its own, and are told which rows the
+	// ledger has, which lets go of what they held for them.
 	usageWriter := routing.NewWriter(routing.WriterOptions{
 		Store: pgStore, Live: liveClient, Logger: logger, Gate: gate, Usage: usageClient, Source: source,
+		Shipped: shipped, Written: written,
 	})
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), usageDrainTimeout)
@@ -643,7 +652,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		usageWriter.Close(ctx)
 	}()
 	if usageClient != nil {
-		stopSweeper := startUsageSweeper(ctx, routing.SweeperOptions{Store: pgStore, Usage: usageClient, Source: source, Logger: logger})
+		stopSweeper := startUsageSweeper(ctx, routing.SweeperOptions{Store: pgStore, Usage: usageClient, Source: source, Logger: logger, Shipped: shipped})
 		defer stopSweeper()
 	}
 
@@ -944,6 +953,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
+	}
+	// Every text, call and number a customer pays for asks the same admission as a model.
+	if policies != nil {
+		dlcGate.Charging(policies)
 	}
 	telephony, err := buildPhone(settings, vendorConfig, prices, pgStore, liveClient, usageWriter, streamClients, dlcGate, secrets, logger)
 	if err != nil {

@@ -460,6 +460,27 @@ func (s *ConfigSuite) TestNoUsageServiceIsTheDefault() {
 	s.Empty(config.Usage.URL)
 }
 
+func (s *ConfigSuite) TestLimitsModeMustBeKnown() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(LimitsEnforce, config.Limits.Mode, "a deployment that says nothing enforces")
+
+	for _, mode := range []LimitsMode{LimitsEnforce, LimitsShadow, LimitsOff} {
+		s.T().Setenv("ROUTER_LIMITS_MODE", string(mode))
+		config, _, err := Load("")
+		s.Require().NoError(err, mode)
+		s.Equal(mode, config.Limits.Mode)
+		s.Equal(string(mode), os.Getenv("ROUTER_LIMITS_MODE"), "exported")
+	}
+
+	for _, mode := range []string{"Enforce", "disabled", "true"} {
+		s.T().Setenv("ROUTER_LIMITS_MODE", mode)
+		_, _, err := Load("")
+		s.Require().ErrorContains(err, "ROUTER_LIMITS_MODE", mode)
+		s.ErrorContains(err, "enforce, shadow or off")
+	}
+}
+
 func (s *ConfigSuite) TestStreamTenancyDefaultsToDeployment() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

@@ -84,7 +84,9 @@ def sync_detailed(
     they do for a call.
     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error`
     frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type`
-    that `createSession` answers the same field with.
+    that `createSession` answers the same field with, and so does a session refused for money:
+    `account_suspended` (`permission`), or `insufficient_credits`, `system_limit_reached` or
+    `spend_limit_reached` (`payment_required`).
     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the
     conversation. A conversation that ends closes the socket.
 
@@ -126,7 +128,9 @@ def sync(
     they do for a call.
     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error`
     frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type`
-    that `createSession` answers the same field with.
+    that `createSession` answers the same field with, and so does a session refused for money:
+    `account_suspended` (`permission`), or `insufficient_credits`, `system_limit_reached` or
+    `spend_limit_reached` (`payment_required`).
     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the
     conversation. A conversation that ends closes the socket.
 
@@ -164,7 +168,9 @@ async def asyncio_detailed(
     they do for a call.
     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error`
     frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type`
-    that `createSession` answers the same field with.
+    that `createSession` answers the same field with, and so does a session refused for money:
+    `account_suspended` (`permission`), or `insufficient_credits`, `system_limit_reached` or
+    `spend_limit_reached` (`payment_required`).
     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the
     conversation. A conversation that ends closes the socket.
 
@@ -204,7 +210,9 @@ async def asyncio(
     they do for a call.
     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error`
     frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type`
-    that `createSession` answers the same field with.
+    that `createSession` answers the same field with, and so does a session refused for money:
+    `account_suspended` (`permission`), or `insufficient_credits`, `system_limit_reached` or
+    `spend_limit_reached` (`payment_required`).
     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the
     conversation. A conversation that ends closes the socket.
 

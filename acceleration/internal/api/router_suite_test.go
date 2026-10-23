@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"slices"
@@ -42,6 +43,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
@@ -84,6 +86,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
@@ -170,6 +173,15 @@ type RouterSuite struct {
 	// usage, as cmd/router's writer does.
 	shipping bool
 	usage    *usagetest.Service
+	// limited reads every organization's money from that usage service, started with its
+	// management API before the policies, through usageFront, which a test can take down; and
+	// lets the rows the service acks go from what the policies hold. It ships, too.
+	limited    bool
+	usageFront *usageFront
+	enforcer   *policy.Enforcer
+	// limitsMode is the suite's ROUTER_LIMITS_MODE, for a suite to set before it starts the
+	// harness. Empty is enforce.
+	limitsMode config.LimitsMode
 	// owned are the apps the suite made or used, whose rows must all name a key.
 	ownedMu sync.Mutex
 	owned   []string
@@ -490,7 +502,8 @@ func (s *RouterSuite) SetupSuite() {
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
-	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger)
+	// Every text, call and number asks the same admission as a model, as in cmd/router.
+	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
@@ -887,6 +900,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Transcribers: transcriberRegistry(),
 		Store:        s.store,
 		Live:         s.live,
+		Gate:         gate,
 		Logger:       logger,
 	})
 	s.Require().NoError(err)
@@ -898,6 +912,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Store:     s.store,
 		Live:      s.live,
 		Voices:    s.ttsVoices,
+		Gate:      gate,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
@@ -1034,9 +1049,16 @@ func (s *RouterSuite) shippingWriter(gate routing.Gate, logger *slog.Logger) *ro
 	if !s.shipping {
 		return nil
 	}
-	s.usage = usagetest.Start(s.T(), usagetest.Options{Logger: logger})
+	if s.usage == nil {
+		s.usage = usagetest.Start(s.T(), usagetest.Options{Logger: logger})
+	}
+	var shipped func([]routing.Acked)
+	if s.limited {
+		shipped = s.enforcer.Acked
+	}
 	writer := routing.NewWriter(routing.WriterOptions{
 		Store: s.store, Live: s.live, Logger: logger, Gate: gate, Usage: s.usage.Client, Source: "router/suite/" + s.utils.uuid(),
+		Shipped: shipped,
 	})
 	s.T().Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1292,10 +1314,49 @@ func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
 	return bus
 }
 
+// suiteFresh is how often a suite's policies read money and their decisions again: a tenth of
+// a second rather than a router's five, so a budget a test spends is measured within it.
+const suiteFresh = 100 * time.Millisecond
+
 func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
-	enforcer, err := policy.New(s.configs, logger)
+	settings := policy.Settings{Mode: s.limitsMode, Fresh: suiteFresh, BudgetEvery: suiteFresh}
+	if s.limited {
+		s.shipping = true
+		s.usage = usagetest.Start(s.T(), usagetest.Options{
+			DSN: usagetest.Database(s.T(), "usage_admission"), ManageKey: "manage-" + s.utils.uuid(), Logger: logger,
+		})
+		s.usageFront = newUsageFront(s.T(), s.usage)
+		client, err := usage.NewClient(usage.ClientOptions{URL: s.usageFront.server.URL, Token: s.usage.Token})
+		s.Require().NoError(err)
+		settings.Usage, settings.MaxStale, settings.PendingTTL = client, time.Minute, time.Minute
+	}
+	enforcer, err := policy.New(s.configs, settings, logger)
 	s.Require().NoError(err)
+	s.T().Cleanup(enforcer.Close)
+	s.enforcer = enforcer
 	return enforcer
+}
+
+// usageFront is the usage service as the suite's policies reach it: the real one, through a
+// proxy a test can take down, as the service going away does.
+type usageFront struct {
+	server *httptest.Server
+	down   atomic.Bool
+}
+
+func newUsageFront(t *testing.T, service *usagetest.Service) *usageFront {
+	target, err := url.Parse(service.URL)
+	require.NoError(t, err)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	front := &usageFront{}
+	front.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if front.down.Load() {
+			panic(http.ErrAbortHandler)
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.server.Close)
+	return front
 }
 
 // quota caps what one end user may spend in a day, unless their app's policy says otherwise.

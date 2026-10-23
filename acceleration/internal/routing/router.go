@@ -26,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -130,10 +132,17 @@ type ModelResolver interface {
 var ErrModelNotAllowed = errors.New("routing: your policy does not allow this model")
 
 // Gate is what an organization's and an app's policies say about a customer's request
-// before anything is routed. Admit refuses a customer who has spent their budget, and
-// otherwise returns what every request of theirs is held to on top of its own.
+// before anything is routed. Admit refuses a customer who may do no work at all, and
+// otherwise returns what every request of theirs is held to on top of its own, money
+// included: Admission.Spend refuses only the work that costs something.
 type Gate interface {
 	Admit(ctx context.Context, customerID string) (Admission, error)
+}
+
+// Spender is a Gate that is told what a unit of work cost as soon as it is recorded, before
+// its row is written, so a customer spending fast is measured without waiting for the writer.
+type Spender interface {
+	Spent(owner Owner, usageID uuid.UUID, micros int64)
 }
 
 // Admission is what a customer's policies hold every request of theirs to.
@@ -153,6 +162,9 @@ type Admission struct {
 	// opened with, so a session's later work carries a tier Stream changed. Empty when it is
 	// not known.
 	OrganizationTier string
+	// Spend is why the customer may not spend money now: no credit, or a spend limit reached.
+	// Nil when they may. Work that costs nothing is still admitted.
+	Spend error
 }
 
 // Labelled returns the tags with the policies' laid over them, leaving the ones passed in
@@ -530,6 +542,12 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	candidates = slices.DeleteFunc(candidates, func(candidate Candidate) bool {
 		return slices.Contains(request.Exclude, candidate.Config.Name())
 	})
+	// Last of the filters, so a customer refused money is told so only when a paying one
+	// would have been served.
+	candidates, err = affordable(candidates, admission.Spend, r.recorder.Billable)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
 	untried(candidates, request.Failed)
 	candidates = r.vouched(ctx, request, candidates)
 	candidates, err = r.voiced(request, candidates)
@@ -986,6 +1004,25 @@ func allowed(candidates []Candidate, models []string) ([]Candidate, error) {
 		return nil, stack.Wrap(fmt.Errorf("%w: it allows none of %s", ErrModelNotAllowed, strings.Join(asked, ", ")))
 	}
 	return kept, nil
+}
+
+// affordable keeps only work that costs nothing when the customer may not spend money, the
+// refusal saying why, and is refused with it when there is none: a customer with no credit
+// still gets a model the deployment runs itself or one that is free.
+func affordable(candidates []Candidate, refusal error, billable func(ProviderConfig) bool) ([]Candidate, error) {
+	if refusal == nil {
+		return candidates, nil
+	}
+	free := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !billable(candidate.Config) {
+			free = append(free, candidate)
+		}
+	}
+	if len(free) == 0 {
+		return nil, refusal
+	}
+	return free, nil
 }
 
 // permitted narrows candidates to the ones allowed to do this work at all.

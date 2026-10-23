@@ -41,6 +41,23 @@ func (s *Store) RequestsToShip(ctx context.Context, settle time.Duration, after 
 	return rows, nil
 }
 
+// Shipped is which of the usage ids this shard holds a row for that the usage service has, as
+// whichever router's sweeper shipped it recorded.
+func (s *Store) Shipped(ctx context.Context, usageIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if len(usageIDs) == 0 {
+		return nil, nil
+	}
+	var shipped []uuid.UUID
+	err := s.shard.NewSelect().Model((*Request)(nil)).Column("usage_id").
+		Where("usage_id IN (?)", bun.In(usageIDs)).
+		Where("shipped_at IS NOT NULL").
+		Scan(ctx, &shipped)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: shipped: %w", err))
+	}
+	return shipped, nil
+}
+
 // RecordShipment marks what the usage service answered for rows it was sent: shipped are the
 // usage ids it has, and rejected the ones it refused, each with why. Neither is sent again
 // until somebody reships it.

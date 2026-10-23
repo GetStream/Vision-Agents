@@ -114,6 +114,7 @@ type Config struct {
 	Telnyx      Telnyx      `koanf:"telnyx"`
 	Usage       Usage       `koanf:"usage"`
 	Knowledge   Knowledge   `koanf:"knowledge"`
+	Limits      Limits      `koanf:"limits"`
 }
 
 // Knowledge is the knowledge store's settings.
@@ -124,6 +125,25 @@ type Knowledge struct {
 	// attributes.provider_cost_micros; what a customer pays is the price list's. It is here,
 	// not in code, so a change in the provider's prices is a change of config.
 	StreamCost map[string]pricing.Rate `koanf:"stream_cost"`
+}
+
+// LimitsMode is how much of credit, the spend hard limit and budgets the router enforces.
+type LimitsMode string
+
+const (
+	// LimitsEnforce refuses what they refuse.
+	LimitsEnforce LimitsMode = "enforce"
+	// LimitsShadow works every refusal out, logs it as would refuse, and admits the request.
+	LimitsShadow LimitsMode = "shadow"
+	// LimitsOff refuses nothing for money. Work is still priced, recorded and shipped.
+	LimitsOff LimitsMode = "off"
+)
+
+// Limits is what the router does about an organization's money before its work: a suspension,
+// its credit, the operator's spend hard limit and its budgets.
+type Limits struct {
+	// Mode is enforce, shadow or off. Empty is enforce.
+	Mode LimitsMode `koanf:"mode"`
 }
 
 // Usage is the usage service the router ships the rows it writes to. An empty URL is none:
@@ -484,6 +504,8 @@ var variables = map[string]string{
 
 	"usage.url":   "ROUTER_USAGE_URL",
 	"usage.token": "ROUTER_USAGE_TOKEN",
+
+	"limits.mode": "ROUTER_LIMITS_MODE",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -535,6 +557,7 @@ func Defaults() Config {
 			string(pricing.BytesWritten):  {USD: 2, Per: 1_000_000_000, Minimum: 10_000},
 			string(pricing.ByteHours):     {USD: 0.33, Per: 730_000_000_000},
 		}},
+		Limits: Limits{Mode: LimitsEnforce},
 	}
 }
 
@@ -593,6 +616,9 @@ func Load(path string) (Config, string, error) {
 	config := Defaults()
 	if err := k.Unmarshal("", &config); err != nil {
 		return Config{}, "", fmt.Errorf("config: %s: %w", name, err)
+	}
+	if config.Limits.Mode == "" {
+		config.Limits.Mode = LimitsEnforce
 	}
 	if err := config.validate(); err != nil {
 		return Config{}, "", err
@@ -710,6 +736,12 @@ func (c Config) validate() error {
 		if rate.Per <= 0 || rate.USD < 0 || rate.Minimum < 0 {
 			return fmt.Errorf("config: knowledge.stream_cost.%s is usd per a positive number of units, got %+v", meter, rate)
 		}
+	}
+	switch c.Limits.Mode {
+	case LimitsEnforce, LimitsShadow, LimitsOff:
+	default:
+		return fmt.Errorf("config: limits.mode (ROUTER_LIMITS_MODE) is %s, %s or %s, got %q",
+			LimitsEnforce, LimitsShadow, LimitsOff, c.Limits.Mode)
 	}
 	return c.validateShard()
 }
@@ -881,6 +913,8 @@ func (c Config) export() error {
 
 		"usage.url":   c.Usage.URL,
 		"usage.token": c.Usage.Token,
+
+		"limits.mode": string(c.Limits.Mode),
 	}
 	for key, value := range values {
 		if value == "" {

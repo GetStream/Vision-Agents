@@ -60,10 +60,10 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 		return nil, err
 	}
 	if err != nil {
-		// Everything that can go wrong here is the caller's spec or a provider that would
-		// not start, and both are worth reading rather than a 500 with the detail in a
-		// log the caller cannot see.
-		return nil, invalidRequest(err.Error())
+		// Everything that can go wrong here is the caller's spec, a provider that would not
+		// start, or a refusal about money, and each is worth reading rather than a 500 with
+		// the detail in a log the caller cannot see.
+		return nil, refusedRequest(err)
 	}
 	s.rememberTimezone(ctx, customerID, spec)
 	return &createSessionResponse{Body: sessionOf(created)}, nil

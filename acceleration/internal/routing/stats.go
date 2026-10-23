@@ -299,7 +299,33 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	r.watch(config, entry, request, priced)
+	// Before the row is queued, so an ack that comes back fast finds the hold it settles.
+	r.spent(entry.Owner, request)
 	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal, unmeasured: entry.Unmeasured})
+}
+
+// spent tells the gate what billable work cost the moment it is recorded, so the customer's
+// next admission counts it before its row is written.
+func (r *Recorder) spent(owner Owner, request store.Request) {
+	if !request.Billable || request.CostMicros <= 0 {
+		return
+	}
+	gate := r.gate
+	if gate == nil {
+		gate = r.writer.gate
+	}
+	if spender, ok := gate.(Spender); ok {
+		spender.Spent(owner, request.UsageID, request.CostMicros)
+	}
+}
+
+// Billable reports whether work on the provider counts toward spend, as its rows are priced: a
+// customer's own model never does, and one the price list has no entry for does.
+func (r *Recorder) Billable(config ProviderConfig) bool {
+	if config.Provider == CustomProvider {
+		return false
+	}
+	return r.pricer.Billable(ItemOf(r.modality, config, nil))
 }
 
 // lose prices the stat as Record would and loses its row at once, logged in full and counted

@@ -99,6 +99,10 @@ func answerFailure(ctx huma.Context, status int, message string, errs ...error) 
 		}
 		return waiting
 	}
+	if answer, ok := moneyError(errors.Join(errs...)); ok {
+		recordFailure(ctx.Context(), errors.Join(errs...), "")
+		return answer
+	}
 	if status < http.StatusInternalServerError {
 		if len(errs) > 0 {
 			// Without a secret's value, as the answer leaves it out.
@@ -126,6 +130,11 @@ func answerFailure(ctx huma.Context, status int, message string, errs ...error) 
 // writeFailure answers a request served by hand that failed in a way that is not the
 // caller's, the way answerFailure answers an operation that did.
 func writeFailure(w http.ResponseWriter, r *http.Request, err error) {
+	if answer, ok := moneyError(err); ok {
+		recordFailure(r.Context(), err, "")
+		writeError(w, answer)
+		return
+	}
 	trace := stack.Trace(err)
 	if trace == "" {
 		trace = string(debug.Stack())

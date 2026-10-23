@@ -372,3 +372,103 @@ func (s *RecorderSuite) TestACostTheVendorQuotedOutrightIsResoldWithTheMarkup() 
 	s.Equal(pricing.QuotedVersion, row.PriceVersion)
 	s.True(row.Billable)
 }
+
+// spending is a gate that keeps what it was told each unit of work cost, by usage id.
+type spending struct {
+	mu    sync.Mutex
+	spent map[uuid.UUID]int64
+	owner Owner
+}
+
+func (g *spending) Admit(context.Context, string) (Admission, error) { return Admission{}, nil }
+
+func (g *spending) Spent(owner Owner, usageID uuid.UUID, micros int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.spent == nil {
+		g.spent = map[uuid.UUID]int64{}
+	}
+	g.spent[usageID] += micros
+	g.owner = owner
+}
+
+func (g *spending) total() int64 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var sum int64
+	for _, micros := range g.spent {
+		sum += micros
+	}
+	return sum
+}
+
+func (s *RecorderSuite) TestRecordTellsASpenderWhatItCost() {
+	gate := &spending{}
+	writer := NewWriter(WriterOptions{Store: s.store, Logger: slog.New(slog.DiscardHandler)})
+	defer writer.Close(s.ctx)
+	recorder := newRecorder(LLM, nil, nil, gate, writer, s.prices, slog.New(slog.DiscardHandler))
+	usageID := uuid.Must(uuid.NewV7())
+
+	recorder.Record(priced, Stat{Owner: Owner{CustomerID: uuid.NewString(), Attribution: Attribution{APIKey: "key-a"}},
+		UsageID: usageID, Usage: Usage{InputTokens: 1_000, OutputTokens: 100}, Success: true})
+
+	s.EqualValues(3_200, gate.total(), "told as Record returns, before the writer has written anything")
+	s.Contains(gate.spent, usageID, "under the row's usage id")
+	s.Equal("key-a", gate.owner.APIKey)
+}
+
+func (s *RecorderSuite) TestWorkThatCostsNothingHoldsNothing() {
+	gate := &spending{}
+	writer := NewWriter(WriterOptions{Store: s.store, Logger: slog.New(slog.DiscardHandler)})
+	defer writer.Close(s.ctx)
+	recorder := newRecorder(LLM, nil, nil, gate, writer, s.prices, slog.New(slog.DiscardHandler))
+	owner := Owner{CustomerID: uuid.NewString(), Attribution: Attribution{APIKey: "key-a"}}
+
+	recorder.Record(gifted, Stat{Owner: owner, Usage: Usage{InputTokens: 1_000}, Success: true})
+	recorder.Record(hosted, Stat{Owner: owner, Usage: Usage{InputTokens: 1_000}, Success: true})
+	recorder.Record(priced, Stat{Owner: owner, Usage: Usage{InputTokens: 1_000}, Free: true, Success: true})
+
+	s.Zero(gate.total(), "free, local and given-away work is no spend")
+}
+
+func (s *RecorderSuite) TestTheWritersGateIsTheSpenderOfARecorderWithNone() {
+	gate := &spending{}
+	writer := NewWriter(WriterOptions{Store: s.store, Gate: gate, Logger: slog.New(slog.DiscardHandler)})
+	defer writer.Close(s.ctx)
+	recorder := NewRecorderOn(LLM, writer, s.prices, slog.New(slog.DiscardHandler))
+
+	recorder.Record(priced, Stat{Owner: Owner{CustomerID: uuid.NewString(), Attribution: Attribution{APIKey: "key-a"}},
+		Usage: Usage{InputTokens: 1_000}, Success: true})
+
+	s.EqualValues(2_000, gate.total())
+}
+
+func (s *RecorderSuite) TestTheWriterSaysWhichRowsTheShardHas() {
+	var mu sync.Mutex
+	told := map[uuid.UUID]int{}
+	writer := NewWriter(WriterOptions{Store: s.store, Logger: slog.New(slog.DiscardHandler), Written: func(written []Acked) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, row := range written {
+			told[row.UsageID]++
+		}
+	}})
+	recorder := NewRecorderOn(LLM, writer, s.prices, slog.New(slog.DiscardHandler))
+	owner := Owner{CustomerID: uuid.NewString(), Attribution: Attribution{APIKey: "key-a"}}
+	first, again := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+
+	recorder.Record(priced, Stat{Owner: owner, UsageID: first, Usage: Usage{InputTokens: 1_000}, Success: true})
+	recorder.Record(priced, Stat{Owner: owner, UsageID: again, Usage: Usage{InputTokens: 1_000}, Success: true})
+	s.Require().Eventually(func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return told[first] == 1 && told[again] == 1
+	}, 5*time.Second, 10*time.Millisecond)
+	recorder.Record(priced, Stat{Owner: owner, UsageID: again, Usage: Usage{InputTokens: 1_000}, Success: true})
+	writer.Close(s.ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	s.Equal(2, told[again], "a row the shard already had is one it has")
+	s.Equal(1, told[first])
+}

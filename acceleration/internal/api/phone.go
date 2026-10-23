@@ -476,6 +476,11 @@ func phoneFailure(logger *slog.Logger, err error) error {
 	if errors.Is(err, phone.ErrSuspended) {
 		return errTelephonySuspended
 	}
+	// A number, a call and a transfer are all billed, so the organization's money refuses them
+	// as it refuses a model that costs money.
+	if answer, refused := moneyError(err); refused {
+		return answer
+	}
 	if errors.Is(err, phone.ErrAddressRequired) {
 		logger.Info("a phone number needs an address", "error", err)
 		return errNumberNeedsAddress

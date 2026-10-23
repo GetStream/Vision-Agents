@@ -4,10 +4,14 @@
 package usagetest
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
@@ -177,6 +181,76 @@ type Options struct {
 	RetryEvery time.Duration
 	Logger     *slog.Logger
 	Now        func() time.Time
+}
+
+// Manage calls the service's management API as an operator does, under an idempotency key of
+// its own, and answers the status. The service must have been started with a manage key.
+func (s *Service) Manage(t testing.TB, method, path string, body any) int {
+	t.Helper()
+	require.NotEmpty(t, s.ManageKey, "the service was started without a manage key")
+	var payload io.Reader = http.NoBody
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		require.NoError(t, err)
+		payload = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(context.Background(), method, s.URL+usage.PathManage+path, payload)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Manage-Key", s.ManageKey)
+	request.Header.Set("X-Stream-Actor-Id", "usagetest")
+	request.Header.Set("Idempotency-Key", uuid.NewString())
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	defer response.Body.Close() //nolint:errcheck // a read-only body
+	_, _ = io.Copy(io.Discard, response.Body)
+	return response.StatusCode
+}
+
+// Credit adds micros to the organization's credit, or takes them away when negative.
+func (s *Service) Credit(t testing.TB, organization string, micros int64) {
+	t.Helper()
+	kind := usage.CreditGrant
+	if micros < 0 {
+		kind = usage.CreditAdjustment
+	}
+	status := s.Manage(t, http.MethodPost, "/accounts/"+organization+"/credits", map[string]any{"kind": kind, "amount_micros": micros})
+	require.Equal(t, http.StatusCreated, status)
+}
+
+// SetLimits replaces the organization's own settings; empty limits give it its tier's.
+func (s *Service) SetLimits(t testing.TB, organization string, limits usage.Limits) {
+	t.Helper()
+	require.Equal(t, http.StatusOK, s.Manage(t, http.MethodPut, "/accounts/"+organization+"/limits", limits))
+}
+
+// Suspend suspends the organization, and Restore restores it.
+func (s *Service) Suspend(t testing.TB, organization, reason string) {
+	t.Helper()
+	require.Equal(t, http.StatusOK, s.Manage(t, http.MethodPost, "/accounts/"+organization+"/suspend", map[string]string{"reason": reason}))
+}
+
+func (s *Service) Restore(t testing.TB, organization string) {
+	t.Helper()
+	require.Equal(t, http.StatusOK, s.Manage(t, http.MethodPost, "/accounts/"+organization+"/restore", map[string]string{"reason": "usagetest"}))
+}
+
+// SetTier writes a tier's row.
+func (s *Service) SetTier(t testing.TB, tier usage.Tier) {
+	t.Helper()
+	require.Equal(t, http.StatusOK, s.Manage(t, http.MethodPut, "/tiers/"+tier.Name, map[string]any{"fail_mode": tier.FailMode, "limits": tier.Limits}))
+}
+
+// Spend ingests one billable event of the organization that cost micros, as a router ships it.
+func (s *Service) Spend(t testing.TB, organization string, micros int64, change ...func(*usage.Event)) usage.Event {
+	t.Helper()
+	event := Event(organization, append([]func(*usage.Event){func(event *usage.Event) {
+		event.CostMicros, event.BaseCostMicros = micros, micros
+	}}, change...)...)
+	ack, err := s.Client.Ship(context.Background(), []usage.Event{event})
+	require.NoError(t, err)
+	require.Empty(t, ack.Rejected)
+	return event
 }
 
 // Start runs the service for the test, and stops it when the test ends.

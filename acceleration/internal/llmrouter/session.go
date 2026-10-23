@@ -30,6 +30,7 @@ var tracer = tracing.Tracer("llmrouter")
 type statRecorder interface {
 	Record(routing.ProviderConfig, routing.Stat)
 	QuoteStat(routing.ProviderConfig, routing.Stat) pricing.Quote
+	Billable(routing.ProviderConfig) bool
 }
 
 // errClosed is what a session answers once it has been closed.
@@ -368,8 +369,14 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		return nil, err
 	}
 	if s.admit != nil {
-		if _, err := s.admit(ctx, s.owner.CustomerID); err != nil {
+		admission, err := s.admit(ctx, s.owner.CustomerID)
+		if err != nil {
 			return nil, stack.Wrap(err)
+		}
+		// Money runs out mid-session too. A model that costs nothing keeps answering, and a
+		// fallback or a hedge is admitted again on its own model.
+		if admission.Spend != nil && s.recorder.Billable(s.config) {
+			return nil, stack.Wrap(admission.Spend)
 		}
 	}
 	// The screen is started before the model is asked so the two overlap from the first

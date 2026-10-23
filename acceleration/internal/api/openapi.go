@@ -104,6 +104,7 @@ var securitySchemes = map[string]*huma.SecurityScheme{
 var sharedResponses = map[string]string{
 	"400": "BadRequest",
 	"401": "Unauthorized",
+	"402": "PaymentRequired",
 	"403": "Forbidden",
 	"404": "NotFound",
 	"500": "InternalError",
@@ -112,9 +113,16 @@ var sharedResponses = map[string]string{
 var responseDescriptions = map[string]string{
 	"BadRequest":   "The request was malformed",
 	"Unauthorized": "The customer header is missing",
-	"Forbidden": "The caller is known and this operation is server-side only. It needs " +
-		"Stream-Auth-Type: server and a token carrying server: true, which means it cannot " +
-		"be reached from an end user's device.",
+	"PaymentRequired": "The organization may not spend money now, so work that costs money is " +
+		"refused: its credit is spent (insufficient_credits), its spend hard limit for the day " +
+		"or the month is reached whatever its credit (system_limit_reached), or a budget is " +
+		"spent (spend_limit_reached). The message says which, and for a limit when it resets. " +
+		"Work on a model that costs nothing is still served.",
+	"Forbidden": "The caller is known and may not do this. Usually the operation is " +
+		"server-side only: it needs Stream-Auth-Type: server and a token carrying server: true, " +
+		"which means it cannot be reached from an end user's device. With code " +
+		"account_suspended, the organization is suspended, and every request is refused until " +
+		"it is restored; the message says to contact support.",
 	"NotFound": "No such modality, provider or shortcut",
 	"InternalError": "Something went wrong that is not the caller's doing. The body says " +
 		"only that: quote the response's X-Request-Id to find out more.",
@@ -368,6 +376,13 @@ func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 	// Any operation can fail in a way that is not the caller's.
 	if _, ok := operation.Responses["500"]; !ok {
 		operation.Responses["500"] = &huma.Response{}
+	}
+	// Any operation a customer calls can be refused for money. A socket is refused in a frame,
+	// after the upgrade.
+	_, socket := operation.Responses["101"]
+	public := operation.Security != nil && len(operation.Security) == 0
+	if _, ok := operation.Responses["402"]; !ok && !socket && !public && !staffOperation(operation) {
+		operation.Responses["402"] = &huma.Response{}
 	}
 	for code, name := range sharedResponses {
 		// A failure the operation describes in words of its own keeps them.

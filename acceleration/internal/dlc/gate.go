@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/rueidis"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -46,7 +47,40 @@ type Gate struct {
 	store   *store.Store
 	redis   rueidis.Client
 	sandbox Sandbox
+	money   Money
 	logger  *slog.Logger
+}
+
+// Money is what says whether a customer's organization may spend money now: the admission
+// every routed request asks (policy.Enforcer). Its error refuses everything, as a suspension
+// does; its Spend refuses work that costs money, which every text, call and number does.
+type Money interface {
+	Admit(ctx context.Context, customerID string) (routing.Admission, error)
+}
+
+// Charging has the gate refuse what money refuses too. It is set once, before the gate is used.
+func (g *Gate) Charging(money Money) *Gate {
+	if g != nil {
+		g.money = money
+	}
+	return g
+}
+
+// Admit refuses a customer whose organization may not pay for telephony: suspended, out of
+// credit or past a spend limit. With no Money set it refuses nobody. Whatever a vendor charges
+// for is billed work, so a refusal of money refuses it, unlike a model that costs nothing.
+func (g *Gate) Admit(ctx context.Context, customerID string) error {
+	if g == nil || g.money == nil {
+		return nil
+	}
+	admission, err := g.money.Admit(ctx, customerID)
+	if err == nil {
+		err = admission.Spend
+	}
+	if err == nil {
+		return nil
+	}
+	return stack.Wrap(fmt.Errorf("%w: %w", ErrUnpaid, err))
 }
 
 // NewGate returns a Gate. redis may be nil, which leaves the daily limits uncounted.
@@ -67,8 +101,11 @@ type Usage struct {
 }
 
 // Allow reports whether an app may text or call to on channel, as an error wrapping
-// ErrRefused when it may not.
+// ErrRefused when it may not, or the refusal of money Admit answers.
 func (g *Gate) Allow(ctx context.Context, customerID, channel, to string) error {
+	if err := g.Admit(ctx, customerID); err != nil {
+		return err
+	}
 	if g == nil || g.store == nil {
 		return nil
 	}

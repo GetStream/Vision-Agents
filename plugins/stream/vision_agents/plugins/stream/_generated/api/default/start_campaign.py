@@ -43,6 +43,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = ErrorResponse.from_dict(response.json())
+
+        return response_402
+
     if response.status_code == 403:
         response_403 = ErrorResponse.from_dict(response.json())
 
@@ -83,7 +88,8 @@ def sync_detailed(
     """Start ringing
 
      Returns once the campaign is running rather than once it is over. A campaign that was paused carries
-    on from whoever is left.
+    on from whoever is left. An organization that may not pay for calls is refused here as a call would
+    be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -116,7 +122,8 @@ def sync(
     """Start ringing
 
      Returns once the campaign is running rather than once it is over. A campaign that was paused carries
-    on from whoever is left.
+    on from whoever is left. An organization that may not pay for calls is refused here as a call would
+    be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -144,7 +151,8 @@ async def asyncio_detailed(
     """Start ringing
 
      Returns once the campaign is running rather than once it is over. A campaign that was paused carries
-    on from whoever is left.
+    on from whoever is left. An organization that may not pay for calls is refused here as a call would
+    be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -175,7 +183,8 @@ async def asyncio(
     """Start ringing
 
      Returns once the campaign is running rather than once it is over. A campaign that was paused carries
-    on from whoever is left.
+    on from whoever is left. An organization that may not pay for calls is refused here as a call would
+    be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:

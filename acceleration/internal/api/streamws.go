@@ -1163,8 +1163,14 @@ func (s *socket) ping() error {
 	return s.connection.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait))
 }
 
-// failed reports a failure to the caller, which is all that can be done about one here.
+// failed reports a failure to the caller, which is all that can be done about one here. A
+// refusal about money also carries the code and type an HTTP request is refused with, so a
+// caller can send its user to top up.
 func (s *socket) failed(err error) {
+	if answer, ok := moneyError(err); ok {
+		s.frame(frame{"type": "error", "error": answer.Message, "code": answer.Code, "error_type": answer.Type})
+		return
+	}
 	s.frame(frame{"type": "error", "error": err.Error()})
 }
 
@@ -1174,8 +1180,8 @@ func (s *socket) failed(err error) {
 // audio the router never read is reset, which can throw away the frames the caller had not
 // read yet: the refusal it was waiting for. So the caller is told how the socket ended, 1000
 // or a failure code with the failure as the reason, and what it sends meanwhile is read and
-// dropped. A request the router refused (routing.ErrRequest) is the caller's to change, so
-// it ends with 1008, policy violation; any other failure, as often a provider's as a
+// dropped. A request the router refused (routing.ErrRequest), or refused for money, is the
+// caller's to change, so it ends with 1008, policy violation; any other failure, as often a provider's as a
 // caller's, with 1011, an unexpected condition (RFC 6455 section 7.4.1,
 // https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1). A caller that closed first has
 // had its close answered already.
@@ -1185,6 +1191,9 @@ func (s *socket) end(failure error) {
 		code, reason = websocket.CloseInternalServerErr, closeReason(failure.Error())
 		if errors.Is(failure, routing.ErrRequest) {
 			code = websocket.ClosePolicyViolation
+		}
+		if answer, refused := moneyError(failure); refused {
+			code, reason = websocket.ClosePolicyViolation, closeReason(answer.Message)
 		}
 	}
 	deadline := time.Now().Add(closeWait)
