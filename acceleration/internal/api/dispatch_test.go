@@ -331,6 +331,19 @@ func (s *DispatchSuite) TestADrainingRouterSendsItsWorkersToReconnectElsewhere()
 		"a worker told anything but going away stops waiting rather than reconnecting: %v", err)
 }
 
+func (s *DispatchSuite) TestADrainingRouterWaitsForTheWorkerToAnswerItsClose() {
+	other, router := s.otherRouter(dispatch.NewPool())
+	worker := s.serverClient.on(other).opens("/v1/dispatch")
+	s.Equal("ready", s.next(worker)["type"])
+
+	router.Drain()
+
+	closed, held := s.unanswered(worker)
+	s.Equal(websocket.CloseGoingAway, closed.Code)
+	s.Equal("router restarting", closed.Text)
+	s.heldUntilAnswered(held)
+}
+
 // worker opens the dispatch socket as a backend and waits until it is in the rotation, so a
 // test that assigns a call straight afterwards does not race the registration.
 func (s *DispatchSuite) worker() *websocket.Conn {

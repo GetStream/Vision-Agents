@@ -200,9 +200,7 @@ func (s *Server) writeRelayedEvents(
 			return
 
 		case <-socket.closed:
-			connection.SetWriteDeadline(time.Now().Add(writeWait))
-			connection.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "the session ended"))
+			closeBeforeReader(connection, websocket.CloseNormalClosure, "the session ended", gone)
 			return
 
 		case payload := <-socket.frames:
