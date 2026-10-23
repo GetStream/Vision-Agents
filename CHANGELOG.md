@@ -786,7 +786,7 @@ work, and logs `stopped serving metrics for the router taking over` once at INFO
 router started after it on the same `metrics_addr` gets the address within its next 5 s
 retry rather than when the drain ends. Prometheus then scrapes the router taking work
 instead of the draining one. Without a drain, metrics are served until the process exits,
-as before (AI-1826).
+as before (AI-1826, #1200).
 
 ### The router logs which turn a turn follows, each tool call and each utterance
 
