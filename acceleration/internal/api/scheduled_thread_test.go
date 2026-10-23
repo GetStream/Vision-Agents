@@ -107,10 +107,11 @@ func (s *RouterSuite) toldTheModel(needle string) {
 }
 
 // smsTurn has person text the line and the Router answer it: the message is written into
-// the person's thread channel and Stream Chat's message.new for it is delivered.
+// the person's thread channel, Stream Chat's message.new for it is delivered, and the
+// agent's reply is sent, so none reaches the suite's next test's Telnyx.
 func (s *telnyxLine) smsTurn(person, text string) string {
 	channel := ""
-	before, replies := 0, 0
+	before, replies, sent := 0, 0, len(s.telnyx.sent())
 	if s.hasThread(person) {
 		channel = s.threadChannel(person)
 		before, replies = len(s.chat.Stored(channel)), s.repliesIn(channel)
@@ -120,6 +121,7 @@ func (s *telnyxLine) smsTurn(person, text string) string {
 	stored := s.written(channel, before+1)
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
 	s.answeredAfter(channel, replies)
+	s.took(sent + 1)
 	return channel
 }
 
@@ -278,6 +280,8 @@ func (s *WhatsAppChannelSuite) TestAWhatsAppThreadSchedulesForThePersonWhoWrote(
 	task := s.customersTasks(1)[0]
 	s.Equal(s.chat.Stored(channel)[0]["user_id"], task.UserID)
 	s.Equal(channel, task.ChannelThread)
+	// The reply is sent before the test ends, so it reaches no later test's Meta.
+	s.took(1)
 }
 
 // Two senders in one Linq chat hold tasks of their own: the second lists none of the first's.
@@ -301,6 +305,8 @@ func (s *LinqChannelSuite) TestTwoSendersInOneChatHoldTasksOfTheirOwn() {
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
 
 	s.toldTheModel(`"tasks":[]`)
+	// Both replies are sent before the test ends, so they reach no later test's Linq.
+	s.took(2)
 }
 
 // A Slack thread is shared by the channel's people, so it is offered no scheduling tools.
@@ -310,6 +316,7 @@ func (s *SlackChannelSuite) TestASlackThreadIsNotOfferedTheTools() {
 	channel := s.messaged("U0000ALICE", "remind me to stretch in two hours", "1759740000.000100", "")
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.answeredAfter(channel, 0)
+	s.posted(1)
 
 	offered := s.everyToolOffered()
 	for _, name := range schedulingTools {
