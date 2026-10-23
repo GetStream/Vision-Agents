@@ -130,7 +130,7 @@ Both still place the call. Neither is an error.
 ### Transfers
 
 A transfer from a shared vendor uses the From number's line. The header is the call id of the
-call the agent is on. This holds for the default call type. A transfer into another call type
+call the agent is on. This holds for the `agent` call type. A transfer into another call type
 keeps a trunk and rule of its own, pinned to that call. See [transfer](transfer.md).
 
 ### Capacity

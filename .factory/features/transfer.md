@@ -73,7 +73,7 @@ For Twilio, Telnyx and `sip_trunk`, a transfer dials through the From number's l
 shared trunk. The header carries the id of the call the agent is already on, so nothing is
 made per transfer and no credentials are stored for it. See [shared trunks](shared-trunks.md).
 The trunk is still made per transfer for the other five vendors, and for a call of any type but
-`default`. `CreateTrunk` returns the SIP password once and it is not stored, so reusing the
+`agent`. `CreateTrunk` returns the SIP password once and it is not stored, so reusing the
 attached number's bridge there would mean a migration holding SIP credentials at rest, a worse
 trade than a second trunk.
 
