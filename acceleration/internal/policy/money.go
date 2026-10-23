@@ -177,6 +177,14 @@ type account struct {
 	resets     []store.UsageReset
 	limitsRead time.Time
 	limited    bool
+	// grants are its live grants, read with the limits, each with what the request rows naming
+	// it had paid for; grantsFrom is when that read was asked for, which counts every row the
+	// shards had written by then, and grantsFailed when one last did not land. grantHeld is
+	// what the holds count against each grant, by id.
+	grants       []grantState
+	grantsFrom   time.Time
+	grantsFailed time.Time
+	grantHeld    map[int64]int64
 	// subjects is every subject the work admitted here counted for, by its counter's key, with
 	// what it spent at the last read of it.
 	subjects map[string]*subjectSpend
@@ -473,8 +481,9 @@ func (m *money) oldest() time.Duration {
 // worked out.
 //
 // The order is suspension, then the balance, then the spend hard limit, then the customer's
-// limits. Nothing a customer writes lifts the spend hard limit.
-func (e *Enforcer) spendable(owner routing.Owner, decided decision) (refusal, spend error) {
+// limits. Nothing a customer writes lifts the spend hard limit. grants are those the work is
+// drawn from past the limits it has spent.
+func (e *Enforcer) spendable(owner routing.Owner, decided decision) (refusal, spend error, grants []int64) {
 	m := &e.money
 	appID := owner.CustomerID
 	organization := decided.organization
@@ -487,7 +496,7 @@ func (e *Enforcer) spendable(owner routing.Owner, decided decision) (refusal, sp
 		}
 	}
 	if m.off() {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if organization == "" {
 		// An app in no organization bills nobody, and has only its own limits to keep to.
@@ -499,16 +508,16 @@ func (e *Enforcer) spendable(owner routing.Owner, decided decision) (refusal, sp
 	if acct == nil {
 		m.mu.Unlock()
 		m.want(organization)
-		return nil, nil
+		return nil, nil, nil
 	}
 	acct.used = now
-	refusal, spend, reason, named := m.refusal(acct, organization, owner, decided, now)
+	refusal, spend, reason, named := m.refusal(acct, organization, owner, decided, now, &grants)
 	why, balance, held, read := acct.standing.StatusReason, acct.standing.BalanceMicros, acct.held, acct.read
 	m.mu.Unlock()
 
 	shadow := m.settings.Mode == config.LimitsShadow
 	if reason == "" {
-		return refusal, spend
+		return refusal, spend, grants
 	}
 	args := who(organization)
 	if billed(organization) {
@@ -518,7 +527,7 @@ func (e *Enforcer) spendable(owner routing.Owner, decided decision) (refusal, sp
 		if reason == reasonSuspended && why != "" && m.refusals.due(organization+"\x00suspended_reason", logEvery) {
 			e.logger.Info("refused a suspended organization", append(args, "status_reason", why)...)
 		}
-		return refusal, spend
+		return refusal, spend, grants
 	}
 	wouldRefuse.WithLabelValues(reason).Inc()
 	if m.refusals.due(organization+"\x00"+reason, logEvery) {
@@ -532,13 +541,14 @@ func (e *Enforcer) spendable(owner routing.Owner, decided decision) (refusal, sp
 		}
 		e.logger.Info("would refuse", append(args, named...)...)
 	}
-	return nil, nil
+	return nil, nil, grants
 }
 
 // refusal works spendable's answer out of the account, under m.mu, and names the reason, and
-// for a spent limit the subject and the level it was spent at. An account that is not billed is
-// an app's in no organization, which keeps to its limits alone.
-func (m *money) refusal(acct *account, key string, owner routing.Owner, decided decision, now time.Time) (refusal, spend error, reason string, named []any) {
+// for a spent limit the subject and the level it was spent at; grants is set to the grants the
+// work is drawn from past spent limits. An account that is not billed is an app's in no
+// organization, which keeps to its limits alone.
+func (m *money) refusal(acct *account, key string, owner routing.Owner, decided decision, now time.Time, grants *[]int64) (refusal, spend error, reason string, named []any) {
 	isBilled := billed(key)
 	billing := isBilled && m.settings.Usage != nil
 	clock := m.settings.Now()
@@ -575,21 +585,37 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 			}
 		}
 	}
-	if err, ref, limit := acct.overLimits(refs, clock); err != nil {
+	verdict := acct.overLimits(refs, clock)
+	*grants = verdict.grants
+	if verdict.refusal != nil {
 		reason := reasonLimit
-		if ref.Subject == usage.SubjectUser {
+		if verdict.ref.Subject == usage.SubjectUser {
 			reason = reasonUserLimit
 		}
-		return nil, err, reason, []any{"subject", ref.Subject, "level", limit.Level, "interval", limit.Interval, "limit_id", limit.ID}
+		return nil, verdict.refusal, reason, []any{"subject", verdict.ref.Subject, "level", verdict.limit.Level,
+			"interval", verdict.limit.Interval, "limit_id", verdict.limit.ID}
 	}
 	return nil, nil, "", nil
 }
 
-// overLimits is the refusal of the first of the subjects with no room under one of its limits,
-// in the order subjectsOf gives, each interval from the shortest; nil when every one has room.
-func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) (error, usage.SubjectRef, store.Limit) {
+// limitsVerdict is what the customer's limits say of one owner's work: the refusal of the first
+// subject with no room left under one of its limits and no grant to draw on, with that subject
+// and limit; and the grants it is drawn from past the limits it has spent.
+type limitsVerdict struct {
+	refusal error
+	ref     usage.SubjectRef
+	limit   store.Limit
+	grants  []int64
+}
+
+// overLimits is what the limits say of the subjects, checked in the order subjectsOf gives, each
+// interval from the shortest. A subject with no room under one of its limits is admitted on its
+// grant, when it has one with something left, which lifts every interval of that subject and
+// nothing else; with none, it is refused.
+func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdict {
+	var verdict limitsVerdict
 	if len(a.limits) == 0 {
-		return nil, usage.SubjectRef{}, store.Limit{}
+		return verdict
 	}
 	for _, ref := range refs {
 		key := ref.Key(usage.CounterPrefix)
@@ -605,10 +631,15 @@ func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) (error, usa
 			if room(limit, baseline, spend.spentIn(interval, start), held) > 0 {
 				continue
 			}
-			return limitRefusal(limit, ref, end), ref, limit
+			if grant, ok := grantFor(a.grants, a.grantHeld, ref, now); ok {
+				verdict.grants = append(verdict.grants, grant.grant.ID)
+				break
+			}
+			verdict.refusal, verdict.ref, verdict.limit = limitRefusal(limit, ref, end), ref, limit
+			return verdict
 		}
 	}
-	return nil, usage.SubjectRef{}, store.Limit{}
+	return verdict
 }
 
 // see notes, under m.mu, that work counted for the subjects, and asks the limits loop to read

@@ -11,6 +11,7 @@ from ..models.limit_subject import LimitSubject
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.limit_grant import LimitGrant
     from ..models.limit_window import LimitWindow
     from ..models.spend_hard_limit_usage import SpendHardLimitUsage
 
@@ -22,6 +23,8 @@ T = TypeVar("T", bound="SubjectUsage")
 class SubjectUsage:
     """
     Attributes:
+        grants (list[LimitGrant] | None): The subject's live grants, which its work is admitted on once one of its
+            limits is spent.
         subject (LimitSubject): Whose spend a limit counts: the organization, one app, a key, an end user of an app, a
             usage category across the organization or within one app, or a team across the organization or within one app. A
             team is the user's team, as its token names it.
@@ -36,6 +39,7 @@ class SubjectUsage:
         user_id (str | Unset):
     """
 
+    grants: list[LimitGrant] | None
     subject: LimitSubject
     windows: list[LimitWindow] | None
     api_key: str | Unset = UNSET
@@ -47,6 +51,16 @@ class SubjectUsage:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        grants: list[dict[str, Any]] | None
+        if isinstance(self.grants, list):
+            grants = []
+            for grants_type_0_item_data in self.grants:
+                grants_type_0_item = grants_type_0_item_data.to_dict()
+                grants.append(grants_type_0_item)
+
+        else:
+            grants = self.grants
+
         subject = self.subject.value
 
         windows: list[dict[str, Any]] | None
@@ -77,6 +91,7 @@ class SubjectUsage:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "grants": grants,
                 "subject": subject,
                 "windows": windows,
             }
@@ -98,10 +113,32 @@ class SubjectUsage:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.limit_grant import LimitGrant
         from ..models.limit_window import LimitWindow
         from ..models.spend_hard_limit_usage import SpendHardLimitUsage
 
         d = dict(src_dict)
+
+        def _parse_grants(data: object) -> list[LimitGrant] | None:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                grants_type_0 = []
+                _grants_type_0 = data
+                for grants_type_0_item_data in _grants_type_0:
+                    grants_type_0_item = LimitGrant.from_dict(grants_type_0_item_data)
+
+                    grants_type_0.append(grants_type_0_item)
+
+                return grants_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[LimitGrant] | None, data)
+
+        grants = _parse_grants(d.pop("grants"))
+
         subject = LimitSubject(d.pop("subject"))
 
         def _parse_windows(data: object) -> list[LimitWindow] | None:
@@ -144,6 +181,7 @@ class SubjectUsage:
         user_id = d.pop("user_id", UNSET)
 
         subject_usage = cls(
+            grants=grants,
             subject=subject,
             windows=windows,
             api_key=api_key,

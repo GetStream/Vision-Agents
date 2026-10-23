@@ -90,12 +90,12 @@ func TestEveryCategoryIsChecked(t *testing.T) {
 	}
 	owner := routing.Owner{CustomerID: "a1", Attribution: routing.Attribution{UsageCategories: []string{"a", "b"}}}
 
-	err, ref, limit := acct.overLimits(subjectsOf(owner, "o1"), now)
+	verdict := acct.overLimits(subjectsOf(owner, "o1"), now)
 
-	require.ErrorIs(t, err, ErrBudgetSpent)
-	require.Equal(t, b, ref)
-	require.EqualValues(t, 2, limit.ID)
-	require.EqualError(t, err, "the daily limit of $0.00 on category b is spent; it resets at 2026-10-24T00:00:00Z")
+	require.ErrorIs(t, verdict.refusal, ErrBudgetSpent)
+	require.Equal(t, b, verdict.ref)
+	require.EqualValues(t, 2, verdict.limit.ID)
+	require.EqualError(t, verdict.refusal, "the daily limit of $0.00 on category b is spent; it resets at 2026-10-24T00:00:00Z")
 }
 
 func TestASpendReadInAnEndedWindowCountsAsNothing(t *testing.T) {
@@ -109,9 +109,9 @@ func TestASpendReadInAnEndedWindowCountsAsNothing(t *testing.T) {
 		},
 	}
 
-	err, _, _ := acct.overLimits(subjectsOf(routing.Owner{CustomerID: "a1"}, "o1"), now)
+	verdict := acct.overLimits(subjectsOf(routing.Owner{CustomerID: "a1"}, "o1"), now)
 
-	require.NoError(t, err, "yesterday's spend is not today's")
+	require.NoError(t, verdict.refusal, "yesterday's spend is not today's")
 }
 
 func TestAUsersRefusalIsItsOwnKindAndSaysWhenItResets(t *testing.T) {

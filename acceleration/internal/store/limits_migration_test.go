@@ -19,8 +19,9 @@ import (
 // Around 20261112120000_limits.sql. beforeLimits is the newest migration before it on the
 // feature branch, where every development and staging database is.
 const (
-	beforeLimits int64 = 20261111121000
-	limitsTable  int64 = 20261112120000
+	beforeLimits      int64 = 20261111121000
+	limitsTable       int64 = 20261112120000
+	limitGrantsColumn int64 = 20261112121000
 )
 
 // LimitsMigrationSuite stops a database of its own at the migration before the limits table,
@@ -151,6 +152,25 @@ func (s *LimitsMigrationSuite) TestComingDownPutsTheBudgetsBack() {
 		`SELECT count(*) FROM information_schema.tables WHERE table_name IN ('limits', 'usage_resets', 'limit_grants')`).Scan(&tables))
 	s.Zero(tables)
 	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", limitsTable), "and it applies again")
+}
+
+func (s *LimitsMigrationSuite) TestARowFromBeforeTheGrantsColumnNamesNoGrant() {
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", limitsTable))
+	_, err := s.db.DB().ExecContext(s.ctx, `INSERT INTO requests (modality, customer_id, provider, model, started_at, success)
+		VALUES ('llm', 'acme', 'openai', 'm', now(), true)`)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.db.Migrate(s.ctx))
+
+	var grants string
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx, `SELECT limit_grants::text FROM requests WHERE customer_id = 'acme'`).Scan(&grants))
+	s.Equal("{}", grants)
+	var valid bool
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx, `SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+		WHERE c.relname = 'requests_limit_grants_idx'`).Scan(&valid))
+	s.True(valid)
+	s.Require().NoError(goose.DownToContext(s.ctx, s.db.DB().DB, ".", limitsTable))
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", limitGrantsColumn), "and it applies again")
 }
 
 // trimmed is a limit without what the database chose for it.

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
@@ -294,6 +295,41 @@ func (s *PolicySuite) TestACategoryLimitRefusesWorkCarryingIt() {
 	admitted, err := s.enforcer.Admit(s.ctx, routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{UsageCategories: []string{"team:sales"}}})
 	s.Require().NoError(err)
 	s.NoError(admitted.Spend)
+}
+
+func (s *PolicySuite) TestAGrantAdmitsPastASpentLimitUntilItIsUsed() {
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 1_000_000)
+	s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(s.store.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+
+	var admitted routing.Admission
+	s.eventually(func() bool {
+		var err error
+		admitted, err = s.enforcer.Admit(s.ctx, ownerOf(s.app))
+		return err == nil && admitted.Spend == nil
+	}, 5*time.Second, 10*time.Millisecond, "admitted on the grant once it is read")
+	s.Equal([]int64{grant.ID}, admitted.Grants)
+
+	usageID := uuid.Must(uuid.NewV7())
+	drawn := s.enforcer.Spent(routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{OrganizationID: s.org}}, usageID, 2_000_000)
+	s.Equal([]int64{grant.ID}, drawn, "the row names the grant its work is drawn from")
+	_, refused := s.enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.NoError(refused)
+	s.ErrorIs(s.admitted().Spend, ErrBudgetSpent, "the hold uses the grant up at once")
+
+	s.spendAs(store.Request{UsageID: usageID, CustomerID: s.app, CostMicros: 2_000_000, LimitGrants: drawn})
+	s.enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 2_000_000}})
+	s.never(func() bool { return s.admitted().Spend == nil }, 300*time.Millisecond, 10*time.Millisecond,
+		"once the row is written and summed, what it paid for is the grant's")
+}
+
+// admitted is the app's admission now, which refuses nothing outright.
+func (s *PolicySuite) admitted() routing.Admission {
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.Require().NoError(err)
+	return admitted
 }
 
 func (s *PolicySuite) TestAResetCountsFromItsBaseline() {

@@ -26,6 +26,7 @@ class LimitWindow:
             past this.
         interval (LimitInterval): The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days
             counted from Monday 2024-01-01, or the calendar month.
+        on_grant (bool): The limit is spent and the subject's work is admitted on one of its grants.
         spent_micros (int): What the subject spent in the window, as the usage records count it.
         window_end (datetime.datetime):
         window_start (datetime.datetime):
@@ -36,6 +37,7 @@ class LimitWindow:
 
     baseline_micros: int
     interval: LimitInterval
+    on_grant: bool
     spent_micros: int
     window_end: datetime.datetime
     window_start: datetime.datetime
@@ -47,6 +49,8 @@ class LimitWindow:
         baseline_micros = self.baseline_micros
 
         interval = self.interval.value
+
+        on_grant = self.on_grant
 
         spent_micros = self.spent_micros
 
@@ -66,6 +70,7 @@ class LimitWindow:
             {
                 "baseline_micros": baseline_micros,
                 "interval": interval,
+                "on_grant": on_grant,
                 "spent_micros": spent_micros,
                 "window_end": window_end,
                 "window_start": window_start,
@@ -87,6 +92,8 @@ class LimitWindow:
 
         interval = LimitInterval(d.pop("interval"))
 
+        on_grant = d.pop("on_grant")
+
         spent_micros = d.pop("spent_micros")
 
         window_end = datetime.datetime.fromisoformat(d.pop("window_end"))
@@ -105,6 +112,7 @@ class LimitWindow:
         limit_window = cls(
             baseline_micros=baseline_micros,
             interval=interval,
+            on_grant=on_grant,
             spent_micros=spent_micros,
             window_end=window_end,
             window_start=window_start,

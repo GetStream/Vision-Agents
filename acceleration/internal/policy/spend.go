@@ -125,6 +125,7 @@ func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) 
 	organizations := slices.Sorted(mapsKeys(due))
 	call, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
+	m.readGrants(call, db, organizations, due)
 	limits, err := db.LimitsFor(call, organizations)
 	if err != nil {
 		m.failedRead("could not read the customers' spend limits, answering with the last ones read", err, "organizations", len(organizations))
@@ -149,6 +150,43 @@ func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) 
 	for organization, key := range due {
 		if acct := m.accounts[key]; acct != nil {
 			m.keepLimits(acct, byOrganization[organization], resetsOf[organization], landed)
+		}
+	}
+}
+
+// readGrants reads the organizations' live grants and what each paid for, and keeps them under
+// the accounts due names by organization. A read that fails keeps the last ones, and is a
+// failed read for the holds against them.
+func (m *money) readGrants(ctx context.Context, db *store.Store, organizations []string, due map[string]string) {
+	from := time.Now()
+	grants, err := db.LiveGrants(ctx, organizations, m.settings.Now())
+	var used map[int64]int64
+	if err == nil {
+		ids := make([]int64, len(grants))
+		for i, grant := range grants {
+			ids[i] = grant.ID
+		}
+		used, err = db.GrantUsed(ctx, ids)
+	}
+	now := time.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err != nil {
+		for _, key := range due {
+			if acct := m.accounts[key]; acct != nil {
+				acct.grantsFailed = now
+			}
+		}
+		m.failedRead("could not read the customers' grants, answering with the last ones read", err, "organizations", len(organizations))
+		return
+	}
+	byOrganization := map[string][]store.LimitGrant{}
+	for _, grant := range grants {
+		byOrganization[grant.OrganizationID] = append(byOrganization[grant.OrganizationID], grant)
+	}
+	for organization, key := range due {
+		if acct := m.accounts[key]; acct != nil {
+			acct.keepGrants(byOrganization[organization], used, from)
 		}
 	}
 }

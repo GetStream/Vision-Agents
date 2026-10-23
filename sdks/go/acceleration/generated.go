@@ -1308,6 +1308,30 @@ func (e KnowledgeUrlState) Valid() bool {
 	}
 }
 
+// Defines values for LimitGrantState.
+const (
+	LimitGrantStateExpired LimitGrantState = "expired"
+	LimitGrantStateLive    LimitGrantState = "live"
+	LimitGrantStateRevoked LimitGrantState = "revoked"
+	LimitGrantStateUsed    LimitGrantState = "used"
+)
+
+// Valid indicates whether the value is a known member of the LimitGrantState enum.
+func (e LimitGrantState) Valid() bool {
+	switch e {
+	case LimitGrantStateExpired:
+		return true
+	case LimitGrantStateLive:
+		return true
+	case LimitGrantStateRevoked:
+		return true
+	case LimitGrantStateUsed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LimitInterval.
 const (
 	LimitIntervalBiweekly LimitInterval = "biweekly"
@@ -3252,7 +3276,7 @@ type AuditEntry struct {
 	// ResourceName What it was called when it changed, for a resource that has a name.
 	ResourceName *string `json:"resource_name,omitempty"`
 
-	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization's id.
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
 	ResourceType AuditResourceType `json:"resource_type"`
 
 	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
@@ -3270,7 +3294,7 @@ type AuditFilter struct {
 	// ResourceId One resource's own history.
 	ResourceId *string `json:"resource_id,omitempty"`
 
-	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization's id.
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
 	ResourceType *AuditResourceType `json:"resource_type,omitempty"`
 
 	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
@@ -3298,7 +3322,7 @@ type AuditQuery struct {
 	Limit *int64 `json:"limit,omitempty"`
 }
 
-// AuditResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization's id.
+// AuditResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
 type AuditResourceType string
 
 // AuditSource Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
@@ -5581,6 +5605,79 @@ type LimitChange struct {
 	Note        *string `json:"note,omitempty"`
 }
 
+// LimitGrant A one-time amount one subject may spend past its own limits once one of them is spent, until it is used up, expires or is revoked. It is not credit: the organization's balance still pays, and credit, the operator's spend hard limit and the limits of every subject that contains this one still refuse. Work admitted on it draws its whole cost from it, so the last request can take it a little past its amount.
+type LimitGrant struct {
+	AmountMicros int64     `json:"amount_micros"`
+	ApiKey       *string   `json:"api_key,omitempty"`
+	AppId        *string   `json:"app_id,omitempty"`
+	Category     *string   `json:"category,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+
+	// CreatedBy Who made it, as the audit log names them.
+	CreatedBy string     `json:"created_by"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Id        int64      `json:"id"`
+	Reason    string     `json:"reason"`
+
+	// RemainingMicros amount_micros less used_micros, never below 0.
+	RemainingMicros int64      `json:"remaining_micros"`
+	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
+	RevokedBy       *string    `json:"revoked_by,omitempty"`
+
+	// State Where a grant stands: live (it is drawn once a limit of its subject is spent), used (it paid for its amount), expired (past expires_at) or revoked.
+	State LimitGrantState `json:"state"`
+
+	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+	Subject LimitSubject `json:"subject"`
+	Team    *string      `json:"team,omitempty"`
+
+	// UsedMicros What the work admitted on it has cost: the whole billable cost of every row drawn from it, as the usage records have them.
+	UsedMicros int64   `json:"used_micros"`
+	UserId     *string `json:"user_id,omitempty"`
+}
+
+// LimitGrantInput A one-time grant to one subject, which names the subject's own ids, never a default's.
+type LimitGrantInput struct {
+	AmountMicros int64 `json:"amount_micros"`
+
+	// ApiKey The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// AppId The app. Required at app, api_key and user level, and for an app's category or team.
+	AppId *string `json:"app_id,omitempty"`
+
+	// Category The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+	Category *string `json:"category,omitempty"`
+
+	// ExpiresAt When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Reason    string     `json:"reason"`
+
+	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+	Subject LimitSubject `json:"subject"`
+
+	// Team The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+	Team *string `json:"team,omitempty"`
+
+	// UserId The end user, as the app's tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _ and -.
+	UserId *string `json:"user_id,omitempty"`
+}
+
+// LimitGrantPage defines model for LimitGrantPage.
+type LimitGrantPage struct {
+	HasMore    bool          `json:"has_more"`
+	Items      *[]LimitGrant `json:"items"`
+	NextCursor *string       `json:"next_cursor,omitempty"`
+}
+
+// LimitGrantRevocation Why a grant ends now.
+type LimitGrantRevocation struct {
+	Reason string `json:"reason"`
+}
+
+// LimitGrantState Where a grant stands: live (it is drawn once a limit of its subject is spent), used (it paid for its amount), expired (past expires_at) or revoked.
+type LimitGrantState string
+
 // LimitInForce defines model for LimitInForce.
 type LimitInForce struct {
 	EffectiveLimitMicros int64 `json:"effective_limit_micros"`
@@ -5672,6 +5769,9 @@ type LimitWindow struct {
 	Interval LimitInterval `json:"interval"`
 	Limit    *LimitInForce `json:"limit,omitempty"`
 
+	// OnGrant The limit is spent and the subject's work is admitted on one of its grants.
+	OnGrant bool `json:"on_grant"`
+
 	// RoomMicros What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit.
 	RoomMicros *int64 `json:"room_micros,omitempty"`
 
@@ -5730,6 +5830,34 @@ type LlmOptionsReasoningEffort string
 
 // LlmOptionsVerbosity defines model for LlmOptions.Verbosity.
 type LlmOptionsVerbosity string
+
+// ManageLimitGrantInput A one-time grant staff make for an organization, for support. It is the customer's like any other.
+type ManageLimitGrantInput struct {
+	AmountMicros int64 `json:"amount_micros"`
+
+	// ApiKey The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// AppId The app. Required at app, api_key and user level, and for an app's category or team.
+	AppId *string `json:"app_id,omitempty"`
+
+	// Category The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+	Category *string `json:"category,omitempty"`
+
+	// ExpiresAt When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	OrganizationId string     `json:"organization_id"`
+	Reason         string     `json:"reason"`
+
+	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+	Subject LimitSubject `json:"subject"`
+
+	// Team The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+	Team *string `json:"team,omitempty"`
+
+	// UserId The end user, as the app's tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _ and -.
+	UserId *string `json:"user_id,omitempty"`
+}
 
 // ManageLimitInput A spend limit staff create for an organization, for support. It is the customer's like any other.
 type ManageLimitInput struct {
@@ -8008,6 +8136,9 @@ type SubjectUsage struct {
 	AppId    *string `json:"app_id,omitempty"`
 	Category *string `json:"category,omitempty"`
 
+	// Grants The subject's live grants, which its work is admitted on once one of its limits is spent.
+	Grants *[]LimitGrant `json:"grants"`
+
 	// SpendHardLimit The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
 	SpendHardLimit *SpendHardLimitUsage `json:"spend_hard_limit,omitempty"`
 
@@ -9371,6 +9502,25 @@ type ListLimitsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// ListLimitGrantsParams defines parameters for ListLimitGrants.
+type ListLimitGrantsParams struct {
+	Subject  *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
+	AppId    *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
+	ApiKey   *string       `form:"api_key,omitempty" json:"api_key,omitempty"`
+	UserId   *string       `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Team     *string       `form:"team,omitempty" json:"team,omitempty"`
+	Category *string       `form:"category,omitempty" json:"category,omitempty"`
+
+	// State Only grants in this state. Omitted is every one.
+	State *LimitGrantState `form:"state,omitempty" json:"state,omitempty"`
+
+	// Limit Up to 200. Omitted is 50.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page, sent with the same filters.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // GetLimitUsageParams defines parameters for GetLimitUsage.
 type GetLimitUsageParams struct {
 	Subject  LimitSubject `form:"subject" json:"subject"`
@@ -9712,6 +9862,12 @@ type SearchJSONRequestBody = SearchRequest
 
 // CreateLimitJSONRequestBody defines body for CreateLimit for application/json ContentType.
 type CreateLimitJSONRequestBody = LimitInput
+
+// CreateLimitGrantJSONRequestBody defines body for CreateLimitGrant for application/json ContentType.
+type CreateLimitGrantJSONRequestBody = LimitGrantInput
+
+// RevokeLimitGrantJSONRequestBody defines body for RevokeLimitGrant for application/json ContentType.
+type RevokeLimitGrantJSONRequestBody = LimitGrantRevocation
 
 // ResetLimitUsageJSONRequestBody defines body for ResetLimitUsage for application/json ContentType.
 type ResetLimitUsageJSONRequestBody = LimitResetInput
@@ -12649,6 +12805,59 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
 	CreateLimit(ctx context.Context, body CreateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListLimitGrants List the organization's grants
+	//
+	// Newest first, revoked, expired and used ones included, each with what it paid for and what it has left.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Corresponds with GET /v1/spend/limits/grants (the `ListLimitGrants` operationId).
+	ListLimitGrants(ctx context.Context, params *ListLimitGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateLimitGrantWithBody Grant a subject a one-time amount past its limits
+	//
+	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/spend/limits/grants (the `CreateLimitGrant` operationId).
+	CreateLimitGrantWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateLimitGrant Grant a subject a one-time amount past its limits
+	//
+	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/spend/limits/grants (the `CreateLimitGrant` operationId).
+	CreateLimitGrant(ctx context.Context, body CreateLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeLimitGrantWithBody Revoke a grant
+	//
+	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
+	RevokeLimitGrantWithBody(ctx context.Context, grantId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeLimitGrant Revoke a grant
+	//
+	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
+	RevokeLimitGrant(ctx context.Context, grantId int64, body RevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetLimitUsage Read what a subject spent against its limits
 	//
@@ -18266,6 +18475,109 @@ func (c *Client) CreateLimitWithBody(ctx context.Context, contentType string, bo
 // Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
 func (c *Client) CreateLimit(ctx context.Context, body CreateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateLimitRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListLimitGrants List the organization's grants
+//
+// Newest first, revoked, expired and used ones included, each with what it paid for and what it has left.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Corresponds with GET /v1/spend/limits/grants (the `ListLimitGrants` operationId).
+func (c *Client) ListLimitGrants(ctx context.Context, params *ListLimitGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListLimitGrantsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateLimitGrantWithBody Grant a subject a one-time amount past its limits
+//
+// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/spend/limits/grants (the `CreateLimitGrant` operationId).
+func (c *Client) CreateLimitGrantWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateLimitGrantRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateLimitGrant Grant a subject a one-time amount past its limits
+//
+// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/spend/limits/grants (the `CreateLimitGrant` operationId).
+func (c *Client) CreateLimitGrant(ctx context.Context, body CreateLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateLimitGrantRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeLimitGrantWithBody Revoke a grant
+//
+// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
+func (c *Client) RevokeLimitGrantWithBody(ctx context.Context, grantId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeLimitGrantRequestWithBody(c.Server, grantId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeLimitGrant Revoke a grant
+//
+// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
+func (c *Client) RevokeLimitGrant(ctx context.Context, grantId int64, body RevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeLimitGrantRequest(c.Server, grantId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -28290,6 +28602,243 @@ func NewCreateLimitRequestWithBody(server string, contentType string, body io.Re
 	return req, nil
 }
 
+// NewListLimitGrantsRequest constructs an http.Request for the ListLimitGrants method
+func NewListLimitGrantsRequest(server string, params *ListLimitGrantsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits/grants")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Subject != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "subject", *params.Subject, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AppId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "app_id", *params.AppId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ApiKey != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UserId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Team != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "team", *params.Team, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Category != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "category", *params.Category, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateLimitGrantRequest calls the generic CreateLimitGrant builder with application/json body
+func NewCreateLimitGrantRequest(server string, body CreateLimitGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateLimitGrantRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateLimitGrantRequestWithBody constructs an http.Request for the CreateLimitGrant method, with any body, and a specified content type
+func NewCreateLimitGrantRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits/grants")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeLimitGrantRequest calls the generic RevokeLimitGrant builder with application/json body
+func NewRevokeLimitGrantRequest(server string, grantId int64, body RevokeLimitGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRevokeLimitGrantRequestWithBody(server, grantId, "application/json", bodyReader)
+}
+
+// NewRevokeLimitGrantRequestWithBody constructs an http.Request for the RevokeLimitGrant method, with any body, and a specified content type
+func NewRevokeLimitGrantRequestWithBody(server string, grantId int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits/grants/%s/revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetLimitUsageRequest constructs an http.Request for the GetLimitUsage method
 func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.Request, error) {
 	var err error
@@ -32396,6 +32945,61 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
 	CreateLimitWithResponse(ctx context.Context, body CreateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateLimitResponse, error)
+
+	// ListLimitGrantsWithResponse List the organization's grants
+	//
+	// Newest first, revoked, expired and used ones included, each with what it paid for and what it has left.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/spend/limits/grants (the `ListLimitGrants` operationId).
+	ListLimitGrantsWithResponse(ctx context.Context, params *ListLimitGrantsParams, reqEditors ...RequestEditorFn) (*ListLimitGrantsResponse, error)
+
+	// CreateLimitGrantWithBodyWithResponse Grant a subject a one-time amount past its limits
+	//
+	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits/grants (the `CreateLimitGrant` operationId).
+	CreateLimitGrantWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateLimitGrantResponse, error)
+
+	// CreateLimitGrantWithResponse Grant a subject a one-time amount past its limits
+	//
+	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits/grants (the `CreateLimitGrant` operationId).
+	CreateLimitGrantWithResponse(ctx context.Context, body CreateLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateLimitGrantResponse, error)
+
+	// RevokeLimitGrantWithBodyWithResponse Revoke a grant
+	//
+	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
+	RevokeLimitGrantWithBodyWithResponse(ctx context.Context, grantId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeLimitGrantResponse, error)
+
+	// RevokeLimitGrantWithResponse Revoke a grant
+	//
+	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
+	RevokeLimitGrantWithResponse(ctx context.Context, grantId int64, body RevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeLimitGrantResponse, error)
 
 	// GetLimitUsageWithResponse Read what a subject spent against its limits
 	//
@@ -49308,6 +49912,262 @@ func (r CreateLimitResponse) ContentType() string {
 	return ""
 }
 
+type ListLimitGrantsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LimitGrantPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListLimitGrantsResponse) GetJSON200() *LimitGrantPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListLimitGrantsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListLimitGrantsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListLimitGrantsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListLimitGrantsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListLimitGrantsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListLimitGrantsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListLimitGrantsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListLimitGrantsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListLimitGrantsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListLimitGrantsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateLimitGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *LimitGrant
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateLimitGrantResponse) GetJSON201() *LimitGrant {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateLimitGrantResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateLimitGrantResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateLimitGrantResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateLimitGrantResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateLimitGrantResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateLimitGrantResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateLimitGrantResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateLimitGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateLimitGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateLimitGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateLimitGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeLimitGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LimitGrant
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RevokeLimitGrantResponse) GetJSON200() *LimitGrant {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RevokeLimitGrantResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RevokeLimitGrantResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RevokeLimitGrantResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RevokeLimitGrantResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RevokeLimitGrantResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RevokeLimitGrantResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeLimitGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeLimitGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeLimitGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeLimitGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetLimitUsageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -55479,6 +56339,91 @@ func (c *ClientWithResponses) CreateLimitWithResponse(ctx context.Context, body 
 		return nil, err
 	}
 	return ParseCreateLimitResponse(rsp)
+}
+
+// ListLimitGrantsWithResponse List the organization's grants
+//
+// Newest first, revoked, expired and used ones included, each with what it paid for and what it has left.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/spend/limits/grants (the `ListLimitGrants` operationId).
+func (c *ClientWithResponses) ListLimitGrantsWithResponse(ctx context.Context, params *ListLimitGrantsParams, reqEditors ...RequestEditorFn) (*ListLimitGrantsResponse, error) {
+	rsp, err := c.ListLimitGrants(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListLimitGrantsResponse(rsp)
+}
+
+// CreateLimitGrantWithBodyWithResponse Grant a subject a one-time amount past its limits
+//
+// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits/grants (the `CreateLimitGrant` operationId).
+func (c *ClientWithResponses) CreateLimitGrantWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateLimitGrantResponse, error) {
+	rsp, err := c.CreateLimitGrantWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateLimitGrantResponse(rsp)
+}
+
+// CreateLimitGrantWithResponse Grant a subject a one-time amount past its limits
+//
+// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits/grants (the `CreateLimitGrant` operationId).
+func (c *ClientWithResponses) CreateLimitGrantWithResponse(ctx context.Context, body CreateLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateLimitGrantResponse, error) {
+	rsp, err := c.CreateLimitGrant(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateLimitGrantResponse(rsp)
+}
+
+// RevokeLimitGrantWithBodyWithResponse Revoke a grant
+//
+// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
+func (c *ClientWithResponses) RevokeLimitGrantWithBodyWithResponse(ctx context.Context, grantId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeLimitGrantResponse, error) {
+	rsp, err := c.RevokeLimitGrantWithBody(ctx, grantId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeLimitGrantResponse(rsp)
+}
+
+// RevokeLimitGrantWithResponse Revoke a grant
+//
+// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
+func (c *ClientWithResponses) RevokeLimitGrantWithResponse(ctx context.Context, grantId int64, body RevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeLimitGrantResponse, error) {
+	rsp, err := c.RevokeLimitGrant(ctx, grantId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeLimitGrantResponse(rsp)
 }
 
 // GetLimitUsageWithResponse Read what a subject spent against its limits
@@ -69606,6 +70551,217 @@ func ParseCreateLimitResponse(rsp *http.Response) (*CreateLimitResponse, error) 
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListLimitGrantsResponse parses an HTTP response from a ListLimitGrantsWithResponse call
+func ParseListLimitGrantsResponse(rsp *http.Response) (*ListLimitGrantsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListLimitGrantsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LimitGrantPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateLimitGrantResponse parses an HTTP response from a CreateLimitGrantWithResponse call
+func ParseCreateLimitGrantResponse(rsp *http.Response) (*CreateLimitGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateLimitGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest LimitGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeLimitGrantResponse parses an HTTP response from a RevokeLimitGrantWithResponse call
+func ParseRevokeLimitGrantResponse(rsp *http.Response) (*RevokeLimitGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeLimitGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LimitGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

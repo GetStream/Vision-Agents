@@ -968,7 +968,7 @@ components:
           type: integer
       type: object
     AuditResourceType:
-      description: 'What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment''s own, changed through the management API, and is never listed for an app. end_user is one of the app''s end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization''s spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization''s id.'
+      description: 'What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment''s own, changed through the management API, and is never listed for an app. end_user is one of the app''s end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization''s spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization''s id.'
       enum:
         - agent_config
         - skill
@@ -4518,6 +4518,147 @@ components:
           maxLength: 500
           type: string
       type: object
+    LimitGrant:
+      description: 'A one-time amount one subject may spend past its own limits once one of them is spent, until it is used up, expires or is revoked. It is not credit: the organization''s balance still pays, and credit, the operator''s spend hard limit and the limits of every subject that contains this one still refuse. Work admitted on it draws its whole cost from it, so the last request can take it a little past its amount.'
+      properties:
+        amount_micros:
+          format: int64
+          type: integer
+        api_key:
+          type: string
+        app_id:
+          type: string
+        category:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          description: Who made it, as the audit log names them.
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        reason:
+          type: string
+        remaining_micros:
+          description: amount_micros less used_micros, never below 0.
+          format: int64
+          type: integer
+        revoked_at:
+          format: date-time
+          type: string
+        revoked_by:
+          type: string
+        state:
+          $ref: '#/components/schemas/LimitGrantState'
+        subject:
+          $ref: '#/components/schemas/LimitSubject'
+        team:
+          type: string
+        used_micros:
+          description: 'What the work admitted on it has cost: the whole billable cost of every row drawn from it, as the usage records have them.'
+          format: int64
+          type: integer
+        user_id:
+          type: string
+      required:
+        - id
+        - subject
+        - amount_micros
+        - used_micros
+        - remaining_micros
+        - state
+        - reason
+        - created_by
+        - created_at
+      type: object
+    LimitGrantInput:
+      additionalProperties: false
+      description: A one-time grant to one subject, which names the subject's own ids, never a default's.
+      properties:
+        amount_micros:
+          format: int64
+          maximum: 1000000000000000
+          minimum: 1
+          type: integer
+        api_key:
+          description: 'The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.'
+          maxLength: 128
+          type: string
+        app_id:
+          description: The app. Required at app, api_key and user level, and for an app's category or team.
+          maxLength: 255
+          type: string
+        category:
+          description: 'The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.'
+          maxLength: 64
+          type: string
+        expires_at:
+          description: When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+          format: date-time
+          type: string
+        reason:
+          maxLength: 500
+          minLength: 1
+          type: string
+        subject:
+          $ref: '#/components/schemas/LimitSubject'
+        team:
+          description: 'The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.'
+          maxLength: 59
+          type: string
+        user_id:
+          description: 'The end user, as the app''s tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _ and -.'
+          maxLength: 255
+          type: string
+      required:
+        - amount_micros
+        - reason
+        - subject
+      type: object
+    LimitGrantPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/LimitGrant'
+          nullable: true
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    LimitGrantRevocation:
+      additionalProperties: false
+      description: Why a grant ends now.
+      properties:
+        reason:
+          maxLength: 500
+          minLength: 1
+          type: string
+      required:
+        - reason
+      type: object
+    LimitGrantState:
+      description: 'Where a grant stands: live (it is drawn once a limit of its subject is spent), used (it paid for its amount), expired (past expires_at) or revoked.'
+      enum:
+        - live
+        - used
+        - expired
+        - revoked
+      type: string
+      x-enum-varnames:
+        - LimitGrantStateLive
+        - LimitGrantStateUsed
+        - LimitGrantStateExpired
+        - LimitGrantStateRevoked
     LimitInForce:
       properties:
         effective_limit_micros:
@@ -4696,6 +4837,9 @@ components:
         limit:
           $ref: '#/components/schemas/LimitInForce'
           description: The limit in force, absent when the subject has none in this interval.
+        on_grant:
+          description: The limit is spent and the subject's work is admitted on one of its grants.
+          type: boolean
         room_micros:
           description: 'What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit.'
           format: int64
@@ -4716,6 +4860,7 @@ components:
         - window_end
         - spent_micros
         - baseline_micros
+        - on_grant
       type: object
     LinkChannelRequest:
       properties:
@@ -4782,6 +4927,55 @@ components:
             - medium
             - high
           type: string
+      type: object
+    ManageLimitGrantInput:
+      additionalProperties: false
+      description: A one-time grant staff make for an organization, for support. It is the customer's like any other.
+      properties:
+        amount_micros:
+          format: int64
+          maximum: 1000000000000000
+          minimum: 1
+          type: integer
+        api_key:
+          description: 'The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.'
+          maxLength: 128
+          type: string
+        app_id:
+          description: The app. Required at app, api_key and user level, and for an app's category or team.
+          maxLength: 255
+          type: string
+        category:
+          description: 'The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.'
+          maxLength: 64
+          type: string
+        expires_at:
+          description: When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+          format: date-time
+          type: string
+        organization_id:
+          maxLength: 255
+          minLength: 1
+          type: string
+        reason:
+          maxLength: 500
+          minLength: 1
+          type: string
+        subject:
+          $ref: '#/components/schemas/LimitSubject'
+        team:
+          description: 'The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.'
+          maxLength: 59
+          type: string
+        user_id:
+          description: 'The end user, as the app''s tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _ and -.'
+          maxLength: 255
+          type: string
+      required:
+        - organization_id
+        - amount_micros
+        - reason
+        - subject
       type: object
     ManageLimitInput:
       additionalProperties: false
@@ -8261,6 +8455,12 @@ components:
           type: string
         category:
           type: string
+        grants:
+          description: The subject's live grants, which its work is admitted on once one of its limits is spent.
+          items:
+            $ref: '#/components/schemas/LimitGrant'
+          nullable: true
+          type: array
         spend_hard_limit:
           $ref: '#/components/schemas/SpendHardLimitUsage'
         subject:
@@ -8278,6 +8478,7 @@ components:
       required:
         - subject
         - windows
+        - grants
       type: object
     SuspendTelephonyRequest:
       properties:
@@ -17116,6 +17317,180 @@ paths:
       summary: Change a spend limit's amount or note
       tags:
         - Staff
+  /v1/manage/spend/limits/grants:
+    get:
+      description: |-
+        Newest first, revoked, expired and used ones included, each with what it paid for and what it has left.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A grant staff make is the customer's like any other.
+      operationId: manageListLimitGrants
+      parameters:
+        - explode: false
+          in: query
+          name: subject
+          schema:
+            $ref: '#/components/schemas/LimitSubject'
+        - explode: false
+          in: query
+          name: app_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: api_key
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: user_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: team
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: category
+          schema:
+            type: string
+        - description: Only grants in this state. Omitted is every one.
+          explode: false
+          in: query
+          name: state
+          schema:
+            $ref: '#/components/schemas/LimitGrantState'
+            description: Only grants in this state. Omitted is every one.
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page, sent with the same filters.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page, sent with the same filters.
+            type: string
+        - explode: false
+          in: query
+          name: organization_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitGrantPage'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: List the organization's grants
+      tags:
+        - Staff
+    post:
+      description: |-
+        Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A grant staff make is the customer's like any other.
+      operationId: manageCreateLimitGrant
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManageLimitGrantInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitGrant'
+          description: The grant was made
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Grant a subject a one-time amount past its limits
+      tags:
+        - Staff
+  /v1/manage/spend/limits/grants/{grant_id}/revoke:
+    post:
+      description: |-
+        The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A grant staff make is the customer's like any other.
+      operationId: manageRevokeLimitGrant
+      parameters:
+        - in: path
+          name: grant_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitGrantRevocation'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitGrant'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Revoke a grant
+      tags:
+        - Staff
   /v1/manage/spend/limits/usage:
     get:
       description: |-
@@ -19206,6 +19581,166 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Change a spend limit's amount or note
+  /v1/spend/limits/grants:
+    get:
+      description: |-
+        Newest first, revoked, expired and used ones included, each with what it paid for and what it has left.
+
+        Server-side only: one server-side credential of any app grants for any subject of its organization.
+      operationId: listLimitGrants
+      parameters:
+        - explode: false
+          in: query
+          name: subject
+          schema:
+            $ref: '#/components/schemas/LimitSubject'
+        - explode: false
+          in: query
+          name: app_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: api_key
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: user_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: team
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: category
+          schema:
+            type: string
+        - description: Only grants in this state. Omitted is every one.
+          explode: false
+          in: query
+          name: state
+          schema:
+            $ref: '#/components/schemas/LimitGrantState'
+            description: Only grants in this state. Omitted is every one.
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page, sent with the same filters.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page, sent with the same filters.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitGrantPage'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List the organization's grants
+    post:
+      description: |-
+        Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+
+        Server-side only: one server-side credential of any app grants for any subject of its organization.
+      operationId: createLimitGrant
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitGrantInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitGrant'
+          description: The grant was made
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Grant a subject a one-time amount past its limits
+  /v1/spend/limits/grants/{grant_id}/revoke:
+    post:
+      description: |-
+        The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+
+        Server-side only: one server-side credential of any app grants for any subject of its organization.
+      operationId: revokeLimitGrant
+      parameters:
+        - in: path
+          name: grant_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitGrantRevocation'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitGrant'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Revoke a grant
   /v1/spend/limits/usage:
     get:
       description: |-

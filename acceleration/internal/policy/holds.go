@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -38,6 +39,8 @@ const (
 	shippedTimeout = 15 * time.Second
 )
 
+var _ routing.Spender = (*Enforcer)(nil)
+
 // foldedInProcess is how many folded ids every account of every Enforcer remembers.
 var foldedInProcess atomic.Int64
 
@@ -72,9 +75,13 @@ type hold struct {
 	made time.Time
 	at   time.Time
 	// balance and limits say whether it still counts against the balance and the spend hard
-	// limit, and against the customer's limits.
+	// limit, and against the customer's limits; granted whether it still counts against the
+	// grants it was drawn from, which is until a read of what they paid for, asked after the
+	// shard wrote the row, lands.
 	balance bool
 	limits  bool
+	granted bool
+	grants  []int64
 	// ackedAt is when this process knew the usage service had the row, and mirrored whether
 	// that ack said its counters took it; writtenAt is when it knew the shard had it; zero
 	// until then.
@@ -90,9 +97,11 @@ type hold struct {
 type fold struct {
 	app      string
 	subjects string
+	grants   string
 	hour     int64
 	balance  bool
 	limits   bool
+	granted  bool
 	acked    bool
 	mirrored bool
 	written  bool
@@ -101,9 +110,34 @@ type fold struct {
 // state is the fold the hold would be carried in.
 func (h *hold) state() fold {
 	return fold{
-		app: h.app, subjects: h.subjectsKey, hour: h.at.UTC().Truncate(time.Hour).Unix(), balance: h.balance, limits: h.limits,
+		app: h.app, subjects: h.subjectsKey, grants: grantsKey(h.grants), hour: h.at.UTC().Truncate(time.Hour).Unix(),
+		balance: h.balance, limits: h.limits, granted: h.granted,
 		acked: !h.ackedAt.IsZero(), mirrored: h.mirrored, written: !h.writtenAt.IsZero(),
 	}
+}
+
+// grantsKey is a hold's grants as a fold tells them apart.
+func grantsKey(grants []int64) string {
+	words := make([]string, len(grants))
+	for i, id := range grants {
+		words[i] = strconv.FormatInt(id, 10)
+	}
+	return strings.Join(words, ",")
+}
+
+// grantsOfKey is grantsKey read back.
+func grantsOfKey(key string) []int64 {
+	if key == "" {
+		return nil
+	}
+	words := strings.Split(key, ",")
+	grants := make([]int64, 0, len(words))
+	for _, word := range words {
+		if id, err := strconv.ParseInt(word, 10, 64); err == nil {
+			grants = append(grants, id)
+		}
+	}
+	return grants
 }
 
 // subjectsSeparator joins a hold's subject keys. No key holds a newline.
@@ -131,6 +165,9 @@ func (a *account) count(h *hold, sign int64) {
 	}
 	if h.limits {
 		a.countLimits(h, sign)
+	}
+	if h.granted {
+		a.countGrants(h, sign)
 	}
 }
 
@@ -178,9 +215,13 @@ func (a *account) heldAgainst(ref usage.SubjectRef, interval usage.Interval, now
 // every subject it counts for, under the row's usage id, until the ledgers count the row.
 // Holding it again replaces the amount, restarts its timer and leaves what the ledgers were
 // known to have as it was; holding one carried in a fold again changes nothing. It never waits.
-func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) {
+//
+// It answers the grants the work is drawn from, past limits of its subjects that are spent, as
+// its admission was: the row names them, and they hold it until a read of what they paid for
+// counts the row. Held again, it answers the grants it was first held on.
+func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) []int64 {
 	if e == nil || owner.CustomerID == "" || usageID == uuid.Nil || micros <= 0 || e.money.off() {
-		return
+		return nil
 	}
 	organization := owner.OrganizationID
 	if decided, ok := e.decided(owner.CustomerID); ok && decided.organization != "" {
@@ -196,8 +237,11 @@ func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) {
 	var held *hold
 	if previous, ok := m.holdOf[usageID]; ok {
 		if other := m.accounts[previous]; other != nil {
-			if _, carried := other.folded[usageID]; carried {
-				return
+			if carried, ok := other.folded[usageID]; ok {
+				if into := other.holds[carried.into]; into != nil {
+					return slices.Clone(into.grants)
+				}
+				return nil
 			}
 			if held = other.holds[usageID]; held != nil {
 				other.count(held, -1)
@@ -214,10 +258,14 @@ func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) {
 	if acct.holds == nil {
 		acct.holds = map[uuid.UUID]*hold{}
 	}
+	refs := subjectsOf(owner, limitsOrganization(organization))
 	if held == nil {
 		held = &hold{at: at, balance: m.billing(organization), limits: true}
+		if acct.limited && len(acct.grants) > 0 {
+			held.grants = acct.overLimits(refs, at).grants
+			held.granted = len(held.grants) > 0
+		}
 	}
-	refs := subjectsOf(owner, limitsOrganization(organization))
 	// Its subjects are read with the next spend read once the account has a limit on one,
 	// which is what lets go of it.
 	m.see(acct, refs, now)
@@ -230,6 +278,7 @@ func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) {
 	acct.holds[usageID] = held
 	acct.count(held, 1)
 	m.holdOf[usageID] = organization
+	return slices.Clone(held.grants)
 }
 
 // Acked notes the rows the usage service has: a hold kept for one of them stops counting
@@ -362,7 +411,16 @@ func (m *money) release(key string, acct *account, now time.Time) {
 				acct.letGoLimits(held)
 			}
 		}
-		if held.balance || held.limits {
+		if held.granted {
+			switch {
+			case !held.writtenAt.IsZero() && held.writtenAt.Before(acct.grantsFrom):
+				acct.letGoGrants(held)
+			case !acct.grantsFrom.Before(later(held.made, acct.grantsFailed).Add(ttl)):
+				unwritten += held.micros
+				acct.letGoGrants(held)
+			}
+		}
+		if held.balance || held.limits || held.granted {
 			continue
 		}
 		delete(acct.holds, id)
@@ -459,7 +517,8 @@ func (a *account) foldInto(state fold) (*hold, uuid.UUID) {
 	group := state
 	into := &hold{
 		app: state.app, subjectsKey: state.subjects, at: time.Unix(state.hour, 0).UTC(),
-		balance: state.balance, limits: state.limits, mirrored: state.mirrored, group: &group,
+		balance: state.balance, limits: state.limits, granted: state.granted, grants: grantsOfKey(state.grants),
+		mirrored: state.mirrored, group: &group,
 	}
 	if state.subjects != "" {
 		into.subjects = strings.Split(state.subjects, subjectsSeparator)

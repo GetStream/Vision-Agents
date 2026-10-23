@@ -454,6 +454,18 @@ subject, level and interval is a 409 `limit_exists` naming the first. Writes are
 the same operations for support under `/v1/manage/spend/limits`, with the manage key and an
 `organization_id`; what they write is the customer's.
 
+A grant (`POST /v1/spend/limits/grants`, listed with `GET` and ended with
+`POST /v1/spend/limits/grants/{grant_id}/revoke`) is a one-time amount one subject may spend
+past its own limits: once any of them is spent, its work is admitted on the grant, the one that
+expires first, until the grant is used up, expires (at most a year away; the next midnight UTC
+gives "more for today") or is revoked. It lifts that subject's limits and nothing else: a
+parent's limit, credit and the operator's spend hard limit still refuse. Work admitted on a
+grant draws its whole cost from it, and its row names the grant (`requests.limit_grants`), so
+what a grant paid for is summed from the rows, in every shard. A subject must have a limit to
+be granted (404 `no_limit`), and an organization has at most 20 live grants (409
+`too_many_grants`). `getLimitUsage` lists the subject's live grants and says, per window, when
+its work runs on one.
+
 The organization and app budgets that policies held moved into this table with the migration
 `20261112120000_limits`: each became the organization's or the app's own limit on its interval,
 an app's under the organization it was last seen in, or under itself when it was seen in none.

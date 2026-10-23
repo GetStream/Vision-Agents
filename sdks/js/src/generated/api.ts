@@ -3647,6 +3647,56 @@ export type paths = {
         readonly patch: operations["updateLimit"];
         readonly trace?: never;
     };
+    readonly "/v1/spend/limits/grants": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the organization's grants
+         * @description Newest first, revoked, expired and used ones included, each with what it paid for and what it has left.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly get: operations["listLimitGrants"];
+        readonly put?: never;
+        /**
+         * Grant a subject a one-time amount past its limits
+         * @description Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly post: operations["createLimitGrant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/grants/{grant_id}/revoke": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Revoke a grant
+         * @description The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly post: operations["revokeLimitGrant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/spend/limits/usage": {
         readonly parameters: {
             readonly query?: never;
@@ -4406,7 +4456,7 @@ export type components = {
             readonly limit?: number;
         };
         /**
-         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization's id.
+         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
          * @enum {string}
          */
         readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy" | "price_list" | "end_user" | "limit";
@@ -6459,6 +6509,76 @@ export type components = {
             readonly limit_micros?: number;
             readonly note?: string;
         };
+        /** @description A one-time amount one subject may spend past its own limits once one of them is spent, until it is used up, expires or is revoked. It is not credit: the organization's balance still pays, and credit, the operator's spend hard limit and the limits of every subject that contains this one still refuse. Work admitted on it draws its whole cost from it, so the last request can take it a little past its amount. */
+        readonly LimitGrant: {
+            /** Format: int64 */
+            readonly amount_micros: number;
+            readonly api_key?: string;
+            readonly app_id?: string;
+            readonly category?: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description Who made it, as the audit log names them. */
+            readonly created_by: string;
+            /** Format: date-time */
+            readonly expires_at?: string;
+            /** Format: int64 */
+            readonly id: number;
+            readonly reason: string;
+            /**
+             * Format: int64
+             * @description amount_micros less used_micros, never below 0.
+             */
+            readonly remaining_micros: number;
+            /** Format: date-time */
+            readonly revoked_at?: string;
+            readonly revoked_by?: string;
+            readonly state: components["schemas"]["LimitGrantState"];
+            readonly subject: components["schemas"]["LimitSubject"];
+            readonly team?: string;
+            /**
+             * Format: int64
+             * @description What the work admitted on it has cost: the whole billable cost of every row drawn from it, as the usage records have them.
+             */
+            readonly used_micros: number;
+            readonly user_id?: string;
+        };
+        /** @description A one-time grant to one subject, which names the subject's own ids, never a default's. */
+        readonly LimitGrantInput: {
+            /** Format: int64 */
+            readonly amount_micros: number;
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /**
+             * Format: date-time
+             * @description When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+             */
+            readonly expires_at?: string;
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _ and -. */
+            readonly user_id?: string;
+        };
+        readonly LimitGrantPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["LimitGrant"][] | null;
+            readonly next_cursor?: string;
+        };
+        /** @description Why a grant ends now. */
+        readonly LimitGrantRevocation: {
+            readonly reason: string;
+        };
+        /**
+         * @description Where a grant stands: live (it is drawn once a limit of its subject is spent), used (it paid for its amount), expired (past expires_at) or revoked.
+         * @enum {string}
+         */
+        readonly LimitGrantState: "live" | "used" | "expired" | "revoked";
         readonly LimitInForce: {
             /** Format: int64 */
             readonly effective_limit_micros: number;
@@ -6537,6 +6657,8 @@ export type components = {
             readonly interval: components["schemas"]["LimitInterval"];
             /** @description The limit in force, absent when the subject has none in this interval. */
             readonly limit?: components["schemas"]["LimitInForce"];
+            /** @description The limit is spent and the subject's work is admitted on one of its grants. */
+            readonly on_grant: boolean;
             /**
              * Format: int64
              * @description What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit.
@@ -6592,6 +6714,29 @@ export type components = {
             readonly tool_choice?: string;
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
+        };
+        /** @description A one-time grant staff make for an organization, for support. It is the customer's like any other. */
+        readonly ManageLimitGrantInput: {
+            /** Format: int64 */
+            readonly amount_micros: number;
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /**
+             * Format: date-time
+             * @description When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+             */
+            readonly expires_at?: string;
+            readonly organization_id: string;
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _ and -. */
+            readonly user_id?: string;
         };
         /** @description A spend limit staff create for an organization, for support. It is the customer's like any other. */
         readonly ManageLimitInput: {
@@ -8624,6 +8769,8 @@ export type components = {
             readonly api_key?: string;
             readonly app_id?: string;
             readonly category?: string;
+            /** @description The subject's live grants, which its work is admitted on once one of its limits is spent. */
+            readonly grants: readonly components["schemas"]["LimitGrant"][] | null;
             readonly spend_hard_limit?: components["schemas"]["SpendHardLimitUsage"];
             readonly subject: components["schemas"]["LimitSubject"];
             readonly team?: string;
@@ -17131,6 +17278,116 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["Limit"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listLimitGrants: {
+        readonly parameters: {
+            readonly query?: {
+                readonly api_key?: string;
+                readonly app_id?: string;
+                readonly category?: string;
+                /** @description The next_cursor of the previous page, sent with the same filters. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+                /** @description Only grants in this state. Omitted is every one. */
+                readonly state?: components["schemas"]["LimitGrantState"];
+                readonly subject?: components["schemas"]["LimitSubject"];
+                readonly team?: string;
+                readonly user_id?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrantPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createLimitGrant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitGrantInput"];
+            };
+        };
+        readonly responses: {
+            /** @description The grant was made */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrant"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly revokeLimitGrant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitGrantRevocation"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrant"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
