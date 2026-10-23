@@ -106,8 +106,11 @@ var (
 	shared   = map[string]*Pool{}
 )
 
+// quotaExceededStatus is the status label of a refusal that came as a websocket frame.
+const quotaExceededStatus = "quota_exceeded"
+
 // FromEnv is the shared pool for explicit when it names any key, or else for the keys Env
-// finds under envVars. The first of envVars names the pool's provider in its metrics.
+// finds under envVars. The first of envVars names the pool's key variable in its metrics.
 func FromEnv(explicit string, envVars ...string) *Pool {
 	keys := Parse(explicit)
 	if len(keys) == 0 {
@@ -150,8 +153,8 @@ type ring struct {
 	next int
 	// until is when each key's cooldown ends, zero for a key that is not resting.
 	until []time.Time
-	// provider is the variable the keys are read from, "" until a FromEnv names one.
-	provider string
+	// keyVar is the variable the keys are read from, "" until a FromEnv names one.
+	keyVar string
 }
 
 type pin struct {
@@ -223,26 +226,27 @@ func (r *ring) take() string {
 	return r.keys[soonest]
 }
 
-// name gives the ring its provider unless it has one. A pool is shared by key set, so one
-// built from keys passed in (the Gemini LLM is given GOOGLE_API_KEY's keys) takes its name
-// from the provider that reads the same keys from their variable, whichever is built first.
-func (r *ring) name(provider string) {
+// name gives the ring its key variable unless it has one. A pool is shared by key set, so
+// one built from keys passed in (the Gemini LLM is given GOOGLE_API_KEY's keys) takes its
+// name from the provider that reads the same keys from their variable, whichever is built
+// first.
+func (r *ring) name(keyVar string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.provider == "" {
-		r.provider = provider
+	if r.keyVar == "" {
+		r.keyVar = keyVar
 	}
 }
 
-// countRefused counts a refused attempt under the pool's provider, never its key.
-func (r *ring) countRefused(response *http.Response) {
+// countRefused counts a refused attempt under the pool's key variable, never its key.
+func (r *ring) countRefused(status string) {
 	r.mu.Lock()
-	provider := r.provider
+	keyVar := r.keyVar
 	r.mu.Unlock()
-	if provider == "" {
-		provider = unnamedProvider
+	if keyVar == "" {
+		keyVar = unnamedKeyVar
 	}
-	refusedAttempts.WithLabelValues(provider, strconv.Itoa(response.StatusCode)).Inc()
+	refusedAttempts.WithLabelValues(keyVar, status).Inc()
 }
 
 func (r *ring) resting(key string) bool {
@@ -269,6 +273,14 @@ func (p *Pool) Cooldown(key string, d time.Duration) {
 	if until.After(p.until[index]) {
 		p.until[index] = until
 	}
+}
+
+// QuotaExceeded rests key for as long as a pool can, after a websocket frame said its quota
+// is spent, and counts it as refused under the status "quota_exceeded": the frame has no
+// HTTP status.
+func (p *Pool) QuotaExceeded(key string) {
+	p.countRefused(quotaExceededStatus)
+	p.Cooldown(key, MaxCooldown)
 }
 
 // CooldownFromResponse rests key for as long as the response's Retry-After asks, or for
@@ -342,7 +354,7 @@ func (p *Pool) sendTimes(ctx context.Context, attempts int, send func(key string
 		if !refused {
 			return response, nil
 		}
-		p.countRefused(response)
+		p.countRefused(strconv.Itoa(response.StatusCode))
 		p.Cooldown(key, rest)
 
 		if attempt >= attempts-1 || ctx.Err() != nil {
@@ -486,7 +498,7 @@ func (p *Pool) Dial(
 		if !refused {
 			return conn, response, key, err
 		}
-		p.countRefused(response)
+		p.countRefused(strconv.Itoa(response.StatusCode))
 		p.Cooldown(key, rest)
 		if attempt >= attempts-1 || ctx.Err() != nil {
 			return conn, response, key, err

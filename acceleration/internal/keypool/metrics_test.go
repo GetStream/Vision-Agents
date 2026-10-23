@@ -2,6 +2,8 @@ package keypool
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,8 +18,8 @@ import (
 
 // RefusedAttemptsSuite proves each attempt a provider refuses on a pooled key is counted
 // once, under the pool's provider, and that counting leaves the turn of the keys as it was.
-// Every test has keys and a variable of its own: pools and the counter are shared by the
-// whole process.
+// Every test has keys and variables of its own, new on every run: pools and the counter are
+// shared by the whole process, so a rerun (-count) must not meet what the last one left.
 type RefusedAttemptsSuite struct {
 	suite.Suite
 
@@ -91,10 +93,21 @@ func (s *RefusedAttemptsSuite) keysSeen() []string {
 	return append([]string(nil), s.seen...)
 }
 
-// pool is the pool FromEnv builds for keys read from the variable provider.
-func (s *RefusedAttemptsSuite) pool(provider, keys string) *Pool {
-	s.T().Setenv(provider, keys)
-	return FromEnv("", provider)
+// pooled is a pool FromEnv built, with the variables and keys it was built from.
+type pooled struct {
+	*Pool
+	keyVars []string
+	keys    []string
+}
+
+// pool is the pool FromEnv builds for two keys read from a variable named for the test.
+// Their names are new on every run.
+func (s *RefusedAttemptsSuite) pool(name string) pooled {
+	id := rand.Text()
+	keyVar := fmt.Sprintf("RA_%s_%s_API_KEY", strings.ToUpper(name), id)
+	keys := []string{fmt.Sprintf("ra-%s-%s-1", name, id), fmt.Sprintf("ra-%s-%s-2", name, id)}
+	s.T().Setenv(keyVar, strings.Join(keys, ","))
+	return pooled{Pool: FromEnv("", keyVar), keyVars: []string{keyVar}, keys: keys}
 }
 
 // post sends a request through pool and returns the status it ended with.
@@ -119,7 +132,7 @@ func (s *RefusedAttemptsSuite) dial(pool *Pool) (*http.Response, string, error) 
 	return response, key, err
 }
 
-// refusals is every series of the counter, as provider → status → count.
+// refusals is every series of the counter, as key_var → status → count.
 func refusals(t *testing.T) map[string]map[string]float64 {
 	registry := prometheus.NewPedanticRegistry()
 	registry.MustRegister(refusedAttempts)
@@ -134,134 +147,151 @@ func refusals(t *testing.T) map[string]map[string]float64 {
 			for _, pair := range metric.GetLabel() {
 				labels[pair.GetName()] = pair.GetValue()
 			}
-			if counted[labels["provider"]] == nil {
-				counted[labels["provider"]] = map[string]float64{}
+			if counted[labels["key_var"]] == nil {
+				counted[labels["key_var"]] = map[string]float64{}
 			}
-			counted[labels["provider"]][labels["status"]] = metric.GetCounter().GetValue()
+			counted[labels["key_var"]][labels["status"]] = metric.GetCounter().GetValue()
 		}
 	}
 	return counted
 }
 
-func (s *RefusedAttemptsSuite) counted(provider string) map[string]float64 {
-	return refusals(s.T())[provider]
+func (s *RefusedAttemptsSuite) counted(keyVar string) map[string]float64 {
+	return refusals(s.T())[keyVar]
 }
 
 // The keys seen and the next key in these tests are what the base before the counter
 // answered to the same requests.
 
 func (s *RefusedAttemptsSuite) TestARefusalAnotherKeyGetsPastIsCountedOnceAndTheCallSucceeds() {
-	pool := s.pool("RA_PASSED_API_KEY", "ra-passed-1,ra-passed-2")
-	s.answer(http.StatusTooManyRequests, "ra-passed-1")
+	p := s.pool("passed")
+	s.answer(http.StatusTooManyRequests, p.keys[0])
 
-	s.Equal(http.StatusOK, s.post(pool))
+	s.Equal(http.StatusOK, s.post(p.Pool))
 
-	s.Equal([]string{"ra-passed-1", "ra-passed-2"}, s.keysSeen())
-	s.Equal("ra-passed-2", pool.Next())
-	s.Equal(map[string]float64{"429": 1}, s.counted("RA_PASSED_API_KEY"))
+	s.Equal(p.keys, s.keysSeen())
+	s.Equal(p.keys[1], p.Next())
+	s.Equal(map[string]float64{"429": 1}, s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestEveryRefusedAttemptIsCountedWhenNoKeyIsLeft() {
-	pool := s.pool("RA_EXHAUSTED_API_KEY", "ra-exhausted-1,ra-exhausted-2")
-	s.answer(http.StatusTooManyRequests, "ra-exhausted-1", "ra-exhausted-2")
+	p := s.pool("exhausted")
+	s.answer(http.StatusTooManyRequests, p.keys...)
 
-	s.Equal(http.StatusTooManyRequests, s.post(pool))
+	s.Equal(http.StatusTooManyRequests, s.post(p.Pool))
 
-	s.Equal([]string{"ra-exhausted-1", "ra-exhausted-2"}, s.keysSeen())
-	s.Equal("ra-exhausted-1", pool.Next())
-	s.Equal(map[string]float64{"429": 2}, s.counted("RA_EXHAUSTED_API_KEY"))
+	s.Equal(p.keys, s.keysSeen())
+	s.Equal(p.keys[0], p.Next())
+	s.Equal(map[string]float64{"429": 2}, s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestAnAnsweredRequestCountsNoRefusal() {
-	pool := s.pool("RA_ANSWERED_API_KEY", "ra-answered-1,ra-answered-2")
+	p := s.pool("answered")
 
-	s.Equal(http.StatusOK, s.post(pool))
+	s.Equal(http.StatusOK, s.post(p.Pool))
 
-	s.Equal([]string{"ra-answered-1"}, s.keysSeen())
-	s.Equal("ra-answered-2", pool.Next())
-	s.Empty(s.counted("RA_ANSWERED_API_KEY"))
+	s.Equal(p.keys[:1], s.keysSeen())
+	s.Equal(p.keys[1], p.Next())
+	s.Empty(s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestAServerErrorCountsNoRefusal() {
-	pool := s.pool("RA_FAILING_API_KEY", "ra-failing-1,ra-failing-2")
-	s.answer(http.StatusInternalServerError, "ra-failing-1")
+	p := s.pool("failing")
+	s.answer(http.StatusInternalServerError, p.keys[0])
 
-	s.Equal(http.StatusInternalServerError, s.post(pool))
+	s.Equal(http.StatusInternalServerError, s.post(p.Pool))
 
-	s.Equal([]string{"ra-failing-1"}, s.keysSeen())
-	s.Equal("ra-failing-2", pool.Next())
-	s.Empty(s.counted("RA_FAILING_API_KEY"))
+	s.Equal(p.keys[:1], s.keysSeen())
+	s.Equal(p.keys[1], p.Next())
+	s.Empty(s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestASpentQuotaIsCountedUnderItsStatus() {
-	pool := s.pool("RA_SPENT_API_KEY", "ra-spent-1,ra-spent-2")
-	s.answer(http.StatusPaymentRequired, "ra-spent-1")
+	p := s.pool("spent")
+	s.answer(http.StatusPaymentRequired, p.keys[0])
 
-	s.Equal(http.StatusOK, s.post(pool))
+	s.Equal(http.StatusOK, s.post(p.Pool))
 
-	s.Equal([]string{"ra-spent-1", "ra-spent-2"}, s.keysSeen())
-	s.Equal("ra-spent-2", pool.Next())
-	s.Equal(map[string]float64{"402": 1}, s.counted("RA_SPENT_API_KEY"))
+	s.Equal(p.keys, s.keysSeen())
+	s.Equal(p.keys[1], p.Next())
+	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestAWrongKeyCountsNoRefusal() {
-	pool := s.pool("RA_WRONG_API_KEY", "ra-wrong-1,ra-wrong-2")
-	s.answer(http.StatusUnauthorized, "ra-wrong-1")
+	p := s.pool("wrong")
+	s.answer(http.StatusUnauthorized, p.keys[0])
 
-	s.Equal(http.StatusUnauthorized, s.post(pool))
+	s.Equal(http.StatusUnauthorized, s.post(p.Pool))
 
-	s.Equal([]string{"ra-wrong-1"}, s.keysSeen())
-	s.Equal("ra-wrong-2", pool.Next())
-	s.Empty(s.counted("RA_WRONG_API_KEY"))
+	s.Equal(p.keys[:1], s.keysSeen())
+	s.Equal(p.keys[1], p.Next())
+	s.Empty(s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestARefusedHandshakeIsCountedOnceAndDialledOnTheNextKey() {
-	pool := s.pool("RA_DIALLED_API_KEY", "ra-dialled-1,ra-dialled-2")
-	s.answer(http.StatusTooManyRequests, "ra-dialled-1")
+	p := s.pool("dialled")
+	s.answer(http.StatusTooManyRequests, p.keys[0])
 
-	response, key, err := s.dial(pool)
+	response, key, err := s.dial(p.Pool)
 
 	s.Require().NoError(err)
 	s.Equal(http.StatusSwitchingProtocols, response.StatusCode)
-	s.Equal("ra-dialled-2", key)
-	s.Equal([]string{"ra-dialled-1", "ra-dialled-2"}, s.keysSeen())
-	s.Equal("ra-dialled-2", pool.Next())
-	s.Equal(map[string]float64{"429": 1}, s.counted("RA_DIALLED_API_KEY"))
+	s.Equal(p.keys[1], key)
+	s.Equal(p.keys, s.keysSeen())
+	s.Equal(p.keys[1], p.Next())
+	s.Equal(map[string]float64{"429": 1}, s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestEveryRefusedHandshakeIsCountedWhenNoKeyIsLeft() {
-	pool := s.pool("RA_UNDIALLED_API_KEY", "ra-undialled-1,ra-undialled-2")
-	s.answer(http.StatusTooManyRequests, "ra-undialled-1", "ra-undialled-2")
+	p := s.pool("undialled")
+	s.answer(http.StatusTooManyRequests, p.keys...)
 
-	response, key, err := s.dial(pool)
+	response, key, err := s.dial(p.Pool)
 
 	s.Require().Error(err)
 	s.Equal(http.StatusTooManyRequests, response.StatusCode)
-	s.Equal("ra-undialled-2", key)
-	s.Equal([]string{"ra-undialled-1", "ra-undialled-2"}, s.keysSeen())
-	s.Equal("ra-undialled-1", pool.Next())
-	s.Equal(map[string]float64{"429": 2}, s.counted("RA_UNDIALLED_API_KEY"))
+	s.Equal(p.keys[1], key)
+	s.Equal(p.keys, s.keysSeen())
+	s.Equal(p.keys[0], p.Next())
+	s.Equal(map[string]float64{"429": 2}, s.counted(p.keyVars[0]))
+}
+
+func (s *RefusedAttemptsSuite) TestAHandshakeThatFailsWithoutARefusalCountsNothing() {
+	p := s.pool("broken")
+	s.answer(http.StatusInternalServerError, p.keys[0])
+
+	response, key, err := s.dial(p.Pool)
+
+	s.Require().Error(err)
+	s.Equal(http.StatusInternalServerError, response.StatusCode)
+	s.Equal(p.keys[0], key)
+	s.Equal(p.keys[:1], s.keysSeen())
+	s.Equal(p.keys[1], p.Next())
+	s.Empty(s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestARefusalIsCountedUnderItsVariableAndNeverItsKey() {
-	pool := s.pool("RA_LABELLED_API_KEY", "ra-secret-1,ra-secret-2")
-	s.answer(http.StatusTooManyRequests, "ra-secret-1", "ra-secret-2")
+	p := s.pool("labelled")
+	s.answer(http.StatusTooManyRequests, p.keys...)
 
-	s.post(pool)
+	s.post(p.Pool)
 
 	counted := refusals(s.T())
-	s.Equal(map[string]float64{"429": 2}, counted["RA_LABELLED_API_KEY"])
-	for provider, statuses := range counted {
-		s.NotContains(provider, "ra-secret")
-		for status := range statuses {
-			s.NotContains(status, "ra-secret")
+	s.Equal(map[string]float64{"429": 2}, counted[p.keyVars[0]])
+	for keyVar, statuses := range counted {
+		for _, key := range p.keys {
+			s.NotContains(keyVar, key)
+			for status := range statuses {
+				s.NotContains(status, key)
+			}
 		}
 	}
 }
 
 func (s *RefusedAttemptsSuite) TestAPoolNoVariableNamesIsCountedAsUnknown() {
-	pool := New("ra-unnamed-1,ra-unnamed-2")
-	s.answer(http.StatusTooManyRequests, "ra-unnamed-1")
+	id := rand.Text()
+	pool := New(fmt.Sprintf("ra-unnamed-%s-1,ra-unnamed-%s-2", id, id))
+	s.answer(http.StatusTooManyRequests, fmt.Sprintf("ra-unnamed-%s-1", id))
 	before := s.counted("unknown")["429"]
 
 	s.Equal(http.StatusOK, s.post(pool))
@@ -270,22 +300,51 @@ func (s *RefusedAttemptsSuite) TestAPoolNoVariableNamesIsCountedAsUnknown() {
 }
 
 func (s *RefusedAttemptsSuite) TestAPoolOfKeysPassedInTakesTheVariableTheSameKeysAreReadFrom() {
-	passed := FromEnv("ra-adopted-1,ra-adopted-2")
-	s.pool("RA_ADOPTED_API_KEY", "ra-adopted-1,ra-adopted-2")
-	s.answer(http.StatusTooManyRequests, "ra-adopted-1")
+	id := rand.Text()
+	keys := []string{fmt.Sprintf("ra-adopted-%s-1", id), fmt.Sprintf("ra-adopted-%s-2", id)}
+	keyVar := fmt.Sprintf("RA_ADOPTED_%s_API_KEY", id)
+	passed := FromEnv(strings.Join(keys, ","))
+	s.T().Setenv(keyVar, strings.Join(keys, ","))
+	FromEnv("", keyVar)
+	s.answer(http.StatusTooManyRequests, keys[0])
 
 	s.Equal(http.StatusOK, s.post(passed))
 
-	s.Equal(map[string]float64{"429": 1}, s.counted("RA_ADOPTED_API_KEY"))
+	s.Equal(map[string]float64{"429": 1}, s.counted(keyVar))
 }
 
 func (s *RefusedAttemptsSuite) TestAPoolKeepsTheFirstVariableItIsNamedFor() {
-	first := s.pool("RA_FIRST_API_KEY", "ra-first-1,ra-first-2")
-	s.pool("RA_SECOND_API_KEY", "ra-first-1,ra-first-2")
-	s.answer(http.StatusTooManyRequests, "ra-first-1")
+	first := s.pool("first")
+	second := fmt.Sprintf("RA_SECOND_%s_API_KEY", rand.Text())
+	s.T().Setenv(second, strings.Join(first.keys, ","))
+	FromEnv("", second)
+	s.answer(http.StatusTooManyRequests, first.keys[0])
 
-	s.Equal(http.StatusOK, s.post(first))
+	s.Equal(http.StatusOK, s.post(first.Pool))
 
-	s.Equal(map[string]float64{"429": 1}, s.counted("RA_FIRST_API_KEY"))
-	s.Empty(s.counted("RA_SECOND_API_KEY"))
+	s.Equal(map[string]float64{"429": 1}, s.counted(first.keyVars[0]))
+	s.Empty(s.counted(second))
+}
+
+func (s *RefusedAttemptsSuite) TestThePoolIsNamedForTheFirstOfSeveralVariables() {
+	id := rand.Text()
+	first, second := fmt.Sprintf("RA_PRIMARY_%s_API_KEY", id), fmt.Sprintf("RA_FALLBACK_%s_API_KEY", id)
+	keys := []string{fmt.Sprintf("ra-several-%s-1", id), fmt.Sprintf("ra-several-%s-2", id)}
+	s.T().Setenv(second, strings.Join(keys, ","))
+	pool := FromEnv("", first, second)
+	s.answer(http.StatusTooManyRequests, keys[0])
+
+	s.Equal(http.StatusOK, s.post(pool))
+
+	s.Equal(map[string]float64{"429": 1}, s.counted(first))
+	s.Empty(s.counted(second))
+}
+
+func (s *RefusedAttemptsSuite) TestAQuotaFrameIsCountedAndRestsTheKey() {
+	p := s.pool("frame")
+
+	p.QuotaExceeded(p.keys[0])
+
+	s.Equal(map[string]float64{"quota_exceeded": 1}, s.counted(p.keyVars[0]))
+	s.Equal([]string{p.keys[1], p.keys[1]}, []string{p.Next(), p.Next()})
 }

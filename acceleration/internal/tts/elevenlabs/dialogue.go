@@ -486,7 +486,7 @@ func (d *Dialogue) readLoop(conn *websocket.Conn, key string) {
 			continue
 		}
 		if message.Error == quotaExceeded {
-			d.keys.Cooldown(key, keypool.MaxCooldown)
+			d.keys.QuotaExceeded(key)
 		}
 		if d.current(conn) {
 			d.handleMessage(message)
