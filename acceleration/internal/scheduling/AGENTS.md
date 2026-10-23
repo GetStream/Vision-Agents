@@ -173,8 +173,13 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
 - **A task made in a thread is delivered back to that thread (AI-1843).** `deliverOnThread`
   opens the thread's conversation as `answerThread` does (the session the backend keeps on the
   channel, else one on the task's config, closed after the turn), under the thread's turn lease,
-  and runs the follow-up; the bridge texts the reply (`Bridge.Reply`). The run is
-  `delivered_to` `sms` or `whatsapp` once the reply is finished. Before the turn,
+  and runs the follow-up. The delivery holds the reply back from `Bridge.Reply` (`Bridge.Hold`)
+  and sends it through the same path (`Bridge.Send`), so the run is `delivered_to` `sms` or
+  `whatsapp` only once the line took it: a refused send is `delivery_failed`, and its retry
+  sends the reply the thread holds without a second turn; a person who opted out by then is
+  `channel_unreachable`, final. The task stores `deliver_to` `sms` or `whatsapp`
+  (`Spec.ThreadDelivery`), which PATCH refuses to change. Quiet hours hold it as any task.
+  Before the turn,
   `Bridge.Reachable` refuses: a removed connection (`connection_removed`, final), an opted-out
   person (`channel_unreachable`, final), the sandbox gate (`channel_unreachable`), WhatsApp
   past 24 h since the person last wrote with no `after_window` template in the manifest
@@ -185,6 +190,13 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestTelnyxChannelSuite/TestATaskWaitsForTheThreadsTurnAndLetsGoOfIt`,
   `TestTelnyxChannelSuite/TestATaskIsCarriedInTheSessionTheBackendKeepsOnTheThread`,
   `TestTelnyxChannelSuite/TestATaskWhoseTurnFailsTextsNothing`,
+  `TestTelnyxChannelSuite/TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry`,
+  `TestTelnyxChannelSuite/TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotTextedAndTheTaskIsNotRetried`,
+  `TestTelnyxChannelSuite/TestAThreadTaskInItsQuietHoursIsHeld`,
+  `TestTelnyxChannelSuite/TestAThreadTasksDeliverToCannotChange`,
+  `TestTelnyxChannelSuite/TestAThreadTaskSaysItIsDeliveredOnTheThreadsChannel`,
+  `TestTelnyxChannelSuite/TestATaskScheduledInATasksTurnIsDeliveredOnTheThreadToo`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskSaysItIsDeliveredOnWhatsApp`,
   `TestTelnyxChannelSuite/TestAPersonWhoOptedOutIsNotTextedAndTheTaskIsNotRetried`,
   `TestTelnyxChannelSuite/TestATaskOnARemovedLineFailsFinally`,
   `TestTelnyxChannelSuite/TestATaskWhoseThreadIsGoneFailsFinally`,
