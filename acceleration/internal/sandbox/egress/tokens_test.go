@@ -4,6 +4,7 @@ package egress_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -135,6 +136,19 @@ func (s *ResolverTokensSuite) TestABindingTheConfigDroppedGivesNoToken() {
 	s.ErrorIs(err, sandbox.ErrNoCredential)
 	s.Equal(sandbox.Grant{Connection: s.grant.Connection, Binding: "forge", Config: "config-1", Connector: s.grant.Connector,
 		Selection: "fixed"}, s.bound)
+}
+
+// TestAConfigThatCannotBeReadGivesNoTokenAndNoWithdrawal: bound failing for any other reason
+// than a withdrawal gives no token either, and not the answer for a reconnect: the proxy
+// sends a 502 to retry, not a 401.
+func (s *ResolverTokensSuite) TestAConfigThatCannotBeReadGivesNoTokenAndNoWithdrawal() {
+	s.unbound = errors.New("the store cannot be read just now")
+
+	token, err := s.tokens(s.ctx, s.grant)
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, sandbox.ErrNoCredential)
+	s.Empty(token)
 }
 
 // TestASchemeThatIsNotRegisteredOrSendsNoBearerGivesNoCredential.

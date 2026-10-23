@@ -515,3 +515,32 @@ func (s *SandboxGrantsSuite) TestAConnectionThatCannotBeReadJustNowKeepsItsSecre
 	s.True(api.offered("CRM_TOKEN"))
 	s.Contains(s.logs.String(), "it keeps the one it has")
 }
+
+// TestAConfigThatCannotBeReadJustNowGivesNoTokenAndKeepsTheSecret: the check that the config
+// still binds the grant reads it first. When it cannot, the broker gets no token and no
+// withdrawal, so it keeps the secret it has without renewing it, though the connection holds a
+// newer credential.
+func (s *SandboxGrantsSuite) TestAConfigThatCannotBeReadJustNowGivesNoTokenAndKeepsTheSecret() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, d := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().True(api.offered("CRM_TOKEN"))
+	grant := box.(sandbox.Granted).Grants()[0]
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	s.manager.options.Store = closed
+
+	token, err := s.manager.sandboxTokens(d.schemes)(s.ctx, grant)
+	s.Require().Error(err)
+	s.NotErrorIs(err, sandbox.ErrNoCredential)
+	s.Empty(token.Value)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.True(api.offered("CRM_TOKEN"))
+	s.Contains(s.logs.String(), "it keeps the one it has")
+}
