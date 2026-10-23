@@ -1659,7 +1659,7 @@ func (s *Store) AttachedBridge(ctx context.Context, vendor, e164 string) (Attach
 		Where("vendor = ?", vendor).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
-		Where("stream_trunk_id IS NOT NULL").
+		Where("attached_at IS NOT NULL").
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {

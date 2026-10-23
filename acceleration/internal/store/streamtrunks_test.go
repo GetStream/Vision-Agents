@@ -246,3 +246,32 @@ func (s *StoreSuite) TestDeletingALegKeepsAnotherLegOfTheCallOnTheSameTrunk() {
 	s.Require().Len(kept, 1)
 	s.Equal(legs[0].ID, kept[0].ID)
 }
+
+// linedOnly puts a number of acme's on a line in the deployment's app, without attaching it.
+func (s *StoreSuite) linedOnly(vendor, e164 string) {
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
+		E164: e164, Vendor: vendor, Country: "US", CustomerID: "acme", PurchasedAt: s.base,
+	}))
+	group := TrunkGroup{CustomerID: "acme", Vendor: vendor}
+	s.Require().NoError(s.store.InTrunkGroup(s.ctx, group, func(_ context.Context, tx *TrunkGroupTx) error {
+		return tx.SetLine(e164, "trunk-1", "route-1", NumberBridge{
+			URI: "sip:" + e164 + "@sip.example.test", Username: "trunk-1", PasswordSealed: []byte("sealed"), KEKVersion: 2,
+		})
+	}))
+}
+
+func (s *StoreSuite) TestANumberLinedOnlyToPlaceCallsIsNotRung() {
+	s.linedOnly("twilio", "+15125551234")
+
+	_, err := s.store.NumberRungInApp(s.ctx, AppScope{Unpinned: true}, "+15125551234")
+
+	s.ErrorContains(err, "no number +15125551234 is attached")
+}
+
+func (s *StoreSuite) TestANumberLinedOnlyToPlaceCallsHasNoInboundBridge() {
+	s.linedOnly("telnyx", "+15125551234")
+
+	_, err := s.store.AttachedBridge(s.ctx, "telnyx", "+15125551234")
+
+	s.ErrorIs(err, ErrNoNumber)
+}
