@@ -109,14 +109,35 @@ func (d *dispatcher) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 		}
 		return nil, errUnknownTool(call.Name)
 	}
+	return d.checkedCall(ctx, found, call)
+}
+
+// checkedCall runs call on r once its binding and connection are read again (recheck), and,
+// for a tool the binding's require_approval names as the session opened it or as the config is
+// now, once the session's user allows the call (holdForApproval). A person can answer minutes
+// later, so an allowed call is read again before it is sent, and its row counts its latency
+// from the answer. It records the call's row, refused or run.
+func (d *dispatcher) checkedCall(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, error) {
 	started := time.Now()
-	current, err := d.recheck(ctx, found)
+	current, err := d.recheck(ctx, r)
 	if err != nil {
-		d.record(found, call, started, failure{kind: store.InvocationDenied}, err)
+		d.record(r, call, started, failure{kind: store.InvocationDenied}, err)
 		return nil, err
 	}
-	parts, how, err := d.call(ctx, found, current, call)
-	d.record(found, call, started, how, err)
+	if requiresApproval(r.binding, r.tool) || requiresApproval(current, r.tool) {
+		allowed, parts, how, err := d.holdForApproval(ctx, r, call)
+		if !allowed {
+			d.record(r, call, started, how, err)
+			return parts, err
+		}
+		started = time.Now()
+		if _, err := d.recheck(ctx, r); err != nil {
+			d.record(r, call, started, failure{kind: store.InvocationDenied}, err)
+			return nil, err
+		}
+	}
+	parts, how, err := d.call(ctx, r, call)
+	d.record(r, call, started, how, err)
 	return parts, err
 }
 
@@ -337,17 +358,9 @@ func (d *dispatcher) Close() {
 // waited reads the limiter again once it has its slot: the call it waited behind may have
 // been answered 429.
 //
-// A tool the binding's require_approval names, as the session opened it or as the config is now
-// (current), is not sent until the session's user allows the call (holdForApproval).
-//
 // It also says how the call failed, for its row and its log line: no kind when it answered,
 // else one of the store.Invocation* values.
-func (d *dispatcher) call(ctx context.Context, r route, current store.ConnectorBinding, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
-	if requiresApproval(r.binding, r.tool) || requiresApproval(current, r.tool) {
-		if allowed, parts, how, err := d.holdForApproval(ctx, r, call); !allowed {
-			return parts, how, err
-		}
-	}
+func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
 	policy := r.binding.Policy
 	if policy != nil && policy.OnInterrupt == store.InterruptWait {
 		ctx = context.WithoutCancel(ctx)

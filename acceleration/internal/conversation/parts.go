@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 )
 
 // A reply's steps, in order, as the Stream attachments Stream's AI components render:
@@ -371,11 +373,12 @@ func shownStep(m *Message, id string) *Part {
 }
 
 // AwaitApproval has the call id of the reply being written wait for owner to allow it, with
-// approval's question on its step, which decided settles. The step is shown whatever the agent
-// config shows, since somebody is waiting on it. It returns the command the reply answers, which
-// the answer names, and false when owner cannot be asked here (CanAskToConnect) or the reply
-// made no such call.
-func (c *Conversation) AwaitApproval(owner, id string, approval ToolApproval) (string, bool) {
+// approval's question and the call's arguments on its step, which DecideApproval settles. The
+// arguments are shown as a client tool's are: valid JSON up to maxClientArguments. The step is
+// shown whatever the agent config shows, since somebody is waiting on it. It returns the
+// command the reply answers, which the answer names, and false when owner cannot be asked here
+// (CanAskToConnect) or the reply made no such call.
+func (c *Conversation) AwaitApproval(owner, id, arguments string, approval ToolApproval) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.canAsk(owner) {
@@ -388,6 +391,9 @@ func (c *Conversation) AwaitApproval(owner, id string, approval ToolApproval) (s
 	}
 	part.Status, part.TargetUserID = "awaiting_approval", owner
 	part.Approval = &Approval{Title: capRunes(strings.TrimSpace(approval.Title), maxApprovalTitle)}
+	if raw := json.RawMessage(arguments); len(raw) <= maxClientArguments && json.Valid(raw) {
+		part.Arguments = raw
+	}
 	m.Sequence++
 	c.save()
 	c.publish(*m)
@@ -406,6 +412,24 @@ func (c *Conversation) AwaitsApproval(id string) bool {
 	}
 	part := toolStep(m, id)
 	return part != nil && part.Status == "awaiting_approval"
+}
+
+// DecideApproval settles the step of the call e names with the person's answer, if the step
+// still waits for them (AwaitsApproval), and reports whether it did. The check and the answer
+// are one step, so a reply that ends as the answer comes leaves its call unsent.
+func (c *Conversation) DecideApproval(e agent.ToolApprovalDecided) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.data.Current
+	if c.stopping || m == nil || m.FinishedAt != nil || !c.acceptTurn(e.TurnID, false) ||
+		!decided(m, e.ID, e.Allowed, e.Summary, time.Now()) {
+		return false
+	}
+	m.Sequence++
+	c.dirty = true
+	m.Saved = false
+	c.publish(*m)
+	return true
 }
 
 // toolStep is the step of the call id on m, or nil.

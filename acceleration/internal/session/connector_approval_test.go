@@ -25,9 +25,10 @@ import (
 type ConnectorApprovalSuite struct {
 	connectorFixture
 	mu sync.Mutex
-	// asked are the questions shown on calls' steps, settled how each was settled, and stopped
-	// the calls whose reply was stopped, by call id.
+	// asked are the questions shown on calls' steps, shown the arguments shown with them,
+	// settled how each was settled, and stopped the calls whose reply was stopped, by call id.
 	asked   map[string]persistent.ToolApproval
+	shown   map[string]string
 	settled map[string]agent.ToolApprovalDecided
 	stopped map[string]bool
 }
@@ -38,7 +39,8 @@ func TestConnectorApprovalSuite(t *testing.T) {
 
 func (s *ConnectorApprovalSuite) SetupTest() {
 	s.connectorFixture.SetupTest()
-	s.asked, s.settled, s.stopped = map[string]persistent.ToolApproval{}, map[string]agent.ToolApprovalDecided{}, map[string]bool{}
+	s.asked, s.shown, s.settled, s.stopped = map[string]persistent.ToolApproval{}, map[string]string{},
+		map[string]agent.ToolApprovalDecided{}, map[string]bool{}
 }
 
 func (s *ConnectorApprovalSuite) TestACallIsSentOnlyOnceTheUserAllowsIt() {
@@ -292,6 +294,108 @@ func (s *ConnectorApprovalSuite) TestABindingWithoutApprovalSendsTheCallAsBefore
 	s.Empty(s.rows(connection)[0].ErrorType)
 }
 
+// The step shows the arguments the call would send, so the person sees what they allow.
+func (s *ConnectorApprovalSuite) TestTheQuestionCarriesTheCallsArguments() {
+	d, _ := s.holding("echo")
+
+	answer := make(chan answered, 1)
+	go func() {
+		parts, err := d.Run(s.ctx, llm.ToolCall{ID: "call-1", Name: "crm__echo", Arguments: `{"text":"secret plan"}`})
+		answer <- answered{said: llm.TextOf(parts), err: err}
+	}()
+	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.True(d.answerApproval("call-1", "command-1", false, ""))
+	s.answerOf(answer)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.JSONEq(`{"text":"secret plan"}`, s.shown["call-1"])
+}
+
+// A person can answer minutes later. The binding taken off the config meanwhile, the allowed
+// call is not sent (probe on fe5ed52d: it reached the provider).
+func (s *ConnectorApprovalSuite) TestABindingRemovedWhileTheCallWaitsIsNotSent() {
+	d, connection := s.holding("whoami")
+	config, err := s.store.AgentConfig(s.ctx, s.customerID, d.spec.ConfigID)
+	s.Require().NoError(err)
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.rebind(config)
+	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	got := s.answerOf(answer)
+
+	s.Require().Error(got.err)
+	s.Contains(got.err.Error(), "the agent config no longer binds it")
+	s.Zero(s.provider.calls("primary"))
+	s.Equal(store.InvocationDenied, s.rows(connection)[0].ErrorType)
+}
+
+// The config deleted while the call waits: the allowed call is not sent either.
+func (s *ConnectorApprovalSuite) TestAConfigDeletedWhileTheCallWaitsIsNotSent() {
+	d, connection := s.holding("whoami")
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, s.customerID, d.spec.ConfigID))
+	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	got := s.answerOf(answer)
+
+	s.Require().Error(got.err)
+	s.Contains(got.err.Error(), "the agent config could not be read")
+	s.Zero(s.provider.calls("primary"))
+	s.Equal(store.InvocationDenied, s.rows(connection)[0].ErrorType)
+}
+
+// The person's wait is not the provider's: an allowed call's row counts its latency from the
+// answer.
+func (s *ConnectorApprovalSuite) TestAnAllowedCallsLatencyLeavesOutTheWait() {
+	d, connection := s.holding("whoami")
+	const wait = 500 * time.Millisecond
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.Never(func() bool { return len(answer) > 0 }, wait, 20*time.Millisecond)
+	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	s.Equal("primary", s.answerOf(answer).said)
+
+	s.Less(s.rows(connection)[0].LatencyMs, wait.Milliseconds())
+}
+
+// The reply ends as the answer comes, after the last poll saw the step waiting: the step is
+// checked and settled at once, so the allowed call is not sent.
+func (s *ConnectorApprovalSuite) TestAReplyThatEndsAsTheAnswerComesRunsNothing() {
+	d, _ := s.holding("whoami")
+	d.approvals.waits = func(string) bool { return true }
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.stop("call-1")
+	s.True(d.answerApproval("call-1", "command-1", true, ""))
+
+	s.Contains(s.answerOf(answer).said, `"status":"stopped"`)
+	s.Zero(s.provider.calls("primary"))
+}
+
+// An answer that comes as soon as the question is shown finds the call held.
+func (s *ConnectorApprovalSuite) TestAnAnswerAsTheQuestionIsShownFindsTheCall() {
+	d, _ := s.holding("whoami")
+	shows := d.approvals.await
+	taken := make(chan bool, 1)
+	d.approvals.await = func(owner, callID, arguments string, approval persistent.ToolApproval) (string, bool) {
+		commandID, asked := shows(owner, callID, arguments, approval)
+		go func() { taken <- d.answerApproval(callID, commandID, true, "") }()
+		// Time for the answer to arrive before await returns.
+		time.Sleep(100 * time.Millisecond)
+		return commandID, asked
+	}
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+
+	s.True(<-taken, "the answer found the call")
+	s.Equal("primary", s.answerOf(answer).said)
+}
+
 // holding is a dispatcher for alice's session of a config binding the app's primary account
 // as crm, granting whoami and echo, with require_approval approval, whose conversation asks
 // alice on the call's step for command-1, and its connection.
@@ -313,28 +417,38 @@ func (s *ConnectorApprovalSuite) holdingWith(change func(*store.ConnectorBinding
 func (s *ConnectorApprovalSuite) asking(config store.AgentConfig, user string) *dispatcher {
 	d, _, _, err := s.attach(s.spec(config, user, nil))
 	s.Require().NoError(err)
-	d.approvals.await = func(owner, callID string, approval persistent.ToolApproval) (string, bool) {
+	d.approvals.await = func(owner, callID, arguments string, approval persistent.ToolApproval) (string, bool) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if owner != "alice" {
 			return "", false
 		}
-		s.asked[callID] = approval
+		s.asked[callID], s.shown[callID] = approval, arguments
 		return "command-1", true
 	}
 	d.approvals.waits = func(callID string) bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		_, asked := s.asked[callID]
-		_, over := s.settled[callID]
-		return asked && !over && !s.stopped[callID]
+		return s.waiting(callID)
 	}
-	d.approvals.decided = func(event agent.ToolApprovalDecided) {
+	d.approvals.decide = func(event agent.ToolApprovalDecided) bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if !s.waiting(event.ID) {
+			return false
+		}
 		s.settled[event.ID] = event
+		return true
 	}
 	return d
+}
+
+// waiting reports whether the step of callID still waits, as conversation.AwaitsApproval does.
+// The caller holds s.mu.
+func (s *ConnectorApprovalSuite) waiting(callID string) bool {
+	_, asked := s.asked[callID]
+	_, over := s.settled[callID]
+	return asked && !over && !s.stopped[callID]
 }
 
 // callInBackground runs the call id of name on turn, and hands back what it said once it

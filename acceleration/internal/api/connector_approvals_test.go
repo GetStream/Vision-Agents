@@ -121,6 +121,7 @@ func (s *SessionConnectorsSuite) TestACallNeedingApprovalRunsOnceTheUserAllowsIt
 	approval, _ := step["approval"].(map[string]any)
 	s.Equal("Allow crm to run echo?", approval["title"])
 	s.Equal(s.client.userID, step["target_user_id"])
+	s.Equal(map[string]any{"text": connectorEchoText}, step["arguments"], "the person sees what the call would send")
 	s.Equal(held.before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider before the answer")
 	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
 		"request_id": held.request, "allowed": true}))
@@ -128,6 +129,33 @@ func (s *SessionConnectorsSuite) TestACallNeedingApprovalRunsOnceTheUserAllowsIt
 
 	s.Equal(connectorEcho, ran["tool"])
 	s.Equal(connectorEchoText, ran["result"])
+	s.Greater(s.provider.Hits(fakeprovider.PathMCP), held.before)
+}
+
+// The SDKs send the turn's id with every tool_approval, as it was required before. Such an
+// answer reaches the held call too, rather than the client tools' approvals, which would settle
+// its step and leave the call refused as stopped.
+func (s *SessionConnectorsSuite) TestAnAnswerWithTheTurnsIDRunsTheCall() {
+	held := s.heldCall(s.client)
+	turnID := ""
+	var step map[string]any
+	s.Require().NoError(held.events.SetReadDeadline(time.Now().Add(settleFor)))
+	for step == nil {
+		var frame map[string]any
+		s.Require().NoError(held.events.ReadJSON(&frame))
+		if frame["type"] == "tool_started" && frame["tool"] == connectorEcho {
+			turnID, _ = frame["turn_id"].(string)
+		}
+		if found := echoStepIn(frame); frame["type"] == "conversation_updated" && found != nil && found["status"] == "awaiting_approval" {
+			step = found
+		}
+	}
+	s.Require().NotEmpty(turnID)
+
+	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
+		"request_id": held.request, "turn_id": turnID, "allowed": true}))
+
+	s.Equal(connectorEchoText, s.await(held.events, "tool_ran")["result"])
 	s.Greater(s.provider.Hits(fakeprovider.PathMCP), held.before)
 }
 

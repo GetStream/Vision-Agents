@@ -248,20 +248,11 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 		return nil, errUnknownTool(name)
 	}
 	// Logged as Run logs a call, one row for each, refused or run.
-	started := time.Now()
 	arguments := string(asked.Arguments)
 	if arguments == "" || arguments == "null" {
 		arguments = "{}"
 	}
-	run := llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments}
-	current, err := d.recheck(ctx, found)
-	if err != nil {
-		d.record(found, run, started, failure{kind: store.InvocationDenied}, err)
-		return nil, err
-	}
-	parts, how, err := d.call(ctx, found, current, run)
-	d.record(found, run, started, how, err)
-	return parts, err
+	return d.checkedCall(ctx, found, llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments})
 }
 
 // openOrAsk is the login's opened binding, or else what the model reads instead. A call whose

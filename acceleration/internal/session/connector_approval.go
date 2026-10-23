@@ -25,13 +25,14 @@ const approvalWait = 10 * time.Minute
 // approvals are a dispatcher's calls held for a person to allow them, by call id, and the
 // conversation that asks.
 type approvals struct {
-	// await shows the question on the step of a call of the reply being written, for owner, and
-	// returns the command the reply answers (conversation.AwaitApproval). waits reports whether
-	// the step still waits (conversation.AwaitsApproval), and decided settles it. Without await,
-	// as in a session with no conversation, nobody is asked.
-	await   func(owner, callID string, approval persistent.ToolApproval) (string, bool)
-	waits   func(callID string) bool
-	decided func(agent.ToolApprovalDecided)
+	// await shows the question and the call's arguments on the step of a call of the reply being
+	// written, for owner, and returns the command the reply answers (conversation.AwaitApproval).
+	// waits reports whether the step still waits (conversation.AwaitsApproval), and decide
+	// settles it if it still does, and reports whether it did (conversation.DecideApproval).
+	// Without await, as in a session with no conversation, nobody is asked.
+	await  func(owner, callID, arguments string, approval persistent.ToolApproval) (string, bool)
+	waits  func(callID string) bool
+	decide func(agent.ToolApprovalDecided) bool
 	// wait is how long a call waits, approvalWait when zero.
 	wait time.Duration
 
@@ -52,8 +53,7 @@ type approvalAnswer struct {
 
 // asksIn has the approvals ask in conv, the session's own conversation.
 func (a *approvals) asksIn(conv *persistent.Conversation) {
-	a.await, a.waits = conv.AwaitApproval, conv.AwaitsApproval
-	a.decided = func(event agent.ToolApprovalDecided) { conv.Observe(event) }
+	a.await, a.waits, a.decide = conv.AwaitApproval, conv.AwaitsApproval, conv.DecideApproval
 }
 
 // requiresApproval reports whether binding's require_approval names tool.
@@ -74,23 +74,27 @@ func requiresApproval(binding store.ConnectorBinding, tool string) bool {
 // waiting for a slot: it was never sent.
 func (d *dispatcher) holdForApproval(ctx context.Context, r route, call llm.ToolCall) (bool, []llm.ContentPart, failure, error) {
 	a := &d.approvals
+	answer := make(chan approvalAnswer, 1)
+	// The call is held before its question is shown, under the lock an answer takes, so an
+	// answer that comes at once finds it (answerApproval).
+	a.mu.Lock()
 	commandID, asked := "", false
 	if a.await != nil {
-		commandID, asked = a.await(d.spec.Caller.UserID, call.ID, persistent.ToolApproval{
+		commandID, asked = a.await(d.spec.Caller.UserID, call.ID, call.Arguments, persistent.ToolApproval{
 			Title: fmt.Sprintf("Allow %s to run %s?", r.binding.Name, r.tool)})
 	}
+	if asked {
+		if a.held == nil {
+			a.held = map[string]heldCall{}
+		}
+		a.held[call.ID] = heldCall{commandID: commandID, answer: answer}
+	}
+	a.mu.Unlock()
 	if !asked {
 		return false, approvalText("unavailable", fmt.Sprintf("%s runs only once the user allows it, and nobody can be "+
 				"asked here, so it was not run. Tell the user it needs their approval in a chat of their own.", call.Name)),
 			failure{kind: store.InvocationDenied, message: "declined: nobody can approve it here"}, nil
 	}
-	answer := make(chan approvalAnswer, 1)
-	a.mu.Lock()
-	if a.held == nil {
-		a.held = map[string]heldCall{}
-	}
-	a.held[call.ID] = heldCall{commandID: commandID, answer: answer}
-	a.mu.Unlock()
 	defer func() {
 		a.mu.Lock()
 		delete(a.held, call.ID)
@@ -112,10 +116,9 @@ func (d *dispatcher) holdForApproval(ctx context.Context, r route, call llm.Tool
 			return false, nil, failure{kind: store.InvocationClientTimeout},
 				stack.Wrap(fmt.Errorf("session: %s stopped waiting for its approval: %w", call.Name, ctx.Err()))
 		case got := <-answer:
-			if !a.waits(call.ID) {
+			if !a.decide(agent.ToolApprovalDecided{ID: call.ID, TurnID: call.TurnID, Allowed: got.allowed, Summary: got.summary}) {
 				return stopped()
 			}
-			a.decided(agent.ToolApprovalDecided{ID: call.ID, TurnID: call.TurnID, Allowed: got.allowed, Summary: got.summary})
 			if got.allowed {
 				return true, nil, failure{}, nil
 			}
@@ -123,7 +126,7 @@ func (d *dispatcher) holdForApproval(ctx context.Context, r route, call llm.Tool
 					"run. Do not call it again unless they ask.", call.Name)),
 				failure{kind: store.InvocationDenied, message: "declined by the person"}, nil
 		case <-expiry.C:
-			a.decided(agent.ToolApprovalDecided{ID: call.ID, TurnID: call.TurnID, Summary: "Not allowed in time"})
+			a.decide(agent.ToolApprovalDecided{ID: call.ID, TurnID: call.TurnID, Summary: "Not allowed in time"})
 			return false, approvalText("declined", fmt.Sprintf("Nobody allowed %s in time, so it "+
 					"was declined and not run. Tell the user, and that they can ask again.", call.Name)),
 				failure{kind: store.InvocationDenied, message: "declined by timeout"}, nil
