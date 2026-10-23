@@ -42,7 +42,7 @@ const threadTurnLease = askTimeout + 30*time.Second
 //	    claim (thread channel, turn, Stream message id)    a repeat delivery: nothing
 //	    lease the thread's turn in Postgres                another router's turn: wait
 //	    the session on the channel (ByConversationWhere), else
-//	      FromConfig(the channel's agent config), Text, PersistConversation,
+//	      FromConfig(the config binding the line now), Text, PersistConversation,
 //	      ConversationID agent:thread-<uuid>               reply lands in the thread channel
 //	    Session.FollowUp(text)                             the person's message is already
 //	                                                       in the channel: none is written
@@ -110,6 +110,10 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 	opened := false
 	if !running || !found.Spec().PersistConversation {
 		if found, err = s.threadSession(turn, origin, thread, event); err != nil {
+			if errors.Is(err, errNoConfigBindsLine) {
+				s.logger.Warn("could not open the conversation of a thread channel: no agent config binds its line", "channel", thread.ChannelID, "error", err)
+				return
+			}
 			s.logger.Error("could not open the conversation of a thread channel", "channel", thread.ChannelID, "error", err)
 			return
 		}
@@ -159,28 +163,34 @@ func (s *Server) takeThreadTurn(ctx context.Context, channelID, holder string) e
 	}
 }
 
-// threadSession opens the persistent conversation held on a thread channel, with the agent
-// config the channel names, as the Router's own session: no end user owns a thread several
-// people write in. On an SMS or WhatsApp thread the tasks it schedules are the person the
-// thread belongs to, when they are the one who wrote (personalThreads).
+// threadSession opens the persistent conversation held on a thread channel, as the Router's
+// own session: no end user owns a thread several people write in. Its agent config is the one
+// binding the thread's line now, the oldest when several do, as the bridge picks it for the
+// message (channelbridge take), not the one the thread's earlier turns ran on: a binding moved
+// to another config moves the thread with it, and the history in the channel goes along. On an
+// SMS or WhatsApp thread the tasks it schedules are the person the thread belongs to, when
+// they are the one who wrote (personalThreads).
 func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread store.ChannelThread, event messageEvent) (*session.Session, error) {
-	customerID, configID, found := s.ownerOf(ctx, origin, event)
-	if !found || customerID != thread.CustomerID {
-		return nil, errors.New("the thread channel names no agent config of its customer")
-	}
-	if !s.mayWrite(ctx, origin, customerID) {
-		return nil, errors.New("the customer no longer writes in the app the hook came from")
-	}
-	config, err := s.store.AgentConfig(ctx, customerID, configID)
+	configs, err := s.store.AgentConfigsBindingConnection(ctx, thread.CustomerID, thread.ConnectionID)
 	if err != nil {
 		return nil, err
 	}
-	spec := threadSpec(config, thread)
+	if len(configs) == 0 {
+		return nil, errNoConfigBindsLine
+	}
+	if !s.mayWrite(ctx, origin, thread.CustomerID) {
+		return nil, errors.New("the customer no longer writes in the app the hook came from")
+	}
+	spec := threadSpec(configs[0], thread)
 	if person, personal := threadPerson(thread); personal && event.Message.User.ID == person {
 		spec.ThreadPerson, spec.ThreadChannel, spec.ThreadDelivery = person, thread.ChannelID, personalThreads[thread.ConnectorID]
 	}
 	return s.sessions.Create(conversation.RouterOpensThread(ctx, spec.ConversationID), spec)
 }
+
+// errNoConfigBindsLine is a thread whose line no agent config of its customer binds: the
+// customer's to fix, as the bridge's own drop of such a message is.
+var errNoConfigBindsLine = errors.New("no agent config of the thread's customer binds its line")
 
 // threadSpec is the persistent text session held on a thread channel, as the Router's own.
 func threadSpec(config store.AgentConfig, thread store.ChannelThread) session.Spec {
