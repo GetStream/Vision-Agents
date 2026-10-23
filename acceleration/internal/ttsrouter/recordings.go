@@ -30,6 +30,9 @@ func NewRecorderRegistry() *Recorders { return routing.NewRegistry[tts.Recorder]
 // DefaultRecorderRegistry returns a registry with every batch voice this build supports.
 func DefaultRecorderRegistry() *Recorders {
 	registry := NewRecorderRegistry()
+	// Every factory here only reads config, so a model the deployment has no key or endpoint
+	// for is listed unavailable and never routed to.
+	registry.Probe()
 
 	registry.Register(elevenlabs.ProviderName, func(spec routing.Spec) (tts.Recorder, error) {
 		settings := elevenlabsSettings{}
