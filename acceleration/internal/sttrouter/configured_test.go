@@ -70,3 +70,10 @@ func (s *STTRouterSuite) TestAModelWithoutItsKeyIsListedUnavailableAndRefusedNam
 	_, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "microsoft/MAI-Transcribe-2-Streaming"})
 	s.ErrorContains(err, "microsoft: api key is required (set AZURE_MAI_API_KEY)")
 }
+
+func (s *STTRouterSuite) TestABatchModelWithoutItsKeyIsNotReady() {
+	s.configure("DEEPGRAM_API_KEY")
+
+	s.ErrorContains(DefaultTranscriberRegistry().Ready("deepgram", "nova-3"),
+		"deepgram: api key is required (set DEEPGRAM_API_KEY)")
+}

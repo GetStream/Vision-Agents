@@ -69,3 +69,10 @@ func (s *TTSRouterSuite) TestAVoiceWithoutItsEndpointIsListedUnavailableAndRefus
 	_, err = router.Start(s.ctx, Request{CustomerID: "acme", Target: "breeze/breeze-tts-2"})
 	s.ErrorContains(err, "breeze: websocket url is required (set BREEZE_WS_URL)")
 }
+
+func (s *TTSRouterSuite) TestARecordingVoiceWithoutItsKeyIsNotReady() {
+	s.configure("ELEVENLABS_API_KEY")
+
+	s.ErrorContains(DefaultRecorderRegistry().Ready("elevenlabs", "eleven_multilingual_v2"),
+		"elevenlabs: api key is required (set ELEVENLABS_API_KEY)")
+}
