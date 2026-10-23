@@ -377,6 +377,59 @@ type CallResource struct {
 	CreatedAt   time.Time `bun:"created_at,notnull"`
 }
 
+// The directions a call leg is in.
+const (
+	CallInbound  = "inbound"
+	CallOutbound = "outbound"
+)
+
+// CallLeg is one leg of a phone call, from when it was connected until the call ended, which
+// is what its minutes are billed by. Who it is billed to is kept from when it opened, so the
+// minutes of a placed call stay with the key that placed it.
+type CallLeg struct {
+	bun.BaseModel `bun:"table:call_legs,alias:cl"`
+
+	ID               int64    `bun:"id,pk,autoincrement"`
+	CustomerID       string   `bun:"customer_id,notnull"`
+	OrganizationID   string   `bun:"organization_id,notnull"`
+	OrganizationTier string   `bun:"organization_tier,notnull"`
+	APIKey           string   `bun:"api_key,notnull"`
+	UserID           string   `bun:"user_id,notnull"`
+	UsageCategories  []string `bun:"usage_categories,array,nullzero"`
+	// StreamAppPK is the Stream app the call is in. Zero, stored as NULL, is the
+	// deployment's own app.
+	StreamAppPK int64  `bun:"stream_app_pk,nullzero"`
+	CallType    string `bun:"call_type,notnull"`
+	CallID      string `bun:"call_id,notnull"`
+	Vendor      string `bun:"vendor,notnull"`
+	// Direction is CallInbound or CallOutbound.
+	Direction    string `bun:"direction,notnull"`
+	LocalNumber  string `bun:"local_number,notnull"`
+	RemoteNumber string `bun:"remote_number,notnull"`
+	// Country is what the leg's minutes are priced by: where an outbound leg rang, and the
+	// country of the number an inbound one rang. Empty when unknown.
+	Country   string            `bun:"country,notnull"`
+	AgentID   string            `bun:"agent_id,notnull"`
+	Tags      map[string]string `bun:"tags,type:jsonb,nullzero"`
+	StartedAt time.Time         `bun:"started_at,notnull"`
+	// EndedAt is nil while the leg is open.
+	EndedAt *time.Time `bun:"ended_at"`
+}
+
+// Used is how long an ended leg lasted, in seconds, a started second counting whole: what a
+// vendor bills its minutes from. An open leg has used nothing yet.
+func (l CallLeg) Used() pricing.Quantities {
+	if l.EndedAt == nil || !l.EndedAt.After(l.StartedAt) {
+		return pricing.Quantities{pricing.CallSeconds: 0}
+	}
+	lasted := l.EndedAt.Sub(l.StartedAt)
+	seconds := int64(lasted / time.Second)
+	if lasted%time.Second != 0 {
+		seconds++
+	}
+	return pricing.Quantities{pricing.CallSeconds: seconds}
+}
+
 // AgentConfig is a named set of the decisions a session is created with.
 //
 // It holds only what a caller would otherwise repeat on every call. Everything that is

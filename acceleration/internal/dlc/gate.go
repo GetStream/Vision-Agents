@@ -177,6 +177,15 @@ func (g *Gate) SetRecipients(ctx context.Context, customerID string, recipients 
 	return g.store.SetSandboxRecipients(ctx, customerID, recipients)
 }
 
+// Sandboxed reports whether the sandbox holds an app now, which is what gives its texts and
+// minutes away. A nil Gate holds nobody.
+func (g *Gate) Sandboxed(ctx context.Context, customerID string) (bool, error) {
+	if g == nil || g.store == nil {
+		return false, nil
+	}
+	return g.sandboxed(ctx, customerID)
+}
+
 // sandboxed reports whether an app is held to the sandbox: it is on, and none of the
 // app's use cases is approved.
 func (g *Gate) sandboxed(ctx context.Context, customerID string) (bool, error) {

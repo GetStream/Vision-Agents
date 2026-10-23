@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -41,6 +42,7 @@ type Service struct {
 	recorder  *routing.Recorder
 	gate      *dlc.Gate
 	publicURL string
+	clock     func() time.Time
 	logger    *slog.Logger
 }
 
@@ -59,8 +61,8 @@ type ServiceOptions struct {
 	// SIPTrunks dials numbers on customers' own SIP trunks. It is kept out of the
 	// registry, which is what every customer is offered to buy from.
 	SIPTrunks Provider
-	// Recorder files purchases as request rows, so a number's monthly charge shows up in
-	// cost reporting next to what the models cost.
+	// Recorder files what telephony costs as request rows, beside what the models cost: each
+	// month of a number, each call placed, and the minutes of every leg of a call.
 	Recorder *routing.Recorder
 	// Gate refuses a call to somebody who opted out, or past what the sandbox allows, and,
 	// when it is charging, a call or a number the organization may not pay for.
@@ -69,7 +71,9 @@ type ServiceOptions struct {
 	// vendors that fetch a call plan on answer need in order to fetch it. Without it those
 	// vendors say so rather than placing a call nothing will answer.
 	PublicURL string
-	Logger    *slog.Logger
+	// Now is the clock call legs are timed by. Nil is the wall clock.
+	Now    func() time.Time
+	Logger *slog.Logger
 }
 
 // NewService returns a Service.
@@ -91,6 +95,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		recorder:  options.Recorder,
 		gate:      options.Gate,
 		publicURL: strings.TrimSuffix(options.PublicURL, "/"),
+		clock:     options.Now,
 		logger:    options.Logger,
 	}, nil
 }
@@ -363,9 +368,18 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		return store.PhoneNumber{}, err
 	}
 
-	started := time.Now()
-	bought, err := provider.BuyNumber(ctx, Order{E164: purchase.E164, Country: purchase.Country})
-	s.record(purchase.Vendor, "number", purchase.Owner, started, bought.MonthlyCostMicros, err)
+	// A failed purchase is a row of its own; a bought number is billed by its months, the
+	// first of them below.
+	buying := routing.Meter{
+		Recorder: s.recorder,
+		Config:   routing.ProviderConfig{Provider: purchase.Vendor, Model: ModelNumber},
+		Owner:    purchase.Owner,
+		Code:     vendorFailed,
+		Omit:     func(pricing.Quantities) bool { return true },
+	}
+	bought, err := routing.Call(ctx, buying, func(ctx context.Context) (Number, error) {
+		return provider.BuyNumber(ctx, Order{E164: purchase.E164, Country: purchase.Country})
+	})
 	if err != nil {
 		return store.PhoneNumber{}, err
 	}
@@ -379,8 +393,12 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		CustomerID:        purchase.Owner.CustomerID,
 		Tags:              purchase.Owner.Tags,
 		VendorID:          bought.VendorID,
-		PurchasedAt:       time.Now().UTC(),
+		// To the microsecond Postgres keeps, so a month billed now and one billed from the
+		// stored row name the same purchase.
+		PurchasedAt: s.now().UTC().Truncate(time.Microsecond),
 	}
+	// The month it was bought in is charged at once, whether or not the row below is kept.
+	s.billMonth(held, purchase.Owner, held.PurchasedAt)
 	if s.store == nil {
 		return held, nil
 	}
@@ -764,14 +782,20 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		}
 	}
 
-	started := time.Now()
-	dialed, err := provider.Dial(ctx, outbound)
-	s.record(held.Vendor, "call", request.Owner, started, 0, err)
+	dialed, err := routing.Call(ctx, s.dialMeter(held.Vendor, request.Owner), func(ctx context.Context) (Dialed, error) {
+		return provider.Dial(ctx, outbound)
+	})
 	if err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
 
 	committed = true
+	// The vendor bills the call from when it connects, which nothing here hears of, so its
+	// minutes run from now.
+	s.OpenLeg(ctx, request.Owner, store.CallLeg{
+		StreamAppPK: pin, CallType: callType, CallID: callID, Vendor: held.Vendor,
+		Direction: store.CallOutbound, LocalNumber: request.From, RemoteNumber: request.To,
+	})
 	sites := placedSites{streamSIPHost: BridgeHost(outbound.Bridge.URI)}
 	if trunk != nil {
 		sites.customerTrunkHost = trunk.Host
@@ -978,15 +1002,6 @@ func (s *Service) ReleaseCall(ctx context.Context, scope store.AppScope, callTyp
 	if err != nil {
 		return fmt.Errorf("phone: release call resources: %w", err)
 	}
-	// Each leg, the call's own and one per transfer into it, is billed for as long as it
-	// lasted, so each counts toward the sandbox's minutes.
-	var talked time.Duration
-	for _, resource := range resources {
-		talked += time.Since(resource.CreatedAt)
-	}
-	if len(resources) > 0 {
-		s.gate.Talked(ctx, resources[0].CustomerID, talked)
-	}
 	for _, resource := range resources {
 		s.unwire(ctx, resource.CustomerID, resource.StreamAppPK, resource.RouteID, resource.TrunkID, "a call ended")
 	}
@@ -1180,14 +1195,19 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		return Dialed{}, stack.Wrap(err)
 	}
 
-	started := time.Now()
-	placed, err := provider.Dial(ctx, Outbound{From: request.From, To: request.To, Bridge: bridge, Trunk: trunk})
-	s.record(held.Vendor, "transfer", request.Owner, started, 0, err)
+	placed, err := routing.Call(ctx, s.dialMeter(held.Vendor, request.Owner), func(ctx context.Context) (Dialed, error) {
+		return provider.Dial(ctx, Outbound{From: request.From, To: request.To, Bridge: bridge, Trunk: trunk})
+	})
 	if err != nil {
 		return Dialed{}, stack.Wrap(err)
 	}
 
 	committed = true
+	// The human's leg is a leg of the call it joins, billed to whoever transferred.
+	s.OpenLeg(ctx, request.Owner, store.CallLeg{
+		StreamAppPK: request.StreamApp, CallType: callType, CallID: request.CallID, Vendor: held.Vendor,
+		Direction: store.CallOutbound, LocalNumber: request.From, RemoteNumber: request.To,
+	})
 	if err := s.store.RecordCallResource(ctx, &store.CallResource{
 		TrunkID:     trunkID,
 		RouteID:     routeID,
@@ -1231,32 +1251,6 @@ func (s *Service) Numbers(ctx context.Context, customerID string, includeRelease
 		return nil, stack.Wrap(errors.New("phone: listing numbers needs a database"))
 	}
 	return s.store.CustomerNumbers(ctx, customerID, includeReleased)
-}
-
-// record files a vendor operation as a request row, so what telephony costs is reported
-// beside what the models cost and under the same labels.
-func (s *Service) record(
-	vendor, model string,
-	owner routing.Owner,
-	started time.Time,
-	costMicros int64,
-	err error,
-) {
-	if s.recorder == nil {
-		return
-	}
-
-	stat := routing.Stat{
-		Owner:      owner,
-		StartedAt:  started.UTC(),
-		LatencyMs:  routing.MsSince(started),
-		CostMicros: costMicros,
-		Success:    err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = "vendor_failed"
-	}
-	s.recorder.Record(routing.ProviderConfig{Provider: vendor, Model: model}, stat)
 }
 
 // names renders capabilities for storage, since Postgres holds them as plain text.
