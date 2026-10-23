@@ -2893,6 +2893,9 @@ type AgentConnectorBinding struct {
 	// Policy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
 	Policy *ConnectorBindingPolicy `json:"policy,omitempty"`
 
+	// RequireApproval Names or path.Match patterns of the binding's tools whose every call waits for a person to allow it before the router sends it, such as create_issue or delete_*. The step of the call asks the session's user in its conversation, who answers with the session socket's tool_approval. Declined, or not answered in 10 minutes, the call is not sent and the model is told so. A session with nobody to ask, such as an incognito one or one opened by an MCP event, refuses the call at once. Each entry must match a tool the binding grants, or one of its tool_patterns. Refused with sandbox, whose code calls the API with nobody asked. At most 128, the cap tools has.
+	RequireApproval *[]string `json:"require_approval,omitempty"`
+
 	// Required Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
 	Required *bool `json:"required,omitempty"`
 
@@ -7689,16 +7692,18 @@ type TimelineEntry struct {
 	TurnId    string   `json:"turn_id"`
 }
 
-// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself.
+// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out.
 type ToolApprovalCommand struct {
 	Allowed   bool   `json:"allowed"`
 	RequestId string `json:"request_id"`
 
 	// Summary Shown on the declined call, such as "Location not shared".
-	Summary    *string                 `json:"summary,omitempty"`
-	ToolCallId string                  `json:"tool_call_id"`
-	TurnId     string                  `json:"turn_id"`
-	Type       ToolApprovalCommandType `json:"type"`
+	Summary    *string `json:"summary,omitempty"`
+	ToolCallId string  `json:"tool_call_id"`
+
+	// TurnId The turn of the call. Required, except for a connector call whose binding sets require_approval.
+	TurnId *string                 `json:"turn_id,omitempty"`
+	Type   ToolApprovalCommandType `json:"type"`
 }
 
 // ToolApprovalCommandType defines model for ToolApprovalCommand.Type.

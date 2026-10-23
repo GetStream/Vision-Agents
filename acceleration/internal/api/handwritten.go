@@ -153,7 +153,12 @@ func documentHandWritten(api huma.API) {
 			"and optionally a `summary` shown when they declined), before it answers the call with " +
 			"`tool_result`. A connector call waiting for the person to sign in " +
 			"(`awaiting_authorization`) is declined with `tool_approval` too, naming only its " +
-			"`tool_call_id` with `allowed` false: the router answers that call itself.\n" +
+			"`tool_call_id` with `allowed` false: the router answers that call itself. A connector " +
+			"call whose binding sets `require_approval` waits on its step (`awaiting_approval`) for " +
+			"the session's user, and the router sends it only once they allow it: `tool_approval` " +
+			"with its `tool_call_id`, the `request_id` of the command it answers and `allowed`, from " +
+			"that user or their backend, `turn_id` left out or not. Declined, or not answered in 10 " +
+			"minutes, it is not sent and the model is told so. It needs no `tool_result`.\n" +
 			"`tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. " +
 			"An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally " +
 			"with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.\n" +

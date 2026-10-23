@@ -453,6 +453,10 @@ type ConnectorBinding struct {
 	// JSON inside agent_configs.connectors, so an older router drops it and reads the binding
 	// as one without sandbox access.
 	Sandbox bool `json:"sandbox,omitempty"`
+	// RequireApproval are tool names or path.Match patterns whose calls wait for a person to
+	// allow each one before it is sent. The field is JSON inside agent_configs.connectors, so
+	// an older router drops it and sends those calls with nobody asked.
+	RequireApproval []string `json:"require_approval,omitempty"`
 }
 
 // The values of BindingPolicy.OnInterrupt. Empty lets the call outlive an interruption, and

@@ -1488,7 +1488,9 @@ func (c *Conversation) Observe(event agent.Event) {
 				switch r.Status {
 				case "answered":
 					t.Summary = fmt.Sprintf("Verified %d source citations", len(r.Citations))
-				case "unavailable", "research_failed", "insufficient_evidence":
+				// A held connector call that was declined or stopped was never sent
+				// (session.holdForApproval).
+				case "unavailable", "declined", "stopped", "research_failed", "insufficient_evidence":
 					t.Status = "failed"
 					t.Summary = strings.TrimSpace(strings.ReplaceAll(r.Status+" "+r.Code, "_", " "))
 				}

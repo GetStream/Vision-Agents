@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 )
 
 // A reply's steps, in order, as the Stream attachments Stream's AI components render:
@@ -279,21 +281,9 @@ func (c *Conversation) AwaitAuthorization(owner, id string, found Authorization)
 		return false
 	}
 	m := c.data.Current
-	part := toolStep(m, id)
+	part := shownStep(m, id)
 	if part == nil {
-		var started *time.Time
-		name := ""
-		for _, tool := range m.Tools {
-			if tool.ID == id {
-				at := tool.StartedAt.UTC()
-				started, name = &at, tool.Name
-			}
-		}
-		if name == "" {
-			return false
-		}
-		m.Parts = append(m.Parts, Part{Type: partToolCall, V: partVersion, ID: id, Name: name, Executor: "server", StartedAt: started})
-		part = &m.Parts[len(m.Parts)-1]
+		return false
 	}
 	if part.DisplayTitle == "" && found.ProviderName != "" {
 		part.DisplayTitle = "Using " + found.ProviderName
@@ -359,6 +349,90 @@ func (c *Conversation) AwaitsAuthorization(id string) bool {
 	}
 	part := toolStep(m, id)
 	return part != nil && part.Status == "awaiting_authorization"
+}
+
+// shownStep is the step of the call id on m, opened when the agent config does not show the
+// call, or nil when m made no such call.
+func shownStep(m *Message, id string) *Part {
+	if part := toolStep(m, id); part != nil {
+		return part
+	}
+	var started *time.Time
+	name := ""
+	for _, tool := range m.Tools {
+		if tool.ID == id {
+			at := tool.StartedAt.UTC()
+			started, name = &at, tool.Name
+		}
+	}
+	if name == "" {
+		return nil
+	}
+	m.Parts = append(m.Parts, Part{Type: partToolCall, V: partVersion, ID: id, Name: name, Executor: "server", StartedAt: started})
+	return &m.Parts[len(m.Parts)-1]
+}
+
+// AwaitApproval has the call id of the reply being written wait for owner to allow it, with
+// approval's question and the call's arguments on its step, which DecideApproval settles. The
+// arguments are shown as a client tool's are: valid JSON up to maxClientArguments; any other
+// arguments show as a cut preview in the approval's message, so none is approved blind. The step is
+// shown whatever the agent config shows, since somebody is waiting on it. It returns the
+// command the reply answers, which the answer names, and false when owner cannot be asked here
+// (CanAskToConnect) or the reply made no such call.
+func (c *Conversation) AwaitApproval(owner, id, arguments string, approval ToolApproval) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.canAsk(owner) {
+		return "", false
+	}
+	m := c.data.Current
+	part := shownStep(m, id)
+	if part == nil {
+		return "", false
+	}
+	part.Status, part.TargetUserID = "awaiting_approval", owner
+	part.Approval = &Approval{Title: capRunes(strings.TrimSpace(approval.Title), maxApprovalTitle)}
+	if raw := json.RawMessage(arguments); len(raw) <= maxClientArguments && json.Valid(raw) {
+		part.Arguments = raw
+	} else {
+		part.Approval.Message = capRunes(strings.Join(strings.Fields(arguments), " "), maxApprovalMessage)
+	}
+	m.Sequence++
+	c.save()
+	c.publish(*m)
+	return m.CommandID, true
+}
+
+// AwaitsApproval reports whether the step of the call id in the reply being written still
+// waits for a person to allow it. It stops once they answer, or the reply ends, which ends its
+// steps (stopParts).
+func (c *Conversation) AwaitsApproval(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.data.Current
+	if m == nil {
+		return false
+	}
+	part := toolStep(m, id)
+	return part != nil && part.Status == "awaiting_approval"
+}
+
+// DecideApproval settles the step of the call e names with the person's answer, if the step
+// still waits for them (AwaitsApproval), and reports whether it did. The check and the answer
+// are one step, so a reply that ends as the answer comes leaves its call unsent.
+func (c *Conversation) DecideApproval(e agent.ToolApprovalDecided) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.data.Current
+	if c.stopping || m == nil || m.FinishedAt != nil || !c.acceptTurn(e.TurnID, false) ||
+		!decided(m, e.ID, e.Allowed, e.Summary, time.Now()) {
+		return false
+	}
+	m.Sequence++
+	c.dirty = true
+	m.Saved = false
+	c.publish(*m)
+	return true
 }
 
 // toolStep is the step of the call id on m, or nil.

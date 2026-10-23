@@ -42,6 +42,13 @@ class AgentConnectorBinding:
                 event arrives with no session open.
             policy (ConnectorBindingPolicy | Unset): How a binding's tool calls behave around speech and interruptions.
                 Every field is optional, and a field left out keeps today's behaviour.
+            require_approval (list[str] | Unset): Names or path.Match patterns of the binding's tools whose every call waits
+                for a person to allow it before the router sends it, such as create_issue or delete_*. The step of the call asks
+                the session's user in its conversation, who answers with the session socket's tool_approval. Declined, or not
+                answered in 10 minutes, the call is not sent and the model is told so. A session with nobody to ask, such as an
+                incognito one or one opened by an MCP event, refuses the call at once. Each entry must match a tool the binding
+                grants, or one of its tool_patterns. Refused with sandbox, whose code calls the API with nobody asked. At most
+                128, the cap tools has.
             required (bool | Unset): Whether a session needs this connector. A required one that cannot be opened fails the
                 session; an optional one is left out of it. Default: False.
             sandbox (bool | Unset): Whether code in the session's sandbox may call the connector's API with the binding's
@@ -65,6 +72,7 @@ class AgentConnectorBinding:
     tools: list[ConnectorToolGrant]
     events: list[ConnectorBindingEvent] | Unset = UNSET
     policy: ConnectorBindingPolicy | Unset = UNSET
+    require_approval: list[str] | Unset = UNSET
     required: bool | Unset = False
     sandbox: bool | Unset = UNSET
     timeout_ms: int | Unset = UNSET
@@ -94,6 +102,10 @@ class AgentConnectorBinding:
         if not isinstance(self.policy, Unset):
             policy = self.policy.to_dict()
 
+        require_approval: list[str] | Unset = UNSET
+        if not isinstance(self.require_approval, Unset):
+            require_approval = self.require_approval
+
         required = self.required
 
         sandbox = self.sandbox
@@ -118,6 +130,8 @@ class AgentConnectorBinding:
             field_dict["events"] = events
         if policy is not UNSET:
             field_dict["policy"] = policy
+        if require_approval is not UNSET:
+            field_dict["require_approval"] = require_approval
         if required is not UNSET:
             field_dict["required"] = required
         if sandbox is not UNSET:
@@ -166,6 +180,8 @@ class AgentConnectorBinding:
         else:
             policy = ConnectorBindingPolicy.from_dict(_policy)
 
+        require_approval = cast(list[str], d.pop("require_approval", UNSET))
+
         required = d.pop("required", UNSET)
 
         sandbox = d.pop("sandbox", UNSET)
@@ -181,6 +197,7 @@ class AgentConnectorBinding:
             tools=tools,
             events=events,
             policy=policy,
+            require_approval=require_approval,
             required=required,
             sandbox=sandbox,
             timeout_ms=timeout_ms,

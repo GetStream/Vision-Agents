@@ -1987,7 +1987,7 @@ export type paths = {
          *     Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
          *     `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers should leave this disabled. Persistent text command recovery is unchanged.
          *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are its agent config's, so there is no command to change them. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
-         *     A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`. A connector call waiting for the person to sign in (`awaiting_authorization`) is declined with `tool_approval` too, naming only its `tool_call_id` with `allowed` false: the router answers that call itself.
+         *     A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`. A connector call waiting for the person to sign in (`awaiting_authorization`) is declined with `tool_approval` too, naming only its `tool_call_id` with `allowed` false: the router answers that call itself. A connector call whose binding sets `require_approval` waits on its step (`awaiting_approval`) for the session's user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id` left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so. It needs no `tool_result`.
          *     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
          *     `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
          */
@@ -4171,6 +4171,8 @@ export type components = {
             readonly name: string;
             /** @description How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs. */
             readonly policy?: components["schemas"]["ConnectorBindingPolicy"];
+            /** @description Names or path.Match patterns of the binding's tools whose every call waits for a person to allow it before the router sends it, such as create_issue or delete_*. The step of the call asks the session's user in its conversation, who answers with the session socket's tool_approval. Declined, or not answered in 10 minutes, the call is not sent and the model is told so. A session with nobody to ask, such as an incognito one or one opened by an MCP event, refuses the call at once. Each entry must match a tool the binding grants, or one of its tool_patterns. Refused with sandbox, whose code calls the API with nobody asked. At most 128, the cap tools has. */
+            readonly require_approval?: readonly string[];
             /**
              * @description Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
              * @default false
@@ -8455,14 +8457,15 @@ export type components = {
              */
             readonly $lt?: string;
         };
-        /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. */
+        /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out. */
         readonly ToolApprovalCommand: {
             readonly allowed: boolean;
             readonly request_id: string;
             /** @description Shown on the declined call, such as "Location not shared". */
             readonly summary?: string;
             readonly tool_call_id: string;
-            readonly turn_id: string;
+            /** @description The turn of the call. Required, except for a connector call whose binding sets require_approval. */
+            readonly turn_id?: string;
             /** @enum {string} */
             readonly type: "tool_approval";
         };
