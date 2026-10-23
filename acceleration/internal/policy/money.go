@@ -213,6 +213,10 @@ type account struct {
 	throughFrom   time.Time
 	balanceFailed time.Time
 	spendFailed   time.Time
+	// lastAck is when the usage service last acked a row of the account, and acksFailed when
+	// release last found it acking none (ackless), which counts as a failed read of the limits.
+	lastAck    time.Time
+	acksFailed time.Time
 	// wanted is when this process first asked for it, and used when it last did.
 	wanted time.Time
 	used   time.Time
