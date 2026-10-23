@@ -856,39 +856,68 @@ func newKnowledgeBase() *knowledgeBase {
 	return &knowledgeBase{passages: map[string]knowledge.Document{}}
 }
 
-func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []knowledge.Document) error {
+// knowledgeQueried is what the stub bills a query as having searched: the least a small
+// namespace is billed at turbopuffer.
+const knowledgeQueried = 1_280_000_000
+
+// passageBytes is a passage's logical size, as turbopuffer bills it.
+func passageBytes(document knowledge.Document) int64 {
+	return int64(len(document.ID) + len(document.Text) + len(document.Source))
+}
+
+func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []knowledge.Document) (knowledge.Billed, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	b.namespace = namespace
+	billed := knowledge.Billed{Requests: 1}
 	for _, document := range documents {
 		b.passages[document.ID] = document
+		billed.BytesWritten += passageBytes(document)
 	}
-	return nil
+	return billed, nil
 }
 
-func (b *knowledgeBase) Delete(_ context.Context, _ string, ids []string) error {
+func (b *knowledgeBase) Delete(_ context.Context, _ string, ids []string) (knowledge.Billed, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	billed := knowledge.Billed{Requests: 1}
 	for _, id := range ids {
 		delete(b.passages, id)
+		billed.BytesWritten += int64(len(id))
 	}
-	return nil
+	return billed, nil
 }
 
-func (b *knowledgeBase) Fetch(_ context.Context, _ string, ids []string) ([]knowledge.Document, error) {
+func (b *knowledgeBase) Fetch(_ context.Context, _ string, ids []string) (knowledge.Found, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	var found []knowledge.Document
+	found := knowledge.Found{Billed: knowledge.Billed{Requests: 1, BytesQueried: knowledgeQueried}}
 	for _, id := range ids {
 		if document, ok := b.passages[id]; ok {
-			found = append(found, document)
+			found.Documents = append(found.Documents, document)
+			found.BytesReturned += passageBytes(document)
 		}
 	}
+	found.Results = int64(len(found.Documents))
 	return found, nil
 }
+
+func (b *knowledgeBase) Search(context.Context, knowledge.Query) (knowledge.Found, error) {
+	return knowledge.Found{Billed: knowledge.Billed{Requests: 1, BytesQueried: knowledgeQueried}}, nil
+}
+
+func (b *knowledgeBase) Namespaces(context.Context, string) ([]string, error) { return nil, nil }
+
+func (b *knowledgeBase) Stored(context.Context, string) (knowledge.Billed, error) {
+	return knowledge.Billed{}, knowledge.ErrNoNamespace
+}
+
+func (b *knowledgeBase) Provider() string { return "kept" }
+
+func (b *knowledgeBase) Close() error { return nil }
 
 // stored is the namespace last written to and the passages it holds.
 func (b *knowledgeBase) stored() (string, map[string]knowledge.Document) {
@@ -920,25 +949,25 @@ type keptMemories struct {
 	kept []memory.Scope
 }
 
-func (m *keptMemories) Recall(context.Context, memory.Query) ([]memory.Memory, error) {
-	return nil, nil
+func (m *keptMemories) Recall(context.Context, memory.Query) (memory.Recalled, error) {
+	return memory.Recalled{Billed: memory.Billed{Requests: 1}}, nil
 }
 
-func (m *keptMemories) Remember(_ context.Context, scope memory.Scope, _ []llm.Message) error {
+func (m *keptMemories) Remember(_ context.Context, scope memory.Scope, _ []llm.Message) (memory.Billed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.kept = append(m.kept, scope)
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
-func (m *keptMemories) Truncate(_ context.Context, appID, userID string) error {
+func (m *keptMemories) Truncate(_ context.Context, appID, userID string) (memory.Billed, error) {
 	m.forget(func(kept memory.Scope) bool { return kept.AppID == appID && kept.UserID == userID })
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
-func (m *keptMemories) ForgetRun(_ context.Context, appID, runID string) error {
+func (m *keptMemories) ForgetRun(_ context.Context, appID, runID string) (memory.Billed, error) {
 	m.forget(func(kept memory.Scope) bool { return kept.AppID == appID && kept.RunID == runID })
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
 func (m *keptMemories) Provider() string { return "kept" }

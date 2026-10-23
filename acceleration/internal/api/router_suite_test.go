@@ -61,6 +61,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -245,7 +246,10 @@ type RouterSuite struct {
 
 	// memoryStore is where sessions remember, for a suite about memory to set before it
 	// starts the harness. Nil keeps them in memories.
-	memoryStore memory.Store
+	memoryStore memory.Backend
+	// metering is what memory, knowledge and voice cloning record through, as the process
+	// writer is in cmd/router.
+	metering *routing.Recorder
 
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
@@ -463,6 +467,7 @@ func (s *RouterSuite) SetupSuite() {
 	if s.pricedFromDatabase {
 		s.prices = s.databasePrices(logger)
 	}
+	s.metering = s.meteringRecorder(logger)
 	policies := s.policies(logger)
 	s.limiter = s.quota(liveClient, policies, logger)
 	streams := s.routers(s.limiter, policies, logger)
@@ -967,7 +972,7 @@ func (s *RouterSuite) sessionManager(
 	s.conversations = conversations
 
 	s.memories = &keptMemories{}
-	var remembering memory.Store = s.memories
+	var remembering memory.Backend = s.memories
 	if s.memoryStore != nil {
 		remembering = s.memoryStore
 	}
@@ -975,7 +980,7 @@ func (s *RouterSuite) sessionManager(
 		LLM:           streams.LLM,
 		STT:           streams.STT,
 		TTS:           streams.TTS,
-		Memory:        remembering,
+		Memory:        metered.NewMemory(remembering, s.metering),
 		Transcript:    s.transcripts,
 		Conversations: conversations,
 		Stream:        s.stream,
@@ -1103,9 +1108,21 @@ func (s *RouterSuite) simulations(sessions *session.Manager, streams *Streams, l
 	return runner
 }
 
-func (s *RouterSuite) knowledgeWriter() *knowledgeBase {
+// meteringRecorder is the recorder the suite's memory, knowledge and voice cloning record
+// through, priced as the suite's routers are, and drained when the suite ends.
+func (s *RouterSuite) meteringRecorder(logger *slog.Logger) *routing.Recorder {
+	var pricer pricing.Pricer
+	if s.prices != nil {
+		pricer = s.prices
+	}
+	recorder := routing.NewRecorder(routing.Knowledge, s.store, s.live, pricer, logger)
+	s.T().Cleanup(recorder.Close)
+	return recorder
+}
+
+func (s *RouterSuite) knowledgeWriter() *metered.Knowledge {
 	s.knowledge = newKnowledgeBase()
-	return s.knowledge
+	return metered.NewKnowledge(s.knowledge, s.metering)
 }
 
 // pages keeps the knowledge bases filled from pages published elsewhere. Its queue is in a
@@ -1116,7 +1133,7 @@ func (s *RouterSuite) pages(redisAddr string) *urls.Service {
 		Store:         s.store,
 		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(redisDB.Add(1))%15 + 1},
 		Reader:        pageReader{},
-		Writer:        newKnowledgeBase(),
+		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering),
 		CheckInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)
@@ -1146,7 +1163,7 @@ func (s *RouterSuite) voiceService() *voices.Service {
 	cloners := voices.NewRegistry()
 	cloners.Register("elevenlabs", cloner)
 
-	service, err := voices.NewService(voices.Options{Store: s.configs, Bucket: bucket, Cloners: cloners})
+	service, err := voices.NewService(voices.Options{Store: s.configs, Bucket: bucket, Cloners: cloners, Recorder: s.metering})
 	s.Require().NoError(err)
 	return service
 }
@@ -1184,7 +1201,7 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 		LLM:           s.streams.LLM,
 		STT:           s.streams.STT,
 		TTS:           s.streams.TTS,
-		Memory:        &keptMemories{},
+		Memory:        metered.NewMemory(&keptMemories{}, s.metering),
 		Conversations: s.conversations,
 		Stream:        s.stream,
 		Store:         s.store,

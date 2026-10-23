@@ -155,7 +155,13 @@ func (l *Loop) checkItems(now time.Time, condition Condition) {
 // Send sends one alert now, for a short-lived process (a job) that has no loop. It goes to
 // the current hub, tagged with the binary's name; the caller flushes Sentry before it exits.
 func Send(name string, level Level, extra map[string]any) {
-	send(sentry.CurrentHub(), slog.Default(), filepath.Base(os.Args[0]), nil, name, "", level, extra)
+	SendItem(name, "", level, extra)
+}
+
+// SendItem is Send for one item, such as the hour a job missed: the alert names it, and one
+// item's alert is kept apart from another's.
+func SendItem(name, item string, level Level, extra map[string]any) {
+	send(sentry.CurrentHub(), slog.Default(), filepath.Base(os.Args[0]), nil, name, item, level, extra)
 }
 
 // send sends one alert, of one item of the condition when item is not empty.

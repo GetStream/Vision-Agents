@@ -130,6 +130,15 @@ type VendorCosted interface {
 	VendorCostMicros() int64
 }
 
+// ProviderCosted is a result whose cost to the operator was worked out under the provider's
+// own formula, its minimums and discounts included, in billionths of a dollar: a call that
+// costs a millionth of a dollar or less is still counted. Like VendorCosted it never prices
+// the work; it is kept beside the row, so what a meter costs the operator can be compared with
+// what it is sold at.
+type ProviderCosted interface {
+	ProviderCostNanos() int64
+}
+
 // Rate is USD for every Per units of a meter. Increment rounds the quantity up to a
 // multiple of itself, and Minimum is the least billed once anything is used.
 type Rate struct {
@@ -149,6 +158,15 @@ func (r Rate) micros(quantity int64) float64 {
 		billed = max(billed, r.Minimum)
 	}
 	return r.USD * 1e6 * float64(billed) / float64(r.Per)
+}
+
+// Nanos is what quantity costs at this rate, its increment and minimum applied, in
+// billionths of a dollar, rounded once.
+func (r Rate) Nanos(quantity int64) int64 {
+	if r.Per <= 0 {
+		return 0
+	}
+	return roundHalfUp(r.micros(quantity) * 1000)
 }
 
 // Tier prices a prompt longer than AboveInputTokens at Rates, for the whole request, as

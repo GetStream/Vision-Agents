@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"strconv"
@@ -186,6 +187,21 @@ func (s *Stat) VendorCost(work any) {
 	if costed, ok := work.(pricing.VendorCosted); ok {
 		if micros := costed.VendorCostMicros(); micros > 0 {
 			s.Attribute(store.VendorCostAttribute, strconv.FormatInt(micros, 10))
+		}
+	}
+}
+
+// AttributeProviderCostMicros is what the work cost the operator under its provider's own
+// formula, in micros to three decimal places (1.280), so a day of lookups costing about a
+// micro each sums close to the provider's invoice.
+const AttributeProviderCostMicros = "provider_cost_micros"
+
+// ProviderCost keeps what the work cost the operator under its provider's formula, when the
+// result worked it out. It never prices the row.
+func (s *Stat) ProviderCost(work any) {
+	if costed, ok := work.(pricing.ProviderCosted); ok {
+		if nanos := costed.ProviderCostNanos(); nanos > 0 {
+			s.Attribute(AttributeProviderCostMicros, fmt.Sprintf("%d.%03d", nanos/1000, nanos%1000))
 		}
 	}
 }

@@ -27,8 +27,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -217,11 +217,13 @@ func run(options options, logger *slog.Logger) error {
 
 	// Without a mem0 key the agent starts every call knowing nothing but its
 	// instructions, which is the behaviour before memory existed.
-	var remembering memory.Store
+	var remembering *metered.Memory
 	if recall, err := mem0.New(mem0.Options{Logger: logger}); err != nil {
 		logger.Debug("not remembering anything between calls", "error", err)
 	} else {
-		remembering = recall
+		recorder := routing.NewRecorder(routing.Memory, routers.store, routers.live, nil, logger)
+		defer recorder.Close()
+		remembering = metered.NewMemory(recall, recorder)
 	}
 
 	// Skills only mean something with a subagent to run them, so loading them is skipped
