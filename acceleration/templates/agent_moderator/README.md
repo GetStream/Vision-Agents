@@ -20,11 +20,12 @@ through `POST /v1/agents/runs`. The dashboard's "AI moderator" template
   whose text tries to suppress the verdict, and two Ask Nora questions across the app (who
   violates most, which label is most often overturned). Run them after editing the agent
   (`getstream agents simulate nora`); the AI team runs them before changing this template.
-- `skills/suggest_policy.md` is for Ask Nora: from the live policy, the last 7 days of reviews
-  and where Nora disagreed with the first layer, it proposes changes to labels, app context,
-  severities, blocklists, rules and the flooding filter, as JSON the dashboard's
-  `apply-configuration.ts` saves once the moderator confirms. It only proposes. The dashboard
-  calls it by name (`suggest-policy-skill.ts`), so keep the file name.
+- `skills/suggest_policy.md` is for Ask Nora: from the live policy, the last 7 days of reviews,
+  where Nora disagreed with the first layer, and `list_agent_feedback` (written corrections),
+  it proposes changes to labels, app context, severities, blocklists, rules and the flooding
+  filter, as JSON the dashboard's `apply-configuration.ts` saves once the moderator confirms.
+  It only proposes. The dashboard calls it by name (`suggest-policy-skill.ts`), so keep the
+  file name.
 
 The app may edit all of it. The answer format the worker parses is not here: the router adds it
 (`acceleration/internal/moderator/contract.md`) after every other instruction on each run of a
