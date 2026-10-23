@@ -113,6 +113,22 @@ func (s *ToolsSuite) TestAReadBackWithoutAWaitIsFollowedByTheCall() {
 	}
 }
 
+func (s *ToolsSuite) TestAToolThatFailedIsTriedAgainWhenItIsNeeded() {
+	// One unexpected call in Audio Arena is answered "not available right now", and the
+	// agent told the caller for the rest of the call that it could not book, send or set
+	// anything, without calling the tools again: 8 of 18 missed calls in one run.
+	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
+		s.Contains(prompt, "A tool that failed or was unavailable earlier in the call may work now: "+
+			"when the caller asks for something that needs it, call it again")
+	}
+}
+
+func (s *ToolsSuite) TestAGoodbyeEndsTheSessionWhenAToolDoes() {
+	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
+		s.Contains(prompt, "When the caller says goodbye and one of your tools ends the session, call it")
+	}
+}
+
 func (s *ToolsSuite) TestNoHoldPhraseIsGivenToCopy() {
 	// The models open every reply with whatever example they are shown: "One moment, let me
 	// check that" opened 23 of 85 Audio Arena turns, many of them calling a tool nobody asked for.

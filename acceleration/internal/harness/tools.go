@@ -211,6 +211,10 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"as walking the caller through something, call it instead of describing the step, " +
 	"even if the caller says they already tried that step themselves: the tool records " +
 	"that it was done and later steps may need it. " +
+	"A tool that failed or was unavailable earlier in the call may work now: when the caller " +
+	"asks for something that needs it, call it again rather than telling them it is still " +
+	"unavailable. When the caller says goodbye and one of your tools ends the session, call it " +
+	"as you say goodbye. " +
 	"Never guess an id: pass one only as a tool result gave it, and if you have not seen " +
 	"it, first call the tool that lists them. " +
 	"When you read details back or confirm a change, say each value whole, exactly as you " +
