@@ -1,6 +1,10 @@
 package phone
 
-import "github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+import (
+	"fmt"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+)
 
 // StreamSuite covers what can be checked without an account: that nothing half-described
 // reaches Stream, and that a trunk address a vendor is given is dialable.
@@ -123,4 +127,56 @@ func (s *PhoneSuite) TestATrunkGivenAPasswordKeepsIt() {
 
 	password, _ := fake.TrunkAuth(trunkID)
 	s.Equal("chosen", password)
+}
+
+func (s *PhoneSuite) TestUpdatingATrunkKeepsItsPasswordWhenNoneIsGiven() {
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+	trunkID, _, err := stream.CreateTrunk(s.ctx, Trunk{Name: "call", Numbers: []string{"+15125550100"}, Password: "chosen"})
+	s.Require().NoError(err)
+
+	err = stream.UpdateTrunk(s.ctx, trunkID, Trunk{Name: "call", Numbers: []string{"+15125550100", "+15125550101"}})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"+15125550100", "+15125550101"}, fake.TrunkNumbers(trunkID))
+	password, _ := fake.TrunkAuth(trunkID)
+	s.Equal("chosen", password)
+}
+
+func (s *PhoneSuite) TestATrunkTakesNoMoreThanFiftyNumbers() {
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+	trunkID, _, err := stream.CreateTrunk(s.ctx, Trunk{Name: "call", Numbers: []string{"+15125550100"}})
+	s.Require().NoError(err)
+
+	numbers := make([]string, 51)
+	for i := range numbers {
+		numbers[i] = fmt.Sprintf("+1512555%04d", i)
+	}
+	s.Error(stream.UpdateTrunk(s.ctx, trunkID, Trunk{Name: "call", Numbers: numbers}))
+}
+
+func (s *PhoneSuite) TestUpdatingARouteChangesItsCallID() {
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+	route := Route{Name: "call", TrunkIDs: []string{"t"}, CalledNumbers: []string{"+15125550100"}}
+	ruleID, err := stream.CreateRoute(s.ctx, route)
+	s.Require().NoError(err)
+
+	route.CallID = "x"
+	s.Require().NoError(stream.UpdateRoute(s.ctx, ruleID, route))
+
+	configs, _ := fake.Rule(ruleID)["direct_routing_configs"].(map[string]any)
+	s.Equal("x", configs["call_id"])
+}
+
+func (s *PhoneSuite) TestACreatedCallCarriesItsCustom() {
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+
+	s.Require().NoError(stream.CreateCall(s.ctx, "agent", "abc", map[string]string{"k": "v"}))
+
+	data, _ := fake.Call("agent", "abc")["data"].(map[string]any)
+	custom, _ := data["custom"].(map[string]any)
+	s.Equal("v", custom["k"])
 }

@@ -30,7 +30,9 @@ type store struct {
 	users    map[string]map[string]any
 	trunks   map[string]map[string]any
 	// calls are the participant ids in each call's session, by "<type>:<id>".
-	calls    map[string][]string
+	calls map[string][]string
+	// made are the bodies calls were created with, by "<type>:<id>".
+	made     map[string]map[string]any
 	rules    map[string]map[string]any
 	order    []string
 	now      func() time.Time
@@ -39,6 +41,8 @@ type store struct {
 	// oneTrunkPerNumber refuses a trunk naming a number another trunk already has; see
 	// OneTrunkPerNumber.
 	oneTrunkPerNumber bool
+	// trunkCap is the most trunks the app holds, 0 for no limit; see CapTrunks.
+	trunkCap int
 	// keyed are apps answered for one api key, standing in for several apps at one URL.
 	keyed map[string]App
 	// hooks are the event hooks each api key's app holds, as an app update last set them,
@@ -125,7 +129,7 @@ func NewServer(t *testing.T) *Server {
 	db := &store{
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
-		rules: map[string]map[string]any{}, calls: map[string][]string{}, hooks: map[string][]json.RawMessage{},
+		rules: map[string]map[string]any{}, calls: map[string][]string{}, made: map[string]map[string]any{}, hooks: map[string][]json.RawMessage{},
 		updates: map[string][]json.RawMessage{}, events: map[string][]map[string]any{}, now: time.Now,
 		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
@@ -328,6 +332,33 @@ func (s *Server) OneTrunkPerNumber() {
 	s.db.oneTrunkPerNumber = true
 }
 
+// CapTrunks has the app refuse a trunk once it holds n, as Stream does at its limit. It is
+// off unless asked for.
+func (s *Server) CapTrunks(n int) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.trunkCap = n
+}
+
+// TrunkNumbers are the numbers the trunk has now.
+func (s *Server) TrunkNumbers(id string) []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	var numbers []string
+	listed, _ := s.db.trunks[id]["numbers"].([]any)
+	for _, number := range listed {
+		numbers = append(numbers, fmt.Sprint(number))
+	}
+	return numbers
+}
+
+// Call is the body a call was created with, nil if none was.
+func (s *Server) Call(callType, id string) map[string]any {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return s.db.made[callType+":"+id]
+}
+
 // Rules are the ids of the SIP routing rules the app holds now.
 func (s *Server) Rules() []string {
 	s.db.mu.Lock()
@@ -455,10 +486,14 @@ func refuse(w http.ResponseWriter, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": message, "StatusCode": http.StatusBadRequest})
 }
 
-// numberOnATrunk is a number the trunk being made names that a trunk the app holds has too.
-func (db *store) numberOnATrunk(trunk map[string]any) string {
+// numberOnATrunk is a number the trunk being made names that a trunk the app holds has too,
+// leaving out the trunk with the id except, the one being updated.
+func (db *store) numberOnATrunk(trunk map[string]any, except string) string {
 	wanted, _ := trunk["numbers"].([]any)
-	for _, held := range db.trunks {
+	for id, held := range db.trunks {
+		if id == except {
+			continue
+		}
 		has, _ := held["numbers"].([]any)
 		for _, number := range wanted {
 			if slices.Contains(has, number) {
@@ -467,6 +502,22 @@ func (db *store) numberOnATrunk(trunk map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// checkTrunk refuses a trunk with more numbers than Stream allows, or with one another trunk
+// has when that is modelled, and reports whether the trunk is fine.
+func (db *store) checkTrunk(w http.ResponseWriter, trunk map[string]any, except string) bool {
+	if numbers, _ := trunk["numbers"].([]any); len(numbers) > 50 {
+		refuse(w, "a SIP trunk takes at most 50 numbers")
+		return false
+	}
+	if db.oneTrunkPerNumber {
+		if taken := db.numberOnATrunk(trunk, except); taken != "" {
+			refuse(w, "numbers already used by another SIP trunk: "+taken)
+			return false
+		}
+	}
+	return true
 }
 
 // appFor is the app a request's api key is answered as.
@@ -665,12 +716,16 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			call["session"] = map[string]any{"id": "session-" + cid, "participants": participants}
 		}
 		result["call"] = call
+	case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/video/call/"):
+		db.made[parts[len(parts)-2]+":"+parts[len(parts)-1]] = body
+		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1]}
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
-		if db.oneTrunkPerNumber {
-			if taken := db.numberOnATrunk(body); taken != "" {
-				refuse(w, "numbers already used by another SIP trunk: "+taken)
-				return
-			}
+		if db.trunkCap > 0 && len(db.trunks) >= db.trunkCap {
+			refuse(w, "your application reached the maximum number of SIP trunks (25)")
+			return
+		}
+		if !db.checkTrunk(w, body, "") {
+			return
 		}
 		// Stream's ids are unique across every app, which is what lets a test tell one app's
 		// trunk from another's.
@@ -680,6 +735,32 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		// created without one has none.
 		password, _ := body["password"].(string)
 		result["sip_trunk"] = map[string]any{"id": id, "uri": "sip:" + id + "@sip.example.test", "username": id, "password": password}
+	case strings.Contains(r.URL.Path, "/sip/inbound_trunks/") && r.Method == http.MethodPut:
+		id := parts[len(parts)-1]
+		if _, ok := db.trunks[id]; !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if !db.checkTrunk(w, body, id) {
+			return
+		}
+		// An update that names no password leaves the stored one, as Stream does.
+		if _, sent := body["password"]; !sent {
+			if kept, ok := db.trunks[id]["password"]; ok {
+				body["password"] = kept
+			}
+		}
+		db.trunks[id] = body
+		password, _ := body["password"].(string)
+		result["sip_trunk"] = map[string]any{"id": id, "uri": "sip:" + id + "@sip.example.test", "username": id, "password": password}
+	case strings.Contains(r.URL.Path, "/sip/inbound_routing_rules/") && r.Method == http.MethodPut:
+		id := parts[len(parts)-1]
+		if _, ok := db.rules[id]; !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		db.rules[id] = body
+		result["sip_inbound_routing_rule"] = map[string]any{"id": id}
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_routing_rules") && r.Method == http.MethodPost:
 		id := "rule-" + unique()
 		db.rules[id] = body
