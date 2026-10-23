@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -390,12 +391,12 @@ func (s *Server) receivePluginEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, gone("this deployment subscribes to no plugin events"))
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, plugins.MaxEventBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, webhook.MaxEventBytes+1))
 	if err != nil {
 		writeError(w, invalidRequest(err.Error()))
 		return
 	}
-	if len(body) > plugins.MaxEventBytes {
+	if len(body) > webhook.MaxEventBytes {
 		writeError(w, payloadTooLarge("a delivery is at most 256 KiB"))
 		return
 	}

@@ -20,8 +20,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 )
 
 // EventForwardingSuite is a customer's Slack app's events going on to the customer's event
@@ -86,7 +86,7 @@ func (s *EventForwardingSuite) TestABlockActionsReachesTheDestinationWithSlacksB
 	for _, name := range []string{"Content-Type", "X-Slack-Signature", "X-Slack-Request-Timestamp"} {
 		s.Equal(sent.Get(name), got.header.Get(name), name)
 	}
-	s.NoError(plugins.VerifyWebhook(created.Secret, got.header, got.body, time.Now()), "signed with the destination's secret")
+	s.NoError(webhook.Verify(created.Secret, got.header, got.body, time.Now()), "signed with the destination's secret")
 }
 
 func (s *EventForwardingSuite) TestAForwardSignedForOneCustomerDoesNotVerifyWithAnothersKey() {
@@ -98,8 +98,8 @@ func (s *EventForwardingSuite) TestAForwardSignedForOneCustomerDoesNotVerifyWith
 	s.deliver(s.reaction(), 0)
 
 	got := s.forwardedTo(mine, 1)[0]
-	s.NoError(plugins.VerifyWebhook(created.Secret, got.header, got.body, time.Now()))
-	s.ErrorIs(plugins.VerifyWebhook(theirs.Secret, got.header, got.body, time.Now()), plugins.ErrBadSignature)
+	s.NoError(webhook.Verify(created.Secret, got.header, got.body, time.Now()))
+	s.ErrorIs(webhook.Verify(theirs.Secret, got.header, got.body, time.Now()), webhook.ErrBadSignature)
 }
 
 // A person's message an agent answers is the router's: a destination of unhandled events is
@@ -360,8 +360,8 @@ func (s *EventForwardingSuite) TestAfterARotationAForwardVerifiesWithTheOldSecre
 	s.deliver(s.reaction(), 0)
 
 	got := s.forwardedTo(target, 1)[0]
-	s.NoError(plugins.VerifyWebhook(created.Secret, got.header, got.body, time.Now()), "the old secret")
-	s.NoError(plugins.VerifyWebhook(rotated.Secret, got.header, got.body, time.Now()), "the new secret")
+	s.NoError(webhook.Verify(created.Secret, got.header, got.body, time.Now()), "the old secret")
+	s.NoError(webhook.Verify(rotated.Secret, got.header, got.body, time.Now()), "the new secret")
 }
 
 // forwardedTo waits until a destination took count requests, and returns them.
