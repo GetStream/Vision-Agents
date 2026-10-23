@@ -67,7 +67,7 @@ func runUsageStorage(ctx context.Context, args []string, settings config.Config,
 	}
 	defer pgStore.Close()
 
-	recording, stop, err := storageRecorder(ctx, settings, pgStore, logger)
+	recording, stop, err := jobRecorder(ctx, settings, pgStore, routing.Knowledge, logger)
 	if err != nil {
 		return err
 	}
@@ -88,10 +88,12 @@ func storageHourOf(text string, now time.Time) (time.Time, error) {
 	return at.UTC().Truncate(time.Hour), nil
 }
 
-// storageRecorder is the recorder storage rows are written through, priced by the list in
-// force, with the policies saying whose app each row's organization is and its tier. stop
-// drains the writer.
-func storageRecorder(ctx context.Context, settings config.Config, pgStore *store.Store, logger *slog.Logger) (*routing.Recorder, func(), error) {
+// jobRecorder is the recorder a job's rows of modality are written through, by a writer of the
+// job's own that ships to the usage service when one is set, priced by the list in force, with
+// the policies saying whose app each row's organization is and its tier. stop drains the
+// writer; what it has not shipped by then, the routers' sweeper ships.
+func jobRecorder(ctx context.Context, settings config.Config, pgStore *store.Store, modality routing.Modality,
+	logger *slog.Logger) (*routing.Recorder, func(), error) {
 	usageClient, err := newUsageClient(settings, pgStore, logger)
 	if err != nil {
 		return nil, nil, err
@@ -124,7 +126,7 @@ func storageRecorder(ctx context.Context, settings config.Config, pgStore *store
 		Store: pgStore, Logger: logger, Gate: policies, Usage: usageClient,
 		Source: routing.Source(cmp.Or(settings.Shard, routing.Unsharded), host),
 	})
-	return routing.NewRecorderOn(routing.Knowledge, writer, active, logger), func() {
+	return routing.NewRecorderOn(modality, writer, active, logger), func() {
 		drained, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageDrainTimeout)
 		defer cancel()
 		writer.Close(drained)

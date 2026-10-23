@@ -44,8 +44,11 @@ type Options struct {
 	// Transport reaches the providers. Nil is http.DefaultClient.
 	Transport *http.Client
 	// Gate keeps the agent from writing to somebody who opted out, or past the sandbox.
-	Gate   *dlc.Gate
-	Logger *slog.Logger
+	Gate *dlc.Gate
+	// Recorder files every message that arrives and every one sent as a row, priced by its
+	// channel, direction and country. Nil records none.
+	Recorder *routing.Recorder
+	Logger   *slog.Logger
 }
 
 // Service answers what arrives on an app's channels.
@@ -55,6 +58,7 @@ type Service struct {
 	secrets   *auth.Sealer
 	transport *http.Client
 	gate      *dlc.Gate
+	recorder  *routing.Recorder
 	logger    *slog.Logger
 
 	// mu guards answering, keyed by who is writing: two messages from one person are
@@ -97,6 +101,7 @@ func New(options Options) (*Service, error) {
 		secrets:   options.Secrets,
 		transport: options.Transport,
 		gate:      options.Gate,
+		recorder:  options.Recorder,
 		logger:    options.Logger,
 		turns:     map[string]*holder{},
 		ctx:       ctx,
@@ -155,6 +160,11 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 		// A provider that did not hear back in time sends the same message again. Answering
 		// it twice is the agent talking over itself, so a message already taken is dropped.
 		if !fresh {
+			continue
+		}
+		s.received(ctx, account, message)
+		// Files with no words are billed, and there is nothing in them for the agent to answer.
+		if message.Text == "" {
 			continue
 		}
 		s.working.Add(1)
@@ -218,7 +228,15 @@ func (s *Service) Notify(ctx context.Context, notice Notice) error {
 	if err != nil {
 		return err
 	}
-	if err := provider.Send(ctx, line, thread, Reply{Text: notice.Text}); err != nil {
+	// Who a text or a WhatsApp message goes to is its thread; an iMessage chat is in no
+	// country, and costs the same wherever it is.
+	to := thread
+	attribution := routing.AttributionFrom(ctx)
+	if attribution.APIKey == "" {
+		attribution.APIKey = OriginNotice
+	}
+	owner := routing.Owner{CustomerID: notice.CustomerID, Attribution: attribution}
+	if err := s.deliver(ctx, line, provider, to, thread, Reply{Text: notice.Text}, owner); err != nil {
 		return stack.Wrap(err)
 	}
 	s.gate.Sent(ctx, notice.CustomerID)
@@ -414,7 +432,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	sending := make(chan struct{})
 	go func() {
 		defer close(sending)
-		s.send(ctx, created, account.CustomerID, line, provider, message, events)
+		s.send(ctx, created, answering(account.CustomerID, identity.UserID), line, provider, message, events)
 	}()
 	// The provider's own message id is the command id, so the durable conversation refuses a
 	// repeat for the same reason the delivery table does.
@@ -461,11 +479,13 @@ func (s *Service) identify(ctx context.Context, config store.AgentConfig, accoun
 		link, err := s.store.ClaimChannelLink(ctx, account.CustomerID, strings.TrimSpace(message.Text))
 		if err != nil {
 			s.say(ctx, line, provider, message, Reply{Text: "Send me the code from your account to " +
-				"get started. It ties this number to you, so I can answer about what is yours."})
+				"get started. It ties this number to you, so I can answer about what is yours."},
+				answering(account.CustomerID, ""))
 			return store.ChannelIdentity{}, false
 		}
 		if link.ConfigID != config.ID {
-			s.say(ctx, line, provider, message, Reply{Text: "That code is for another agent."})
+			s.say(ctx, line, provider, message, Reply{Text: "That code is for another agent."},
+				answering(account.CustomerID, ""))
 			return store.ChannelIdentity{}, false
 		}
 		identity.UserID = link.UserID
@@ -475,7 +495,8 @@ func (s *Service) identify(ctx context.Context, config store.AgentConfig, accoun
 		return store.ChannelIdentity{}, false
 	}
 	if config.Channels.Identity == store.ChannelIdentityLink {
-		s.say(ctx, line, provider, message, Reply{Text: "This number is yours now. What can I do for you?"})
+		s.say(ctx, line, provider, message, Reply{Text: "This number is yours now. What can I do for you?"},
+			answering(account.CustomerID, identity.UserID))
 		return identity, false
 	}
 	return identity, true
@@ -483,8 +504,9 @@ func (s *Service) identify(ctx context.Context, config store.AgentConfig, accoun
 
 // send writes back what the agent says, as it says it, and returns once the turn has
 // settled: one message can earn several replies, and work it hands off produces files.
-func (s *Service) send(ctx context.Context, created *session.Session, customerID string, line Account,
+func (s *Service) send(ctx context.Context, created *session.Session, owner routing.Owner, line Account,
 	provider Provider, message Message, events <-chan session.Event) {
+	customerID := owner.CustomerID
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	last := time.Now()
@@ -513,7 +535,7 @@ func (s *Service) send(ctx context.Context, created *session.Session, customerID
 			s.logger.Info("not writing back on a channel", "channel", line.Kind, "reason", err)
 			continue
 		}
-		s.say(ctx, line, provider, message, reply)
+		s.say(ctx, line, provider, message, reply, owner)
 		s.gate.Sent(ctx, customerID)
 	}
 }
@@ -540,8 +562,15 @@ func filesOf(attached []sandbox.Attachment) []File {
 	return files
 }
 
-func (s *Service) say(ctx context.Context, line Account, provider Provider, message Message, reply Reply) {
-	if err := provider.Send(ctx, line, message.Thread, reply); err != nil {
+// answering is who a reply to somebody who wrote is billed to: the app, under the origin of a
+// conversation a text started, for the end user it is for when that is known.
+func answering(customerID, userID string) routing.Owner {
+	return routing.Owner{CustomerID: customerID, Attribution: routing.Attribution{
+		APIKey: routing.OriginPhoneInbound, UserID: userID, CallerKind: routing.CallerUser}}
+}
+
+func (s *Service) say(ctx context.Context, line Account, provider Provider, message Message, reply Reply, owner routing.Owner) {
+	if err := s.deliver(ctx, line, provider, message.From, message.Thread, reply, owner); err != nil {
 		s.logger.Error("could not write back on a channel", "channel", line.Kind,
 			"number", line.E164, "error", err)
 	}

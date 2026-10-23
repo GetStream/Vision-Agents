@@ -73,14 +73,14 @@ var modalities = map[string]string{
 }
 
 // vendorRoots are the packages whose subpackages are vendors: the model modalities, the phone
-// and 10DLC vendors, and the knowledge and memory stores.
+// and 10DLC vendors, the knowledge and memory stores, and the sandbox providers.
 var vendorRoots = append(slices.Sorted(func(yield func(string) bool) {
 	for modality := range modalities {
 		if !yield(modality) {
 			return
 		}
 	}
-}), "internal/phone", "internal/dlc", "internal/knowledge", "internal/memory")
+}), "internal/phone", "internal/dlc", "internal/knowledge", "internal/memory", "internal/sandbox")
 
 // importers are, beside the vendors themselves and the routers, which build theirs through
 // their registries and meter what they build, the packages that may import a vendor: the
@@ -115,6 +115,7 @@ var notVendors = map[string]string{
 	"internal/phone/vendors":           "the phone vendors' registry",
 	"internal/knowledge/ingest":        "how a document is cut into passages, whichever store they go to",
 	"internal/knowledge/urls":          "the pages a knowledge base is kept filled from, written through internal/metered",
+	"internal/sandbox/egress":          "the egress proxy that holds a sandbox's connector credentials, whichever provider runs it",
 }
 
 // withoutSuite are the vendors that run no suite, and why. The list may only shrink.
@@ -365,6 +366,7 @@ func TestTheGuardCatchesWhatBreaksTheRule(t *testing.T) {
 	require.Equal(t, []string{
 		"internal/agent/lookup.go imports internal/knowledge/turbopuffer",
 		"internal/agent/model.go imports internal/llm/openai",
+		"internal/session/box.go imports internal/sandbox/daytona",
 		"internal/sts/crossed/crossed.go imports internal/stt/deepgram",
 	}, vendorImporters(sources))
 	require.Equal(t, []string{"internal/llm/unsuited"}, vendorsWithoutSuite(sources, tests))

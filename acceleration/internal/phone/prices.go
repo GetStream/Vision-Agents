@@ -7,10 +7,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
-// PriceEntries prices placing and transferring a call through every vendor, a customer's
-// own trunk included, at nothing: what a vendor bills for a call is its minutes. A number
-// needs no rate either: its price is the one the vendor quotes when it is bought, and a
-// purchase that failed bought nothing.
+// PriceEntries prices placing a call or a transfer through every vendor, a customer's own
+// trunk included, at nothing: what a vendor bills for a call is its minutes, which are priced
+// by country and direction in the vendor price list. A number needs no rate: each month is
+// billed at the price the vendor quoted, and one with no quote is billable work with no price.
+// A number on the customer's own trunk, and its minutes, are billed by the customer's carrier.
 func PriceEntries(config Config) []pricing.Entry {
 	vendors := []string{SIPTrunkVendor}
 	for _, vendor := range config.Vendors {
@@ -18,11 +19,12 @@ func PriceEntries(config Config) []pricing.Entry {
 			vendors = append(vendors, vendor.Vendor)
 		}
 	}
-	var entries []pricing.Entry
+	free := func(vendor, model string) pricing.Entry {
+		return pricing.Entry{Modality: string(routing.Phone), Provider: vendor, Model: model, Free: true}
+	}
+	entries := []pricing.Entry{free(SIPTrunkVendor, ModelNumber), free(SIPTrunkVendor, ModelCallMinutes)}
 	for _, vendor := range vendors {
-		for _, model := range []string{"call", "transfer", "number"} {
-			entries = append(entries, pricing.Entry{Modality: string(routing.Phone), Provider: vendor, Model: model, Free: true})
-		}
+		entries = append(entries, free(vendor, ModelDial))
 	}
 	return entries
 }

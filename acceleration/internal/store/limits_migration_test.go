@@ -19,7 +19,7 @@ import (
 // Around 20261112120000_limits.sql. beforeLimits is the migration just before it, where a
 // database that already runs the previous release stands.
 const (
-	beforeLimits int64 = 20261111121000
+	beforeLimits int64 = 20261111130000
 	limitsTable  int64 = 20261112120000
 )
 

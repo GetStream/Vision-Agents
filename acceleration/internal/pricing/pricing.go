@@ -36,6 +36,9 @@ const (
 	Requests        Meter = "requests"
 	Messages        Meter = "messages"
 	MessageSegments Meter = "message_segments"
+	// MediaMessages are the messages of a text that carry a file (MMS), which a carrier
+	// bills apart from the segments of its words.
+	MediaMessages   Meter = "media_messages"
 	CallSeconds     Meter = "call_seconds"
 	Seconds         Meter = "seconds"
 	SessionSeconds  Meter = "session_seconds"
@@ -56,7 +59,7 @@ var meters = []Meter{
 	InputTextTokens, InputAudioTokens, InputImageTokens,
 	CachedInputTextTokens, CachedInputAudioTokens, CachedInputImageTokens,
 	OutputTextTokens, OutputAudioTokens,
-	Characters, AudioMs, Images, Pixels, Requests, Messages, MessageSegments, CallSeconds,
+	Characters, AudioMs, Images, Pixels, Requests, Messages, MessageSegments, MediaMessages, CallSeconds,
 	Seconds, SessionSeconds, VCPUSeconds, MemoryGBSeconds, DiskGBSeconds,
 	BytesWritten, BytesQueried, BytesReturned, Results, ByteHours, Clones,
 }

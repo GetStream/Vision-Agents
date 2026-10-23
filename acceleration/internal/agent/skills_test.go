@@ -120,12 +120,27 @@ func quoteSkills() harness.Skills {
 	}
 }
 
-// codeBox runs code as a sandbox would, recording what it was handed.
+// codeBox runs code as a sandbox would, recording what it was handed. generation is which
+// sandbox it is, 1 unless the test makes it another.
 type codeBox struct {
-	mu      sync.Mutex
-	result  sandbox.Result
-	ran     []string
-	written []string
+	mu         sync.Mutex
+	result     sandbox.Result
+	ran        []string
+	written    []string
+	generation int
+}
+
+func (b *codeBox) Ready(context.Context) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return max(b.generation, 1), nil
+}
+
+// remade is the sandbox made again, as after its provider deleted it.
+func (b *codeBox) remade() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.generation = max(b.generation, 1) + 1
 }
 
 func (b *codeBox) Run(_ context.Context, code string, _ []string) (sandbox.Result, error) {
@@ -192,6 +207,22 @@ func (s *AgentSuite) TestAWrittenConversationWithASandboxRunsItsSkillsScriptsIts
 
 	s.runsTool(runCodeCall("run-2", "import subprocess"), 3)
 	s.Len(s.box.writes(), 1, "and is not written again for the next run")
+}
+
+func (s *AgentSuite) TestANewSandboxGetsTheSkillsAgain() {
+	s.skills = quoteSkills()
+	s.box = &codeBox{result: sandbox.Result{Output: "42\n"}}
+	s.joinText()
+	loaded := s.runsTool(llm.ToolCall{ID: "load", Name: harness.LoadSkillTool, Arguments: `{"name":"quote"}`}, 1)
+	s.Require().NoError(loaded.Err)
+	s.runsTool(runCodeCall("run-1", "import subprocess"), 2)
+	s.box.remade()
+
+	ran := s.runsTool(runCodeCall("run-2", "import subprocess"), 3)
+
+	s.Require().NoError(ran.Err)
+	s.Equal([]string{"skills/quote/scripts/quote.py", "skills/quote/scripts/quote.py"}, s.box.writes(),
+		"a sandbox made again holds nothing written into the last")
 }
 
 func (s *AgentSuite) TestFilesAWrittenConversationsCodeHandsBackRideOnTheToolResult() {

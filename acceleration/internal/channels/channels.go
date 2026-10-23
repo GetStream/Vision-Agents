@@ -15,6 +15,8 @@ import (
 	"errors"
 	"net/http"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 // HookPath is where providers deliver. The account's token follows it, which is what tells
@@ -108,6 +110,9 @@ type Message struct {
 	// Name is what the sender calls themselves, when the provider says.
 	Name string
 	Text string
+	// Media is how many files came with it, which makes a text an MMS. A message of files
+	// alone is billed and not answered.
+	Media int
 }
 
 // Reply is what the agent said, as a provider has to send it.
@@ -152,8 +157,28 @@ type Provider interface {
 	// Parse reads the messages out of a delivery. A delivery carrying none -- a delivery
 	// report, a reaction -- yields none rather than failing.
 	Parse(body []byte) ([]Message, error)
-	// Send writes a reply back to the thread a message came from.
-	Send(ctx context.Context, account Account, thread string, reply Reply) error
+	// Send writes a reply back to the thread a message came from, and says what it sent.
+	Send(ctx context.Context, account Account, thread string, reply Reply) (Sent, error)
+}
+
+// Sent is what a provider sent for one reply, in the units it bills: the messages, and for a
+// text message the segments its words took and the messages that carried a file.
+type Sent struct {
+	Messages int64
+	Segments int64
+	Media    int64
+}
+
+// Used is what the reply is billed by.
+func (s Sent) Used() pricing.Quantities {
+	used := pricing.Quantities{pricing.Messages: s.Messages}
+	if s.Segments > 0 {
+		used[pricing.MessageSegments] = s.Segments
+	}
+	if s.Media > 0 {
+		used[pricing.MediaMessages] = s.Media
+	}
+	return used
 }
 
 // For is the provider carrying a channel.

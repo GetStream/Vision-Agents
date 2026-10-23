@@ -71,6 +71,10 @@ const (
 	// priced by what holds it: text, voice or video. It is the deployment's own work rather
 	// than a vendor's, so it is recorded but never routed.
 	Runtime Modality = store.RuntimeModality
+	// Sandbox is the time a sandbox holds its provider's vCPUs, memory and disk, recorded a
+	// slice at a time by the state it is in and checked daily against the provider's records.
+	// There is one provider, so it is recorded but not routed.
+	Sandbox Modality = store.SandboxModality
 )
 
 // Tier separates models tuned for latency from models tuned for output quality. It is
