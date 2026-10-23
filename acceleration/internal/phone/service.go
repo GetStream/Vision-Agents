@@ -33,6 +33,7 @@ import (
 type Service struct {
 	registry *Registry
 	store    *store.Store
+	groups   groupLocks
 	stream   *Stream
 	apps     Apps
 	// Calls through a customer's own trunk are off unless both sealer and sipTrunks are
@@ -462,7 +463,10 @@ func (s *Service) unline(ctx context.Context, held store.PhoneNumber, why string
 	for range 3 {
 		var moved bool
 		group := store.TrunkGroup{CustomerID: held.CustomerID, StreamAppPK: app, Vendor: held.Vendor}
-		err := s.store.InTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
+		// Found before the lock: reaching the app may read the database, which under the lock
+		// would take a second pooled connection.
+		stream, reached := s.streamToRemove(ctx, held.CustomerID, app)
+		err := s.inTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
 			number, err := tx.Number(held.E164)
 			if err != nil {
 				return err
@@ -472,7 +476,7 @@ func (s *Service) unline(ctx context.Context, held store.PhoneNumber, why string
 				return nil
 			}
 			if number.StreamTrunkID != "" {
-				if err := s.offTrunk(ctx, tx, number, why); err != nil {
+				if err := s.offTrunk(ctx, tx, stream, reached, number, why); err != nil {
 					return err
 				}
 			}
@@ -491,12 +495,11 @@ func (s *Service) unline(ctx context.Context, held store.PhoneNumber, why string
 // offTrunk takes a number off its trunk and deletes its rule. The trunk is deleted with its
 // last number; one the number had to itself, made before trunks were shared, is not a row
 // and is deleted with it.
-func (s *Service) offTrunk(ctx context.Context, tx *store.TrunkGroupTx, number store.PhoneNumber, why string) error {
-	stream, err := s.streamToRemove(ctx, number.CustomerID, number.StreamAppPK)
-	if err != nil {
+func (s *Service) offTrunk(ctx context.Context, tx *store.TrunkGroupTx, stream *Stream, reached error, number store.PhoneNumber, why string) error {
+	if reached != nil {
 		stream = nil
 		s.logger.Error("could not reach the Stream app a line was made in", "why", why,
-			"trunk", number.StreamTrunkID, "route", number.StreamRouteID, "error", err)
+			"trunk", number.StreamTrunkID, "route", number.StreamRouteID, "error", reached)
 	}
 	trunks, err := tx.Trunks()
 	if err != nil {

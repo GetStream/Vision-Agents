@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -37,10 +38,10 @@ func (s *Service) line(ctx context.Context, stream *Stream, pin int64, held stor
 
 	var line TrunkLine
 	var joined *joining
-	err := s.store.InTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
+	err := s.inTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
 		// Read again under the lock: a concurrent line() for the same number may have just
 		// put it on a trunk, and joining again would list it twice.
-		held, err := s.store.Number(ctx, held.CustomerID, held.E164)
+		held, err := tx.Number(held.E164)
 		if err != nil {
 			return err
 		}
@@ -168,7 +169,7 @@ func (s *Service) leave(ctx context.Context, stream *Stream, group store.TrunkGr
 	if joined.trunkID == "" {
 		return
 	}
-	err := s.store.InTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
+	err := s.inTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
 		trunks, err := tx.Trunks()
 		if err != nil {
 			return err
@@ -231,6 +232,61 @@ func (s *Service) adopt(ctx context.Context, stream *Stream, tx *store.TrunkGrou
 		return TrunkLine{}, err
 	}
 	return TrunkLine{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID, Bridge: bridge}, nil
+}
+
+// inTrunkGroup is store.InTrunkGroup behind a lock of this process's own. A caller waiting
+// on the database's lock holds a pooled connection, so a burst of calls for one group, a
+// campaign starting, would otherwise take every connection and leave none for the rest of
+// the router.
+func (s *Service) inTrunkGroup(ctx context.Context, group store.TrunkGroup, fn func(ctx context.Context, tx *store.TrunkGroupTx) error) error {
+	unlock, err := s.groups.lock(ctx, group)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.store.InTrunkGroup(ctx, group, fn)
+}
+
+// groupLocks are the trunk groups this process is working on, one waiter at a time each.
+type groupLocks struct {
+	mu   sync.Mutex
+	held map[store.TrunkGroup]*groupLock
+}
+
+type groupLock struct {
+	// turn holds a value while someone has the group.
+	turn  chan struct{}
+	users int
+}
+
+// lock waits for the group, or for ctx to end.
+func (g *groupLocks) lock(ctx context.Context, group store.TrunkGroup) (func(), error) {
+	g.mu.Lock()
+	if g.held == nil {
+		g.held = map[store.TrunkGroup]*groupLock{}
+	}
+	l, ok := g.held[group]
+	if !ok {
+		l = &groupLock{turn: make(chan struct{}, 1)}
+		g.held[group] = l
+	}
+	l.users++
+	g.mu.Unlock()
+
+	done := func() {
+		g.mu.Lock()
+		if l.users--; l.users == 0 {
+			delete(g.held, group)
+		}
+		g.mu.Unlock()
+	}
+	select {
+	case l.turn <- struct{}{}:
+		return func() { <-l.turn; done() }, nil
+	case <-ctx.Done():
+		done()
+		return nil, stack.Wrap(fmt.Errorf("phone: wait for trunk group: %w", ctx.Err()))
+	}
 }
 
 // lineOn is the line of a number already on one of the group's trunks.

@@ -1456,3 +1456,38 @@ func (s *AppsSuite) TestASharedCallsResourceIsNeverSwept() {
 	s.Require().NoError(err)
 	s.Len(rows, 1)
 }
+
+func (s *AppsSuite) TestMoreNumbersLiningAtOnceThanThePoolHasConnectionsAllLine() {
+	s.sealed()
+	s.store.DB().SetMaxOpenConns(3)
+	s.T().Cleanup(func() {
+		s.store.DB().SetMaxOpenConns(40)
+		s.store.DB().SetMaxIdleConns(40)
+	})
+	numbers := []string{s.e164}
+	for range 9 {
+		numbers = append(numbers, s.anotherNumber(s.customer, s.vendor.vendor))
+	}
+	// A pool held by waiters deadlocks; the deadline turns that into a failure.
+	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+	defer cancel()
+	stream, pin, err := s.service.streamFor(ctx, s.customer)
+	s.Require().NoError(err)
+
+	var wait sync.WaitGroup
+	for _, e164 := range numbers {
+		wait.Go(func() {
+			held, err := s.store.Number(ctx, s.customer, e164)
+			if !s.NoError(err) {
+				return
+			}
+			_, err = s.service.line(ctx, stream, pin, held)
+			s.NoError(err)
+		})
+	}
+	wait.Wait()
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	s.ElementsMatch(numbers, s.deployment.TrunkNumbers(trunks[0]))
+}
