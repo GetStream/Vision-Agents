@@ -38,11 +38,14 @@ That is the price of one artifact; do not split it back up without being asked.
 - Declare `platforms:`. An unspecified platform makes consumers discover availability
   failures inside generated code.
 
-**Publishing is not solved by the monorepo.** SwiftPM has no `url + subdirectory` version
-dependency, so the examples' path reference cannot survive publication. When it ships, either
-subtree-split `core` into its own repository from CI, or use a package registry. Do not make
-`Package.swift` branch on an environment variable between `path:` and `url:` — resolution stops
-being reproducible and development paths leak into releases.
+**Published from this repository.** SwiftPM reads a manifest and version tags only at a
+repository's root, so the manifest is the root `Package.swift`, its targets reaching into
+`sdks/swift/core` with `path:`, and the examples reference the root by path. A release is a `v`
+tag, shared with the Python packages: there is nothing to upload, and SwiftPM has no tag prefix
+that would give Swift versions of its own. Never move or delete a released tag. An app clones
+the whole repository once (`git clone --mirror`, about 300 MB); that is the price of one
+repository. Do not make `Package.swift` branch on an environment variable between `path:` and
+`url:` — resolution stops being reproducible and development paths leak into releases.
 
 A library's `Package.resolved` is not a promise to consumers; it is gitignored for the package
 and committed for the demo apps.
@@ -322,10 +325,10 @@ Three layers, in order of how much they cost to run:
    views; build them for the simulator. What they share is in `Backend` and tested there
    (`StreamCredentialsTests`).
 
-The package is iOS only, so the tests run on a simulator: `xcodebuild test -scheme
-vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 18 Pro'`, with
-`TEST_RUNNER_VISION_AGENTS_URL` for the live tests and `TEST_RUNNER_INTEGRATION_ROUTER_KEY`
-and `_SECRET` for the keyed posture checks.
+The package is iOS only, so the tests run on a simulator, from the root of the repository:
+`xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone
+18 Pro'`, with `TEST_RUNNER_VISION_AGENTS_URL` for the live tests and
+`TEST_RUNNER_INTEGRATION_ROUTER_KEY` and `_SECRET` for the keyed posture checks.
 
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,
 on any change under `sdks/swift`, the demo's app or the spec. It runs `generate.py --check`

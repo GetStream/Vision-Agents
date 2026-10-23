@@ -135,7 +135,7 @@
 			);
 			mainGroup = A1000500;
 			packageReferences = (
-				A1000B01 /* XCLocalSwiftPackageReference "../../../../sdks/swift/core" */,
+				A1000B01 /* XCLocalSwiftPackageReference "../../../.." */,
 				A1000B05 /* XCRemoteSwiftPackageReference "stream-chat-swift" */,
 				A1000B06 /* XCRemoteSwiftPackageReference "stream-video-swift" */,
 			);
@@ -293,9 +293,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		A1000B01 /* XCLocalSwiftPackageReference "../../../../sdks/swift/core" */ = {
+		A1000B01 /* XCLocalSwiftPackageReference "../../../.." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../../../sdks/swift/core;
+			relativePath = ../../../..;
 		};
 /* End XCLocalSwiftPackageReference section */
 
