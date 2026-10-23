@@ -165,12 +165,31 @@ func documentHandWritten(api huma.API) {
 			"`respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the " +
 			"conversation receives the question and later the findings, without raw images. Video " +
 			"capture uses task-correlated `get_video_frames` tool requests and `tool_result` " +
-			"replies. Frames are never attached automatically to conversational turns.",
+			"replies. Frames are never attached automatically to conversational turns.\n" +
+			"A watcher that may lose its connection, such as to the router restarting, asks for a " +
+			"resumable socket with `resumable=true`. Its first frame is `resumed`, and every frame " +
+			"after it except `hearing` carries a `cursor`. To reconnect, open the socket again with " +
+			"the same credentials and `cursor` set to the last one received: the frames sent after " +
+			"it are sent again, then the live ones. A session keeps its last 256 frames for this, " +
+			"for as long as it is held: a persistent text session until 5 minutes after its last " +
+			"watcher left, a call until it ends. `resumed` carries `cursor`, where the stream now " +
+			"carries on from, and `complete`, false when some frames after the cursor asked from " +
+			"are gone, because the router restarted, the conversation was reopened, or the watcher " +
+			"missed more than 256: read what was missed back from the conversation then. " +
+			"`request_id` names a command the watcher was waiting on, and `resumed.command` is its " +
+			"receipt. A command whose reply the router stopped on its way down is `interrupted`: " +
+			"it is never run again, so a client that still wants the answer asks once more under a " +
+			"new request id. A session the router stopped on its way down closes a resumable socket " +
+			"with 1012 (service restart) rather than 1000, which is the cue to reconnect. A socket " +
+			"that does not ask to resume is sent the frames and the close it always was.",
 		Parameters: []*huma.Param{
 			{Name: "id", In: "path", Description: "The session, as returned when it was created.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "interim", In: "query", Description: "Also send `hearing` frames, which are the words as they are revised.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
 			{Name: "decisions", In: "query", Description: "Send `decision` frames.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: true}},
 			{Name: "replay_pending_tools", In: "query", Description: "Replay pending live voice tool requests to a durable tool host.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
+			{Name: "resumable", In: "query", Description: "Send `resumed` first and a `cursor` on every frame after it, so the socket can be resumed.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
+			{Name: "cursor", In: "query", Description: "Resume after this frame's `cursor`, sending again what came after it. Implies `resumable`.", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "request_id", In: "query", Description: "A command to report the receipt of in `resumed`, for a watcher that was waiting on it.", Schema: &huma.Schema{Type: huma.TypeString}},
 		},
 		Responses: map[string]*huma.Response{
 			"101": {Description: "The socket is open"},

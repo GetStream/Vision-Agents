@@ -124,6 +124,14 @@ func (b *bridge) Pending() []ToolCall {
 	return calls
 }
 
+// Waiting reports whether the call is still waiting for its result.
+func (b *bridge) Waiting(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, ok := b.pending[id]
+	return ok && !b.closed && !pending.resolved && pending.ctx.Err() == nil
+}
+
 // Resolve hands an answer back to the call waiting for it, reporting whether one was.
 //
 // An answer for a call nobody is waiting on is dropped rather than an error, because the

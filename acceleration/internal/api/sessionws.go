@@ -100,6 +100,12 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+		if err := session.CheckCursor(cursor); err != nil {
+			writeError(w, invalidRequest(err.Error()))
+			return
+		}
+	}
 	found, ok := s.sessions.Get(id, OwnerFrom(r.Context()))
 	// A session this node is not running may still be running on another one, and a
 	// browser reconnecting has no reason to land back where it was. The relay asks the rest
@@ -129,11 +135,22 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Watching starts before the upgrade so nothing said between the two is missed.
-	watch := found.Watch
-	if r.URL.Query().Get("replay_pending_tools") == "true" {
-		watch = found.WatchPendingVoiceTools
+	resuming := resumingOf(r)
+	var events <-chan session.Event
+	var detach func()
+	if resuming.resumable {
+		var err error
+		if events, detach, err = found.WatchFrom(resuming.cursor, resuming.requestID, resuming.replayTools); err != nil {
+			writeError(w, invalidRequest(err.Error()))
+			return
+		}
+	} else {
+		watch := found.Watch
+		if resuming.replayTools {
+			watch = found.WatchPendingVoiceTools
+		}
+		events, detach = watch()
 	}
-	events, detach := watch()
 	defer detach()
 
 	connection, err := s.upgrader.Upgrade(w, r, nil)
@@ -154,7 +171,43 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 		defer close(gone)
 		s.readCommands(connection, found, owner, CallerFrom(r.Context()))
 	}()
-	s.writeEvents(connection, events, watching(r), gone)
+	s.writeEvents(connection, events, watching(r), gone, endingOf(resuming, found.Halted))
+}
+
+// resuming is what a resumable watcher asked for: cursor is the last frame it was sent,
+// requestID a command it is waiting on. A watcher asks with resumable=true, or by naming a
+// cursor; one that does neither is sent the frames it always was.
+type resuming struct {
+	resumable   bool
+	cursor      string
+	requestID   string
+	replayTools bool
+}
+
+func resumingOf(r *http.Request) resuming {
+	asked := r.URL.Query()
+	cursor := asked.Get("cursor")
+	return resuming{
+		resumable:   asked.Get("resumable") == "true" || cursor != "",
+		cursor:      cursor,
+		requestID:   asked.Get("request_id"),
+		replayTools: asked.Get("replay_pending_tools") == "true",
+	}
+}
+
+// ending is the close frame a socket is sent once its session's events stop.
+type ending func() []byte
+
+// endingOf says a session ended, except to a resumable watcher whose session this router
+// stopped on its way down: that one is told the router is restarting, which is its cue to
+// reconnect, where every other watcher is told what it always was.
+func endingOf(asked resuming, halted func() bool) ending {
+	return func() []byte {
+		if asked.resumable && halted() {
+			return websocket.FormatCloseMessage(websocket.CloseServiceRestart, "router restarting")
+		}
+		return websocket.FormatCloseMessage(websocket.CloseNormalClosure, "the session ended")
+	}
 }
 
 // wanted says which of the frequent frames this watcher asked for.
@@ -176,7 +229,9 @@ func watching(r *http.Request) wanted {
 }
 
 func (w wanted) takes(event session.Event) bool {
-	switch event.(type) {
+	switch typed := event.(type) {
+	case session.Sequenced:
+		return w.takes(typed.Event)
 	case agent.Hearing:
 		return w.interim
 	case agent.Decided:
@@ -201,7 +256,7 @@ func (w wanted) takesFrame(kind string) bool {
 
 // writeEvents pushes the conversation to the caller until the session ends or the socket
 // breaks.
-func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted, gone <-chan struct{}) {
+func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted, gone <-chan struct{}, ended ending) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 
@@ -212,8 +267,7 @@ func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.E
 		case event, open := <-events:
 			if !open {
 				connection.SetWriteDeadline(time.Now().Add(writeWait))
-				connection.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "the session ended"))
+				connection.WriteMessage(websocket.CloseMessage, ended())
 				return
 			}
 			if !asked.takes(event) {
@@ -421,6 +475,20 @@ func resolveTool(found *session.Session, callID, commandID, turnID string, parts
 // with the SDKs: a field renamed in Go should break this function, not a client.
 func frameOf(event session.Event) (frame, bool) {
 	switch typed := event.(type) {
+	case session.Sequenced:
+		rendered, ok := frameOf(typed.Event)
+		if ok {
+			rendered["cursor"] = typed.Cursor
+		}
+		return rendered, ok
+
+	case session.Resumed:
+		resumed := frame{"type": "resumed", "cursor": typed.Cursor, "complete": typed.Complete}
+		if typed.Command != nil {
+			resumed["command"] = receiptOf(*typed.Command)
+		}
+		return resumed, true
+
 	case session.ToolCall:
 		if typed.Cancel {
 			return frame{"type": "tool_cancel", "id": typed.ID, "request_id": typed.CommandID, "turn_id": typed.TurnID}, true

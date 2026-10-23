@@ -171,6 +171,8 @@ type Session struct {
 	// disturbing the others.
 	watchers    map[uint64]*watcher
 	nextWatcher uint64
+	// replay numbers and keeps events for resumable watchers, nil until one attaches.
+	replay *replay
 	// detachedGrace is how long a persistent text session outlives its last watcher, and
 	// unwatched is the timer counting it down, nil while somebody is watching.
 	detachedGrace time.Duration
@@ -234,6 +236,9 @@ type Session struct {
 	closers   []func()
 	closeOnce sync.Once
 	running   sync.WaitGroup
+	// halted is set by a router shutting down, whose ending leaves the reply being written
+	// interrupted rather than cancelled.
+	halted atomic.Bool
 }
 
 // recordedTurn is one turn being written down as it happens.
@@ -378,6 +383,8 @@ func (s *Session) Speech() string {
 type watcher struct {
 	events chan Event
 	once   sync.Once
+	// sequenced is a resumable watcher, sent each event as a Sequenced.
+	sequenced bool
 }
 
 func (w *watcher) close() { w.once.Do(func() { close(w.events) }) }
@@ -400,16 +407,18 @@ func (w *watcher) send(event Event) bool {
 // that connects late has missed the conversation, and a control channel that opened with a
 // backlog would have it answering tool calls that timed out before it arrived.
 func (s *Session) Watch() (<-chan Event, func()) {
-	return s.watch(false)
+	return s.watch(false, "", nil)
 }
 
 // WatchPendingVoiceTools opts a durable tool host into replay of pending live
 // voice requests. Text command recovery uses the persistent conversation path.
 func (s *Session) WatchPendingVoiceTools() (<-chan Event, func()) {
-	return s.watch(true)
+	return s.watch(true, "", nil)
 }
 
-func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
+// watch attaches a watcher. A non-nil resumed makes it a resumable one (WatchFrom), sent
+// resumed and then what it missed after cursor.
+func (s *Session) watch(replayVoiceTools bool, cursor string, resumed *Resumed) (<-chan Event, func()) {
 	attached := &watcher{events: make(chan Event, watcherBuffer)}
 
 	s.mu.Lock()
@@ -417,6 +426,29 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 		s.mu.Unlock()
 		attached.close()
 		return attached.events, func() {}
+	}
+	var replayed map[string]bool
+	if resumed != nil {
+		replayed = map[string]bool{}
+		if s.replay == nil {
+			s.replay = newReplay()
+		}
+		missed, complete := s.replay.after(cursor)
+		resumed.Cursor, resumed.Complete = s.replay.cursor(s.replay.last), complete
+		attached.sequenced = true
+		attached.events = make(chan Event, watcherBuffer+len(missed)+1)
+		attached.send(*resumed)
+		for _, event := range missed {
+			// A tool call is sent again only while it still waits for its answer: one
+			// answered or timed out since would be run a second time for nothing.
+			if call, ok := event.Event.(ToolCall); ok && !call.Cancel {
+				if s.tools == nil || !s.tools.Waiting(call.ID) {
+					continue
+				}
+				replayed[call.ID] = true
+			}
+			attached.send(event)
+		}
 	}
 	id := s.nextWatcher
 	s.nextWatcher++
@@ -430,7 +462,9 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	}
 	if replayVoiceTools && !s.spec.Text && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
-			attached.send(pending)
+			if !replayed[pending.ID] {
+				attached.send(pending)
+			}
 		}
 	}
 	s.mu.Unlock()
@@ -1270,6 +1304,18 @@ func (s *Session) Close() error {
 	return err
 }
 
+// Halted reports whether the session was ended by the router going away rather than by
+// anybody's choice.
+func (s *Session) Halted() bool { return s.halted.Load() }
+
+// halt closes the session for a router that is going away. Nobody chose to stop the reply
+// being written, so its command is left interrupted: never run again, and told apart from
+// one the caller cancelled by a client that reconnects.
+func (s *Session) halt() error {
+	s.halted.Store(true)
+	return s.Close()
+}
+
 func (s *Session) close() error {
 	s.mu.Lock()
 	s.closing = true
@@ -1287,6 +1333,9 @@ func (s *Session) close() error {
 		s.logger.Debug("the agent was still talking when the session ended", "error", err)
 	}
 	cancel()
+	if s.halted.Load() && s.persisted != nil {
+		s.persisted.Interrupt()
+	}
 
 	err := s.current().Close()
 
@@ -1612,8 +1661,9 @@ func (s *Session) broadcast(event Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	sequenced, numbered := s.sequence(event)
 	for id, attached := range s.watchers {
-		if !attached.send(event) {
+		if !attached.send(attached.form(event, sequenced, numbered)) {
 			s.logger.Debug("dropped an event for a watcher that is behind",
 				"session", s.id, "watcher", id)
 		}
@@ -1641,8 +1691,9 @@ func (s *Session) askTool(call ToolCall) error {
 		return errors.New("session: nobody is connected to run it")
 	}
 	delivered := false
+	sequenced, numbered := s.sequence(call)
 	for _, attached := range s.watchers {
-		if attached.send(call) {
+		if attached.send(attached.form(call, sequenced, numbered)) {
 			delivered = true
 		}
 	}

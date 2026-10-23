@@ -5,13 +5,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -312,4 +315,42 @@ func TestFramesOfAnUtteranceWithNoKnownPlaceInTheMessageLeaveItOut(t *testing.T)
 		require.NotContains(t, sent, "message_start")
 		require.NotContains(t, sent, "message_end")
 	}
+}
+
+func TestASequencedEventIsItsOwnFrameWithACursor(t *testing.T) {
+	sent, ok := frameOf(session.Sequenced{Cursor: "a1b2.7", Event: agent.ResponseDelta{TurnID: "turn-1", Text: "Hel"}})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"response_delta","turn_id":"turn-1","text":"Hel","cursor":"a1b2.7"}`, string(raw))
+}
+
+func TestAResumedFrameCarriesTheReceiptOfTheCommandAskedAfter(t *testing.T) {
+	receipt := conversation.CommandReceipt{CommandID: "command-1", UserMessageID: "command-1", AssistantMessageID: "reply-1", State: "interrupted"}
+
+	sent, ok := frameOf(session.Resumed{Cursor: "a1b2.0", Complete: false, Command: &receipt})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"resumed","cursor":"a1b2.0","complete":false,"command":{"request_id":"command-1",
+		"user_message_id":"command-1","assistant_message_id":"reply-1","state":"interrupted","duplicate":false}}`, string(raw))
+}
+
+func TestOnlyAResumableSocketIsToldTheRouterIsRestarting(t *testing.T) {
+	halted := func() bool { return true }
+
+	resumable := endingOf(resuming{resumable: true}, halted)()
+	plain := endingOf(resuming{}, halted)()
+
+	require.Equal(t, websocket.FormatCloseMessage(websocket.CloseServiceRestart, "router restarting"), resumable)
+	require.Equal(t, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "the session ended"), plain,
+		"a socket that never asked to resume is closed the way it always was")
+}
+
+func TestAResumableSocketWhoseSessionEndedIsToldItEnded(t *testing.T) {
+	ended := endingOf(resuming{resumable: true}, func() bool { return false })()
+
+	require.Equal(t, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "the session ended"), ended)
 }

@@ -16,6 +16,9 @@ def _get_kwargs(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    resumable: bool | Unset = False,
+    cursor: str | Unset = UNSET,
+    request_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -25,6 +28,12 @@ def _get_kwargs(
     params["decisions"] = decisions
 
     params["replay_pending_tools"] = replay_pending_tools
+
+    params["resumable"] = resumable
+
+    params["cursor"] = cursor
+
+    params["request_id"] = request_id
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -85,6 +94,9 @@ def sync_detailed(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    resumable: bool | Unset = False,
+    cursor: str | Unset = UNSET,
+    request_id: str | Unset = UNSET,
 ) -> Response[Any | ErrorResponse]:
     """Watch the conversation and answer the model's tool calls
 
@@ -203,12 +215,29 @@ def sync_detailed(
     receives the question and later the findings, without raw images. Video capture uses task-correlated
     `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically
     to conversational turns.
+    A watcher that may lose its connection, such as to the router restarting, asks for a resumable
+    socket with `resumable=true`. Its first frame is `resumed`, and every frame after it except
+    `hearing` carries a `cursor`. To reconnect, open the socket again with the same credentials and
+    `cursor` set to the last one received: the frames sent after it are sent again, then the live ones.
+    A session keeps its last 256 frames for this, for as long as it is held: a persistent text session
+    until 5 minutes after its last watcher left, a call until it ends. `resumed` carries `cursor`, where
+    the stream now carries on from, and `complete`, false when some frames after the cursor asked from
+    are gone, because the router restarted, the conversation was reopened, or the watcher missed more
+    than 256: read what was missed back from the conversation then. `request_id` names a command the
+    watcher was waiting on, and `resumed.command` is its receipt. A command whose reply the router
+    stopped on its way down is `interrupted`: it is never run again, so a client that still wants the
+    answer asks once more under a new request id. A session the router stopped on its way down closes a
+    resumable socket with 1012 (service restart) rather than 1000, which is the cue to reconnect. A
+    socket that does not ask to resume is sent the frames and the close it always was.
 
     Args:
         id (str):
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        resumable (bool | Unset):  Default: False.
+        cursor (str | Unset):
+        request_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -223,6 +252,9 @@ def sync_detailed(
         interim=interim,
         decisions=decisions,
         replay_pending_tools=replay_pending_tools,
+        resumable=resumable,
+        cursor=cursor,
+        request_id=request_id,
     )
 
     response = client.get_httpx_client().request(
@@ -239,6 +271,9 @@ def sync(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    resumable: bool | Unset = False,
+    cursor: str | Unset = UNSET,
+    request_id: str | Unset = UNSET,
 ) -> Any | ErrorResponse | None:
     """Watch the conversation and answer the model's tool calls
 
@@ -357,12 +392,29 @@ def sync(
     receives the question and later the findings, without raw images. Video capture uses task-correlated
     `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically
     to conversational turns.
+    A watcher that may lose its connection, such as to the router restarting, asks for a resumable
+    socket with `resumable=true`. Its first frame is `resumed`, and every frame after it except
+    `hearing` carries a `cursor`. To reconnect, open the socket again with the same credentials and
+    `cursor` set to the last one received: the frames sent after it are sent again, then the live ones.
+    A session keeps its last 256 frames for this, for as long as it is held: a persistent text session
+    until 5 minutes after its last watcher left, a call until it ends. `resumed` carries `cursor`, where
+    the stream now carries on from, and `complete`, false when some frames after the cursor asked from
+    are gone, because the router restarted, the conversation was reopened, or the watcher missed more
+    than 256: read what was missed back from the conversation then. `request_id` names a command the
+    watcher was waiting on, and `resumed.command` is its receipt. A command whose reply the router
+    stopped on its way down is `interrupted`: it is never run again, so a client that still wants the
+    answer asks once more under a new request id. A session the router stopped on its way down closes a
+    resumable socket with 1012 (service restart) rather than 1000, which is the cue to reconnect. A
+    socket that does not ask to resume is sent the frames and the close it always was.
 
     Args:
         id (str):
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        resumable (bool | Unset):  Default: False.
+        cursor (str | Unset):
+        request_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -378,6 +430,9 @@ def sync(
         interim=interim,
         decisions=decisions,
         replay_pending_tools=replay_pending_tools,
+        resumable=resumable,
+        cursor=cursor,
+        request_id=request_id,
     ).parsed
 
 
@@ -388,6 +443,9 @@ async def asyncio_detailed(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    resumable: bool | Unset = False,
+    cursor: str | Unset = UNSET,
+    request_id: str | Unset = UNSET,
 ) -> Response[Any | ErrorResponse]:
     """Watch the conversation and answer the model's tool calls
 
@@ -506,12 +564,29 @@ async def asyncio_detailed(
     receives the question and later the findings, without raw images. Video capture uses task-correlated
     `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically
     to conversational turns.
+    A watcher that may lose its connection, such as to the router restarting, asks for a resumable
+    socket with `resumable=true`. Its first frame is `resumed`, and every frame after it except
+    `hearing` carries a `cursor`. To reconnect, open the socket again with the same credentials and
+    `cursor` set to the last one received: the frames sent after it are sent again, then the live ones.
+    A session keeps its last 256 frames for this, for as long as it is held: a persistent text session
+    until 5 minutes after its last watcher left, a call until it ends. `resumed` carries `cursor`, where
+    the stream now carries on from, and `complete`, false when some frames after the cursor asked from
+    are gone, because the router restarted, the conversation was reopened, or the watcher missed more
+    than 256: read what was missed back from the conversation then. `request_id` names a command the
+    watcher was waiting on, and `resumed.command` is its receipt. A command whose reply the router
+    stopped on its way down is `interrupted`: it is never run again, so a client that still wants the
+    answer asks once more under a new request id. A session the router stopped on its way down closes a
+    resumable socket with 1012 (service restart) rather than 1000, which is the cue to reconnect. A
+    socket that does not ask to resume is sent the frames and the close it always was.
 
     Args:
         id (str):
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        resumable (bool | Unset):  Default: False.
+        cursor (str | Unset):
+        request_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -526,6 +601,9 @@ async def asyncio_detailed(
         interim=interim,
         decisions=decisions,
         replay_pending_tools=replay_pending_tools,
+        resumable=resumable,
+        cursor=cursor,
+        request_id=request_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -540,6 +618,9 @@ async def asyncio(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    resumable: bool | Unset = False,
+    cursor: str | Unset = UNSET,
+    request_id: str | Unset = UNSET,
 ) -> Any | ErrorResponse | None:
     """Watch the conversation and answer the model's tool calls
 
@@ -658,12 +739,29 @@ async def asyncio(
     receives the question and later the findings, without raw images. Video capture uses task-correlated
     `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically
     to conversational turns.
+    A watcher that may lose its connection, such as to the router restarting, asks for a resumable
+    socket with `resumable=true`. Its first frame is `resumed`, and every frame after it except
+    `hearing` carries a `cursor`. To reconnect, open the socket again with the same credentials and
+    `cursor` set to the last one received: the frames sent after it are sent again, then the live ones.
+    A session keeps its last 256 frames for this, for as long as it is held: a persistent text session
+    until 5 minutes after its last watcher left, a call until it ends. `resumed` carries `cursor`, where
+    the stream now carries on from, and `complete`, false when some frames after the cursor asked from
+    are gone, because the router restarted, the conversation was reopened, or the watcher missed more
+    than 256: read what was missed back from the conversation then. `request_id` names a command the
+    watcher was waiting on, and `resumed.command` is its receipt. A command whose reply the router
+    stopped on its way down is `interrupted`: it is never run again, so a client that still wants the
+    answer asks once more under a new request id. A session the router stopped on its way down closes a
+    resumable socket with 1012 (service restart) rather than 1000, which is the cue to reconnect. A
+    socket that does not ask to resume is sent the frames and the close it always was.
 
     Args:
         id (str):
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        resumable (bool | Unset):  Default: False.
+        cursor (str | Unset):
+        request_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -680,5 +778,8 @@ async def asyncio(
             interim=interim,
             decisions=decisions,
             replay_pending_tools=replay_pending_tools,
+            resumable=resumable,
+            cursor=cursor,
+            request_id=request_id,
         )
     ).parsed

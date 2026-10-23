@@ -1382,6 +1382,10 @@ func (c *Conversation) CancelCommand(id string) (CommandReceipt, error) {
 }
 
 func (c *Conversation) Cancel() { c.mu.Lock(); defer c.mu.Unlock(); c.finish("cancelled") }
+
+// Interrupt ends the reply being written as interrupted, the state a reopen gives a reply a
+// stopped process left running: nobody chose to stop it, and it is never run again.
+func (c *Conversation) Interrupt() { c.mu.Lock(); defer c.mu.Unlock(); c.finish("interrupted") }
 func (c *Conversation) Observe(event agent.Event) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

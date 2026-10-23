@@ -5,6 +5,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -115,6 +116,22 @@ func (s *RelayedSessionSuite) TestAnotherAppCannotWatchASessionFromAnotherNode()
 		"/v1/agents/sessions/" + opened.Id + "/events")
 
 	s.Equal(http.StatusNotFound, status, "a stranger is not told the id is real")
+}
+
+func (s *RelayedSessionSuite) TestASocketOnTheOtherNodeResumesWhereItLeftOff() {
+	opened := s.inWriting(CreateSessionRequest{})
+	path := "/v1/agents/sessions/" + opened.Id + "/events"
+	watching := s.serverClient.on(s.other).opens(path + "?resumable=true")
+	last := s.await(watching, "resumed")["cursor"].(string)
+	s.Require().NoError(watching.Close())
+	bystander := s.serverClient.opens(path)
+	s.respond(opened.Id, "hello")
+	s.await(bystander, "responded")
+
+	again := s.serverClient.on(s.other).opens(path + "?cursor=" + url.QueryEscape(last))
+
+	s.Equal(true, s.await(again, "resumed")["complete"])
+	s.NotEmpty(s.await(again, "responded")["cursor"], "what was said while it was gone crossed the relay again")
 }
 
 // inWriting opens a conversation on the suite's own node that keeps no transcript, which

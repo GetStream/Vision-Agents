@@ -783,6 +783,11 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("slow", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Here it is.", takes: time.Second}, nil
 	})
+	// A model that outlasts the moment a closing session gives its reply to finish, for a
+	// reply that is still being written when the router stops.
+	reasoning.Register("stuck", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Too late.", takes: time.Minute}, nil
+	})
 
 	// A model that reaches for the caller's own tool on its first turn. One of these per
 	// session rather than one for the suite, so a test reads back its own turn.
@@ -1072,6 +1077,13 @@ func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Se
 // what its peers' credentials are checked against, and logging to logger. Nil is a node
 // with no keyring.
 func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server) {
+	other, server, _ := s.otherNodeHolding(workers, keyring, logger)
+	return other, server
+}
+
+// otherNodeHolding is otherRouterSealedBy with the sessions it runs, for a test that stops
+// them the way a router going down does.
+func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
@@ -1121,7 +1133,7 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)
-	return other, server
+	return other, server, sessions
 }
 
 // deploymentWorkers is one node's view of the dispatch workers across the deployment.

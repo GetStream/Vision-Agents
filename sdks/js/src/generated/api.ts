@@ -1990,6 +1990,7 @@ export type paths = {
          *     A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`. A connector call waiting for the person to sign in (`awaiting_authorization`) is declined with `tool_approval` too, naming only its `tool_call_id` with `allowed` false: the router answers that call itself. A connector call whose binding sets `require_approval` waits on its step (`awaiting_approval`) for the session's user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id` left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so. It needs no `tool_result`.
          *     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
          *     `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
+         *     A watcher that may lose its connection, such as to the router restarting, asks for a resumable socket with `resumable=true`. Its first frame is `resumed`, and every frame after it except `hearing` carries a `cursor`. To reconnect, open the socket again with the same credentials and `cursor` set to the last one received: the frames sent after it are sent again, then the live ones. A session keeps its last 256 frames for this, for as long as it is held: a persistent text session until 5 minutes after its last watcher left, a call until it ends. `resumed` carries `cursor`, where the stream now carries on from, and `complete`, false when some frames after the cursor asked from are gone, because the router restarted, the conversation was reopened, or the watcher missed more than 256: read what was missed back from the conversation then. `request_id` names a command the watcher was waiting on, and `resumed.command` is its receipt. A command whose reply the router stopped on its way down is `interrupted`: it is never run again, so a client that still wants the answer asks once more under a new request id. A session the router stopped on its way down closes a resumable socket with 1012 (service restart) rather than 1000, which is the cue to reconnect. A socket that does not ask to resume is sent the frames and the close it always was.
          */
         readonly get: operations["watchSession"];
         readonly put?: never;
@@ -13201,12 +13202,18 @@ export interface operations {
     readonly watchSession: {
         readonly parameters: {
             readonly query?: {
+                /** @description Resume after this frame's `cursor`, sending again what came after it. Implies `resumable`. */
+                readonly cursor?: string;
                 /** @description Send `decision` frames. */
                 readonly decisions?: boolean;
                 /** @description Also send `hearing` frames, which are the words as they are revised. */
                 readonly interim?: boolean;
                 /** @description Replay pending live voice tool requests to a durable tool host. */
                 readonly replay_pending_tools?: boolean;
+                /** @description A command to report the receipt of in `resumed`, for a watcher that was waiting on it. */
+                readonly request_id?: string;
+                /** @description Send `resumed` first and a `cursor` on every frame after it, so the socket can be resumed. */
+                readonly resumable?: boolean;
             };
             readonly header?: never;
             readonly path: {
