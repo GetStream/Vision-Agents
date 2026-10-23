@@ -357,11 +357,19 @@ func phoneCallerOf(event callEvent) phoneCaller {
 // reports false when the join or leave could not be recorded, which loses the leg's minutes
 // unless Stream delivers it again.
 func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType string, event callEvent) bool {
-	if s.phone == nil || event.Participant == nil || !event.Participant.phone() {
+	if s.phone == nil || event.Participant == nil {
 		return true
 	}
 	callType, callID, split := strings.Cut(event.CallCid, ":")
 	if !split {
+		return true
+	}
+	// Anybody's, the agent's above all, says the hook delivers participant events, which a
+	// placed call that ends unanswered is checked for.
+	if err := s.phone.Heard(r.Context(), origin.scope(), callType, callID); err != nil {
+		s.logger.Warn("could not record that the call hook delivers participant events", "call", event.CallCid, "error", err)
+	}
+	if !event.Participant.phone() {
 		return true
 	}
 	participant := event.Participant.UserSessionID

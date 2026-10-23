@@ -44,6 +44,9 @@ type Service struct {
 	publicURL string
 	clock     func() time.Time
 	logger    *slog.Logger
+	// heard is the calls whose participant events this process recorded lately (Heard), and
+	// unhooked the apps it lately logged as not delivering them.
+	heard, unhooked recently
 }
 
 // ServiceOptions configures a Service. Only the registry is required: without a store

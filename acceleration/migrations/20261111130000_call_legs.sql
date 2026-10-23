@@ -58,7 +58,9 @@ CREATE UNIQUE INDEX call_legs_participant_idx ON call_legs (call_type, call_id, 
 -- writes its leg, a caller before the session_started that opens theirs, and a phone's leave
 -- can come before its join. The leg that opens later takes its phone's join from here and
 -- starts when the phone joined, and a join whose leave came first ends the leg it connects.
--- Kept in the shard that heard it, and deleted by the leg sweep a day on.
+-- A row with no participant session is the hook having delivered a participant event of the
+-- call, anybody's: a placed call that ends unanswered with none is a hook not subscribed to
+-- them. Kept in the shard that heard it, and deleted by the leg sweep a day on.
 CREATE TABLE call_participants (
     id BIGSERIAL PRIMARY KEY,
     -- The app the hook came from, and whether it was the deployment's own, whose legs may
@@ -67,7 +69,7 @@ CREATE TABLE call_participants (
     unpinned BOOLEAN NOT NULL DEFAULT false,
     call_type TEXT NOT NULL,
     call_id TEXT NOT NULL,
-    participant_session TEXT NOT NULL,
+    participant_session TEXT NOT NULL DEFAULT '',
     -- The number off the phone's sip-<number> participant id, empty when it named none.
     number TEXT NOT NULL DEFAULT '',
     joined_at TIMESTAMPTZ,

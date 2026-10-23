@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -164,6 +165,36 @@ func WithCallHook(hooks []chat.Hook, url string) ([]chat.Hook, bool, error) {
 		Enabled:    &enabled,
 		EventTypes: callHookEvents,
 	}}), false, nil
+}
+
+// MissingCallHookEvents is the call events the app's enabled webhooks delivering under url (the
+// router's own CallHookPath, with or without an app after it) do not ask for, and whether any
+// such hook is there. A hook asking for nothing asks for everything.
+func MissingCallHookEvents(hooks []CallHook, url string) ([]string, bool) {
+	url = strings.TrimSpace(url)
+	var asked []string
+	found := false
+	for _, hook := range hooks {
+		if !hook.Enabled || (hook.HookType != "" && hook.HookType != webhookHookType) || url == "" ||
+			!strings.HasPrefix(hook.URL, url) {
+			continue
+		}
+		if len(hook.EventTypes) == 0 {
+			return nil, true
+		}
+		found = true
+		asked = append(asked, hook.EventTypes...)
+	}
+	if !found {
+		return nil, false
+	}
+	var missing []string
+	for _, event := range callHookEvents {
+		if !slices.Contains(asked, event) {
+			missing = append(missing, event)
+		}
+	}
+	return missing, true
 }
 
 // WithoutHook is hooks less every hook delivering to url, whatever it asks for, and whether

@@ -449,7 +449,8 @@ func (l CallLeg) Used() pricing.Quantities {
 
 // CallParticipant is a phone's join or leave of a call that no leg was waiting for when it
 // was delivered, kept for the leg that opens later (OpenCallLeg) and for the phone's join
-// that comes after its leave (ConnectCallLeg).
+// that comes after its leave (ConnectCallLeg). One with no participant session is the call
+// hook having delivered a participant event of the call (HeardCall).
 type CallParticipant struct {
 	bun.BaseModel `bun:"table:call_participants,alias:cp"`
 

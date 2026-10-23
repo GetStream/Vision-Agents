@@ -2,7 +2,10 @@ package phone
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -172,7 +175,89 @@ func (s *Service) EndLegs(ctx context.Context, scope store.AppScope, callType, c
 		return err
 	}
 	s.settleLegs(ctx, ended)
+	s.checkHooked(ctx, scope, callType, callID, ended)
 	return nil
+}
+
+// Heard records that the call hook delivered a participant event of a call, anybody's, which
+// is what tells a hook subscribed to them from one that is not (checkHooked). A process records
+// each call once an hour, so a call with many participants costs one write.
+func (s *Service) Heard(ctx context.Context, scope store.AppScope, callType, callID string) error {
+	if s.store == nil {
+		return nil
+	}
+	key := strconv.FormatInt(scope.App, 10) + ":" + strconv.FormatBool(scope.Unpinned) + ":" + callType + ":" + callID
+	if !s.heard.first(key, s.now()) {
+		return nil
+	}
+	if err := s.store.HeardCall(ctx, scope, callType, callID, s.now()); err != nil {
+		s.heard.forget(key)
+		return err
+	}
+	return nil
+}
+
+// checkHooked logs at ERROR, once an hour per app, a call that ended with an outbound leg its
+// phone never joined and no participant event of it ever delivered. A hook subscribed to them
+// delivers the agent's own join on every placed call, so this is an app whose call hook was not
+// pointed again (cmd/phone hooks) since the participant events were added to it: its placed
+// calls and transfers never connect, and their minutes are not billed.
+func (s *Service) checkHooked(ctx context.Context, scope store.AppScope, callType, callID string, ended []store.CallLeg) {
+	index := slices.IndexFunc(ended, func(leg store.CallLeg) bool {
+		return leg.Direction == store.Outbound && !leg.Connected()
+	})
+	if index < 0 {
+		return
+	}
+	heard, err := s.store.CallHeard(ctx, scope, callType, callID)
+	if err != nil {
+		s.logger.Warn("could not tell whether the call hook delivers participant events", "call", callType+":"+callID, "error", err)
+		return
+	}
+	leg := ended[index]
+	if heard || !s.unhooked.first(strconv.FormatInt(leg.StreamAppPK, 10), s.now()) {
+		return
+	}
+	s.logger.Error("call hook does not deliver participant events; re-run cmd/phone hooks",
+		"stream_app", leg.StreamAppPK, "customer", leg.CustomerID, "call", callType+":"+callID,
+		"hint", "a placed call ended unanswered and no participant event of it, not even the agent's join, was delivered: "+
+			"placed calls and transfers in this app never connect, and their minutes are not billed")
+}
+
+// recently remembers keys for an hour, and at most recentlyMost of them, so a burst of new
+// ones forgets the oldest rather than grow without bound.
+type recently struct {
+	mu   sync.Mutex
+	seen map[string]time.Time
+}
+
+const recentlyMost = 10_000
+
+// first reports whether key was not seen in the hour before now, and remembers it from now if so.
+func (r *recently) first(key string, now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if at, ok := r.seen[key]; ok && now.Sub(at) < time.Hour {
+		return false
+	}
+	if r.seen == nil {
+		r.seen = map[string]time.Time{}
+	}
+	if len(r.seen) >= recentlyMost {
+		maps.DeleteFunc(r.seen, func(_ string, at time.Time) bool { return now.Sub(at) >= time.Hour })
+		if len(r.seen) >= recentlyMost {
+			clear(r.seen)
+		}
+	}
+	r.seen[key] = now
+	return true
+}
+
+// forget drops key, so it is first again.
+func (r *recently) forget(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.seen, key)
 }
 
 // settleLegs bills the legs that ended whose phone joined. One that never connected was not

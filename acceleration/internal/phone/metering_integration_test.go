@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,6 +38,7 @@ type MeteringSuite struct {
 	service  *Service
 	vendor   *stub
 	clock    *meteringClock
+	logs     *meteringLogs
 	customer string
 	e164     string
 }
@@ -83,11 +85,12 @@ func (s *MeteringSuite) withSandbox(sandbox dlc.Sandbox) {
 		s.T().Setenv(name, "set")
 	}
 	deployment := chattest.NewServer(s.T())
+	s.logs = &meteringLogs{}
 	s.service, err = NewService(ServiceOptions{
 		Registry: registry, Store: s.store, Recorder: s.recorder, Now: s.clock.now,
 		Apps:   &testApps{deployment: deployment, own: map[string]*chattest.Server{}, pins: map[string]int64{}, blocked: map[string]bool{}},
 		Gate:   dlc.NewGate(s.store, s.redis, sandbox, nil),
-		Logger: slog.New(slog.DiscardHandler),
+		Logger: slog.New(slog.NewTextHandler(s.logs, nil)),
 	})
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
@@ -326,6 +329,39 @@ func (s *MeteringSuite) TestLegsAreTimedByWhenTheirEventsWereMade() {
 	var kept store.CallParticipant
 	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&kept).Where("call_id = ?", later).Scan(s.ctx))
 	s.Equal(s.clock.now(), kept.JoinedAt.UTC(), "a time still to come on the service's clock is taken as now")
+}
+
+const unhooked = "call hook does not deliver participant events; re-run cmd/phone hooks"
+
+// The agent's own join is a participant event on every placed call: one that ends unanswered
+// with none delivered is an app whose call hook was not pointed again, logged once an hour.
+func (s *MeteringSuite) TestAPlacedCallEndingWithNoParticipantEventIsLoggedOnceAnHourPerApp() {
+	placed := s.place()
+	s.ended(placed.CallType, placed.CallID)
+	s.Equal(1, s.logs.count("ERROR", unhooked))
+
+	again := s.place()
+	s.ended(again.CallType, again.CallID)
+	s.Equal(1, s.logs.count("ERROR", unhooked), "once an hour per app")
+
+	s.clock.advance(61 * time.Minute)
+	third := s.place()
+	s.ended(third.CallType, third.CallID)
+	s.Equal(2, s.logs.count("ERROR", unhooked))
+}
+
+func (s *MeteringSuite) TestAnUnansweredPlacedCallWhoseAgentJoinWasDeliveredIsNotLogged() {
+	placed := s.place()
+	s.Require().NoError(s.service.Heard(s.ctx, everyApp, placed.CallType, placed.CallID))
+	s.Require().NoError(s.service.Heard(s.ctx, everyApp, placed.CallType, placed.CallID))
+
+	s.ended(placed.CallType, placed.CallID)
+
+	s.Zero(s.logs.count("ERROR", unhooked))
+	answered := s.place()
+	s.answered(answered.CallType, answered.CallID, "phone-1")
+	s.ended(answered.CallType, answered.CallID)
+	s.Zero(s.logs.count("ERROR", unhooked), "an answered call is not checked")
 }
 
 // kept is how many joins and leaves of the call are kept for a leg yet to open.
@@ -626,6 +662,31 @@ func (s *MeteringSuite) openLegs() []store.CallLeg {
 	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&legs).
 		Where("customer_id = ?", s.customer).Where("ended_at IS NULL").Scan(s.ctx))
 	return legs
+}
+
+// meteringLogs is what the service logged.
+type meteringLogs struct {
+	mu      sync.Mutex
+	written strings.Builder
+}
+
+func (l *meteringLogs) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.written.Write(p)
+}
+
+// count is how many lines at level say message.
+func (l *meteringLogs) count(level, message string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	lines := 0
+	for line := range strings.Lines(l.written.String()) {
+		if strings.Contains(line, "level="+level) && strings.Contains(line, message) {
+			lines++
+		}
+	}
+	return lines
 }
 
 // meteringClock is the service's clock, moved by the test.

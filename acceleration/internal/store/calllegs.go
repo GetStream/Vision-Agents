@@ -249,6 +249,35 @@ func (s *Store) RecordParticipant(ctx context.Context, scope AppScope, kept Call
 	return nil
 }
 
+// HeardCall records, in this shard, that the call hook delivered a participant event of the
+// call, anybody's: a row with no participant session. A hook subscribed to them delivers the
+// agent's own join on every placed call, so a placed call ending with none heard is a hook that
+// does not deliver them.
+func (s *Store) HeardCall(ctx context.Context, scope AppScope, callType, callID string, now time.Time) error {
+	_, err := s.shard.NewInsert().Model(&CallParticipant{
+		StreamAppPK: scope.App, Unpinned: scope.Unpinned, CallType: callType, CallID: callID,
+		RecordedAt: now.UTC().Truncate(time.Microsecond),
+	}).On("CONFLICT DO NOTHING").Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: heard call: %w", err))
+	}
+	return nil
+}
+
+// CallHeard reports whether the call hook delivered any participant event of the call
+// (HeardCall), in any shard.
+func (s *Store) CallHeard(ctx context.Context, scope AppScope, callType, callID string) (bool, error) {
+	heard, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (bool, error) {
+		return db.NewSelect().Model((*CallParticipant)(nil)).
+			Where("call_type = ?", callType).Where("call_id = ?", callID).
+			ApplyQueryBuilder(scope.where).Exists(ctx)
+	})
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: call heard: %w", err))
+	}
+	return slices.Contains(heard, true), nil
+}
+
 // ParticipantLeft is when a phone left a call, from the leave kept when no leg had it, or nil.
 func (s *Store) ParticipantLeft(ctx context.Context, scope AppScope, callType, callID, participant string) (*time.Time, error) {
 	lefts, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]time.Time, error) {

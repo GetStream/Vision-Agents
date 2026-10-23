@@ -241,6 +241,10 @@ func (s *TelephonyBillingSuite) TestAPlacedCallNobodyAnsweredBillsNothing() {
 	s.Require().Equal(http.StatusOK, s.endAt(callID))
 
 	s.Never(func() bool { return len(s.rows(phone.ModelCallMinutes)) > 0 }, time.Second, 50*time.Millisecond)
+	heard, err := s.store.ShardDB().NewSelect().Model((*store.CallParticipant)(nil)).
+		Where("call_id = ?", callID).Where("participant_session = ''").Count(context.Background())
+	s.Require().NoError(err)
+	s.Equal(1, heard, "the agent's join says the hook delivers participant events")
 }
 
 func (s *TelephonyBillingSuite) TestAPhoneLeavingEndsItsLeg() {

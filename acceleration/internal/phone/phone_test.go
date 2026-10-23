@@ -36,6 +36,26 @@ func (s *PhoneSuite) TestTheBuiltInVendorListDeclaresEveryVendorProperly() {
 	}
 }
 
+func (s *PhoneSuite) TestAHookPointedBeforeTheParticipantEventsIsMissingThem() {
+	ours := "https://router.example" + CallHookPath
+	hooks := []CallHook{
+		{URL: "https://other.example/hook", EventTypes: []string{"message.new"}, Enabled: true, HookType: "webhook"},
+		{URL: ours + "/42", EventTypes: []string{"call.session_started", "call.session_ended"}, Enabled: true, HookType: "webhook"},
+	}
+
+	missing, found := MissingCallHookEvents(hooks, ours)
+
+	s.True(found)
+	s.Equal([]string{"call.session_participant_joined", "call.session_participant_left"}, missing)
+	missing, found = MissingCallHookEvents([]CallHook{{URL: ours, Enabled: true}}, ours)
+	s.True(found)
+	s.Empty(missing, "a hook asking for nothing is sent everything")
+	_, found = MissingCallHookEvents(hooks[:1], ours)
+	s.False(found)
+	_, found = MissingCallHookEvents([]CallHook{{URL: ours, EventTypes: []string{"call.session_started"}}}, ours)
+	s.False(found, "a disabled hook delivers nothing")
+}
+
 func (s *PhoneSuite) TestEightOfElevenVendorsAreImplemented() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
