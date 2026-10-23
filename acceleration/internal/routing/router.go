@@ -146,6 +146,9 @@ type Admission struct {
 	// Tags are laid over the request's own on every row its work records, so a request
 	// cannot relabel what its policies attribute.
 	Tags Tags
+	// OrganizationID is the organization the customer is in, who its work is billed to.
+	// Empty when it is not known yet.
+	OrganizationID string
 }
 
 // Labelled returns the tags with the policies' laid over them, leaving the ones passed in
@@ -180,6 +183,9 @@ type Options[P Provider] struct {
 	// Pricer prices every row the router records. Nil prices them with Prices: Config's own
 	// rates, then the vendor list embedded in the binary.
 	Pricer pricing.Pricer
+	// Writer is the process's writer, shared by every recorder. Nil gives the router one of
+	// its own over Store and Live.
+	Writer *Writer
 	Logger *slog.Logger
 }
 
@@ -356,7 +362,7 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		modality: options.Modality,
 		config:   options.Config,
 		registry: options.Registry,
-		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, pricer, logger),
+		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, options.Writer, pricer, logger),
 		live:     options.Live,
 		voices:   options.Voices,
 		models:   options.Models,
@@ -387,7 +393,7 @@ func (r *Router[P]) Builds(provider string) bool { return r.registry.Has(provide
 // Logger returns the router's logger.
 func (r *Router[P]) Logger() *slog.Logger { return r.logger }
 
-// Close stops the background stat writer.
+// Close writes what is queued and stops the stat writer, unless the router shares one.
 func (r *Router[P]) Close() { r.recorder.Close() }
 
 // Providers returns every configured provider with its live health, in config order.

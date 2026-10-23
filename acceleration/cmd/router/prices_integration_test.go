@@ -345,21 +345,19 @@ func (s *PriceSyncSuite) TestDriftReadsEveryShard() {
 	s.Equal(2, models[1].Rows)
 }
 
-// TestDriftNamesARowByItsUsageIDWhereItHasOne: a database whose requests carry a usage id names
-// each example row by it as well as by its id.
+// TestDriftNamesARowByItsUsageIDWhereItHasOne: requests carry a usage id, so each example row
+// is named by it as well as by its id.
 func (s *PriceSyncSuite) TestDriftNamesARowByItsUsageIDWhereItHasOne() {
 	pgStore := s.started()
-	_, err := pgStore.DB().ExecContext(s.ctx, "ALTER TABLE requests ADD COLUMN usage_id TEXT")
-	s.Require().NoError(err)
 	s.recordWithVendorCost(pgStore, "grok-4.7", 900, 1_000)
-	_, err = pgStore.DB().ExecContext(s.ctx, "UPDATE requests SET usage_id = 'usage-1'")
-	s.Require().NoError(err)
+	var usageID string
+	s.Require().NoError(pgStore.ShardDB().QueryRowContext(s.ctx, "SELECT usage_id::text FROM requests").Scan(&usageID))
 	var out bytes.Buffer
 
 	s.Require().NoError(runPricesDrift(s.ctx, nil, s.settings, &out))
 
 	s.Contains(out.String(), "drift  llm/grok/grok-4.7  1 rows, median gap -10.00%")
-	s.Contains(out.String(), "(usage usage-1)")
+	s.Contains(out.String(), "(usage "+usageID+")")
 }
 
 // recordWithVendorCost records an LLM row the list priced at cost, of work the vendor said

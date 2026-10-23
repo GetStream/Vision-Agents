@@ -25,7 +25,7 @@ type CustomModelRecorderSuite struct {
 	suite.Suite
 	ctx   context.Context
 	store *store.Store
-	// logs is what the price list logged.
+	// logs is what the price list and the recorder's writer logged.
 	logs     *bytes.Buffer
 	recorder *routing.Recorder
 }
@@ -80,7 +80,7 @@ func (s *CustomModelRecorderSuite) TestACustomModelsRowKeepsItsCostAndIsNotBilla
 	s.EqualValues(1_000_000, row.OutputCostMicros)
 	s.False(row.Billable, "the customer pays their own host")
 	s.False(quote.Unpriced)
-	s.Empty(s.logs.String())
+	s.NotContains(s.logs.String(), "billable work has no price")
 }
 
 func (s *CustomModelRecorderSuite) TestACustomModelWithNoRatesIsFree() {

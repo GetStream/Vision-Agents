@@ -72,6 +72,7 @@ type Options struct {
 	ReplyHedge time.Duration
 	// FlowHedge is the same for the flow controller's decisions. Zero hedges none.
 	FlowHedge time.Duration
+	Writer    *routing.Writer
 	Logger    *slog.Logger
 }
 
@@ -132,6 +133,7 @@ func New(options Options) (*Router, error) {
 		Live:     options.Live,
 		Models:   options.Models,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
 		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})

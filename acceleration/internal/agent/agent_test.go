@@ -229,6 +229,10 @@ type stubLLM struct {
 	// a test can write one as it goes and see which were abandoned.
 	scripts map[string]*llmtest.Script
 	order   []string
+	// handed is every response handed out. A reply started before its ruling and the one
+	// written in its place share a turn's id, so the later one replaces the earlier in
+	// scripts, and Close must still end both.
+	handed []*llmtest.Script
 
 	// composes are the lines the model writes when the agent asks it for one (compose),
 	// one per request and the last again after that. Empty writes nothing, so a test that
@@ -287,6 +291,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 
 	s.mu.Lock()
 	s.scripts[params.ID] = script
+	s.handed = append(s.handed, script)
 	s.order = append(s.order, params.ID)
 	reply := append([]string(nil), s.reply...)
 	thinking := append([]string(nil), s.thinking...)
@@ -369,10 +374,7 @@ func (s *stubLLM) script(responseID string) *llmtest.Script {
 
 func (s *stubLLM) Close() error {
 	s.mu.Lock()
-	scripts := make([]*llmtest.Script, 0, len(s.scripts))
-	for _, script := range s.scripts {
-		scripts = append(scripts, script)
-	}
+	scripts := append([]*llmtest.Script(nil), s.handed...)
 	s.mu.Unlock()
 
 	for _, script := range scripts {

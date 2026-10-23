@@ -476,10 +476,11 @@ func (s *MigrationOrderSuite) TestThePreviousRouterRunsOnThePriceTables() {
 	s.Require().NoError(goose.SetDialect("postgres"))
 	s.Require().NoError(goose.UpContext(s.ctx, db.DB().DB, "."), "the previous router migrates a newer database as a no-op")
 	s.exec(db, oldRequestInsert)
-	s.Require().NoError(db.RecordRequest(s.ctx, &Request{Modality: "llm", CustomerID: "app", Provider: "openai", Model: "gpt",
-		StartedAt: time.Now(), CostMicros: 1, Success: true}))
 
 	s.goose()
+	s.Require().NoError(db.Migrate(s.ctx))
+	s.Require().NoError(db.RecordRequest(s.ctx, &Request{Modality: "llm", CustomerID: "app", Provider: "openai", Model: "gpt",
+		StartedAt: time.Now(), CostMicros: 1, Success: true}))
 	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", beforePriceTables))
 	var exists bool
 	s.Require().NoError(db.DB().QueryRowContext(s.ctx, `SELECT to_regclass('public.price_entries') IS NOT NULL

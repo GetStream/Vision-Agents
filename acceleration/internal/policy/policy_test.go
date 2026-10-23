@@ -125,6 +125,20 @@ func (s *PolicySuite) TestACustomerWithNoPolicyIsAdmitted() {
 	s.False(admitted.DataPolicy.Asks())
 }
 
+func (s *PolicySuite) TestAnAdmissionNamesTheOrganizationTheAppIsIn() {
+	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+
+	s.NoError(err)
+	s.Equal(s.org, admitted.OrganizationID, "who the app's work is billed to")
+}
+
+func (s *PolicySuite) TestAnAppInNoOrganizationIsAdmittedWithNone() {
+	admitted, err := s.enforcer.Admit(s.ctx, s.app+"-alone")
+
+	s.NoError(err)
+	s.Empty(admitted.OrganizationID)
+}
+
 func (s *PolicySuite) TestAnAppThatSpentItsBudgetIsRefused() {
 	s.save(store.ScopeApp, s.app, store.PolicyDocument{
 		Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily},
@@ -226,6 +240,45 @@ func (s *PolicySuite) TestAnOrganizationsTagsWinOverItsAppsTags() {
 
 	s.Require().NoError(err)
 	s.Equal(routing.Tags{"application": "athena", "cost_center": "research", "environment": "production"}, admitted.Tags)
+}
+
+func (s *PolicySuite) TestAnAttributionNamesTheOrganizationAndItsTags() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Tags: map[string]string{"environment": "production"}})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Tags: map[string]string{"application": "athena", "environment": "test"}})
+
+	attributed, err := s.enforcer.Attribute(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Equal(s.org, attributed.OrganizationID)
+	s.Equal(routing.Tags{"application": "athena", "environment": "production"}, attributed.Tags)
+}
+
+func (s *PolicySuite) TestAFailedAttributionIsNotWhatTheNextRequestIsAdmittedOn() {
+	cancelled, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	_, err := s.enforcer.Attribute(cancelled, s.app)
+	s.Require().Error(err, "a lookup that failed is the caller's to try again")
+
+	s.enforcer.mu.Lock()
+	_, kept := s.enforcer.decisions[s.app]
+	s.enforcer.mu.Unlock()
+	s.False(kept, "no decision is kept from it")
+	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+	s.Require().NoError(err)
+	s.Equal(s.org, admitted.OrganizationID)
+}
+
+func (s *PolicySuite) TestAnAttributionLooksAgainPastADecisionAFailedReadMade() {
+	cancelled, cancel := context.WithCancel(s.ctx)
+	cancel()
+	failed, _ := s.enforcer.Admit(cancelled, s.app)
+	s.Require().Empty(failed.OrganizationID, "Admit keeps allowing on what the failed read made of it")
+
+	attributed, err := s.enforcer.Attribute(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Equal(s.org, attributed.OrganizationID)
 }
 
 func (s *PolicySuite) TestNothingIsScreenedUnlessAPolicyTurnsItOn() {

@@ -122,10 +122,16 @@ func (s *StreamsSuite) TestAModelThatRefusedTheAccountIsListedUnavailable() {
 		}
 		return false
 	}, 5*time.Second, 20*time.Millisecond)
-	var recorded store.Request
-	s.Require().NoError(s.store.DB().NewSelect().Model(&recorded).
-		Where("model = ? AND NOT success", refusingModel).Limit(1).Scan(context.Background()))
-	s.Equal(termsRefusal, recorded.ErrorMessage, "the row says why")
+	// Provider health is counted as the row arrives and the row is written after, so it may
+	// not be in Postgres yet.
+	var recorded []store.Request
+	s.Require().Eventually(func() bool {
+		recorded = nil
+		err := s.store.DB().NewSelect().Model(&recorded).
+			Where("model = ? AND NOT success", refusingModel).Limit(1).Scan(context.Background())
+		return err == nil && len(recorded) == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	s.Equal(termsRefusal, recorded[0].ErrorMessage, "the row says why")
 }
 
 func (s *StreamsSuite) TestATargetInTheOptionBlockIsEnoughToRoute() {

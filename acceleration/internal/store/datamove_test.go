@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -765,4 +766,117 @@ func (s *DataMoveSuite) TestScheduledTasksMoveWithTheirRuns() {
 	s.Require().NoError(err)
 	s.Require().Len(runs, 1, "the task's history moves with it")
 	s.Equal(ScheduledTaskRunDelivered, runs[0].State)
+}
+
+// movedRequest imports a request recorded in the source, as an export from before usage ids
+// carries it when old is set, and returns the destination's row.
+func (s *DataMoveSuite) movedRequest(old bool) map[string]any {
+	exported := s.export("acme").of("requests")
+	s.Require().Len(exported, 1)
+	if old {
+		exported[0]["usage_id"] = nil
+	}
+	encoded, err := json.Marshal(exported[0])
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ImportRow(s.ctx, "acme", "requests", encoded))
+	moved := s.exportFrom(s.destination, "acme").of("requests")
+	s.Require().Len(moved, 1)
+	return moved[0]
+}
+
+func (s *DataMoveSuite) TestARequestFromBeforeUsageIDsIsImportedWithTheSameIDEveryTime() {
+	s.Require().NoError(s.source.RecordRequest(s.ctx, &Request{Modality: "stt", CustomerID: "acme",
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true}))
+
+	first := s.movedRequest(true)
+	again := s.movedRequest(true)
+
+	s.NotEmpty(first["usage_id"], "the table refuses a new row without a usage id")
+	s.Equal(first["usage_id"], again["usage_id"], "importing it again names the same unit of work")
+}
+
+func (s *DataMoveSuite) TestAnImportedRequestKeepsItsUsageIDAndIsNeverShipped() {
+	usageID := uuid.Must(uuid.NewV7())
+	s.Require().NoError(s.source.RecordRequest(s.ctx, &Request{UsageID: usageID, Modality: "stt", CustomerID: "acme",
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true, ToShip: true}))
+
+	moved := s.movedRequest(false)
+
+	s.Equal(usageID.String(), moved["usage_id"])
+	s.Equal(false, moved["to_ship"], "the deployment that recorded it bills it")
+}
+
+// takenRequest writes a request of acme's with the id given, as two deployments' own
+// sequences can each hand out.
+func (s *DataMoveSuite) takenRequest(store *Store, id int64) *Request {
+	request := &Request{ID: id, UsageID: uuid.Must(uuid.NewV7()), Modality: "stt", CustomerID: "acme",
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true, ToShip: true}
+	_, err := store.ShardDB().NewInsert().Model(request).Exec(s.ctx)
+	s.Require().NoError(err)
+	return request
+}
+
+// requestsByUsage is the destination's requests of acme by usage id.
+func (s *DataMoveSuite) requestsByUsage() map[string]map[string]any {
+	byUsage := map[string]map[string]any{}
+	for _, row := range s.exportFrom(s.destination, "acme").of("requests") {
+		byUsage[row["usage_id"].(string)] = row
+	}
+	return byUsage
+}
+
+func (s *DataMoveSuite) TestAMovedRequestNeverOverwritesTheDestinationsRowWithItsID() {
+	id := time.Now().UnixNano() % 1_000_000_000_000
+	own := s.takenRequest(s.destination, id)
+	moved := s.takenRequest(s.source, id)
+
+	s.move("acme", "acme")
+	s.move("acme", "acme")
+
+	rows := s.requestsByUsage()
+	s.Require().Len(rows, 2, "the moved row beside the destination's own, once however often it is imported")
+	s.EqualValues(id, rows[own.UsageID.String()]["id"])
+	s.Equal(true, rows[own.UsageID.String()]["to_ship"], "the destination's own row is left as it was")
+	s.NotEqualValues(id, rows[moved.UsageID.String()]["id"], "the moved row is given an id of the destination's")
+	s.Equal(false, rows[moved.UsageID.String()]["to_ship"])
+}
+
+func (s *DataMoveSuite) TestADeletedRequestIsReplayedByItsUsageID() {
+	s.capture("acme")
+	id := time.Now().UnixNano() % 1_000_000_000_000
+	doomed := s.takenRequest(s.source, id)
+	own := s.takenRequest(s.destination, id)
+	cursor := s.move("acme", "acme")
+	s.Require().Len(s.requestsByUsage(), 2)
+
+	_, err := s.source.ShardDB().ExecContext(s.ctx, "DELETE FROM requests WHERE id = ?", id)
+	s.Require().NoError(err)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Require().Equal(ChangeDelete, changes[0].Op)
+	s.JSONEq(fmt.Sprintf(`{"usage_id": %q, "id": %d}`, doomed.UsageID, id), string(changes[0].Key))
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+
+	rows := s.requestsByUsage()
+	s.NotContains(rows, doomed.UsageID.String())
+	s.Contains(rows, own.UsageID.String(), "the destination's row with the deleted row's id is not the row deleted")
+}
+
+func (s *DataMoveSuite) TestADeletedRequestFromBeforeUsageIDsIsReplayedToo() {
+	s.Require().NoError(s.source.RecordRequest(s.ctx, &Request{Modality: "stt", CustomerID: "acme",
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true}))
+	moved := s.movedRequest(true)
+	sourceID := int64(s.export("acme").of("requests")[0]["id"].(float64))
+	kept := s.takenRequest(s.destination, sourceID+1_000_000_000)
+
+	// What the source records deleting a row the migration left without a usage id.
+	key := fmt.Sprintf(`{"usage_id": null, "id": %d}`, sourceID)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", []DataChange{
+		{Table: "requests", Op: ChangeDelete, Key: json.RawMessage(key)},
+	}))
+
+	rows := s.requestsByUsage()
+	s.NotContains(rows, moved["usage_id"], "found by the usage id its import made from its source id")
+	s.Contains(rows, kept.UsageID.String())
 }

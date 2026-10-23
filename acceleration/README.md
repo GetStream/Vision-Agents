@@ -1662,7 +1662,10 @@ The customer is always the authenticated caller, never anything in the body or t
 so an export is the caller's own data and an import lands under the caller's own app
 however the file was edited on the way. An import upserts and refuses a row whose primary
 key belongs to another tenant, so replaying the same change twice lands where applying it
-once would and a guessed id overwrites nothing.
+once would and a guessed id overwrites nothing. A request row is the exception: each
+deployment numbers its own, so it is imported by its `usage_id` with an id the destination
+gives it, written once, and a delete of it is replayed by its `usage_id`, or for a row from
+before usage ids by the one its import made from its source id.
 
 Key rows, sealed secrets, OAuth access and refresh tokens, organizations and apps are not
 exported. A moved deployment mints its own keys and re-authorizes its plugin connections.
