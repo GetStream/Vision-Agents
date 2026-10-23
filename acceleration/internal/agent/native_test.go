@@ -592,7 +592,9 @@ func (s *AgentSuite) TestCloseCancelsAWithheldNativeReplacementHandshake() {
 	select {
 	case err := <-done:
 		s.NoError(err)
-	case <-time.After(settleFor):
+	// Under nativeRetrySetupTimeout (5s, native.go:22): past it the setup times out on its
+	// own and Close returns even when it did not cancel the handshake.
+	case <-time.After(time.Second):
 		s.FailNow("Close did not cancel the withheld native handshake")
 	}
 	select {

@@ -41,8 +41,14 @@ import (
 // several goroutines, so the alternative to waiting is asserting on a race.
 //
 // A wait ends as soon as what it waits for happens, so this only bounds how long a broken
-// flow takes to fail, and is long enough that a slow shared runner does not fail a late one.
-const settleFor = 10 * time.Second
+// flow takes to fail. It must stay at or below the agent's fallback timers (defaultPatience,
+// 3s, converse.go:68, stops a tool the interruption should have stopped): a longer wait
+// is satisfied by the fallback and passes with the interruption broken.
+const settleFor = 3 * time.Second
+
+// closeFor is how long closesAtEnd gives the agent to close. Nothing there waits for a
+// fallback to cover for a broken flow, so it may outlast settleFor on a slow runner.
+const closeFor = 10 * time.Second
 
 // loopbackEdge is a call with no network in it: audio is pushed in from the test and
 // whatever the agent says is kept for inspection.
@@ -374,6 +380,13 @@ func (s *stubLLM) script(responseID string) *llmtest.Script {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.scripts[responseID]
+}
+
+// abandoned is whether the response for responseID was abandoned. A response whose request
+// is recorded but whose script is not stored yet (Create has not come back) is not.
+func (s *stubLLM) abandoned(responseID string) bool {
+	script := s.script(responseID)
+	return script != nil && script.Abandoned()
 }
 
 func (s *stubLLM) Close() error {
@@ -1074,7 +1087,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 }
 
 // closesAtEnd closes the agent once the test ends. It lets go of the fake tools first, then
-// gives the agent and its event stream settleFor to close, so a goroutine nothing will end
+// gives the agent and its event stream closeFor to close, so a goroutine nothing will end
 // fails the test that left it instead of holding the package until go test's 10 m timeout.
 // The test's own T is kept, because the suite has moved back to the parent by cleanup.
 func (s *AgentSuite) closesAtEnd(agent *Agent) {
@@ -1093,8 +1106,8 @@ func (s *AgentSuite) closesAtEnd(agent *Agent) {
 		}()
 		select {
 		case <-closed:
-		case <-time.After(settleFor):
-			t.Errorf("the agent did not close within %s: one of its goroutines waits on something nothing will end", settleFor)
+		case <-time.After(closeFor):
+			t.Errorf("the agent did not close within %s: one of its goroutines waits on something nothing will end", closeFor)
 		}
 	})
 }
