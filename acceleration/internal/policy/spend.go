@@ -80,22 +80,30 @@ func (m *money) limitsPass(ctx context.Context) {
 
 // readAccounts reads the accounts' limits and resets when due, then what their limited subjects
 // spent, every one at once when now is set and as each source's cadence allows otherwise, and
-// keeps what landed. It says whether every read it made landed.
-func (m *money) readAccounts(ctx context.Context, db *store.Store, keys []string, now bool) bool {
-	landed := m.readLimits(ctx, db, keys)
+// keeps what landed. It answers the accounts a read of did not land.
+func (m *money) readAccounts(ctx context.Context, db *store.Store, keys []string, now bool) map[string]bool {
+	failed := map[string]bool{}
+	if !m.readLimits(ctx, db, keys) {
+		for _, key := range keys {
+			failed[key] = true
+		}
+	}
 	reads := m.plan(keys, time.Now(), now)
 	if len(reads) == 0 {
-		return landed
+		return failed
 	}
 	m.readSpend(ctx, db, reads)
-	return m.land(reads) && landed
+	for key := range m.land(reads) {
+		failed[key] = true
+	}
+	return failed
 }
 
 // land keeps what the reads found, under m.mu, and lets go of the holds they now count. A read
-// asked before the one a subject last kept is older, and changes nothing of it. It says whether
-// every read landed.
-func (m *money) land(reads map[string]*spendRead) bool {
-	landed := true
+// asked before the one a subject last kept is older, and changes nothing of it. It answers the
+// accounts whose read failed.
+func (m *money) land(reads map[string]*spendRead) map[string]bool {
+	failed := map[string]bool{}
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -108,7 +116,7 @@ func (m *money) land(reads map[string]*spendRead) bool {
 			acct.countersFailed = now
 		}
 		if read.failed {
-			landed = false
+			failed[key] = true
 			acct.spendFailed = now
 		} else {
 			acct.spentFrom = later(acct.spentFrom, read.from)
@@ -127,17 +135,18 @@ func (m *money) land(reads map[string]*spendRead) bool {
 		}
 		m.release(key, acct, now)
 	}
-	return landed
+	return failed
 }
 
 // firstRead reads, before an admission, what the customer's limits need that this process never
 // read: the account's limits and resets the first time it sees the account, and what each of the
 // owner's subjects with a limit spent the first time it sees the subject, or again once Idle
 // dropped it. It waits at most FirstRead; the read carries on in the background and is kept when
-// it lands. What has not landed by then is unread, which the tier's fail mode answers for
-// (refusal). One such read is under way per account at a time. Once an admission gave up on it,
-// the next ones do not wait for it, and after one that did not land the next is asked only Fresh
-// later, so an outage costs an admission at most one wait.
+// it lands. Limits that have not landed by then admit; a limited subject's spend that has not is
+// the tier's fail mode to answer (refusal). One such read is under way per account at a time,
+// read in a batch with the other accounts first seen within firstWindow (queueFirst). Once an
+// admission gave up on it, the next ones do not wait for it, and after one that did not land the
+// next is asked only Fresh later, so an outage costs an admission at most one wait.
 func (m *money) firstRead(ctx context.Context, key string, owner routing.Owner) {
 	db := m.enforcer.config.DB()
 	if db == nil || m.ctx == nil {
@@ -163,8 +172,7 @@ func (m *money) firstRead(ctx context.Context, key string, owner routing.Owner) 
 		case reading == nil:
 			reading = make(chan struct{})
 			acct.reading = reading
-			m.reads.Add(1)
-			go m.readFirst(db, key, reading)
+			m.queueFirst(db, key)
 		}
 		m.mu.Unlock()
 		timer := time.NewTimer(max(time.Until(deadline), 0))
@@ -203,21 +211,60 @@ func (m *money) unread(acct *account, key string, owner routing.Owner, now time.
 	return true
 }
 
-// readFirst is firstRead's read of one account, which closes reading once it is done.
-func (m *money) readFirst(db *store.Store, key string, reading chan struct{}) {
+// queueFirst adds an account to the batch of first reads gathering now, under m.mu, and starts
+// one when none is. A batch gathers for firstWindow and at most firstBatches are read at once,
+// so a cold start that sees thousands of accounts makes a few calls of each kind (LimitsFor,
+// Resets, the service's windows) rather than a call of each per account.
+func (m *money) queueFirst(db *store.Store, key string) {
+	if m.firstQueue == nil {
+		m.firstQueue = map[string]bool{}
+	}
+	m.firstQueue[key] = true
+	if m.firstGathering {
+		return
+	}
+	m.firstGathering = true
+	m.reads.Add(1)
+	go m.readFirsts(db)
+}
+
+// readFirsts reads one batch of first reads, and closes each account's reading once it is done.
+func (m *money) readFirsts(db *store.Store) {
 	defer m.reads.Done()
-	ctx, cancel := context.WithTimeout(m.ctx, readTimeout)
-	defer cancel()
-	landed := m.readAccounts(ctx, db, []string{key}, true)
+	select {
+	case <-time.After(firstWindow):
+	case <-m.ctx.Done():
+	}
 	m.mu.Lock()
-	if acct := m.accounts[key]; acct != nil && acct.reading == reading {
-		acct.reading, acct.readingLate = nil, false
-		if !landed {
-			acct.firstFailed = time.Now()
+	keys := slices.Sorted(mapsKeys(m.firstQueue))
+	m.firstQueue, m.firstGathering = nil, false
+	m.mu.Unlock()
+	failed := map[string]bool{}
+	select {
+	case m.firstSlots <- struct{}{}:
+		ctx, cancel := context.WithTimeout(m.ctx, readTimeout)
+		failed = m.readAccounts(ctx, db, keys, true)
+		cancel()
+		<-m.firstSlots
+	case <-m.ctx.Done():
+		for _, key := range keys {
+			failed[key] = true
 		}
 	}
-	m.mu.Unlock()
-	close(reading)
+	now := time.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, key := range keys {
+		acct := m.accounts[key]
+		if acct == nil || acct.reading == nil {
+			continue
+		}
+		if failed[key] {
+			acct.firstFailed = now
+		}
+		close(acct.reading)
+		acct.reading, acct.readingLate = nil, false
+	}
 }
 
 // limitsStale reports, under m.mu, whether what the limits of the owner's work are checked
