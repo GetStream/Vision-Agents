@@ -22,7 +22,7 @@ classifiers = [
 
 requires-python = ">=3.10"
 dependencies = [
-    "getstream[webrtc,telemetry]>=6.1.1",
+    "getstream[webrtc,telemetry]>=7.0.0",
     "aiortc>=1.14.0,<1.15.0",
     "av>=14.2.0, <17",
     "python-dotenv>=1.1.1",

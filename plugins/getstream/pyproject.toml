@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "getstream[webrtc,telemetry]>=6.1.1",
+    "getstream[webrtc,telemetry]>=7.0.0",
 ]
 
 [project.urls]
