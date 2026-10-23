@@ -219,6 +219,23 @@ func (s *DispatchSuite) TestAMessageTheServerCannotReadDoesNotEndTheConnection()
 	s.Equal("call", s.next(worker)["type"])
 }
 
+func (s *DispatchSuite) TestAFrameThatIsNotJSONEndsTheWorkerWithPolicyViolation() {
+	worker := s.worker()
+
+	s.Require().NoError(worker.WriteMessage(websocket.TextMessage, []byte("not json")))
+	read, ended := s.socketEnd(worker)
+
+	s.Require().Len(read, 1)
+	s.Equal(frame{
+		"type": "error", "error": errUnreadableFrame.Message,
+		"code": errUnreadableFrame.Code, "error_type": string(errUnreadableFrame.Type),
+	}, read[0])
+	s.Equal(errUnreadableFrame.Message, s.closedWith(ended, websocket.ClosePolicyViolation).Text)
+	s.Require().Eventually(func() bool {
+		return len(s.dispatch.Workers(s.customerID())) == 0
+	}, settleFor, 10*time.Millisecond, "the worker the socket ended is still in the rotation")
+}
+
 func (s *DispatchSuite) TestAWorkerThatDisconnectsLeavesTheRotation() {
 	worker := s.worker()
 

@@ -7839,7 +7839,7 @@ type TranscriptionRequest struct {
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
 	ConfigId *string `json:"config_id,omitempty"`
 
-	// Inline Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+	// Inline Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. The audio goes in source.audio, at most 8 MiB, with no source.url and no callback, else a 400; deadline 90 seconds. Default false retains asynchronous stored jobs.
 	Inline *bool `json:"inline,omitempty"`
 
 	// Options How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.

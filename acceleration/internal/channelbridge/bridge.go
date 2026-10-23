@@ -41,8 +41,10 @@ import (
 )
 
 // configField is the custom field on an agent channel naming the agent config that answers in
-// it: api.ConfigField, which the message hook reads to find who answers a channel no session
-// ran on. The value is the hook's; the bridge cannot import the api package, which serves it.
+// it: api.ConfigField, which the message hook reads to find who answers a plain channel no
+// session ran on. A thread channel is answered by the line's current binding instead, so the
+// value is the config the thread opened under. The value is the hook's; the bridge cannot
+// import the api package, which serves it.
 const configField = "agent_config_id"
 
 // agentField is the channel custom field a persistent conversation reads its agent from

@@ -3,6 +3,7 @@ package voices
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -226,6 +227,23 @@ func (s *ClonerSuite) TestAProviderThatWillNotSpeakSaysWhy() {
 	_, err = cloner.Speak(s.ctx, "el-77", "hello")
 	s.Require().Error(err)
 	s.Contains(err.Error(), "voice not found")
+}
+
+// Speaking names a voice, so a 401 or 403 on it is still the voice refused rather than the
+// key unable to list voices, which is what listRefused says.
+func (s *ClonerSuite) TestASpeakTheKeyIsRefusedStillRefusesTheVoice() {
+	s.reply = `{"detail":"nope"}`
+	cloner, err := NewElevenLabs(ElevenLabsOptions{APIKey: "secret", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		s.status = status
+
+		_, err = cloner.Speak(s.ctx, "el-77", "hello")
+
+		// As the base answered it (291f2e34c).
+		s.EqualError(err, fmt.Sprintf(`voices: elevenlabs refused the voice (http %d): {"detail":"nope"}`, status))
+	}
 }
 
 func (s *ClonerSuite) TestAVoiceWithNoRecordingsIsNeverSent() {

@@ -53,6 +53,8 @@ type telnyxLine struct {
 	line       string
 	connection Connection
 	config     store.AgentConfig
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 // The bridge's answers to STOP, START and HELP (channelbridge/keywords.go), which are
@@ -83,6 +85,8 @@ func (s *telnyxLine) SetupSuite() {
 		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
 	}
 	s.channelProvider = func() string { return s.telnyx.server.Listener.Addr().String() }
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }

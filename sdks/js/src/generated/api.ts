@@ -8557,7 +8557,7 @@ export type components = {
             /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
             readonly config_id?: string;
             /**
-             * @description Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+             * @description Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. The audio goes in source.audio, at most 8 MiB, with no source.url and no callback, else a 400; deadline 90 seconds. Default false retains asynchronous stored jobs.
              * @default false
              */
             readonly inline?: boolean;

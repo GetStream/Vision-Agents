@@ -31,8 +31,8 @@ Slack -> POST /v1/connectors/events/{connector}/{app}   api.receiveProviderAppEv
 Stream Chat -> message.new -> api.receiveMessageEvent -> api.answerThread
   claim (thread channel, turn, Stream message id)
   lease the turn on channel_threads (one router per thread at a time)
-  the session on the channel (ByAgentWhere), else a persistent text session from
-  the channel's agent config, ConversationID agent:thread-<uuid>
+  the session on the channel (ByConversationWhere), else a persistent text session from
+  the config binding the line now (as take picks it), ConversationID agent:thread-<uuid>
   Session.FollowUp(text): the reply is written into the thread channel
 conversation flush: final text stored (UpdateMessagePartial, no webhook)
   -> Service.OnFinishedReply -> Bridge.Reply        the one hand-off point
