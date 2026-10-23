@@ -43,8 +43,8 @@ type Manifest struct {
 	// every manifest stored before it stays as it was.
 	Internal bool `yaml:"internal,omitempty" json:"internal,omitempty"`
 	// Sensitive is a connector whose tools read private data. An agent config that binds one
-	// binds no tool that sends data out (sensitiveBindingsComplaint in internal/api/configs.go),
-	// since a model that reads untrusted text could be steered into sending out what it read
+	// binds no tool that sends data out with no person's approval (sensitiveBindingsComplaint in
+	// internal/api/configs.go), since a model that reads untrusted text could be steered into sending out what it read
 	// («Nessy as a connector» on AI-1538, change 13). Left out of the JSON when false, so the
 	// JSON of every manifest stored before it stays as it was.
 	Sensitive bool `yaml:"sensitive,omitempty" json:"sensitive,omitempty"`
