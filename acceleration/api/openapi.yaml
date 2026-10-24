@@ -6493,12 +6493,21 @@ components:
           x-enum-varnames:
             - SessionToolExecutorServer
             - SessionToolExecutorClient
+        interruptible:
+          description: 'Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes.'
+          type: boolean
         name:
           type: string
         parameters:
           additionalProperties: {}
           description: A JSON Schema object describing the arguments.
           type: object
+        timeout_ms:
+          description: How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's.
+          format: int64
+          maximum: 1800000
+          minimum: 0
+          type: integer
       required:
         - description
         - name

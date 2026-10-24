@@ -30,6 +30,11 @@ type Tool struct {
 	Description string
 	// Parameters is a JSON Schema object describing the arguments.
 	Parameters map[string]any
+	// Interruptible says the caller interrupting cancels a call in flight.
+	Interruptible bool `json:",omitempty"`
+	// Timeout is how long one call may take, in place of what the worker gave all its
+	// tools. Zero takes that.
+	Timeout time.Duration `json:",omitempty"`
 }
 
 // ToolCall is one call a worker is asked to run.
@@ -71,6 +76,16 @@ func (h *hosting) offers(name string) bool {
 	return false
 }
 
+// timeoutOf is how long a call to name is given on this host.
+func (h *hosting) timeoutOf(name string) time.Duration {
+	for _, tool := range h.tools {
+		if tool.Name == name && tool.Timeout > 0 {
+			return tool.Timeout
+		}
+	}
+	return h.timeout
+}
+
 // ToolCalls is the hosted calls the worker's connection has to deliver. It is closed with
 // the rest of the worker's queues.
 func (w *Worker) ToolCalls() <-chan ToolCall { return w.toolCalls }
@@ -103,6 +118,11 @@ func (p *Pool) Host(worker *Worker, agentID string, tools []Tool, timeout time.D
 	}
 	if timeout <= 0 {
 		timeout = defaultHostedTimeout
+	}
+	for _, tool := range tools {
+		if tool.Timeout < 0 {
+			return fmt.Errorf("dispatch: %s cannot have a negative timeout", tool.Name)
+		}
 	}
 
 	p.mu.Lock()
@@ -139,6 +159,7 @@ func (p *Pool) HostedTools(customerID, agentID string) ([]Tool, time.Duration) {
 	for _, offer := range p.hosted[customerID][agentID] {
 		longest = max(longest, offer.timeout)
 		for _, tool := range offer.tools {
+			longest = max(longest, tool.Timeout)
 			if !seen[tool.Name] {
 				seen[tool.Name] = true
 				offered = append(offered, tool)
@@ -212,7 +233,8 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 	chosen.worker.toolCalls <- call
 	p.mu.Unlock()
 
-	deadline, cancel := context.WithTimeout(ctx, chosen.timeout)
+	timeout := chosen.timeoutOf(call.Name)
+	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	select {
 	case result := <-answer:
@@ -226,7 +248,7 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("dispatch: %s stopped: %w", call.Name, err)
 		}
-		return nil, fmt.Errorf("dispatch: %s did not answer within %s", call.Name, chosen.timeout)
+		return nil, fmt.Errorf("dispatch: %s did not answer within %s", call.Name, timeout)
 	}
 }
 

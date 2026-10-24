@@ -7,8 +7,35 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
+
+// interruptible is next with the caller's and the workers' tools that asked to be cancelled
+// by an interruption marked so. Nil when none asked, so a session that did not is left
+// with next as it was.
+func interruptible(tools []harness.Tool, next func(string) agent.ToolPolicy) func(string) agent.ToolPolicy {
+	cancels := map[string]bool{}
+	for _, tool := range tools {
+		if tool.Interruptible {
+			cancels[tool.Name] = true
+		}
+	}
+	if len(cancels) == 0 {
+		return nil
+	}
+	return func(name string) agent.ToolPolicy {
+		var policy agent.ToolPolicy
+		if next != nil {
+			policy = next(name)
+		}
+		if cancels[name] {
+			policy.Cancels, policy.Waits = true, false
+		}
+		return policy
+	}
+}
 
 // defaultToolTimeout bounds how long a conversation waits on a tool that is being run
 // somewhere else.
@@ -28,6 +55,8 @@ const defaultToolTimeout = 30 * time.Second
 // work, and the agent apologises for it the same way it would for a failed transfer.
 type bridge struct {
 	timeout time.Duration
+	// timeouts is the tools that name their own, in place of timeout.
+	timeouts map[string]time.Duration
 	// ask publishes the request and reports whether anyone was there to receive it.
 	ask func(ToolCall) error
 
@@ -51,20 +80,31 @@ type toolResult struct {
 	failure string
 }
 
-func newBridge(timeout time.Duration, ask func(ToolCall) error) *bridge {
+func newBridge(timeout time.Duration, tools []harness.Tool, ask func(ToolCall) error) *bridge {
 	if timeout <= 0 {
 		timeout = defaultToolTimeout
 	}
+	timeouts := map[string]time.Duration{}
+	for _, tool := range tools {
+		if tool.Timeout > 0 {
+			timeouts[tool.Name] = tool.Timeout
+		}
+	}
 	return &bridge{
-		timeout: timeout,
-		ask:     ask,
-		pending: map[string]pendingTool{},
+		timeout:  timeout,
+		timeouts: timeouts,
+		ask:      ask,
+		pending:  map[string]pendingTool{},
 	}
 }
 
 // Run carries one tool call out to the caller and waits for the answer.
 func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
-	deadline, cancel := context.WithTimeout(ctx, b.timeout)
+	timeout := b.timeout
+	if own, named := b.timeouts[call.Name]; named {
+		timeout = own
+	}
+	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	answer := make(chan toolResult, 1)
 
@@ -101,7 +141,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("session: %s stopped: %w", call.Name, err)
 		}
-		return nil, fmt.Errorf("session: %s did not answer within %s: %w", call.Name, b.timeout, deadline.Err())
+		return nil, fmt.Errorf("session: %s did not answer within %s: %w", call.Name, timeout, deadline.Err())
 	}
 }
 

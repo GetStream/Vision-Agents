@@ -277,6 +277,41 @@ func (s *DispatchSuite) TestHostedToolsAreKeptForTheAgentTheWorkerNames() {
 	s.Equal(30*time.Second, timeout, "a worker that names no timeout takes the session's default")
 }
 
+func (s *DispatchSuite) TestAHostedToolsOwnTimeoutReplacesTheWorkers() {
+	worker := s.worker()
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "host_tools", "agent_id": "stream-support", "timeout_ms": 60_000,
+		"tools": []frame{{"name": "investigate_sdk", "description": "Read SDK source", "timeout_ms": 50, "interruptible": true}},
+	}))
+	s.Require().Equal("hosting", s.next(worker)["type"])
+	tools, _ := s.dispatch.HostedTools(s.customerID(), "stream-support")
+	s.Require().Len(tools, 1)
+	s.True(tools[0].Interruptible)
+	answered := make(chan error, 1)
+	started := time.Now()
+	go func() {
+		_, err := s.dispatch.RunHosted(s.T().Context(), s.customerID(), "stream-support",
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+		answered <- err
+	}()
+	s.Equal("tool_call", s.next(worker)["type"])
+
+	s.Equal("tool_cancel", s.next(worker)["type"])
+	s.Error(<-answered)
+	s.Less(time.Since(started), 5*time.Second, "the call waited out the worker's timeout")
+}
+
+func (s *DispatchSuite) TestANegativeHostedToolTimeoutIsRefused() {
+	worker := s.worker()
+
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "host_tools", "agent_id": "stream-support",
+		"tools": []frame{{"name": "investigate_sdk", "description": "Read SDK source", "timeout_ms": -1}},
+	}))
+
+	s.Equal("hosting_refused", s.next(worker)["type"])
+}
+
 func (s *DispatchSuite) TestHostedToolsNeedAnAgentToBeFor() {
 	worker := s.worker()
 

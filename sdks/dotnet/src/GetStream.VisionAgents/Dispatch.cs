@@ -150,7 +150,7 @@ public sealed class Dispatch
     /// <param name="agent">The agent, usually <see cref="VisionAgentsClient.Agent"/>, whose tools are hosted.</param>
     /// <param name="toolTimeout">
     /// How long the router waits for one tool call to be answered before telling the model it
-    /// failed, not how long the worker runs; null takes the router's default of two minutes.
+    /// failed, not how long the worker runs; null takes the router's default of 30 seconds.
     /// </param>
     public Dispatch Host(Agent agent, TimeSpan? toolTimeout = null)
     {

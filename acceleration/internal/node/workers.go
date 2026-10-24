@@ -166,8 +166,14 @@ func (w *Workers) RunHosted(ctx context.Context, customerID, agentID string, cal
 	var hosts []string
 	var timeout time.Duration
 	for address, offer := range w.elsewhere(customerID, agentID) {
-		if slices.ContainsFunc(offer.Tools, func(tool dispatch.Tool) bool { return tool.Name == call.Name }) {
-			hosts = append(hosts, address)
+		index := slices.IndexFunc(offer.Tools, func(tool dispatch.Tool) bool { return tool.Name == call.Name })
+		if index < 0 {
+			continue
+		}
+		hosts = append(hosts, address)
+		if own := offer.Tools[index].Timeout; own > 0 {
+			timeout = max(timeout, own)
+		} else {
 			timeout = max(timeout, offer.Timeout)
 		}
 	}

@@ -520,6 +520,14 @@ func (p *Pipeline) tools() []acceleration.SessionTool {
 			parameters := function.Parameters
 			tool.Parameters = &parameters
 		}
+		if function.Interruptible {
+			interruptible := true
+			tool.Interruptible = &interruptible
+		}
+		if function.Timeout > 0 {
+			timeout := function.Timeout.Milliseconds()
+			tool.TimeoutMs = &timeout
+		}
 		declared = append(declared, tool)
 	}
 	return declared

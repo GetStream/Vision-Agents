@@ -497,6 +497,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
+		spec.Tools,
 		created.askTool,
 	)
 
@@ -575,10 +576,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
 	}
 	// Only a connector binding's policy names a phrase or lets a call go on after an
-	// interruption; a session without one runs its tools as it always has.
+	// interruption, and only a caller's or a worker's tool that says so is cancelled by one;
+	// a session with neither runs its tools as it always has.
 	var toolPolicy func(string) agent.ToolPolicy
 	if connectors != nil {
 		toolPolicy = connectors.toolPolicy
+	}
+	if policy := interruptible(tools, toolPolicy); policy != nil {
+		toolPolicy = policy
 	}
 	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {

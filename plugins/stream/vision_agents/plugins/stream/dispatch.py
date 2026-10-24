@@ -215,7 +215,7 @@ class Dispatch:
                 name.
             tool_timeout: How long the router waits for one tool call to be answered, in
                 seconds, before telling the model it failed. Not how long the worker runs.
-                Zero takes the router's default of two minutes.
+                Zero takes the router's default of 30 seconds.
         """
         self._hosted.append(_Hosting(agent.name, agent.functions, tool_timeout))
 

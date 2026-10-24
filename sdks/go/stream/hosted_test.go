@@ -38,6 +38,35 @@ func (s *HostedCallSuite) answer(photograph func(context.Context, struct{}) (any
 	return router.told(s.T(), "tool_result")
 }
 
+func (s *HostedCallSuite) TestAWorkerDeclaresEachToolsPolicies() {
+	router := newPool(s.T(), func(*websocket.Conn) {})
+	functions := tools.NewRegistry()
+	noop := func(context.Context, struct{}) (any, error) { return nil, nil }
+	s.Require().NoError(tools.Register(functions, "investigate_sdk", "Read SDK source", noop,
+		tools.Interruptible(true), tools.Timeout(90*time.Second)))
+	s.Require().NoError(tools.Register(functions, "search_docs", "Search the docs", noop))
+	worker := waiting(s.T(), router, DispatchOptions{})
+	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+	ctx, cancel := context.WithCancel(s.T().Context())
+	stopped := run(s.T(), ctx, worker)
+	defer func() {
+		cancel()
+		stopped()
+	}()
+
+	declared := router.told(s.T(), "host_tools")["tools"].([]any)
+
+	s.Require().Len(declared, 2)
+	byName := map[string]map[string]any{}
+	for _, tool := range declared {
+		byName[tool.(map[string]any)["name"].(string)] = tool.(map[string]any)
+	}
+	s.Equal(true, byName["investigate_sdk"]["interruptible"])
+	s.EqualValues(90000, byName["investigate_sdk"]["timeout_ms"])
+	s.NotContains(byName["search_docs"], "interruptible")
+	s.NotContains(byName["search_docs"], "timeout_ms")
+}
+
 func (s *HostedCallSuite) TestAResultNamesItsCallAsASessionsDoes() {
 	answered := s.answer(func(context.Context, struct{}) (any, error) { return "the kitchen", nil })
 

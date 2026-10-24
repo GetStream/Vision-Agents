@@ -52,7 +52,10 @@ func (m *Manager) hostedTools(spec Spec, sessionID string, declared []harness.To
 			continue
 		}
 		hosted[tool.Name] = true
-		declared = append(declared, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+		declared = append(declared, harness.Tool{
+			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
+			Interruptible: tool.Interruptible, Timeout: tool.Timeout,
+		})
 	}
 	if len(hosted) == 0 {
 		return declared, next

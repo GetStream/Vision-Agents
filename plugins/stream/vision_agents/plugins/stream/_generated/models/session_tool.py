@@ -39,7 +39,12 @@ class SessionTool:
                 conversation its call is shown as awaiting the device of the person whose command it answers (their user and the
                 command's client_id), with its arguments, which every channel member can read. The caller still answers it over
                 the events socket, once the device has reported. Defaults to server.
+            interruptible (bool | Unset): Whether the caller interrupting the agent cancels a call in flight: the events
+                socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call
+                goes on and its result is told when it comes.
             parameters (SessionToolParameters | Unset): A JSON Schema object describing the arguments.
+            timeout_ms (int | Unset): How long one call may take before the model is told it failed and tool_cancel is sent,
+                in place of the session's tool_timeout_ms. Zero or omitted takes the session's.
     """
 
     description: str
@@ -47,7 +52,9 @@ class SessionTool:
     approval: SessionToolApproval | Unset = UNSET
     display_title: str | Unset = UNSET
     executor: SessionToolExecutor | Unset = UNSET
+    interruptible: bool | Unset = UNSET
     parameters: SessionToolParameters | Unset = UNSET
+    timeout_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,9 +72,13 @@ class SessionTool:
         if not isinstance(self.executor, Unset):
             executor = self.executor.value
 
+        interruptible = self.interruptible
+
         parameters: dict[str, Any] | Unset = UNSET
         if not isinstance(self.parameters, Unset):
             parameters = self.parameters.to_dict()
+
+        timeout_ms = self.timeout_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -83,8 +94,12 @@ class SessionTool:
             field_dict["display_title"] = display_title
         if executor is not UNSET:
             field_dict["executor"] = executor
+        if interruptible is not UNSET:
+            field_dict["interruptible"] = interruptible
         if parameters is not UNSET:
             field_dict["parameters"] = parameters
+        if timeout_ms is not UNSET:
+            field_dict["timeout_ms"] = timeout_ms
 
         return field_dict
 
@@ -114,6 +129,8 @@ class SessionTool:
         else:
             executor = SessionToolExecutor(_executor)
 
+        interruptible = d.pop("interruptible", UNSET)
+
         _parameters = d.pop("parameters", UNSET)
         parameters: SessionToolParameters | Unset
         if isinstance(_parameters, Unset):
@@ -121,13 +138,17 @@ class SessionTool:
         else:
             parameters = SessionToolParameters.from_dict(_parameters)
 
+        timeout_ms = d.pop("timeout_ms", UNSET)
+
         session_tool = cls(
             description=description,
             name=name,
             approval=approval,
             display_title=display_title,
             executor=executor,
+            interruptible=interruptible,
             parameters=parameters,
+            timeout_ms=timeout_ms,
         )
 
         session_tool.additional_properties = d

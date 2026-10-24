@@ -44,7 +44,7 @@ export type MessageHandler = (message: InboundMessage) => void | Promise<void>;
 export interface HostOptions {
   /**
    * How long the router waits for one tool call to be answered before telling the model it
-   * failed. Not how long the worker runs. Left out, the router's default of two minutes.
+   * failed. Not how long the worker runs. Left out, the router's default of 30 seconds.
    */
   toolTimeoutMs?: number;
 }

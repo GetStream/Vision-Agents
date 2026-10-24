@@ -347,6 +347,9 @@ type hostedTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
+	// Interruptible and TimeoutMs mean what they do on a session's own tool.
+	Interruptible bool `json:"interruptible"`
+	TimeoutMs     int  `json:"timeout_ms"`
 }
 
 // hostTools records what a worker offers to run for sessions under an agent id, and says
@@ -367,7 +370,13 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []h
 		if tool.Name == "" || tool.Description == "" {
 			return refuse("every hosted tool needs a name and a description")
 		}
-		tools = append(tools, dispatch.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+		if tool.TimeoutMs < 0 {
+			return refuse(tool.Name + "'s timeout_ms cannot be negative")
+		}
+		tools = append(tools, dispatch.Tool{
+			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
+			Interruptible: tool.Interruptible, Timeout: time.Duration(tool.TimeoutMs) * time.Millisecond,
+		})
 		names = append(names, tool.Name)
 	}
 	if err := s.dispatch.Host(worker, agentID, tools, time.Duration(timeoutMs)*time.Millisecond); err != nil {

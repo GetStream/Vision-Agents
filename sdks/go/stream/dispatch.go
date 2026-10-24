@@ -231,7 +231,7 @@ type HostedAgent interface {
 // every call to one of them here. The router matches a session on its agent id or its
 // agent's name, so the name is what the agent is hosted under. toolTimeout is how long the
 // router waits for one tool call to be answered before telling the model it failed, not how
-// long the worker runs; zero takes the router's default of two minutes. Call before Run.
+// long the worker runs; zero takes the router's default of 30 seconds. Call before Run.
 func (d *Dispatch) Host(agent HostedAgent, toolTimeout time.Duration) {
 	d.hosted = append(d.hosted, hosting{agentID: agent.Name(), functions: agent.Tools(), toolTimeout: toolTimeout})
 }
@@ -241,7 +241,14 @@ func (d *Dispatch) host() {
 	for _, offer := range d.hosted {
 		declared := []Frame{}
 		for _, function := range offer.functions.List() {
-			declared = append(declared, Frame{"name": function.Name, "description": function.Description, "parameters": function.Parameters})
+			tool := Frame{"name": function.Name, "description": function.Description, "parameters": function.Parameters}
+			if function.Interruptible {
+				tool["interruptible"] = true
+			}
+			if function.Timeout > 0 {
+				tool["timeout_ms"] = function.Timeout.Milliseconds()
+			}
+			declared = append(declared, tool)
 		}
 		d.tell(Frame{"type": "host_tools", "agent_id": offer.agentID, "tools": declared, "timeout_ms": offer.toolTimeout.Milliseconds()})
 	}

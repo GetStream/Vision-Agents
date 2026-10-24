@@ -707,7 +707,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 	if request.Tools != nil {
 		for _, tool := range *request.Tools {
-			declared := harness.Tool{Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle)}
+			declared := harness.Tool{
+				Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle),
+				Interruptible: value(tool.Interruptible), Timeout: time.Duration(value(tool.TimeoutMs)) * time.Millisecond,
+			}
 			if tool.Parameters != nil {
 				declared.Parameters = *tool.Parameters
 			}

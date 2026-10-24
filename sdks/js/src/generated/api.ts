@@ -7635,11 +7635,18 @@ export type components = {
              * @enum {string}
              */
             readonly executor?: "server" | "client";
+            /** @description Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes. */
+            readonly interruptible?: boolean;
             readonly name: string;
             /** @description A JSON Schema object describing the arguments. */
             readonly parameters?: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Format: int64
+             * @description How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's.
+             */
+            readonly timeout_ms?: number;
         };
         /** @description Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. */
         readonly SessionToolApproval: {

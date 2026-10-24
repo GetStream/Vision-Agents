@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
@@ -26,6 +27,27 @@ func (s *ToolCallSuite) join(pipeline *Pipeline) {
 	_, err := pipeline.Join(s.T().Context(), Call{Voice: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = pipeline.Leave(context.Background()) })
+}
+
+func (s *ToolCallSuite) TestASessionDeclaresEachToolsPolicies() {
+	backend := newRouter(s.T(), func(*testing.T, *websocket.Conn) {})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	noop := func(context.Context, struct{}) (any, error) { return nil, nil }
+	s.Require().NoError(tools.Register(pipeline.Functions(), "search_flights", "Search for flights", noop,
+		tools.Interruptible(true), tools.Timeout(5*time.Second)))
+	s.Require().NoError(tools.Register(pipeline.Functions(), "book_flight", "Book a flight", noop))
+
+	s.join(pipeline)
+
+	declared := *backend.created(s.T()).Tools
+	s.Require().Len(declared, 2)
+	byName := map[string]acceleration.SessionTool{declared[0].Name: declared[0], declared[1].Name: declared[1]}
+	s.Require().NotNil(byName["search_flights"].Interruptible)
+	s.True(*byName["search_flights"].Interruptible)
+	s.Require().NotNil(byName["search_flights"].TimeoutMs)
+	s.EqualValues(5000, *byName["search_flights"].TimeoutMs)
+	s.Nil(byName["book_flight"].Interruptible, "a tool that said nothing leaves the router's default")
+	s.Nil(byName["book_flight"].TimeoutMs)
 }
 
 func (s *ToolCallSuite) TestACancelledToolCallStopsTheFunction() {
