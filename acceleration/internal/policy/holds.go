@@ -97,6 +97,9 @@ type hold struct {
 	// estimate it was reserved at, let go at expires if the work is never recorded.
 	settled bool
 	expires time.Time
+	// grantsLetGo is when a count of the row let it go from its grants here, zero until then
+	// and for one let go uncounted.
+	grantsLetGo time.Time
 	// balance and limits say whether it still counts against the balance and the spend hard
 	// limit, and against the customer's limits; granted whether it still counts against the
 	// grants it was drawn from, which is until a read of what they paid for, asked after the
@@ -642,7 +645,10 @@ func (m *money) release(key string, acct *account, now time.Time) {
 			// have lost it, and one it knew written but nothing counted goes uncountable after.
 			switch {
 			case !held.countedAt.IsZero() && held.countedAt.Before(acct.grantsFrom):
+				// This router's read has the count; the others' may not for a while, so the
+				// shared copy outlives it (grantSharedUntil).
 				acct.letGoGrants(held)
+				held.grantsLetGo = now
 			case held.writtenAt.IsZero() && now.Sub(held.made) > acklessAges*ttl:
 				uncounted += held.micros
 				acct.letGoGrants(held)
@@ -844,6 +850,7 @@ func (m *money) fold(acct *account, id uuid.UUID) bool {
 	into.made = later(into.made, held.made)
 	into.ackedAt, into.writtenAt = later(into.ackedAt, held.ackedAt), later(into.writtenAt, held.writtenAt)
 	into.countedAt = later(into.countedAt, held.countedAt)
+	into.grantsLetGo = later(into.grantsLetGo, held.grantsLetGo)
 	delete(acct.holds, id)
 	if acct.remember(id, folded{into: intoID, micros: held.micros}) {
 		return true

@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -179,16 +180,17 @@ func remoteHeld(enforcer *Enforcer, organization string) int64 {
 	return acct.remoteOrganization(organization)
 }
 
-// appOf is an app the enforcer knows in the organization.
+// appOf is an app the enforcer was told is in the organization (Join), which it never forgets.
 func appOf(enforcer *Enforcer, organization string) string {
-	enforcer.mu.Lock()
-	defer enforcer.mu.Unlock()
-	for app, decided := range enforcer.decisions {
-		if decided.organization == organization {
-			return app
+	found := ""
+	enforcer.members.Range(func(app, joined any) bool {
+		if joined == organization {
+			found = app.(string)
+			return false
 		}
-	}
-	return ""
+		return true
+	})
+	return found
 }
 
 func newID() uuid.UUID { return uuid.Must(uuid.NewV7()) }
@@ -438,6 +440,176 @@ func (s *PolicySuite) TestShadowHoldsWhatItWouldRefuse() {
 	s.EqualValues(-500_000, available(enforcer.Enforcer, s.org), "and held, so a shadow day shows the numbers")
 	s.Contains(enforcer.logs.String(), "would refuse")
 	s.Contains(enforcer.logs.String(), "reason=no_credit")
+}
+
+// grantRemaining is what a router counts a grant as having left: its amount, less what it had
+// paid for at the last read, less every router's holds against it.
+func grantRemaining(enforcer *Enforcer, organization string, id int64) (int64, bool) {
+	enforcer.money.mu.Lock()
+	defer enforcer.money.mu.Unlock()
+	acct := enforcer.money.accounts[organization]
+	if acct == nil {
+		return 0, false
+	}
+	for _, grant := range acct.grants {
+		if grant.grant.ID == id {
+			return grant.remaining(acct.grantsHeld()), true
+		}
+	}
+	return 0, false
+}
+
+func (s *PolicySuite) TestAGrantsRemainingNeverRisesPastTheTruthAcrossItsCount() {
+	_, redisA := s.redis()
+	_, redisB := s.redis()
+	configs := func() *appconfig.Store {
+		c, err := appconfig.New(appconfig.Options{Store: s.store})
+		s.Require().NoError(err)
+		return c
+	}
+	// Both routers read the grants once a second, so the other reads a count up to a second
+	// after this one has let its hold go.
+	slow := func(settings *Settings) { settings.Fresh, settings.MaxStale = time.Second, time.Minute }
+	a := s.newEnforcer(configs(), nil, sharing(redisA), slow)
+	// Out of step with the first, as two routers started apart are.
+	time.Sleep(500 * time.Millisecond)
+	b := s.newEnforcer(configs(), nil, sharing(redisB), slow)
+	s.T().Cleanup(func() { s.dropHolds(s.direct(), s.org) })
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 1_000_000)
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 1_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(s.store.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	for _, enforcer := range []*Enforcer{a, b} {
+		s.eventually(func() bool {
+			admitted := s.admit(enforcer, s.app)
+			return admitted.Spend == nil && slices.Contains(admitted.Grants, grant.ID)
+		}, 10*time.Second, 10*time.Millisecond, "admitted on the grant once the limit and the grant are read")
+	}
+	owner := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{OrganizationID: s.org}}
+
+	// truth is what the grant has left, its holds counted; the other router must never count more.
+	var truth, worst atomic.Int64
+	truth.Store(1_000_000)
+	sampling, stop := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(sampling)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(2 * time.Millisecond):
+				_, _ = b.Admit(s.ctx, ownerOf(s.app))
+				if left, ok := grantRemaining(b, s.org, grant.ID); ok {
+					worst.Store(max(worst.Load(), left-truth.Load()))
+				}
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		<-sampling
+	}()
+	const cost = 600_000
+	id := newID()
+	s.Require().NoError(a.Reserve(owner, id, cost, time.Minute))
+	s.Require().Equal([]int64{grant.ID}, a.Settle(owner, id, cost), "settled on the grant it was reserved on")
+	s.eventually(func() bool {
+		left, ok := grantRemaining(b, s.org, grant.ID)
+		return ok && left == 1_000_000-cost
+	}, time.Second, 2*time.Millisecond, "the other router counts the hold")
+	truth.Store(1_000_000 - cost)
+
+	s.spendAs(store.Request{UsageID: id, CustomerID: s.app, CostMicros: cost, LimitGrants: []int64{grant.ID}})
+	_, err := s.store.AddGrantUses(s.ctx, []store.GrantUse{{GrantID: grant.ID, UsageID: id, Micros: cost}})
+	s.Require().NoError(err)
+	a.Written([]routing.Acked{{UsageID: id, OrganizationID: s.org, CostMicros: cost}})
+	a.Counted([]routing.Acked{{UsageID: id, OrganizationID: s.org, CostMicros: cost}})
+	// This router reads the grants at once and lets go of its hold; the other's next read is
+	// up to a second away.
+	nudge(a.money.kickGrants)
+	s.eventually(func() bool {
+		a.money.mu.Lock()
+		defer a.money.mu.Unlock()
+		return a.money.accounts[s.org].grantHeld[grant.ID] == 0
+	}, 3*time.Second, 5*time.Millisecond, "let go here once this router's read has the count")
+	s.eventually(func() bool {
+		b.money.mu.Lock()
+		defer b.money.mu.Unlock()
+		return b.money.accounts[s.org].remoteGrants[grant.ID] == 0
+	}, 4*time.Second, 5*time.Millisecond, "and on the other once its shared copy is gone")
+	s.eventually(func() bool {
+		left, _ := grantRemaining(b, s.org, grant.ID)
+		return left == 1_000_000-cost
+	}, 3*time.Second, 5*time.Millisecond, "what the grant paid for is read")
+
+	s.LessOrEqual(worst.Load(), int64(0), "the other router never counted the grant as having more than it has")
+}
+
+func (s *PolicySuite) TestARouterNeverWritesOverAnothersHoldUnderTheSameID() {
+	_, redisA := s.redis()
+	_, redisB := s.redis()
+	s.usage().Credit(s.T(), s.org, 1_000_000)
+	a, b := s.sharer(redisA), s.sharer(redisB)
+	id := newID()
+
+	s.Require().NoError(a.Reserve(s.owner(), id, 300_000, time.Minute))
+	s.Require().NoError(b.Reserve(s.owner(), id, 200_000, time.Minute))
+	s.eventually(func() bool { return remoteHeld(a.Enforcer, s.org) == 200_000 }, time.Second, 5*time.Millisecond)
+	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 300_000 }, time.Second, 5*time.Millisecond,
+		"each router's hold is its own field")
+
+	a.Release(id)
+
+	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 0 }, time.Second, 5*time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
+	s.eventually(func() bool { return remoteHeld(a.Enforcer, s.org) == 200_000 }, time.Second, 5*time.Millisecond,
+		"letting go of its own leaves the other's")
+}
+
+func (s *PolicySuite) TestTheScriptExpiresHoldsByRedisClock() {
+	client := s.direct()
+	key := holdPrefix + ":{clock-" + newID().String() + "}:organization"
+	s.T().Cleanup(func() { _ = client.Do(s.ctx, client.B().Del().Key(key).Build()).Error() })
+	exec := func(instance string, args ...string) []int64 {
+		values, err := holdsScript.Exec(s.ctx, client, []string{key}, append([]string{instance}, args...)).AsIntSlice()
+		s.Require().NoError(err)
+		return values
+	}
+
+	exec("a", "u1", "5:150")
+	stored, err := client.Do(s.ctx, client.B().Hget().Key(key).Field("u1:a").Build()).ToString()
+	s.Require().NoError(err)
+	clock, err := client.Do(s.ctx, client.B().Time().Build()).AsStrSlice()
+	s.Require().NoError(err)
+	seconds, _ := strconv.ParseInt(clock[0], 10, 64)
+	micros, _ := strconv.ParseInt(clock[1], 10, 64)
+	expires, _ := strconv.ParseInt(strings.SplitN(stored, ":", 2)[1], 10, 64)
+	s.InDelta(seconds*1000+micros/1000+150, expires, 100, "the expiry is Redis's now plus the hold's ttl")
+
+	s.Equal([]int64{5, 1}, exec("b"), "another router counts it")
+	time.Sleep(200 * time.Millisecond)
+	s.Equal([]int64{0, 0}, exec("b"), "gone at its expiry, by Redis's clock")
+}
+
+func (s *PolicySuite) TestAFlushOfMoreKeysThanAChunkLandsWhole() {
+	_, redisA := s.redis()
+	_, redisB := s.redis()
+	s.usage().Credit(s.T(), s.org, 100_000_000)
+	a, b := s.sharer(redisA), s.sharer(redisB)
+	users := 2 * flushChunk
+
+	for i := range users {
+		owner := s.owner()
+		owner.UserID = "user-" + strconv.Itoa(i)
+		s.Require().NoError(a.Reserve(owner, newID(), 1_000, time.Minute))
+	}
+
+	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == int64(users)*1_000 }, 2*time.Second, 5*time.Millisecond,
+		"every hold reaches the organization's key, whatever chunk carried it")
+	a.money.mu.Lock()
+	unflushed := len(a.money.dirty)
+	a.money.mu.Unlock()
+	s.Zero(unflushed, "and each of its users' keys took it")
 }
 
 func (s *PolicySuite) TestAGrantHeldOnOneRouterIsHeldOnEvery() {

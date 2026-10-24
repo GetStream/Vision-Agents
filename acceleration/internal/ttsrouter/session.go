@@ -24,6 +24,8 @@ type Session struct {
 	logger   *slog.Logger
 
 	events chan tts.Event
+	// forwarded closes once every event the provider sent has been recorded.
+	forwarded chan struct{}
 
 	mu sync.Mutex
 	// inFlight tracks utterances that have not been settled into a stat row yet.
@@ -75,16 +77,17 @@ func newSession(
 		provider = tts.InOrder(provider)
 	}
 	session := &Session{
-		provider: provider,
-		config:   config,
-		owner:    owner,
-		recorder: recorder,
-		logger:   logger,
-		events:   make(chan tts.Event, 64),
-		inFlight: map[string]*utterance{},
-		sent:     map[string]int64{},
-		reserved: map[string]uuid.UUID{},
-		finished: map[string]struct{}{},
+		provider:  provider,
+		config:    config,
+		owner:     owner,
+		recorder:  recorder,
+		logger:    logger,
+		events:    make(chan tts.Event, 64),
+		forwarded: make(chan struct{}),
+		inFlight:  map[string]*utterance{},
+		sent:      map[string]int64{},
+		reserved:  map[string]uuid.UUID{},
+		finished:  map[string]struct{}{},
 	}
 	go session.forward()
 	return session
@@ -129,17 +132,20 @@ func (s *Session) Synthesize(request tts.Request) error {
 		err = s.provider.Synthesize(request)
 	}
 	if err != nil && characters > 0 {
-		// Refused, it was never sent.
+		// Refused, it was never sent: what is held goes back to what was.
 		s.mu.Lock()
 		if s.sent[request.ID] -= characters; s.sent[request.ID] <= 0 {
 			delete(s.sent, request.ID)
 		}
-		if !speaking {
+		left := s.sent[request.ID]
+		if !speaking || left <= 0 {
 			delete(s.reserved, request.ID)
 		}
 		s.mu.Unlock()
-		if !speaking {
+		if !speaking || left <= 0 {
 			s.recorder.Release(reserved)
+		} else {
+			_ = s.recorder.Reserve(s.config, s.owner, reserved, pricing.Quantities{pricing.Characters: left}, routing.ReserveTTL)
 		}
 	}
 	return err
@@ -180,14 +186,28 @@ func (s *Session) Performs() bool { return s.provider.Performs() }
 func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Quote(s.config, usage) }
 
 // Close ends the session. The event channel closes once the provider's events are drained.
+// What is still reserved for utterances that never completed is let go once they are.
 func (s *Session) Close() error {
 	var err error
-	s.closeOnce.Do(func() { err = s.provider.Close() })
+	s.closeOnce.Do(func() {
+		err = s.provider.Close()
+		go func() {
+			<-s.forwarded
+			s.mu.Lock()
+			reserved := s.reserved
+			s.reserved = map[string]uuid.UUID{}
+			s.mu.Unlock()
+			for _, id := range reserved {
+				s.recorder.Release(id)
+			}
+		}()
+	})
 	return err
 }
 
 // forward relays provider events and records statistics as they pass.
 func (s *Session) forward() {
+	defer close(s.forwarded)
 	defer close(s.events)
 
 	for event := range s.provider.Events() {

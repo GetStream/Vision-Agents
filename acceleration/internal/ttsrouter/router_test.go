@@ -30,6 +30,8 @@ type stubTTS struct {
 	prompt   string
 	// perSentence is a voice that takes each sentence as its own request.
 	perSentence bool
+	// refuse, when set, is what Synthesize answers instead of taking the text.
+	refuse error
 }
 
 func newStubTTS() *stubTTS {
@@ -39,6 +41,9 @@ func newStubTTS() *stubTTS {
 func (s *stubTTS) Start(context.Context) error { return nil }
 
 func (s *stubTTS) Synthesize(request tts.Request) error {
+	if s.refuse != nil {
+		return s.refuse
+	}
 	s.said = append(s.said, request)
 	return nil
 }

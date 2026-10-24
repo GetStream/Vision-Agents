@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
 
@@ -107,6 +108,9 @@ func newSession(
 // ProcessAudio streams the caller's speech to the selected provider. Only audio the provider
 // took is counted toward the next reply.
 func (s *Session) ProcessAudio(pcm sts.PcmData, participant sts.Participant) error {
+	if err := s.unpaid(); err != nil {
+		return err
+	}
 	if err := s.provider.ProcessAudio(pcm, participant); err != nil {
 		return err
 	}
@@ -119,6 +123,9 @@ func (s *Session) ProcessAudio(pcm sts.PcmData, participant sts.Participant) err
 // SendText injects a typed turn, which the next row carries as a message: some vendors bill
 // each one.
 func (s *Session) SendText(text string, participant sts.Participant) error {
+	if err := s.unpaid(); err != nil {
+		return err
+	}
 	if err := s.provider.SendText(text, participant); err != nil {
 		return err
 	}
@@ -143,7 +150,24 @@ func (s *Session) Answer(callID string, output string, err error) error {
 }
 
 // Prompt asks the model to speak, guided by the text.
-func (s *Session) Prompt(text string) error { return s.provider.Prompt(text) }
+func (s *Session) Prompt(text string) error {
+	if err := s.unpaid(); err != nil {
+		return err
+	}
+	return s.provider.Prompt(text)
+}
+
+// unpaid is why the conversation may not go on: its lease was refused, as its money ran out,
+// and a voice model replies to every turn with nothing else to stop it. The session is closed
+// and every turn after answers the same refusal.
+func (s *Session) unpaid() error {
+	err := s.lease.Err()
+	if err == nil {
+		return nil
+	}
+	_ = s.Close()
+	return stack.Wrap(err)
+}
 
 // Interrupt stops the reply in flight. Its audio stops being forwarded at once, before the
 // provider has heard about it, since the caller has already stopped listening.

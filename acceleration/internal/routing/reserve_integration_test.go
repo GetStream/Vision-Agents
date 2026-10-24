@@ -204,6 +204,20 @@ func (s *ReserveSuite) TestWorkThatNamesItsOwnIDReleasesTheReservation() {
 	s.Equal(own, s.rows(1)[0].UsageID)
 }
 
+func (s *ReserveSuite) TestARecorderThatRecordsNothingReservesNothing() {
+	s.credit(0)
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// The gate, and no store or live counters: no row it records would ever settle a hold.
+	writer := routing.NewWriter(routing.WriterOptions{Logger: discard, Gate: s.enforcer})
+	s.T().Cleanup(func() { writer.Close(context.Background()) })
+	recorder := routing.NewRecorderOn(routing.LLM, writer, s.prices, discard)
+
+	err := recorder.Reserve(reservedModel, s.owner(), uuid.Must(uuid.NewV7()), pricing.Quantities{pricing.InputTokens: 1_000}, time.Minute)
+
+	s.NoError(err, "nothing was asked of the gate")
+	s.Nil(routing.StartLease(recorder, reservedModel, s.owner(), "test", uuid.NewString(), pricing.Quantities{pricing.InputTokens: 1_000}))
+}
+
 func (s *ReserveSuite) TestALeaseHoldsAMinuteUntilItStops() {
 	s.credit(2_000_000)
 
