@@ -116,9 +116,11 @@ def sync_detailed(
     The id `stream` is the router's own events, which need no provider app: `account.balance_low` once
     the organization's balance is at or below its warning threshold, and `account.balance_exhausted`
     once it is at or below nothing, each sent once per crossing to every `stream` destination of every
-    app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type,
-    timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id
-    is `balance:<organization>:<kind>:<granted_micros>`.
+    app of the organization, whatever its forward. The balance they go by is what was spent: work under
+    way that has not finished does not count, so it can be above X-Stream-Balance-Micros. Any change to
+    the organization's credit re-arms them, a refund or an adjustment as much as a top-up or a grant.
+    The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros,
+    tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -162,9 +164,11 @@ def sync(
     The id `stream` is the router's own events, which need no provider app: `account.balance_low` once
     the organization's balance is at or below its warning threshold, and `account.balance_exhausted`
     once it is at or below nothing, each sent once per crossing to every `stream` destination of every
-    app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type,
-    timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id
-    is `balance:<organization>:<kind>:<granted_micros>`.
+    app of the organization, whatever its forward. The balance they go by is what was spent: work under
+    way that has not finished does not count, so it can be above X-Stream-Balance-Micros. Any change to
+    the organization's credit re-arms them, a refund or an adjustment as much as a top-up or a grant.
+    The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros,
+    tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -203,9 +207,11 @@ async def asyncio_detailed(
     The id `stream` is the router's own events, which need no provider app: `account.balance_low` once
     the organization's balance is at or below its warning threshold, and `account.balance_exhausted`
     once it is at or below nothing, each sent once per crossing to every `stream` destination of every
-    app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type,
-    timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id
-    is `balance:<organization>:<kind>:<granted_micros>`.
+    app of the organization, whatever its forward. The balance they go by is what was spent: work under
+    way that has not finished does not count, so it can be above X-Stream-Balance-Micros. Any change to
+    the organization's credit re-arms them, a refund or an adjustment as much as a top-up or a grant.
+    The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros,
+    tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -247,9 +253,11 @@ async def asyncio(
     The id `stream` is the router's own events, which need no provider app: `account.balance_low` once
     the organization's balance is at or below its warning threshold, and `account.balance_exhausted`
     once it is at or below nothing, each sent once per crossing to every `stream` destination of every
-    app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type,
-    timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id
-    is `balance:<organization>:<kind>:<granted_micros>`.
+    app of the organization, whatever its forward. The balance they go by is what was spent: work under
+    way that has not finished does not count, so it can be above X-Stream-Balance-Micros. Any change to
+    the organization's credit re-arms them, a refund or an adjustment as much as a top-up or a grant.
+    The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros,
+    tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

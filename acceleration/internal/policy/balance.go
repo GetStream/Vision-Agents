@@ -80,3 +80,11 @@ func (e *Enforcer) Balance(appID, organizationID string) (Balance, bool) {
 func (a *account) available(key string) int64 {
 	return a.standing.BalanceMicros - a.held - a.remoteOrganization(key)
 }
+
+// settledBalance is the balance less the work this router recorded that the usage service may
+// not count yet, under m.mu: no reservation, which a unit may settle well below, and none of
+// the other routers' holds, which do not tell reservations apart. Their recorded work counts
+// once the usage service has it, within a read or two.
+func (a *account) settledBalance() int64 {
+	return a.standing.BalanceMicros - (a.held - a.reserved)
+}

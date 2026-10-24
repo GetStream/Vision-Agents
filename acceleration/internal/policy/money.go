@@ -185,6 +185,10 @@ type money struct {
 	shippedAt time.Time
 
 	kick, kickLimits, kickGrants chan struct{}
+	// due is the warnings the last pass found due that the notices loop has not taken yet, and
+	// kickNotices wakes it.
+	due         []notice
+	kickNotices chan struct{}
 	// ctx is the loops', which the first reads an admission waits on run under too (reads);
 	// stopping says stop has begun, after which no first read starts.
 	ctx      context.Context
@@ -283,9 +287,10 @@ type account struct {
 	folds  map[fold]uuid.UUID
 	// held is what the holds count against the balance, and windows what they count against
 	// the spend hard limit and each subject's limits, kept as holds come and go so admission
-	// reads a sum.
-	held    int64
-	windows map[window]int64
+	// reads a sum. reserved is the part of held that is reservations, work not recorded yet.
+	held     int64
+	reserved int64
+	windows  map[window]int64
 	// remote is what the other routers hold against each subject, by its counter's key, and
 	// remoteGrants against each grant, as the shared Redis last answered; every figure counts
 	// them as it counts this router's holds.
@@ -336,12 +341,14 @@ func (m *money) start(e *Enforcer) {
 		return
 	}
 	m.kick, m.kickLimits, m.kickGrants = make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{}, 1)
+	m.kickNotices = make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.ctx, m.cancel = ctx, cancel
 	m.firstSlots = make(chan struct{}, firstBatches)
 	enforcers.Store(e, struct{}{})
-	m.loops.Add(4)
+	m.loops.Add(5)
 	go m.every(ctx, m.settings.Fresh, m.kick, m.pass)
+	go m.every(ctx, m.settings.Fresh, m.kickNotices, m.noticesPass)
 	go m.every(ctx, m.settings.SpendEvery, m.kickLimits, m.limitsPass)
 	// Grants have a loop of their own, so a slow read of them never holds up the limits', and
 	// so does their reconcile, so a long one never holds up reading them. It runs once at
@@ -473,8 +480,8 @@ func (m *money) inUse(now time.Time) []string {
 }
 
 // pass reads the standing of every organization in use from the usage service, in calls of
-// standingsChunk, then lets go of the holds the reads now count, and warns each organization
-// whose balance went down to low or exhausted (notify).
+// standingsChunk, then lets go of the holds the reads now count, and hands the notices loop
+// the organizations whose balance went down to low or exhausted, to warn (notify).
 func (m *money) pass(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, passTimeout)
 	defer cancel()
@@ -484,7 +491,7 @@ func (m *money) pass(ctx context.Context) {
 	}
 	readFrom := time.Now()
 	standings, landed, unread := m.standings(ctx, keys)
-	m.notify(ctx, m.landed(keys, standings, landed, unread, readFrom))
+	m.queueNotices(m.landed(keys, standings, landed, unread, readFrom))
 }
 
 // landed keeps the standings a pass read, lets go of the holds they count, and returns the
