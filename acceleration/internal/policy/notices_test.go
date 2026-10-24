@@ -132,6 +132,64 @@ func (s *PolicySuite) TestTheCustomersThresholdWarns() {
 	s.EqualValues(20_000_000, s.notices(s.org)[0].ThresholdMicros)
 }
 
+func (s *PolicySuite) TestABigReservationThatSettlesSmallSendsNoWarning() {
+	enforcer := s.billed()
+	s.streamDestination(s.app)
+	s.warnable(10_000_000, enforcer)
+
+	reserved := newID()
+	s.Require().NoError(enforcer.Reserve(s.owner(), reserved, 12_000_000, time.Minute))
+	s.Equal(BalanceExhausted, s.balance(enforcer.Enforcer).State, "the answers count the reservation")
+	s.never(func() bool { return len(s.notices(s.org)) > 0 }, 10*quick.Fresh, 10*time.Millisecond,
+		"a reservation is not spend")
+	enforcer.Settle(s.owner(), reserved, 10_000)
+	s.never(func() bool { return len(s.notices(s.org)) > 0 }, 10*quick.Fresh, 10*time.Millisecond,
+		"it settled far above the threshold")
+
+	enforcer.Settle(s.owner(), newID(), 6_000_000)
+
+	s.eventually(func() bool { return len(s.notices(s.org)) == 1 }, 5*time.Second, 10*time.Millisecond,
+		"spending past the threshold still warns")
+	written := s.notices(s.org)[0]
+	s.Equal(store.NoticeBalanceLow, written.Kind)
+	// The small unit is let go once nothing acks it, so it may or may not count.
+	s.GreaterOrEqual(written.BalanceMicros, int64(3_990_000), "what was spent, the reservation aside")
+	s.LessOrEqual(written.BalanceMicros, int64(4_000_000))
+}
+
+func (s *PolicySuite) TestABlockedNoticeWriteDoesNotHoldUpTheBalances() {
+	enforcer := s.billed()
+	s.streamDestination(s.app)
+	s.warnable(10_000_000, enforcer)
+	// A transaction holding the table makes every warning's write wait, as a Postgres that
+	// does not answer would.
+	blocking, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = blocking.Rollback() }()
+	_, err = blocking.ExecContext(s.ctx, "LOCK TABLE balance_notices IN ACCESS EXCLUSIVE MODE")
+	s.Require().NoError(err)
+
+	s.usage().Spend(s.T(), s.org, 6_000_000)
+	s.read(enforcer.Enforcer, s.org)
+	s.Equal(BalanceLow, s.balance(enforcer.Enforcer).State)
+	started := time.Now()
+	for range 5 {
+		s.read(enforcer.Enforcer, s.org)
+	}
+	s.Less(time.Since(started), noticesTimeout, "the balances are read on while the warning waits")
+
+	s.Require().NoError(blocking.Rollback())
+	s.eventually(func() bool { return len(s.notices(s.org)) == 1 }, 2*noticesTimeout, 10*time.Millisecond,
+		"written once Postgres answers")
+}
+
+// balance is the suite's organization's balance as the enforcer answers it.
+func (s *PolicySuite) balance(enforcer *Enforcer) Balance {
+	balance, ok := enforcer.Balance(s.app, s.org)
+	s.Require().True(ok, "the account is read")
+	return balance
+}
+
 func (s *PolicySuite) TestAnOrganizationNeverGrantedCreditIsNotWarned() {
 	enforcer := s.billed()
 	s.streamDestination(s.app)

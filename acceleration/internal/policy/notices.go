@@ -9,8 +9,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// noticeTimeout bounds writing one organization's warning and queueing its deliveries.
-const noticeTimeout = 5 * time.Second
+// noticesTimeout bounds one run of notify: writing every warning due and queueing their
+// deliveries. What it leaves unwritten is due again after the next pass.
+const noticesTimeout = 5 * time.Second
 
 // The event types a warning is sent as.
 const (
@@ -30,11 +31,15 @@ type notice struct {
 }
 
 // noticeDue is the warning the account's balance calls for now, under m.mu: balance_low once
-// what it has to spend is at or below its threshold, balance_exhausted at or below nothing, as
-// the answers' X-Stream-Balance-Warning says. A warning of a kind already written for what the
-// organization has been granted is not due again: the next one waits for a top-up or a grant.
-// Only an organization the usage service bills, with a standing read, is warned, and only one
-// that was ever granted credit: one that never had any has not run out of it.
+// its settledBalance is at or below its threshold, balance_exhausted at or below nothing. A
+// reservation counts in what the answers say, which admission refuses at, but not here: a
+// warning is sent once, and one sent for an estimate the work then settled well below would
+// leave nothing to send when the credit really runs out. A warning of a kind already written
+// for what the organization has been granted is not due again: the next one waits for the sum
+// of its credit entries to change, a refund or an adjustment as much as a top-up or a grant,
+// since the standing carries only the sum. Only an organization the usage service bills, with
+// a standing read, is warned, and only one that was ever granted credit: one that never had any
+// has not run out of it.
 func (m *money) noticeDue(key string, acct *account) (notice, bool) {
 	if !billed(key) || m.settings.Usage == nil || acct.read.IsZero() || acct.standing.GrantedMicros <= 0 {
 		return notice{}, false
@@ -43,7 +48,7 @@ func (m *money) noticeDue(key string, acct *account) (notice, bool) {
 	if acct.warning != nil {
 		threshold = acct.warning
 	}
-	available := acct.available(key)
+	available := acct.settledBalance()
 	kind := ""
 	switch stateOf(available, threshold) {
 	case BalanceLow:
@@ -63,21 +68,46 @@ func (m *money) noticeDue(key string, acct *account) (notice, bool) {
 	}, true
 }
 
+// queueNotices hands the warnings a pass found due to the notices loop, in place of any it has
+// not started on: each pass finds every one still due. It never waits.
+func (m *money) queueNotices(due []notice) {
+	m.mu.Lock()
+	m.due = due
+	m.mu.Unlock()
+	if len(due) > 0 {
+		nudge(m.kickNotices)
+	}
+}
+
+// noticesPass is the notices loop's, which runs one notify at a time, off the money pass, so
+// a slow Postgres never holds up reading the balances admission answers from.
+func (m *money) noticesPass(ctx context.Context) {
+	m.mu.Lock()
+	due := m.due
+	m.due = nil
+	m.mu.Unlock()
+	m.notify(ctx, due)
+}
+
 // notify writes each warning due and queues it for the organization's stream destinations,
-// off m.mu. The router that writes a warning first is the one that sends it; the others find
-// it written and send nothing. One that could not be written is due again at the next pass.
+// off m.mu, all within noticesTimeout. The router that writes a warning first is the one that
+// sends it; the others find it written and send nothing. One that could not be written is due
+// again after the next pass.
 func (m *money) notify(ctx context.Context, due []notice) {
 	db := m.enforcer.config.DB()
 	if len(due) == 0 || db == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, noticesTimeout)
+	defer cancel()
 	for _, warning := range due {
-		writing, cancel := context.WithTimeout(ctx, noticeTimeout)
-		sent, queued, err := db.NoteBalance(writing, warning.row(), warning.delivery(), warning.body)
-		cancel()
+		sent, queued, err := db.NoteBalance(ctx, warning.row(), warning.delivery(), warning.body)
 		if err != nil {
 			m.failedRead("could not write that an organization's credit is running out", err,
-				"organization", warning.organization, "kind", warning.kind)
+				"organization", warning.organization, "kind", warning.kind, "due", len(due))
+			if ctx.Err() != nil {
+				return
+			}
 			continue
 		}
 		m.mu.Lock()
