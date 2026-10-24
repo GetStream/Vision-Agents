@@ -55,8 +55,20 @@ type Session struct {
 	// whose audio is no longer wanted.
 	current    int
 	staleBelow int
+	// lease holds a minute of the conversation while it runs, so the other routers count it
+	// before its replies are recorded.
+	lease *routing.Lease
 
 	closeOnce sync.Once
+}
+
+// stsTokensPerMinute is what a minute of conversation is held at in tokens, half heard and
+// half spoken, beside its seconds and audio.
+const stsTokensPerMinute = 2_000
+
+var leaseMinute = pricing.Quantities{
+	pricing.SessionSeconds: 60, pricing.AudioMs: 60_000,
+	pricing.InputTokens: stsTokensPerMinute / 2, pricing.OutputTokens: stsTokensPerMinute / 2,
 }
 
 // reply is what the session remembers about one response until it completes.
@@ -87,6 +99,7 @@ func newSession(
 		settled:  map[string]struct{}{},
 		billed:   map[string]struct{}{},
 	}
+	session.lease = routing.StartLease(recorder, config, owner, "sts", session.id, leaseMinute)
 	go session.forward()
 	return session
 }
@@ -183,7 +196,10 @@ func (s *Session) Quote(usage routing.Usage) pricing.Quote {
 // Close ends the session. The event channel closes once the provider's events are drained.
 func (s *Session) Close() error {
 	var err error
-	s.closeOnce.Do(func() { err = s.provider.Close() })
+	s.closeOnce.Do(func() {
+		err = s.provider.Close()
+		s.lease.Stop()
+	})
 	return err
 }
 

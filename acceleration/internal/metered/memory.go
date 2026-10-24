@@ -6,6 +6,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -52,6 +53,7 @@ func (m *Memory) meter(owner routing.Owner, model string) routing.Meter {
 		Config:   routing.ProviderConfig{Provider: m.backend.Provider(), Model: model},
 		Owner:    owner,
 		Code:     func(error) string { return memoryFailed },
+		Estimate: pricing.Quantities{pricing.Requests: 1},
 	}
 }
 

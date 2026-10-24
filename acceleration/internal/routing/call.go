@@ -46,6 +46,42 @@ type Meter struct {
 	// Omit reports whether a call that succeeded did no work worth a row, such as an hour of
 	// a knowledge base that holds nothing. A failure is always recorded. Nil omits nothing.
 	Omit func(used pricing.Quantities) bool
+	// Estimate is what the call may use, such as one search request or the pictures asked
+	// for. Its price is set aside before the vendor is asked, for at most ReserveTTL, and the
+	// row settles it at what the work cost; a refusal asks no vendor and records no row. Nil
+	// sets nothing aside.
+	Estimate pricing.Quantities
+}
+
+// ReserveTTL is how long what a unit of request-and-answer work may cost is set aside before
+// its row settles it.
+const ReserveTTL = 2 * time.Minute
+
+// reserve sets the meter's estimate aside under the stat's usage id, giving it one when it has
+// none, and answers the id reserved under: nil when nothing was.
+func (m Meter) reserve(stat *Stat) (uuid.UUID, error) {
+	if m.Estimate == nil || m.Recorder == nil || m.Free {
+		return uuid.Nil, nil
+	}
+	if stat.UsageID == uuid.Nil {
+		stat.UsageID = uuid.Must(uuid.NewV7())
+	}
+	if err := m.Recorder.Reserve(m.Config, m.Owner, stat.UsageID, m.Estimate, ReserveTTL); err != nil {
+		return uuid.Nil, refusedReservation{err}
+	}
+	return stat.UsageID, nil
+}
+
+// refusedReservation is work refused before any vendor was asked, for the money it may cost.
+type refusedReservation struct{ error }
+
+func (r refusedReservation) Unwrap() error { return r.error }
+
+// ReservationRefused reports whether err is work refused before any vendor was asked, for the
+// money it may cost: the caller's answer, which asking another vendor does not change.
+func ReservationRefused(err error) bool {
+	var refused refusedReservation
+	return errors.As(err, &refused)
 }
 
 // Identified is a result that names the work it did, such as the clone a provider made, so
@@ -56,10 +92,17 @@ type Identified interface {
 }
 
 // Call makes one request to a vendor and records it however it ends: one row for a result, an
-// error or a panic. A failure is recorded without quantities, so it is not billed.
+// error or a panic. A failure is recorded without quantities, so it is not billed. With an
+// estimate, its price is reserved first; a refusal is answered at once, with no vendor asked
+// and no row.
 func Call[R pricing.Metered](ctx context.Context, meter Meter, ask func(context.Context) (R, error)) (R, error) {
 	started := time.Now()
 	stat := meter.stat(started)
+	reserved, err := meter.reserve(&stat)
+	if err != nil {
+		var refused R
+		return refused, err
+	}
 	stat.ErrorCode = "panic"
 	omitted := false
 	// Deferred so a vendor that panics still leaves its row; the panic carries on.
@@ -70,6 +113,10 @@ func Call[R pricing.Metered](ctx context.Context, meter Meter, ask func(context.
 		}
 		if !omitted {
 			meter.record(stat)
+		}
+		// A failure bills nothing, and work that names its own id settles under that one.
+		if reserved != uuid.Nil && (omitted || stat.UsageID != reserved) {
+			meter.Recorder.Release(reserved)
 		}
 	}()
 

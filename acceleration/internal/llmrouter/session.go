@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/openai/openai-go/v3"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -31,6 +33,46 @@ type statRecorder interface {
 	Record(routing.ProviderConfig, routing.Stat)
 	QuoteStat(routing.ProviderConfig, routing.Stat) pricing.Quote
 	Billable(routing.ProviderConfig) bool
+	Reserve(routing.ProviderConfig, routing.Owner, uuid.UUID, pricing.Quantities, time.Duration) error
+	Release(uuid.UUID)
+}
+
+// holdOutputTokens is what a response that sets no cap is reserved for generating.
+const holdOutputTokens = 4_096
+
+// reservation is the money set aside for one response before it was asked for, under the
+// usage id its row carries. Only the first attempt to record takes the id: a hedge or a
+// fallback asked for the same response records under one of its own.
+type reservation struct {
+	id      uuid.UUID
+	claimed atomic.Bool
+}
+
+type reservationKey struct{}
+
+// claim is the usage id reserved for the response ctx asks for, the first time it is asked;
+// nil after that, or when nothing was reserved.
+func claim(ctx context.Context) uuid.UUID {
+	held, _ := ctx.Value(reservationKey{}).(*reservation)
+	if held == nil || !held.claimed.CompareAndSwap(false, true) {
+		return uuid.Nil
+	}
+	return held.id
+}
+
+// reserve sets aside what the response may cost, on its prompt and on the most it may
+// generate, before the provider is asked; ctx carries what was reserved to the row.
+func (s *Session) reserve(ctx context.Context, params llm.ResponseParams) (context.Context, error) {
+	output := int64(params.MaxOutputTokens)
+	if output <= 0 {
+		output = holdOutputTokens
+	}
+	estimate := pricing.Quantities{pricing.InputTokens: llm.Compose(params).Total(), pricing.OutputTokens: output}
+	id := uuid.Must(uuid.NewV7())
+	if err := s.recorder.Reserve(s.config, s.owner, id, estimate, routing.ReserveTTL); err != nil {
+		return ctx, err
+	}
+	return context.WithValue(ctx, reservationKey{}, &reservation{id: id}), nil
 }
 
 // errClosed is what a session answers once it has been closed.
@@ -99,7 +141,10 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 	stream, err := s.provider.Create(ctx, params)
 	tracing.Fail(span, err)
 	span.End()
+	reserved := claim(ctx)
 	if err != nil {
+		// The provider took nothing on, so nothing it would bill is held.
+		s.recorder.Release(reserved)
 		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
 		code := createErrorCode(ctx)
 		stat := routing.Stat{
@@ -128,7 +173,7 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 	}
 	createdAt := time.Now()
 	charged := s.charged(ctx)
-	return stream.Observe(func(event llm.Event) { s.observe(startedAt, createdAt, params, hedge, event, charged) }), nil
+	return stream.Observe(func(event llm.Event) { s.observe(startedAt, createdAt, params, hedge, event, charged, reserved) }), nil
 }
 
 // label puts on a response's row what its caller and its hedge say about it. The response
@@ -203,7 +248,7 @@ func (s *Session) Close() error {
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, charged routing.Caller) {
+func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, charged routing.Caller, reserved uuid.UUID) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
@@ -237,6 +282,8 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	composed := llm.Compose(params).Scaled(stat.InputTokens)
 	usage := stat.Usage
 	stat.Owner = s.owner
+	// Recorded under the id it was reserved under, which settles the reservation at the cost.
+	stat.UsageID = reserved
 	stat.StartedAt = startedAt
 	stat.OperationID = response.ID
 	stat.Purpose = params.Purpose
@@ -377,6 +424,11 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		// fallback or a hedge is admitted again on its own model.
 		if admission.Spend != nil && s.recorder.Billable(s.config) {
 			return nil, stack.Wrap(admission.Spend)
+		}
+		// Admitted, the response's money is set aside before the provider is asked, so the
+		// other routers count it while it is generated.
+		if ctx, err = s.reserve(ctx, params); err != nil {
+			return nil, stack.Wrap(err)
 		}
 	}
 	// The screen is started before the model is asked so the two overlap from the first

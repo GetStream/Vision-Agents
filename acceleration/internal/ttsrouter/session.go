@@ -9,6 +9,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+	"github.com/google/uuid"
 )
 
 // Session is a live voice attached to one customer. It forwards the provider's events
@@ -30,6 +31,9 @@ type Session struct {
 	// sent is the characters handed to the provider for each utterance not settled yet,
 	// which is what it is billed for, whatever the adapter counted.
 	sent map[string]int64
+	// reserved is the usage id each utterance not settled yet holds its characters under,
+	// which its row is recorded under.
+	reserved map[string]uuid.UUID
 	// finished is the most recent utterances settled, oldest first in finishedOrder. More
 	// text for one of them is dropped by the provider (an interrupted utterance takes no
 	// more), so it is not counted. Only the last finishedKept are kept: text that comes that
@@ -79,6 +83,7 @@ func newSession(
 		events:   make(chan tts.Event, 64),
 		inFlight: map[string]*utterance{},
 		sent:     map[string]int64{},
+		reserved: map[string]uuid.UUID{},
 		finished: map[string]struct{}{},
 	}
 	go session.forward()
@@ -88,28 +93,54 @@ func newSession(
 // Synthesize sends text to the selected provider. A request with no id is given one here
 // rather than by the provider, so what is sent can be counted against the utterance it
 // settles as.
+//
+// What an utterance's text costs is reserved before it is sent, under the id its row is
+// recorded under, and raised as more of its text follows. A refusal of its first text is
+// answered and nothing is sent; a refusal of more text for an utterance already speaking
+// keeps what it reserved and lets it finish.
 func (s *Session) Synthesize(request tts.Request) error {
 	if request.ID == "" {
 		request.ID = tts.NewSynthesisID()
 	}
 	characters := int64(utf8.RuneCountInString(request.Text))
 	s.mu.Lock()
+	reserved, speaking := s.reserved[request.ID]
 	if _, done := s.finished[request.ID]; done {
 		characters = 0
 	} else {
 		// Counted before it is sent, so a completion that comes straight back finds it.
 		s.sent[request.ID] += characters
+		if !speaking {
+			reserved = uuid.Must(uuid.NewV7())
+			s.reserved[request.ID] = reserved
+		}
 	}
+	total := s.sent[request.ID]
 	s.mu.Unlock()
 
-	err := s.provider.Synthesize(request)
+	var err error
+	if characters > 0 {
+		err = s.recorder.Reserve(s.config, s.owner, reserved, pricing.Quantities{pricing.Characters: total}, routing.ReserveTTL)
+		if err != nil && speaking {
+			err = nil
+		}
+	}
+	if err == nil {
+		err = s.provider.Synthesize(request)
+	}
 	if err != nil && characters > 0 {
 		// Refused, it was never sent.
 		s.mu.Lock()
 		if s.sent[request.ID] -= characters; s.sent[request.ID] <= 0 {
 			delete(s.sent, request.ID)
 		}
+		if !speaking {
+			delete(s.reserved, request.ID)
+		}
 		s.mu.Unlock()
+		if !speaking {
+			s.recorder.Release(reserved)
+		}
 	}
 	return err
 }
@@ -185,6 +216,7 @@ func (s *Session) observe(event tts.Event) {
 		}
 		s.recorder.Record(s.config, routing.Stat{
 			Owner:       s.owner,
+			UsageID:     settled.reserved,
 			StartedAt:   settled.startedAt,
 			OperationID: typed.SynthesisID,
 			Purpose:     "speech",
@@ -238,6 +270,8 @@ type settled struct {
 	// sent is false for an utterance that never went through Synthesize here, whose
 	// characters only the adapter counted.
 	sent bool
+	// reserved is the usage id its characters were reserved under, nil when none were.
+	reserved uuid.UUID
 }
 
 // settle takes an utterance out of flight, so a late duplicate completion cannot bill
@@ -248,6 +282,8 @@ func (s *Session) settle(synthesisID string) settled {
 
 	characters, sent := s.sent[synthesisID]
 	delete(s.sent, synthesisID)
+	reserved := s.reserved[synthesisID]
+	delete(s.reserved, synthesisID)
 	if _, known := s.finished[synthesisID]; !known {
 		s.finished[synthesisID] = struct{}{}
 		s.finishedOrder = append(s.finishedOrder, synthesisID)
@@ -258,13 +294,14 @@ func (s *Session) settle(synthesisID string) settled {
 	}
 	current, ok := s.inFlight[synthesisID]
 	if !ok {
-		return settled{utterance: utterance{startedAt: time.Now().UTC()}, characters: characters, sent: sent}
+		return settled{utterance: utterance{startedAt: time.Now().UTC()}, characters: characters, sent: sent, reserved: reserved}
 	}
 	delete(s.inFlight, synthesisID)
 	return settled{
 		utterance:  utterance{startedAt: current.startedAt.UTC(), errorCode: current.errorCode},
 		characters: characters,
 		sent:       sent,
+		reserved:   reserved,
 	}
 }
 

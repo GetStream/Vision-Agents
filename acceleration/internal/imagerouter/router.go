@@ -156,7 +156,7 @@ func (r *Router) Generate(ctx context.Context, request Request) (Generation, err
 		if err == nil {
 			return generation, nil
 		}
-		if imagegen.Accepted(err) || imagegen.CodeOf(err) == imagegen.ContentFiltered || ctx.Err() != nil {
+		if imagegen.Accepted(err) || imagegen.CodeOf(err) == imagegen.ContentFiltered || ctx.Err() != nil || routing.ReservationRefused(err) {
 			return generation, err
 		}
 		failures = append(failures, fmt.Errorf("%s: %w", config.Name(), err))
@@ -185,7 +185,8 @@ func (r *Router) draw(
 
 	result, err := routing.Call(ctx, routing.Meter{
 		Recorder: r.Recorder(), Config: config, Owner: owner,
-		Code: func(err error) string { return string(imagegen.CodeOf(err)) },
+		Code:     func(err error) string { return string(imagegen.CodeOf(err)) },
+		Estimate: pricing.Quantities{pricing.Images: int64(max(request.N, 1))},
 	}, func(ctx context.Context) (imagegen.Result, error) {
 		return provider.Generate(ctx, request)
 	})

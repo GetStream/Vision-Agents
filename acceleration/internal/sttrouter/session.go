@@ -8,8 +8,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -50,9 +52,15 @@ type Session struct {
 	// router is billed for whatever it reports. It is kept by provider, so a failover bills
 	// each vendor the audio that vendor took. Guarded by mu.
 	streamed map[stt.STT]*streamedAudio
+	// lease holds a minute of audio while the session streams, so the other routers count
+	// it before its turns are recorded.
+	lease *routing.Lease
 
 	closeOnce sync.Once
 }
+
+// leaseMinute is what a minute of streaming is held at.
+var leaseMinute = pricing.Quantities{pricing.AudioMs: 60_000}
 
 // streamedAudio is audio a provider took and no row has billed yet.
 type streamedAudio struct {
@@ -80,6 +88,7 @@ func newSession(
 		readAhead: make(chan chan struct{}),
 		done:      make(chan struct{}),
 		streamed:  map[stt.STT]*streamedAudio{},
+		lease:     routing.StartLease(recorder, config, owner, "stt", uuid.NewString(), leaseMinute),
 	}
 	go session.forward()
 	return session
@@ -169,6 +178,7 @@ func (s *Session) Close() error {
 		if s.cancel != nil {
 			s.cancel()
 		}
+		s.lease.Stop()
 	})
 	return err
 }

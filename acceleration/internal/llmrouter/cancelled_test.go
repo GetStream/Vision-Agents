@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -49,6 +50,12 @@ func (k *statSink) QuoteStat(routing.ProviderConfig, routing.Stat) pricing.Quote
 
 // Billable is true: nothing here asks money of an admission.
 func (k *statSink) Billable(routing.ProviderConfig) bool { return true }
+
+func (k *statSink) Reserve(routing.ProviderConfig, routing.Owner, uuid.UUID, pricing.Quantities, time.Duration) error {
+	return nil
+}
+
+func (k *statSink) Release(uuid.UUID) {}
 
 // only is the single row the session wrote.
 func (k *statSink) only(t *testing.T) routing.Stat {

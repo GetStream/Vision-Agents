@@ -15,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -234,6 +235,7 @@ func (s *Service) Speak(ctx context.Context, customerID, voiceID, provider, text
 		Recorder: s.recorder,
 		Config:   routing.ProviderConfig{Provider: provider, Model: cloner.SpeechModel()},
 		Owner:    routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx)},
+		Estimate: pricing.Quantities{pricing.Characters: int64(characters)},
 	}, func(ctx context.Context) (Speech, error) {
 		speech, err := cloner.Speak(ctx, externalID, text)
 		speech.Characters = int64(characters)
@@ -291,6 +293,7 @@ func (s *Service) prepareOne(
 		Recorder: s.recorder,
 		Config:   routing.ProviderConfig{Provider: provider, Model: VoiceClone},
 		Owner:    routing.Owner{CustomerID: voice.CustomerID, Attribution: routing.AttributionFrom(ctx)},
+		Estimate: pricing.Quantities{pricing.Clones: 1},
 	}, func(ctx context.Context) (clone, error) {
 		prepared, err := cloner.Prepare(ctx, request)
 		return clone{Prepared: prepared, id: routing.UsageID(VoiceClone, provider, voice.CustomerID, voice.ID, prepared.ExternalID)}, err
