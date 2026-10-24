@@ -106,6 +106,11 @@ export class Tools {
     }));
   }
 
+  /** Whether a function is registered under this name. */
+  has(name: string): boolean {
+    return this.registered.has(name);
+  }
+
   /** The question the function named asks before it runs, if it asks one. */
   approval(name: string): ToolApproval | undefined {
     return this.registered.get(name)?.approval;

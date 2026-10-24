@@ -495,7 +495,12 @@ export class Session {
         this.speech.observe(message);
 
         if (message.type === "tool_call") {
-          const approval = this.tools?.approval(text(message, "name"));
+          // Every watcher is sent every call and the first answer wins: answering a tool held
+          // elsewhere would beat whoever runs it, with an error.
+          if (!this.tools?.has(text(message, "name"))) {
+            continue;
+          }
+          const approval = this.tools.approval(text(message, "name"));
           if (approval) {
             this.hold(message, approval);
             this.deliver(eventOf(message));
