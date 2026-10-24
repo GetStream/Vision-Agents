@@ -169,6 +169,14 @@ func (b *bridge) Pending() []ToolCall {
 	return calls
 }
 
+// nameOf is the tool the call id asked for, when it is still waiting.
+func (b *bridge) nameOf(id string) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, waiting := b.pending[id]
+	return pending.call.Name, waiting
+}
+
 // Resolve hands an answer back to the call waiting for it, reporting whether one was.
 //
 // An answer for a call nobody is waiting on is dropped rather than an error, because the

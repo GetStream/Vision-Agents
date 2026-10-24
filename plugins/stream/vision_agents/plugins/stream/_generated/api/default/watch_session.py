@@ -16,6 +16,7 @@ def _get_kwargs(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -25,6 +26,8 @@ def _get_kwargs(
     params["decisions"] = decisions
 
     params["replay_pending_tools"] = replay_pending_tools
+
+    params["tools"] = tools
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -85,6 +88,7 @@ def sync_detailed(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> Response[Any | ErrorResponse]:
     """Watch the conversation and answer the model's tool calls
 
@@ -185,11 +189,16 @@ def sync_detailed(
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
     be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
     `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
-    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). `tool_cancel`
-    (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or the caller interrupted a
-    call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and
-    `turn_id`; their result must repeat both values so a result cannot be adopted by another command or
-    turn.
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). Every watcher
+    sees every `tool_call`, and `run` says whether this one is to run it: only a watcher that runs the
+    tool answers, and a result from any other is dropped. A watcher says which tools it runs with
+    `tools` when it attaches. Without it, it runs the session's tools when it is on the side that
+    created the session: a backend for a session a backend created, the same person for one a device
+    created. A tool a backend declared runs only on a backend, whatever a device says it holds. A call
+    that no watcher attached runs fails at once. `tool_cancel` (`id`, `turn_id`) says a call is no
+    longer wanted: its timeout passed, or the caller interrupted a call to an `interruptible` tool. Tool
+    calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat
+    both values so a result cannot be adopted by another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -213,6 +222,7 @@ def sync_detailed(
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        tools (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -227,6 +237,7 @@ def sync_detailed(
         interim=interim,
         decisions=decisions,
         replay_pending_tools=replay_pending_tools,
+        tools=tools,
     )
 
     response = client.get_httpx_client().request(
@@ -243,6 +254,7 @@ def sync(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> Any | ErrorResponse | None:
     """Watch the conversation and answer the model's tool calls
 
@@ -343,11 +355,16 @@ def sync(
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
     be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
     `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
-    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). `tool_cancel`
-    (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or the caller interrupted a
-    call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and
-    `turn_id`; their result must repeat both values so a result cannot be adopted by another command or
-    turn.
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). Every watcher
+    sees every `tool_call`, and `run` says whether this one is to run it: only a watcher that runs the
+    tool answers, and a result from any other is dropped. A watcher says which tools it runs with
+    `tools` when it attaches. Without it, it runs the session's tools when it is on the side that
+    created the session: a backend for a session a backend created, the same person for one a device
+    created. A tool a backend declared runs only on a backend, whatever a device says it holds. A call
+    that no watcher attached runs fails at once. `tool_cancel` (`id`, `turn_id`) says a call is no
+    longer wanted: its timeout passed, or the caller interrupted a call to an `interruptible` tool. Tool
+    calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat
+    both values so a result cannot be adopted by another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -371,6 +388,7 @@ def sync(
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        tools (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -386,6 +404,7 @@ def sync(
         interim=interim,
         decisions=decisions,
         replay_pending_tools=replay_pending_tools,
+        tools=tools,
     ).parsed
 
 
@@ -396,6 +415,7 @@ async def asyncio_detailed(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> Response[Any | ErrorResponse]:
     """Watch the conversation and answer the model's tool calls
 
@@ -496,11 +516,16 @@ async def asyncio_detailed(
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
     be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
     `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
-    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). `tool_cancel`
-    (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or the caller interrupted a
-    call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and
-    `turn_id`; their result must repeat both values so a result cannot be adopted by another command or
-    turn.
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). Every watcher
+    sees every `tool_call`, and `run` says whether this one is to run it: only a watcher that runs the
+    tool answers, and a result from any other is dropped. A watcher says which tools it runs with
+    `tools` when it attaches. Without it, it runs the session's tools when it is on the side that
+    created the session: a backend for a session a backend created, the same person for one a device
+    created. A tool a backend declared runs only on a backend, whatever a device says it holds. A call
+    that no watcher attached runs fails at once. `tool_cancel` (`id`, `turn_id`) says a call is no
+    longer wanted: its timeout passed, or the caller interrupted a call to an `interruptible` tool. Tool
+    calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat
+    both values so a result cannot be adopted by another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -524,6 +549,7 @@ async def asyncio_detailed(
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        tools (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -538,6 +564,7 @@ async def asyncio_detailed(
         interim=interim,
         decisions=decisions,
         replay_pending_tools=replay_pending_tools,
+        tools=tools,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -552,6 +579,7 @@ async def asyncio(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> Any | ErrorResponse | None:
     """Watch the conversation and answer the model's tool calls
 
@@ -652,11 +680,16 @@ async def asyncio(
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
     be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
     `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
-    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). `tool_cancel`
-    (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or the caller interrupted a
-    call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and
-    `turn_id`; their result must repeat both values so a result cannot be adopted by another command or
-    turn.
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). Every watcher
+    sees every `tool_call`, and `run` says whether this one is to run it: only a watcher that runs the
+    tool answers, and a result from any other is dropped. A watcher says which tools it runs with
+    `tools` when it attaches. Without it, it runs the session's tools when it is on the side that
+    created the session: a backend for a session a backend created, the same person for one a device
+    created. A tool a backend declared runs only on a backend, whatever a device says it holds. A call
+    that no watcher attached runs fails at once. `tool_cancel` (`id`, `turn_id`) says a call is no
+    longer wanted: its timeout passed, or the caller interrupted a call to an `interruptible` tool. Tool
+    calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat
+    both values so a result cannot be adopted by another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -680,6 +713,7 @@ async def asyncio(
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        tools (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -696,5 +730,6 @@ async def asyncio(
             interim=interim,
             decisions=decisions,
             replay_pending_tools=replay_pending_tools,
+            tools=tools,
         )
     ).parsed

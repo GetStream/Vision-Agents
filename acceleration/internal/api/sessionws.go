@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -130,11 +131,8 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Watching starts before the upgrade so nothing said between the two is missed.
-	watch := found.Watch
-	if r.URL.Query().Get("replay_pending_tools") == "true" {
-		watch = found.WatchPendingVoiceTools
-	}
-	events, detach := watch()
+	seat := seatOf(r, OwnerFrom(r.Context()))
+	events, detach := found.WatchAs(seat)
 	defer detach()
 
 	connection, err := s.upgrader.Upgrade(w, r, nil)
@@ -149,12 +147,34 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 
 	// Reading and writing each own the connection in one direction, which is what gorilla
 	// requires: two goroutines writing to one socket interleave frames.
-	owner := OwnerFrom(r.Context())
 	gone := make(chan error, 1)
 	go func() {
-		gone <- s.readCommands(connection, found, owner, CallerFrom(r.Context()))
+		gone <- s.readCommands(connection, found, seat, CallerFrom(r.Context()))
 	}()
 	s.writeEvents(connection, events, watching(r), gone)
+}
+
+// seatOf is the watcher a request attaches as: its caller, and the tools it says it runs
+// in tools, a comma-separated list that may be empty. Without tools it runs what its side
+// of the session declared.
+func seatOf(r *http.Request, owner session.Owner) session.Seat {
+	asked := r.URL.Query()
+	seat := session.Seat{Owner: owner, ReplayPendingVoiceTools: asked.Get("replay_pending_tools") == "true"}
+	if asked.Has("tools") {
+		seat.Declares = true
+		seat.Tools = namesIn(asked.Get("tools"))
+	}
+	return seat
+}
+
+func namesIn(list string) []string {
+	var names []string
+	for _, name := range strings.Split(list, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // wanted says which of the frequent frames this watcher asked for.
@@ -279,7 +299,7 @@ type watcherCommand struct {
 //
 // It returns nil once a command closed the session, errUnreadableFrame for a frame that is not
 // a command, and the read's own error when the connection ended.
-func (s *Server) readCommands(connection *websocket.Conn, found *session.Session, owner session.Owner, sender routing.Caller) error {
+func (s *Server) readCommands(connection *websocket.Conn, found *session.Session, seat session.Seat, sender routing.Caller) error {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
@@ -299,7 +319,7 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			return errUnreadableFrame
 		}
 
-		if !s.applyCommand(found, owner, sender, command) {
+		if !s.applyCommand(found, seat, sender, command) {
 			return nil
 		}
 	}
@@ -330,13 +350,22 @@ func refuseUnreadable(connection *websocket.Conn) {
 // from the other direction: the frame came off a socket on another node and was carried
 // here on the bus, and a watcher on either node must be able to do the same things.
 //
-// sender is the socket's caller, whose day a turn it sends is counted on.
-func (s *Server) applyCommand(found *session.Session, owner session.Owner, sender routing.Caller, command watcherCommand) bool {
+// seat is who the socket's caller is and what it runs; sender is the same caller, whose day
+// a turn it sends is counted on.
+func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender routing.Caller, command watcherCommand) bool {
+	owner := seat.Owner
 	if command.CommandID == "" {
 		command.CommandID = command.LegacyCommandID
 	}
 	switch command.Type {
 	case "tool_result":
+		// A watcher that was not asked to run the call does not answer it, so a browser
+		// without the tool cannot fail a call the backend that holds it is running.
+		if !found.Answers(seat, command.ToolCallID) {
+			s.logger.Debug("a tool result from a watcher that does not run it",
+				"session", found.ID(), "call", command.ToolCallID)
+			return true
+		}
 		parts, err := parseToolOutput(command.Output)
 		if err != nil {
 			found.Report(err, "tool")
@@ -464,6 +493,7 @@ func frameOf(event session.Event) (frame, bool) {
 			"request_id": typed.CommandID,
 			"turn_id":    typed.TurnID,
 			"session_id": typed.SessionID,
+			"run":        typed.Run,
 		}
 		if typed.User != nil {
 			call["user"] = toolUserFrame(typed.User.ID, typed.User.Name)

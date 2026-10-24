@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -306,7 +308,7 @@ func (p *Pipeline) Watch(ctx context.Context, session *acceleration.Session) err
 	}
 
 	socket := NewSocket(
-		backend.SocketURL("/v1/agents/sessions/"+session.Id+"/events"),
+		backend.SocketURL("/v1/agents/sessions/"+session.Id+"/events?"+p.runs().Encode()),
 		credentials,
 		backend.HTTPClient,
 		p.logger,
@@ -510,6 +512,16 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	return request
 }
 
+// runs is the socket's query saying which of the session's tools this process runs: the
+// functions registered here, and none when there are none.
+func (p *Pipeline) runs() url.Values {
+	var names []string
+	for _, function := range p.functions.List() {
+		names = append(names, function.Name)
+	}
+	return url.Values{"tools": {strings.Join(names, ",")}}
+}
+
 // tools are the functions registered here, as the model will be offered them.
 func (p *Pipeline) tools() []acceleration.SessionTool {
 	registered := p.functions.List()
@@ -567,9 +579,10 @@ func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event) 
 
 		switch frame.Type() {
 		case "tool_call":
-			// Every watcher is sent every call, and the first answer is the one the model
-			// gets: answering a tool held elsewhere would beat the process that runs it.
-			if !p.functions.Holds(frame.String("name")) {
+			// Every watcher is sent every call, and the router says which are to run it.
+			// One from before it said holds the same rule: answering a tool held elsewhere
+			// would beat the process that runs it.
+			if frame["run"] == false || !p.functions.Holds(frame.String("name")) {
 				p.logger.Debug("leaving a call for a tool held elsewhere", "tool", frame.String("name"))
 				continue
 			}

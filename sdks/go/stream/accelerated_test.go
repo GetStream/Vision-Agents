@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"slices"
 	"sync"
@@ -35,6 +36,8 @@ type router struct {
 	// conversation is the conversation a created session reports it is kept in. Empty is a
 	// session nothing is kept for.
 	conversation string
+	// watchedWith is the query the socket was opened with.
+	watchedWith url.Values
 
 	// serve is what the socket does once a client is on it.
 	serve func(t *testing.T, connection *websocket.Conn)
@@ -86,6 +89,9 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 	})
 
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		backend.mu.Lock()
+		backend.watchedWith = r.URL.Query()
+		backend.mu.Unlock()
 		connection, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
 		if err != nil {
 			return

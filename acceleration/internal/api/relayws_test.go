@@ -71,6 +71,30 @@ func (s *RelayedSessionSuite) TestAToolResultSentToTheOtherNodeReachesTheModel()
 	s.Empty(ran["error"])
 }
 
+func (s *RelayedSessionSuite) TestAWatcherOnTheOtherNodeRunsOnlyWhatItSaidItRuns() {
+	opened := s.inWriting(CreateSessionRequest{
+		Llm: pointerTo("tooling/tool-model"),
+		Tools: &[]SessionTool{{
+			Name: lookupOrder, Description: "find an order by its number",
+			Parameters: &map[string]any{"type": "object"},
+		}},
+	})
+	elsewhere := s.serverClient.on(s.other).opens("/v1/agents/sessions/" + opened.Id + "/events?tools=")
+	holder := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.respond(opened.Id, "where is my order")
+
+	asked := s.await(elsewhere, "tool_call")
+	s.Equal(false, asked["run"], "what it said it runs did not cross the relay")
+	s.Require().NoError(elsewhere.WriteJSON(map[string]any{
+		"type": "tool_result", "tool_call_id": asked["id"], "error": "nothing is registered as lookup_order",
+	}))
+	s.Equal(true, s.await(holder, "tool_call")["run"])
+	s.Require().NoError(holder.WriteJSON(map[string]any{
+		"type": "tool_result", "tool_call_id": asked["id"], "output": "it ships tomorrow",
+	}))
+	s.Equal("it ships tomorrow", s.await(holder, "tool_ran")["result"])
+}
+
 func (s *RelayedSessionSuite) TestClosingTheSocketOnTheOtherNodeEndsTheConversation() {
 	opened := s.inWriting(CreateSessionRequest{})
 	watching := s.watchFromTheOtherNode(opened.Id)

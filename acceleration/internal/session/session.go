@@ -119,6 +119,9 @@ type ToolCall struct {
 	SessionID    string
 	User         *ToolUser
 	Conversation *ToolConversation
+	// Run says whether the watcher it went to is one that runs it. Every watcher sees a
+	// call, since a page shows calls, and only those that run it should answer.
+	Run bool
 }
 
 // ToolUser is who a tool call was made for.
@@ -404,6 +407,7 @@ func (s *Session) Speech() string {
 type watcher struct {
 	events chan Event
 	once   sync.Once
+	seat   Seat
 }
 
 func (w *watcher) close() { w.once.Do(func() { close(w.events) }) }
@@ -426,17 +430,19 @@ func (w *watcher) send(event Event) bool {
 // that connects late has missed the conversation, and a control channel that opened with a
 // backlog would have it answering tool calls that timed out before it arrived.
 func (s *Session) Watch() (<-chan Event, func()) {
-	return s.watch(false)
+	return s.WatchAs(Seat{Owner: OwnerOf(s.spec)})
 }
 
 // WatchPendingVoiceTools opts a durable tool host into replay of pending live
 // voice requests. Text command recovery uses the persistent conversation path.
 func (s *Session) WatchPendingVoiceTools() (<-chan Event, func()) {
-	return s.watch(true)
+	return s.WatchAs(Seat{Owner: OwnerOf(s.spec), ReplayPendingVoiceTools: true})
 }
 
-func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
-	attached := &watcher{events: make(chan Event, watcherBuffer)}
+// WatchAs is Watch for a watcher that says who it is and which tools it runs, which is
+// what its tool calls are addressed by.
+func (s *Session) WatchAs(seat Seat) (<-chan Event, func()) {
+	attached := &watcher{events: make(chan Event, watcherBuffer), seat: seat}
 
 	s.mu.Lock()
 	if s.state == Ended {
@@ -454,9 +460,11 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	for _, unavailable := range s.connectorsUnavailable {
 		attached.send(unavailable)
 	}
-	if replayVoiceTools && !s.spec.Text && s.tools != nil {
+	if seat.ReplayPendingVoiceTools && !s.spec.Text && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
-			attached.send(s.placed(pending))
+			replayed := s.placed(pending)
+			replayed.Run = s.seatRuns(seat, replayed.Name)
+			attached.send(replayed)
 		}
 	}
 	s.mu.Unlock()
@@ -1711,9 +1719,18 @@ func (s *Session) askTool(call ToolCall) error {
 	if len(s.watchers) == 0 {
 		return errors.New("session: nobody is connected to run it")
 	}
+	runnable := call.Cancel
+	for _, attached := range s.watchers {
+		runnable = runnable || s.seatRuns(attached.seat, call.Name)
+	}
+	if !runnable {
+		return fmt.Errorf("session: nobody connected runs %s", call.Name)
+	}
 	delivered := false
 	for _, attached := range s.watchers {
-		if attached.send(call) {
+		addressed := call
+		addressed.Run = s.seatRuns(attached.seat, call.Name)
+		if attached.send(addressed) {
 			delivered = true
 		}
 	}

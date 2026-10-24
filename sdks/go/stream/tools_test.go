@@ -149,6 +149,49 @@ func (s *ToolCallSuite) TestACallForAToolHeldElsewhereIsLeftForWhoeverHoldsIt() 
 	}
 }
 
+func (s *ToolCallSuite) TestTheSocketSaysWhichToolsItRuns() {
+	backend := newRouter(s.T(), func(*testing.T, *websocket.Conn) {})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	noop := func(context.Context, struct{}) (any, error) { return nil, nil }
+	s.Require().NoError(tools.Register(pipeline.Functions(), "search_flights", "Search for flights", noop))
+	s.Require().NoError(tools.Register(pipeline.Functions(), "book_flight", "Book a flight", noop))
+
+	s.join(pipeline)
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	s.Require().True(backend.watchedWith.Has("tools"))
+	s.Equal("search_flights,book_flight", backend.watchedWith.Get("tools"))
+}
+
+func (s *ToolCallSuite) TestACallAddressedToAnotherWatcherIsLeftAlone() {
+	answered := make(chan map[string]any, 1)
+	backend := newRouter(s.T(), func(t *testing.T, connection *websocket.Conn) {
+		if err := connection.WriteJSON(map[string]any{
+			"type": "tool_call", "id": "call-5", "name": "lookup_order", "arguments": "{}", "run": false,
+		}); err != nil {
+			return
+		}
+		var frame map[string]any
+		if connection.ReadJSON(&frame) == nil {
+			answered <- frame
+		}
+	})
+	var ran atomic.Bool
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	s.Require().NoError(tools.Register(pipeline.Functions(), "lookup_order", "Look up an order",
+		func(context.Context, struct{}) (any, error) { ran.Store(true); return "found", nil }))
+
+	s.join(pipeline)
+
+	select {
+	case frame := <-answered:
+		s.Failf("answered a call the router addressed to another watcher", "%v", frame)
+	case <-time.After(500 * time.Millisecond):
+	}
+	s.False(ran.Load())
+}
+
 func (s *ToolCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 	backend := newRouter(s.T(), func(t *testing.T, connection *websocket.Conn) {
 		if err := connection.WriteJSON(map[string]any{
