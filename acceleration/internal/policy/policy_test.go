@@ -332,7 +332,9 @@ func (s *PolicySuite) TestAGrantAdmitsPastASpentLimitUntilItIsUsed() {
 		"once the row is written and summed, what it paid for is the grant's")
 }
 
-func (s *PolicySuite) TestWithShardsAGrantHoldStaysUntilItsRowCountsTowardTheGrant() {
+// sharded is a store over a shared database and one shard, with the test's app in its
+// organization and a limit on the app, and configs over it.
+func (s *PolicySuite) sharded() (*store.Store, *appconfig.Store) {
 	dsn := os.Getenv("ROUTER_POSTGRES_DSN")
 	shared, shard := testenv.Database(dsn, "policy_grants_shared"), testenv.Database(dsn, "policy_grants_shard")
 	for _, each := range []string{shared, shard} {
@@ -347,15 +349,38 @@ func (s *PolicySuite) TestWithShardsAGrantHoldStaysUntilItsRowCountsTowardTheGra
 	s.Require().NoError(db.JoinOrganization(s.ctx, s.app, s.org))
 	configs, err := appconfig.New(appconfig.Options{Store: db})
 	s.Require().NoError(err)
+	s.Require().NoError(db.CreateLimit(s.ctx, &store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app,
+		Interval: usage.Daily, LimitMicros: 1, UpdatedBy: "test"}, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	return db, configs
+}
+
+// shardRow is a billable row of the test's app, started now.
+func (s *PolicySuite) shardRow(cost int64, grants []int64) store.Request {
+	return store.Request{UsageID: uuid.Must(uuid.NewV7()), CustomerID: s.app, OrganizationID: s.org, Modality: "llm",
+		Provider: "openai", Model: "gpt", StartedAt: time.Now().UTC(), CostMicros: cost, Success: true, Billable: true, LimitGrants: grants}
+}
+
+func (s *PolicySuite) TestWithShardsTheReconcileRunsAsTheLoopsStart() {
+	db, configs := s.sharded()
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(db.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	// The shard has a row naming the grant and nothing counted it: its count was dropped.
+	_, err := db.RecordRequests(s.ctx, []store.Request{s.shardRow(500_000, []int64{grant.ID})})
+	s.Require().NoError(err)
+
+	s.newEnforcer(configs, nil)
+	s.eventually(func() bool {
+		read, err := db.Grant(s.ctx, "", grant.ID)
+		return err == nil && read.UsedMicros == 500_000
+	}, 5*time.Second, 20*time.Millisecond, "counted by the reconcile the loops start with, not one reconcileEvery on")
+}
+
+func (s *PolicySuite) TestWithShardsAGrantHoldStaysUntilItsRowCountsTowardTheGrant() {
+	db, configs := s.sharded()
 	enforcer := s.newEnforcer(configs, nil)
 	audit := store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}
-	s.Require().NoError(db.CreateLimit(s.ctx, &store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app,
-		Interval: usage.Daily, LimitMicros: 1, UpdatedBy: "test"}, audit))
-	row := func(cost int64, grants []int64) store.Request {
-		return store.Request{UsageID: uuid.Must(uuid.NewV7()), CustomerID: s.app, OrganizationID: s.org, Modality: "llm",
-			Provider: "openai", Model: "gpt", StartedAt: time.Now().UTC(), CostMicros: cost, Success: true, Billable: true, LimitGrants: grants}
-	}
-	_, err = db.RecordRequests(s.ctx, []store.Request{row(1, nil)})
+	row := s.shardRow
+	_, err := db.RecordRequests(s.ctx, []store.Request{row(1, nil)})
 	s.Require().NoError(err)
 	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
 	s.Require().NoError(db.AddGrant(s.ctx, &grant, audit))

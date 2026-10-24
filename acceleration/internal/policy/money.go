@@ -303,9 +303,13 @@ func (m *money) start(e *Enforcer) {
 	go m.every(ctx, m.settings.Fresh, m.kick, m.pass)
 	go m.every(ctx, m.settings.SpendEvery, m.kickLimits, m.limitsPass)
 	// Grants have a loop of their own, so a slow read of them never holds up the limits', and
-	// so does their reconcile, so a long one never holds up reading them.
+	// so does their reconcile, so a long one never holds up reading them. It runs once at
+	// start too, rather than a whole reconcileEvery on.
 	go m.every(ctx, m.settings.Fresh, m.kickGrants, m.grantsPass)
-	go m.every(ctx, reconcileEvery, nil, m.reconcilePass)
+	go func() {
+		m.reconcilePass(ctx)
+		m.every(ctx, reconcileEvery, nil, m.reconcilePass)
+	}()
 }
 
 // stop ends the loops and waits for their passes to finish.
