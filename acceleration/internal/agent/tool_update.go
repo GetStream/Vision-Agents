@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
 
 // statusPurpose takes what whoever runs a call said about it, for a line in the agent's own
@@ -147,12 +149,14 @@ func (a *Agent) sayNativeToolUpdate() {
 	if update.verbatim {
 		guidance = nativeSayPrompt
 	}
-	// A reply's own instructions replace the session's, so they are carried along.
-	prompt := a.instructions() + "\n\n" + fmt.Sprintf(guidance, update.text)
+	told := sts.CallUpdate{
+		CallID: id, Status: update.text, Verbatim: update.verbatim,
+		Guidance: fmt.Sprintf(guidance, update.text), Instructions: a.instructions(),
+	}
 	a.generating = true
 	model := a.sts
 	a.mu.Unlock()
-	if err := model.UpdateCall(id, update.text, prompt); err != nil {
+	if err := model.UpdateCall(told); err != nil {
 		a.mu.Lock()
 		a.generating = false
 		a.mu.Unlock()

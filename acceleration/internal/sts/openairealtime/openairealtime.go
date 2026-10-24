@@ -733,16 +733,17 @@ func (s *STS) Prompt(text string) error {
 // tools for that reply, which OpenAI's response.create documents.
 func (s *STS) UpdatesCalls() bool { return s.dialect == DialectOpenAI && s.capabilities.Tools }
 
-// UpdateCall asks the model to speak now about a call that is still open, guided by the
-// prompt. The reply may call nothing, and the call's function_call_output still goes in when
-// its result comes.
-func (s *STS) UpdateCall(_, _, prompt string) error {
+// UpdateCall asks the model to speak now about a call that is still open. A reply's
+// instructions replace the session's, so the agent's go with the guidance. The reply may call
+// nothing, and the call's function_call_output still goes in when its result comes.
+func (s *STS) UpdateCall(update sts.CallUpdate) error {
 	if !s.UpdatesCalls() {
 		return stack.Wrap(sts.ErrNoCallUpdates)
 	}
 	if err := s.ready(); err != nil {
 		return err
 	}
+	prompt := strings.TrimSpace(update.Instructions + "\n\n" + update.Guidance)
 	return s.ask(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: prompt, ToolChoice: "none"}})
 }
 

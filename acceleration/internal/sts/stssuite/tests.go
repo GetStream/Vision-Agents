@@ -312,7 +312,7 @@ func (s *Suite) TestAPromptMakesTheModelSpeakUnasked() {
 }
 
 func (s *Suite) TestAModelToldHowAnOpenCallIsGoingSaysSoAndCallsNothing() {
-	updater, ok := s.New(Ask{}).(sts.CallUpdater)
+	updater, ok := s.New(Ask{Tools: []llm.Tool{weatherTool}}).(sts.CallUpdater)
 	if !ok || !updater.UpdatesCalls() {
 		s.T().Skip("this model cannot be told how an open call is going")
 	}
@@ -324,13 +324,23 @@ func (s *Suite) TestAModelToldHowAnOpenCallIsGoingSaysSoAndCallsNothing() {
 	s.Require().NoError(provider.SendText("What is the weather in Paris right now?", speaker))
 	call := s.Asked(provider).ToolCalls[0]
 
-	s.Require().NoError(provider.(sts.CallUpdater).UpdateCall(call.CallID, "still reaching the forecast service",
-		briefly+" The weather lookup is still running and reports: still reaching the forecast service. "+
-			"Tell the caller in one short sentence that you are still checking. Do not call any tool."))
-	update := s.Spoken(provider)
+	// Reykjavik is in the status alone, so a reply naming it is one that heard the update.
+	s.Require().NoError(provider.(sts.CallUpdater).UpdateCall(sts.CallUpdate{
+		CallID: call.CallID, Status: "waiting on the backup weather station in Reykjavik", Instructions: briefly,
+		Guidance: "The weather lookup is still running and reports: waiting on the backup weather station in Reykjavik. " +
+			"Tell the caller in one short sentence where it has got to, naming the station's city. Do not call any tool.",
+	}))
+	var said strings.Builder
+	var update Reply
+	for !strings.Contains(strings.ToLower(said.String()), "reykjavik") {
+		update = s.Spoken(provider)
+		s.Require().Empty(update.ToolCalls, "a reply about an open call must call nothing")
+		for _, transcript := range update.Said {
+			said.WriteString(transcript.Text)
+		}
+	}
 
-	s.NotEmpty(update.Chunks, "the model should have said the lookup is still running")
-	s.Empty(update.ToolCalls, "a reply about an open call must call nothing")
+	s.NotEmpty(update.Chunks, "the model should have said where the lookup has got to")
 	s.Require().NoError(provider.Answer(call.CallID, `{"forecast":"sunny","temperature_c":21}`, nil))
 	s.NotEmpty(s.Spoken(provider).Chunks, "the open call should still take its answer")
 }

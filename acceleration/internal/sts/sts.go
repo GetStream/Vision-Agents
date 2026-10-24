@@ -166,10 +166,21 @@ type STS interface {
 type CallUpdater interface {
 	// UpdatesCalls reports whether this session takes UpdateCall.
 	UpdatesCalls() bool
-	// UpdateCall has the model speak now about the open call callID, whose runner reports
-	// status, guided by prompt. It calls no tool for that reply, and the call still waits for
-	// its Answer. One that takes none returns ErrNoCallUpdates.
-	UpdateCall(callID, status, prompt string) error
+	// UpdateCall has the model speak about an open call. It calls no tool for that, and the
+	// call still waits for its Answer. One that takes none returns ErrNoCallUpdates.
+	UpdateCall(update CallUpdate) error
+}
+
+// CallUpdate is what a model is told about a call that is still open.
+type CallUpdate struct {
+	CallID string
+	// Status is what whoever runs the call reports, or with Verbatim, words to say.
+	Status   string
+	Verbatim bool
+	// Guidance is how to say it, and Instructions the agent's own, for a model whose reply
+	// takes instructions in place of the session's.
+	Guidance     string
+	Instructions string
 }
 
 // Voiced is a model that can say which voice it speaks in. Empty means the vendor
