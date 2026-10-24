@@ -56,7 +56,7 @@ internal enum Operations {
             internal struct Created: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -77,17 +77,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -233,7 +233,7 @@ internal enum Operations {
             internal struct Created: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -254,17 +254,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -419,7 +419,7 @@ internal enum Operations {
             internal struct Ok: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -440,17 +440,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -619,7 +619,7 @@ internal enum Operations {
             internal struct Ok: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -640,17 +640,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -789,7 +789,7 @@ internal enum Operations {
             internal struct NoContent: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/204/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/204/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -810,17 +810,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/204/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/204/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -935,7 +935,7 @@ internal enum Operations {
             internal struct Created: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -956,17 +956,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -1147,7 +1147,7 @@ internal enum Operations {
             internal struct Ok: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -1168,17 +1168,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -1342,7 +1342,7 @@ internal enum Operations {
             internal struct Accepted: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -1363,17 +1363,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -1563,7 +1563,7 @@ internal enum Operations {
             internal struct Ok: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -1584,17 +1584,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -1743,7 +1743,7 @@ internal enum Operations {
             internal struct NoContent: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/204/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/204/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -1764,17 +1764,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/204/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/204/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -1864,7 +1864,7 @@ internal enum Operations {
             internal struct NoContent: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/204/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/204/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -1885,17 +1885,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/204/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/204/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -2011,7 +2011,7 @@ internal enum Operations {
             internal struct Ok: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -2032,17 +2032,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -2196,7 +2196,7 @@ internal enum Operations {
             internal struct Ok: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -2217,17 +2217,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -2380,7 +2380,7 @@ internal enum Operations {
             internal struct Ok: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -2401,17 +2401,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
@@ -2556,7 +2556,7 @@ internal enum Operations {
             internal struct Ok: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/headers`.
                 internal struct Headers: Sendable, Hashable {
-                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/headers/X-Stream-Balance-Micros`.
                     internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
@@ -2577,17 +2577,17 @@ internal enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/headers/X-Stream-Cost-Estimated`.
                     internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
-                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     ///
                     /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/headers/X-Stream-Cost-Micros`.
                     internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
-                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
                     ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
                     ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
-                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
                     internal init(
                         xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
                         xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,

@@ -4,12 +4,14 @@ package api
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
 // CostSuite runs the router as Stream's hosted one does about money, and reads what each
@@ -106,6 +108,16 @@ func (s *CostSuite) TestAFreeAnswerSaysNothingWhenItRecordedNothing() {
 	s.Empty(response.Header.Get(headerCostMicros), "nothing was recorded")
 }
 
+func (s *CostSuite) TestAFailureSaysNothingOfMoney() {
+	s.answered(s.serverClient, http.MethodGet, "/v1/policies/app", nil, http.StatusOK)
+
+	response := s.answered(s.serverClient, http.MethodPost, "/v1/search", SearchRequest{}, http.StatusBadRequest)
+
+	for _, header := range []string{headerCostMicros, headerCostEstimated, headerBalanceMicros, headerBalanceWarning} {
+		s.Empty(response.Header.Get(header), "only a success and a refusal for money declare %s", header)
+	}
+}
+
 func (s *CostSuite) TestAnAcceptedTurnSaysNoCost() {
 	created := s.serverClient.createSession(textSession(nil))
 
@@ -156,6 +168,38 @@ func (s *CostSuite) TestATranscriptCarriesItsCost() {
 	s.NotContains(interim, "cost_micros", "a revision is no turn")
 	s.Contains(settled, "cost_micros")
 	s.EqualValues(rows[0].CostMicros, settled["cost_micros"], "what the turn's row recorded")
+}
+
+// The sockets that carry cost frames are a backend's: a device is refused them outright, low
+// as its organization's balance is.
+func (s *CostSuite) TestADeviceSocketGetsNoCost() {
+	s.usage.Spend(s.T(), s.app.organization.ID, 99_000_000)
+	for _, modality := range []string{"stt", "tts", "llm"} {
+		for name, client := range map[string]*testClient{"user": s.client, "guest": s.guestClient, "anonymous": s.anonymousClient} {
+			connection, status := client.watch("/v1/" + modality + "/stream")
+			s.Nil(connection, "%s: %s", name, modality)
+			s.Contains([]int{http.StatusUnauthorized, http.StatusForbidden}, status, "%s: %s", name, modality)
+		}
+	}
+}
+
+func (s *CostSuite) TestAnUtteranceCarriesItsCost() {
+	since := time.Now().UTC()
+	speaking := s.serverClient.opens("/v1/tts/stream")
+	defer speaking.Close() //nolint:errcheck // the test is done with it
+	s.Require().NoError(speaking.WriteJSON(frame{"type": "start", "target": "en-low-latency"}))
+	s.await(speaking, "started")
+	line := "your call is important, " + s.utils.uuid()
+	s.Require().NoError(speaking.WriteJSON(frame{"type": "speak", "id": "s1", "text": line}))
+	s.Require().Eventually(func() bool { return slices.Contains(s.voice.spoken(), line) }, settleFor, 10*time.Millisecond)
+
+	s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: "s1", Characters: int64(len(line)), AudioDurationMs: 2_000,
+		Provider: "stub", Model: "stub-tts"})
+	complete := s.await(speaking, "synthesis_complete")
+
+	rows := s.meteredRows(routing.TTS, since, 1)
+	s.Contains(complete, "cost_micros")
+	s.EqualValues(rows[0].CostMicros, complete["cost_micros"], "what the utterance's row recorded")
 }
 
 // config is the id of an agent config of the suite's app answered by model.
