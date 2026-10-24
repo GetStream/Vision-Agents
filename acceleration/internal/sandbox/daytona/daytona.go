@@ -372,7 +372,7 @@ func (s *Sandbox) started(ctx context.Context) error {
 func (s *Sandbox) create(ctx context.Context) error {
 	create, end := context.WithTimeout(ctx, s.timeout)
 	defer end()
-	if err := s.hold(create); err != nil {
+	if err := s.hold(create, false); err != nil {
 		return err
 	}
 	if s.broker != nil {
@@ -413,12 +413,12 @@ func reserved(box *sdk.Sandbox) Reserved {
 }
 
 // hold takes a slot for the sandbox to run in, unless it holds one or nothing bounds how many
-// run at once. The caller holds the gate.
-func (s *Sandbox) hold(ctx context.Context) error {
+// run at once; running is one Daytona runs already. The caller holds the gate.
+func (s *Sandbox) hold(ctx context.Context, running bool) error {
 	if s.slots == nil || s.slot != nil {
 		return nil
 	}
-	release, err := s.slots.Take(ctx)
+	release, err := s.slots.Take(ctx, running)
 	if err != nil {
 		return err
 	}
@@ -468,9 +468,10 @@ func (s *Sandbox) revive(ctx context.Context) error {
 		return nil
 	}
 	// A sandbox taken to have stopped runs again only in a slot of its own; refused one, it
-	// stays stopped, and is billed so.
+	// stays stopped, and is billed so. One Daytona had not stopped yet runs already, and is
+	// given a slot whatever the count.
 	waking := s.slot == nil
-	if err := s.hold(read); err != nil {
+	if err := s.hold(read, s.box.State == "started"); err != nil {
 		return err
 	}
 	if err := s.wake(read); err != nil {

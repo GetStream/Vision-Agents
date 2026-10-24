@@ -119,8 +119,11 @@ type Lifecycle struct {
 // started again, and gives it back once it stops running, for idling or because it is gone.
 type Slots interface {
 	// Take holds a slot for a sandbox about to run, or refuses it with why; release gives it
-	// back, and is safe to call twice.
-	Take(ctx context.Context) (release func(), err error)
+	// back, and is safe to call twice. running is a sandbox the provider runs already, which
+	// refusing would not stop, so it is given a slot whatever the count. A nil release with no
+	// error is a sandbox that may run though no slot could be held for it; it is asked for
+	// one again the next time it is to run.
+	Take(ctx context.Context, running bool) (release func(), err error)
 }
 
 // Sandbox runs code somewhere isolated from everything that matters.
