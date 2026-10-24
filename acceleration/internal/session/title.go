@@ -136,7 +136,7 @@ func (s *Session) name(event Event) {
 
 func (s *Session) retitle(ctx context.Context, said []spoken) error {
 	n := s.naming
-	named, err := n.titles.ask(ctx, s.spec, s.id, said)
+	named, err := n.titles.ask(ctx, s.Spec(), s.id, said)
 	if err != nil {
 		return err
 	}

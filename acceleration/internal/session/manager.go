@@ -846,7 +846,7 @@ func (m *Manager) supersede(spec Spec) {
 	m.mu.Lock()
 	var left []*Session
 	for id, found := range m.sessions {
-		if sameSeat(found.spec, spec) {
+		if sameSeat(found.Spec(), spec) {
 			left = append(left, found)
 			delete(m.sessions, id)
 		}
@@ -958,7 +958,7 @@ func (m *Manager) Get(id string, owner Owner) (*Session, bool) {
 	defer m.mu.Unlock()
 
 	found, ok := m.sessions[id]
-	if !ok || !owner.Reaches(OwnerOf(found.spec)) {
+	if !ok || !owner.Reaches(OwnerOf(found.Spec())) {
 		return nil, false
 	}
 	return found, true
@@ -1003,7 +1003,7 @@ func (m *Manager) newest(matches func(Spec) bool, admits func(customer string, a
 
 	var newest *Session
 	for _, found := range m.sessions {
-		if !matches(found.spec) {
+		if !matches(found.Spec()) {
 			continue
 		}
 		if admits != nil && !admits(found.spec.CustomerID, found.spec.StreamApp) {
@@ -1025,7 +1025,7 @@ func (m *Manager) List(owner Owner) []*Session {
 
 	var theirs []*Session
 	for _, found := range m.sessions {
-		if !owner.Reaches(OwnerOf(found.spec)) {
+		if !owner.Reaches(OwnerOf(found.Spec())) {
 			continue
 		}
 		// An anonymous caller that named nobody is told about nothing. It reaches its

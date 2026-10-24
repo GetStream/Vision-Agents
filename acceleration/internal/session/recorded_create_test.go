@@ -5,8 +5,10 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -148,6 +150,56 @@ func (s *RecordedCreateSuite) TestFramesSeenAsTheRowIsQueuedMakeItAVideoOne() {
 	s.Require().NoError(err)
 
 	s.Equal(store.ModalityVideo, s.queued(m, joining, row).Modality)
+}
+
+// A title named before the row is built is in the row.
+func (s *RecordedCreateSuite) TestTheRowCarriesTheTitleNamedBeforeItWasBuilt() {
+	m := s.manager(newQuietEdge(), &stubTTS{emitter: tts.NewEmitter(64)}, nil)
+	joining := s.joining(m)
+	joining.title, joining.description = "Refund a late order", "Where an order went."
+
+	row := sessionRow(joining)
+
+	s.Equal("Refund a late order", row.Title)
+	s.Equal("Where an order went.", row.Description)
+}
+
+// The tests below read the spec while a login's chose writes it, on the goroutines Create and
+// the manager read it from. They show their failure only under -race.
+func (s *RecordedCreateSuite) TestTheSpecReadsRaceNoChose() {
+	m := s.manager(newQuietEdge(), &stubTTS{emitter: tts.NewEmitter(64)}, nil)
+	joining := s.joining(m)
+	joining.naming = &naming{titles: s.titler(m, "Refund a late order")}
+	m.sessions[joining.id] = joining
+	// Shutdown closes what is registered, and this session has no agent to close.
+	s.T().Cleanup(func() { delete(m.sessions, joining.id) })
+	owner := OwnerOf(joining.spec)
+	reads := map[string]func(){
+		"the session row":   func() { sessionRow(joining) },
+		"the call row":      func() { row(joining) },
+		"the episode card":  func() { (*callCards)(nil).started(joining, streamapp.Bound{}) },
+		"the title asked":   func() { _, _ = joining.naming.titles.ask(s.ctx, joining.Spec(), joining.id, nil) },
+		"a lookup":          func() { m.Get(joining.id, owner) },
+		"a listing":         func() { m.List(owner) },
+		"the newest":        func() { m.newest(func(Spec) bool { return true }, nil) },
+		"a seat superseded": func() { m.supersede(Spec{Text: true}) },
+	}
+	for name, read := range reads {
+		s.Run(name, func() {
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range 50 {
+					joining.chose("crm", fmt.Sprint("connection-", i))
+				}
+			}()
+			for range 50 {
+				read()
+			}
+			wg.Wait()
+		})
+	}
 }
 
 // joining is a session as Create holds it while the greeting is spoken: handed the recorder,

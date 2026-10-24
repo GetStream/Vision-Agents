@@ -332,7 +332,7 @@ func (r *sessionRecorder) writeItems(items []store.AgentResponseItem) {
 // review a finished call gets, none of which a text conversation has. This one carries what
 // the caller said about the conversation, which is what they will look for it by.
 func sessionRow(created *Session) store.AgentSession {
-	spec := created.spec
+	spec := created.Spec()
 	row := store.AgentSession{
 		ID:              created.id,
 		CustomerID:      spec.CustomerID,
