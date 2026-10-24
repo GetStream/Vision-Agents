@@ -44,13 +44,13 @@ func (s *RouterSuite) refusedAsUnreadable(connection *websocket.Conn) {
 	s.Equal(errUnreadableFrame.Message, s.closedWith(ended, websocket.ClosePolicyViolation).Text)
 }
 
-// unknownCommandLeavesTheSocketOpen sends a command of a type nothing knows and checks it is
-// reported, and that the socket still carries the close sent after it.
-func (s *RouterSuite) unknownCommandLeavesTheSocketOpen(connection *websocket.Conn) {
-	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "nope"}))
+// unknownCommandLeavesTheSocketOpen sends a frame of the kind given holding a command no
+// handler knows and checks it is reported as the error given, and that the socket still
+// carries the close sent after it.
+func (s *RouterSuite) unknownCommandLeavesTheSocketOpen(connection *websocket.Conn, kind int, command, reported string) {
+	s.Require().NoError(connection.WriteMessage(kind, []byte(command)))
 
-	reported := s.await(connection, "error")
-	s.Equal(`unknown command "nope"`, reported["error"])
+	s.Equal(reported, s.await(connection, "error")["error"])
 
 	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "close"}))
 	_, ended := s.socketEnd(connection)

@@ -186,7 +186,29 @@ func (s *SessionEventsSuite) TestABinaryFrameThatIsNotJSONIsRefusedWithPolicyVio
 func (s *SessionEventsSuite) TestACommandOfAnUnknownTypeIsReportedAndTheSocketStaysOpen() {
 	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
 
-	s.unknownCommandLeavesTheSocketOpen(watching)
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.TextMessage, `{"type":"nope"}`, `unknown command "nope"`)
+}
+
+// A command in a binary frame is read as one in a text frame.
+func (s *SessionEventsSuite) TestACommandInABinaryFrameIsReportedAndTheSocketStaysOpen() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.BinaryMessage, `{"type":"nope"}`, `unknown command "nope"`)
+}
+
+// An object with no type is a command of no type: reported, not refused.
+func (s *SessionEventsSuite) TestAnObjectWithNoTypeIsReportedAndTheSocketStaysOpen() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.TextMessage, `{}`, `unknown command ""`)
+}
+
+// An object whose type is not a string cannot be read as a command and is refused.
+func (s *SessionEventsSuite) TestACommandWhoseTypeIsNotAStringIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte(`{"type":1}`)))
+
+	s.refusedAsUnreadable(watching)
 }
 
 // The control: a caller that closes first is answered with its own close, as on base
