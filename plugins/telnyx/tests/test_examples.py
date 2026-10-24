@@ -419,7 +419,10 @@ def test_telnyx_example_cleanup_installs_and_restores_sigterm_handler():
     assert signal.getsignal(signal.SIGTERM) is original_handler
 
 
-def test_sigterm_during_normal_cleanup_waits_for_it_instead_of_nesting(monkeypatch):
+@pytest.mark.parametrize("delete_fails", [False, True])
+def test_sigterm_during_normal_cleanup_waits_for_it_instead_of_nesting(
+    monkeypatch, delete_fails
+):
     if threading.current_thread() is not threading.main_thread():
         pytest.skip("signal handlers can only be installed on the main thread")
 
@@ -450,6 +453,7 @@ def test_sigterm_during_normal_cleanup_waits_for_it_instead_of_nesting(monkeypat
             "phone_number": "+15551234567",
             "connection_id": "created-app-id",
         },
+        delete_failures=1 if delete_fails else 0,
     )
     resources = TelnyxExampleResources(
         phone_number_id="phone-id",
@@ -458,6 +462,8 @@ def test_sigterm_during_normal_cleanup_waits_for_it_instead_of_nesting(monkeypat
     )
     original_handler = signal.getsignal(signal.SIGTERM)
     try:
+        # A failed cleanup is logged rather than raised here: the process is
+        # exiting with the SIGTERM status either way, as in the handler path.
         with telnyx_example_cleanup(client, resources):
             pass
     finally:
@@ -467,7 +473,7 @@ def test_sigterm_during_normal_cleanup_waits_for_it_instead_of_nesting(monkeypat
     # cleanup would repeat the restore and exit before the first one returned.
     assert events == ["restore-routing", "delete-app", "exit"]
     assert client.connection_updates == [("phone-id", "original-app-id")]
-    assert client.deleted_app_ids == ["created-app-id"]
+    assert client.deleted_app_ids == ([] if delete_fails else ["created-app-id"])
 
 
 def test_prepare_telnyx_example_setup_tracks_resources_while_creating_them():
