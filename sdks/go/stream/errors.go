@@ -105,6 +105,14 @@ func (e *RouterError) PaymentRequired() bool {
 	return e.Type == string(acceleration.ErrorTypePaymentRequired) || e.Status == http.StatusPaymentRequired
 }
 
+// SpendCheckUnavailable reports whether the router refused work that costs money because it
+// could not share what the organization is spending with the other routers for a while
+// (spend_check_unavailable, a 503). It is no refusal of the organization's money: retry after a
+// few seconds, as Retry-After says, and a model that costs nothing is still served.
+func (e *RouterError) SpendCheckUnavailable() bool {
+	return e.Code == "spend_check_unavailable"
+}
+
 // Unwrap is what the socket dialler said, for a refused upgrade, and nil otherwise.
 func (e *RouterError) Unwrap() error { return e.cause }
 

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,13 +17,16 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
@@ -36,6 +40,9 @@ type AdmissionSuite struct {
 	// line is Telnyx ringing the suite's numbers, and logged what the router said of it.
 	line   telnyxRinger
 	logged *lockedLog
+	// sharing is the Redis the router shares its holds through, behind a proxy a test can
+	// take down.
+	sharing *redisProxy
 }
 
 func TestAdmissionSuite(t *testing.T) {
@@ -44,6 +51,7 @@ func TestAdmissionSuite(t *testing.T) {
 
 func (s *AdmissionSuite) SetupSuite() {
 	s.limited = true
+	s.sharing, s.holds = newRedisProxy(s.T())
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	s.Require().NoError(err)
 	s.telnyxPublicKey, s.telnyxConnectionID = public, "1234567890"
@@ -57,6 +65,7 @@ func (s *AdmissionSuite) SetupSuite() {
 // spends or suspends is no other's.
 func (s *AdmissionSuite) SetupTest() {
 	s.usageFront.down.Store(false)
+	s.sharing.down.Store(false)
 	s.useApp(s.data.createApp())
 }
 
@@ -292,6 +301,83 @@ func (s *AdmissionSuite) TestTheLLMSessionStopsAnsweringWhenCreditRunsOut() {
 
 	s.Equal(codeInsufficientCredits, refusal["code"], "the first answer is held at once, with no read of the balance")
 	s.EqualValues(ErrorTypePaymentRequired, refusal["error_type"])
+}
+
+func (s *AdmissionSuite) TestSpendCheckUnavailableIsA503() {
+	s.usage.Credit(s.T(), s.organization(), 100_000_000)
+	s.Require().Eventually(func() bool {
+		status, _ := s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{Query: "warm"})
+		return status == http.StatusOK
+	}, 10*time.Second, 50*time.Millisecond, "a search is admitted once the credit is read")
+	s.sharing.stop()
+	defer s.sharing.down.Store(false)
+
+	var response *http.Response
+	s.Require().Eventually(func() bool {
+		// Each search the router admits holds its estimate, which cannot be shared.
+		response = s.serverClient.raw(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+		if response.StatusCode != http.StatusServiceUnavailable {
+			_ = response.Body.Close()
+			return false
+		}
+		return true
+	}, 10*time.Second, 20*time.Millisecond, "refused once a hold waited unshared")
+	defer response.Body.Close() //nolint:errcheck // a read-only body
+
+	var answered ErrorResponse
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&answered))
+	s.Equal(ErrorTypeUnavailable, answered.Error.Type)
+	s.Equal(codeSpendCheckUnavailable, answered.Error.Code)
+	s.Contains(answered.Error.Message, "could not share spend with the other routers")
+	s.Equal("5", response.Header.Get("Retry-After"))
+	s.answersOnTheFreeModel()
+
+	s.sharing.down.Store(false)
+	s.Require().Eventually(func() bool {
+		status, _ := s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{Query: "back"})
+		return status == http.StatusOK
+	}, 5*time.Second, 20*time.Millisecond, "admitted again once a flush lands")
+}
+
+// otherRouter is a second router's enforcer over the same usage service and the same Redis,
+// as another replica of the deployment.
+func (s *AdmissionSuite) otherRouter() *policy.Enforcer {
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	client, err := usage.NewClient(usage.ClientOptions{URL: s.usage.URL, Token: s.usage.Token})
+	s.Require().NoError(err)
+	_, holds := newRedisProxy(s.T())
+	other, err := policy.New(configs, policy.Settings{
+		Usage: client, Holds: holds, Fresh: suiteFresh, SpendEvery: suiteFresh, SumEvery: suiteFresh,
+		MaxStale: time.Minute, PendingTTL: time.Minute,
+		FlushEvery: 10 * time.Millisecond, HoldRefresh: 50 * time.Millisecond, FlushMaxLag: suiteFlushMaxLag,
+	}, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.T().Cleanup(other.Close)
+	return other
+}
+
+func (s *AdmissionSuite) TestTwoRoutersStopAnLLMSessionTogether() {
+	// One response of the counted model costs 1,000 micros.
+	s.usage.Credit(s.T(), s.organization(), 1_000_000)
+	other := s.otherRouter()
+	other.Join(s.customerID(), s.organization(), usage.DefaultTier)
+	answering := s.serverClient.opens("/v1/llm/stream")
+	s.Require().NoError(answering.WriteJSON(frame{"type": "start", "target": "counted/counted-model"}))
+	s.Equal("started", s.await(answering, "started")["type"])
+	time.Sleep(3 * suiteFresh)
+	s.Require().NoError(answering.WriteJSON(frame{"type": "respond", "id": "r1", "messages": []frame{{"role": "user", "content": "one"}}}))
+	s.await(answering, "complete")
+
+	// The other router's sessions take what credit is left.
+	owner := routing.Owner{CustomerID: s.customerID(), Attribution: routing.Attribution{OrganizationID: s.organization()}}
+	s.Require().NoError(other.Reserve(owner, uuid.Must(uuid.NewV7()), 999_000, time.Minute))
+	time.Sleep(4 * 50 * time.Millisecond)
+	s.Require().NoError(answering.WriteJSON(frame{"type": "respond", "id": "r2", "messages": []frame{{"role": "user", "content": "two"}}}))
+	refusal := s.await(answering, "error")
+
+	s.Equal(codeInsufficientCredits, refusal["code"], "this router counts what the other holds, within a refresh")
+	s.Error(other.Reserve(owner, uuid.Must(uuid.NewV7()), 1_000, time.Minute), "and the other counts what this one spent")
 }
 
 func (s *AdmissionSuite) TestCreatingASessionWarmsTheDecision() {
@@ -597,7 +683,7 @@ func (s *AdmissionSuite) TestAScheduledDeliveryRefusedForMoneyIsRecordedUnderIts
 }
 
 func (s *AdmissionSuite) TestThePolicysCodesAreTheAPIs() {
-	for _, refusal := range []error{policy.ErrSuspended, policy.ErrNoCredits, policy.ErrSystemLimit, policy.ErrBudgetSpent, policy.ErrUserLimit} {
+	for _, refusal := range []error{policy.ErrSuspended, policy.ErrNoCredits, policy.ErrSystemLimit, policy.ErrBudgetSpent, policy.ErrUserLimit, policy.ErrSpendCheckUnavailable} {
 		answer, ok := moneyError(refusal)
 		s.Require().True(ok)
 		s.Equal(answer.Code, policy.Code(refusal), "a campaign records the code the API answers")

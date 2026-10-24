@@ -6023,7 +6023,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -9722,6 +9722,15 @@ export type components = {
                 readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description The request cannot be served now and may be retried. With code spend_check_unavailable, the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; Retry-After says when to try again, and work on a model that costs nothing is still served. */
+        readonly Unavailable: {
+            headers: {
+                readonly [name: string]: unknown;
+            };
+            content: {
+                readonly "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
     };
     parameters: never;
     requestBodies: never;
@@ -9809,6 +9818,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listRoutes: {
@@ -9838,6 +9848,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly resolveTarget: {
@@ -9872,6 +9883,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getStats: {
@@ -9909,6 +9921,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getTagStats: {
@@ -9946,6 +9959,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly streamModality: {
@@ -10010,6 +10024,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCall: {
@@ -10039,6 +10054,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCallEvents: {
@@ -10071,6 +10087,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCallTimeline: {
@@ -10100,6 +10117,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createCallToken: {
@@ -10133,6 +10151,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCallTokens: {
@@ -10162,6 +10181,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCallTranscript: {
@@ -10191,6 +10211,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly analyzeReviews: {
@@ -10220,15 +10241,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listCampaigns: {
@@ -10254,6 +10267,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createCampaign: {
@@ -10284,6 +10298,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCampaign: {
@@ -10313,6 +10328,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listCampaignContacts: {
@@ -10342,6 +10358,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly addCampaignContacts: {
@@ -10375,6 +10392,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly pauseCampaign: {
@@ -10404,6 +10422,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly startCampaign: {
@@ -10433,6 +10452,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listChannelAccounts: {
@@ -10458,6 +10478,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly connectChannel: {
@@ -10487,6 +10508,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly disconnectChannel: {
@@ -10514,6 +10536,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly verifyChannelHook: {
@@ -10634,6 +10657,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createChatToken: {
@@ -10663,6 +10687,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listAgentConfigs: {
@@ -10693,6 +10718,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createAgentConfig: {
@@ -10731,6 +10757,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAgentConfig: {
@@ -10760,6 +10787,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateAgentConfig: {
@@ -10802,6 +10830,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteAgentConfig: {
@@ -10829,6 +10858,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly patchAgentConfig: {
@@ -10871,6 +10901,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAgentChanges: {
@@ -10900,6 +10931,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConfigPlugins: {
@@ -10929,6 +10961,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly disconnectPlugin: {
@@ -10958,6 +10991,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly authorizePlugin: {
@@ -10993,6 +11027,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setPluginClient: {
@@ -11028,6 +11063,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deletePluginClient: {
@@ -11057,6 +11093,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnections: {
@@ -11091,6 +11128,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createConnection: {
@@ -11120,6 +11158,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getConnection: {
@@ -11149,6 +11188,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnection: {
@@ -11188,6 +11228,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createAuthorization: {
@@ -11221,6 +11262,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly putConnectionCredentials: {
@@ -11263,6 +11305,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectionInvocations: {
@@ -11297,6 +11340,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly proxyConnectionGet: {
@@ -11676,15 +11720,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectionTools: {
@@ -11714,6 +11750,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly approveConnectionTools: {
@@ -11756,6 +11793,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly validateConnection: {
@@ -11789,6 +11827,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectorAudit: {
@@ -11821,6 +11860,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectors: {
@@ -11853,6 +11893,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createConnector: {
@@ -11882,6 +11923,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getConnector: {
@@ -11911,6 +11953,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnector: {
@@ -11950,6 +11993,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectorEventDestinations: {
@@ -11983,6 +12027,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createConnectorEventDestination: {
@@ -12025,6 +12070,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnectorEventDestination: {
@@ -12054,6 +12100,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly rotateConnectorEventDestinationSecret: {
@@ -12085,6 +12132,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getConnectorOAuthClient: {
@@ -12114,6 +12162,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setConnectorOAuthClient: {
@@ -12165,15 +12214,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnectorOAuthClient: {
@@ -12201,6 +12242,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setConnectorProviderApp: {
@@ -12261,15 +12303,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnectorProviderApp: {
@@ -12315,15 +12349,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly receiveConnectorEvent: {
@@ -12486,6 +12512,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getConversationMessages: {
@@ -12518,6 +12545,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createGuestUser: {
@@ -12555,6 +12583,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly claimGuestUser: {
@@ -12594,6 +12623,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly ingestKnowledge: {
@@ -12623,6 +12653,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listKnowledgeDocuments: {
@@ -12651,6 +12682,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getKnowledgeDocument: {
@@ -12680,6 +12712,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteKnowledgeDocument: {
@@ -12707,6 +12740,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listKnowledgeDocumentPassages: {
@@ -12736,6 +12770,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listKnowledgeUrls: {
@@ -12764,6 +12799,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly addKnowledgeUrl: {
@@ -12793,6 +12829,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getKnowledgeUrl: {
@@ -12822,6 +12859,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteKnowledgeUrl: {
@@ -12849,6 +12887,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly indexKnowledgeUrl: {
@@ -12878,6 +12917,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listKnowledgeUrlPassages: {
@@ -12907,6 +12947,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listAgentLogs: {
@@ -13068,6 +13109,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createCustomModel: {
@@ -13115,6 +13157,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCustomModel: {
@@ -13144,6 +13187,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateCustomModel: {
@@ -13195,6 +13239,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteCustomModel: {
@@ -13222,6 +13267,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listPlugins: {
@@ -13250,6 +13296,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getPluginLogo: {
@@ -13457,6 +13504,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createScheduledTask: {
@@ -13508,6 +13556,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getScheduledTask: {
@@ -13537,6 +13586,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteScheduledTask: {
@@ -13564,6 +13614,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateScheduledTask: {
@@ -13597,6 +13648,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly pauseScheduledTask: {
@@ -13626,6 +13678,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly resumeScheduledTask: {
@@ -13672,6 +13725,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly runScheduledTask: {
@@ -13710,6 +13764,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listScheduledTaskRuns: {
@@ -13744,6 +13799,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createSession: {
@@ -13783,6 +13839,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSession: {
@@ -13812,6 +13869,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSession: {
@@ -13838,6 +13896,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateSession: {
@@ -13871,6 +13930,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSessionCommand: {
@@ -13901,6 +13961,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly interruptSessionCommand: {
@@ -14004,6 +14065,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly interruptSession: {
@@ -14031,6 +14093,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSessionMemories: {
@@ -14058,6 +14121,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly respondSession: {
@@ -14107,6 +14171,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listResponses: {
@@ -14141,6 +14206,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createResponse: {
@@ -14183,6 +14249,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listResponseItems: {
@@ -14219,6 +14286,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly rewindSession: {
@@ -14250,6 +14318,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly saySession: {
@@ -14281,6 +14350,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setSessionSettings: {
@@ -14314,6 +14384,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly stopSession: {
@@ -14340,6 +14411,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSessionTools: {
@@ -14368,6 +14440,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly startSessionVoice: {
@@ -14410,6 +14483,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly stopSessionVoice: {
@@ -14438,6 +14512,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly querySessions: {
@@ -14466,6 +14541,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSimulationRuns: {
@@ -14495,6 +14571,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSimulationRun: {
@@ -14524,6 +14601,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly cancelSimulationRun: {
@@ -14553,6 +14631,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSimulations: {
@@ -14578,6 +14657,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createSimulation: {
@@ -14608,6 +14688,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSimulation: {
@@ -14637,6 +14718,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateSimulation: {
@@ -14670,6 +14752,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSimulation: {
@@ -14697,6 +14780,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly runSimulation: {
@@ -14726,6 +14810,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSkills: {
@@ -14754,6 +14839,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createSkill: {
@@ -14793,6 +14879,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSkill: {
@@ -14822,6 +14909,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateSkill: {
@@ -14864,6 +14952,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSkill: {
@@ -14891,6 +14980,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly openSocketSession: {
@@ -14951,6 +15041,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteUserConnections: {
@@ -14977,6 +15068,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly truncateMemories: {
@@ -15003,6 +15095,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listVoices: {
@@ -15028,6 +15121,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createVoice: {
@@ -15066,6 +15160,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getVoice: {
@@ -15095,6 +15190,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateVoice: {
@@ -15137,6 +15233,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteVoice: {
@@ -15164,6 +15261,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly prepareVoice: {
@@ -15197,6 +15295,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly previewVoice: {
@@ -15230,6 +15329,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly addVoiceSample: {
@@ -15263,6 +15363,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listLibraryVoices: {
@@ -15291,6 +15392,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly previewLibraryVoice: {
@@ -15321,6 +15423,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listVoiceProviders: {
@@ -15346,6 +15449,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly queryAudit: {
@@ -15375,6 +15479,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly classify: {
@@ -15721,6 +15826,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly dispatchCalls: {
@@ -15781,6 +15887,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getBusinessProfile: {
@@ -15807,6 +15914,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly saveBusinessProfile: {
@@ -15836,6 +15944,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly placePhoneCall: {
@@ -15866,6 +15975,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly pressPhoneDigits: {
@@ -15896,6 +16006,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly transferPhoneCall: {
@@ -15926,6 +16037,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly receiveDLCReport: {
@@ -16036,6 +16148,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly buyPhoneNumber: {
@@ -16066,6 +16179,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly releasePhoneNumber: {
@@ -16093,6 +16207,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly attachPhoneNumber: {
@@ -16125,6 +16240,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly searchPhoneNumbers: {
@@ -16169,6 +16285,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listOptOuts: {
@@ -16199,6 +16316,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createOptOut: {
@@ -16228,6 +16346,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly revokeOptOut: {
@@ -16254,6 +16373,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getPhoneSandbox: {
@@ -16279,6 +16399,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setSandboxRecipients: {
@@ -16308,6 +16429,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSipTrunks: {
@@ -16343,6 +16465,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createSipTrunk: {
@@ -16382,6 +16505,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSipTrunk: {
@@ -16419,6 +16543,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSipTrunk: {
@@ -16454,6 +16579,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateSipTrunk: {
@@ -16495,6 +16621,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly addTrunkNumber: {
@@ -16536,6 +16663,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listUseCases: {
@@ -16566,6 +16694,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createUseCase: {
@@ -16595,6 +16724,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getUseCase: {
@@ -16623,6 +16753,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateUseCase: {
@@ -16664,6 +16795,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteUseCase: {
@@ -16699,6 +16831,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listUseCaseReviews: {
@@ -16732,6 +16865,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly submitUseCase: {
@@ -16769,6 +16903,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listPhoneVendors: {
@@ -16793,6 +16928,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAppPolicy: {
@@ -16818,6 +16954,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateAppPolicy: {
@@ -16847,6 +16984,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getOrganizationPolicy: {
@@ -16872,6 +17010,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateOrganizationPolicy: {
@@ -16901,6 +17040,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listRouterConfigs: {
@@ -16926,6 +17066,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createRouterConfig: {
@@ -16964,6 +17105,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getRouterConfig: {
@@ -16993,6 +17135,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateRouterConfig: {
@@ -17035,6 +17178,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteRouterConfig: {
@@ -17062,6 +17206,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly search: {
@@ -17091,6 +17236,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAppSettings: {
@@ -17115,15 +17261,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listLimits: {
@@ -17164,6 +17302,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createLimit: {
@@ -17203,6 +17342,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getLimit: {
@@ -17231,6 +17371,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteLimit: {
@@ -17257,6 +17398,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateLimit: {
@@ -17289,6 +17431,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listLimitGrants: {
@@ -17328,6 +17471,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createLimitGrant: {
@@ -17367,6 +17511,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly revokeLimitGrant: {
@@ -17399,6 +17544,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getLimitUsage: {
@@ -17432,6 +17578,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly resetLimitUsage: {
@@ -17462,6 +17609,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getActivity: {
@@ -17493,6 +17641,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAgentStats: {
@@ -17523,6 +17672,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly runRollup: {
@@ -17552,6 +17702,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSpend: {
@@ -17597,6 +17748,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getTagKeys: {
@@ -17629,6 +17781,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly transcribeRecording: {
@@ -17659,6 +17812,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getTranscription: {
@@ -17688,6 +17842,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly recordSpeech: {
@@ -17718,6 +17873,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSpeech: {
@@ -17747,6 +17903,7 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getTurnStats: {
@@ -17780,6 +17937,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
 }

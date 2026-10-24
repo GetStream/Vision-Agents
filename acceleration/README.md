@@ -524,6 +524,34 @@ which fails closed). The metrics are `router_admission_refresh_errors_total`,
 `router_admission_oldest_read_seconds` and, in `shadow`, `router_admission_would_refuse_total`
 by reason.
 
+Billable work is reserved before it starts, through the metering layer, so a new vendor gets
+it without writing it: `routing.Call` reserves `Meter.Estimate` (a search request, the images
+asked for, a text's segments), an LLM response its prompt and `max_output_tokens` (4,096 when
+unset), renewed every minute while it streams, a TTS utterance its characters, and a stream
+(STT, STS, `routing.Slices`) a lease of one minute of its meters, renewed every 30 s and
+released when it ends. A speech-to-speech session whose lease is refused because its money ran
+out refuses its next turn with the money error and closes; nothing else stops a voice model
+replying. One refused because the money could not be checked (holds unshared, a balance
+unread; `policy.Transient`) refuses that turn and stays open until a renewal lands. A transcription
+keeps running, and an agent's next turn is refused by its LLM's reservation. A reservation is a
+hold under the usage id its row will carry, checked in the order above and answered from
+memory; a refusal asks no vendor and records no row. The row settles it at its cost, and a
+reservation never recorded expires (2 minutes, 90 s for a lease). Holds are shared through
+the deployment's Redis (`ROUTER_REDIS_ADDR`): every 50 ms each router writes what changed to
+one hash per subject (`hold:{<org>}:<subject>`, and `hold:{<org>}:grant:<id>` per grant), and
+reads back what the other routers hold, which every figure subtracts as it does its own; the
+subjects it has nothing to write for are read every second. A shared hold is dropped 10 s after
+the usage service acked its row, by when every router's reads count it, and nothing in a
+router ever writes a total. Once a change has waited 10 s unwritten, work that costs money is
+refused with 503 `spend_check_unavailable` and `Retry-After: 5` until a write lands; free work
+is still served. With no Redis, holds stay in the process and nothing is refused for this.
+The usage alerts loop pages `holds_flush_failing` once `router_holds_unflushed_oldest_seconds`
+is over 10: customers' billable work is being refused, so restore the router's connection to
+`ROUTER_REDIS_ADDR`; the first write that lands clears it.
+The metrics are `router_holds_flushed_total`, `router_holds_flush_errors_total`,
+`router_holds_unflushed_oldest_seconds`, `router_holds_live`, `router_holds_refused_total`
+and `router_holds_per_subject`.
+
 Telephony asks the same admission: buying a number, placing or transferring a call, and every
 text an agent sends or answers on a line. Whatever a phone vendor charges for is billed work,
 so a refusal of money refuses it (402, or 403 `account_suspended`). A call to one of the

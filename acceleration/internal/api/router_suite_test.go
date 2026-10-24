@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
@@ -179,6 +180,9 @@ type RouterSuite struct {
 	limited    bool
 	usageFront *usageFront
 	enforcer   *policy.Enforcer
+	// holds is the Redis the suite's policies share holds through, as the routers of a
+	// deployment do; nil keeps them in the process.
+	holds rueidis.Client
 	// limitsMode is the suite's ROUTER_LIMITS_MODE, for a suite to set before it starts the
 	// harness. Empty is enforce.
 	limitsMode config.LimitsMode
@@ -1341,6 +1345,10 @@ func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
 // a second rather than a router's five, so a limit a test spends is measured within it.
 const suiteFresh = 100 * time.Millisecond
 
+// suiteFlushMaxLag is how long a suite sharing holds lets one wait unshared before billable
+// work is refused, rather than a router's ten seconds.
+const suiteFlushMaxLag = 300 * time.Millisecond
+
 // limitApp gives the suite's app a spend limit of its own, as the limits API writes one.
 func (s *RouterSuite) limitApp(interval usage.Interval, micros int64) store.Limit {
 	limit := store.Limit{
@@ -1353,6 +1361,10 @@ func (s *RouterSuite) limitApp(interval usage.Interval, micros int64) store.Limi
 
 func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
 	settings := policy.Settings{Mode: s.limitsMode, Fresh: suiteFresh, SpendEvery: suiteFresh, SumEvery: suiteFresh}
+	if s.holds != nil {
+		settings.Holds = s.holds
+		settings.FlushEvery, settings.HoldRefresh, settings.FlushMaxLag = 10*time.Millisecond, 50*time.Millisecond, suiteFlushMaxLag
+	}
 	if s.limited {
 		s.shipping = true
 		s.usage = usagetest.Start(s.T(), usagetest.Options{
