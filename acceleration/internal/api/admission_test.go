@@ -437,6 +437,32 @@ func (s *AdmissionSuite) TestASuspendedOrganizationCanNeitherBuyNorDialNorTransf
 	}
 }
 
+func (s *AdmissionSuite) TestACallOrATransferToACountryTheTierDoesNotAllowIsForbidden() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{Channels: map[string]usage.ChannelLimits{
+		dlc.Voice: {Countries: []string{"US", "CA"}},
+	}})
+	transfer := func(to string) (int, string) {
+		return s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer",
+			TransferCallRequest{From: "+15125551234", To: to, SessionId: "session-" + s.utils.uuid()})
+	}
+	var status int
+	var failure string
+	s.Require().Eventually(func() bool {
+		status, failure = transfer("+442079460000")
+		return status == http.StatusForbidden
+	}, 10*time.Second, 50*time.Millisecond, "the organization's limits are read")
+
+	s.Contains(failure, "the default tier is not allowed to reach GB by voice")
+	s.NotContains(failure, "+44", "the refusal does not name the number")
+	status, failure = s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{From: "+15125551234", To: "+442079460000"})
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "not allowed to reach GB")
+	status, failure = transfer("+15125550111")
+	s.NotEqual(http.StatusForbidden, status, "a number of a country the tier allows passes the gate: %s", failure)
+	s.NotEqual(http.StatusPaymentRequired, status, failure)
+}
+
 func (s *AdmissionSuite) TestWithCreditTelephonyGetsPastItsMoney() {
 	s.usage.Credit(s.T(), s.organization(), 10_000_000)
 	s.Require().Eventually(func() bool {

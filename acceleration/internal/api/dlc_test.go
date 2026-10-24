@@ -404,7 +404,7 @@ func (s *DLCSuite) TestTheThirtyFirstMessageOfADayIsRefused() {
 	s.spend("messages", 29)
 	s.NoError(s.gate.Allow(ctx, s.customerID(), dlc.SMS, "+15551110000"))
 
-	s.gate.Sent(ctx, s.customerID())
+	s.gate.Sent(ctx, s.customerID(), dlc.SMS, "+15551110000")
 
 	s.ErrorIs(s.gate.Allow(ctx, s.customerID(), dlc.SMS, "+15551110000"), dlc.ErrRefused)
 }

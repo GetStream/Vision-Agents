@@ -964,9 +964,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
 	}
-	// Every text, call and number a customer pays for asks the same admission as a model.
+	// Every text, call and number a customer pays for asks the same admission as a model, and
+	// is kept to the channel limits of its organization's tier, in the same mode as money.
 	if policies != nil {
-		dlcGate.Charging(policies)
+		dlcGate.Charging(policies).Limiting(settings.Limits.Mode)
 	}
 	telephony, err := buildPhone(settings, vendorConfig, pgStore, phoneRecorder, streamClients, dlcGate, secrets, logger)
 	if err != nil {
