@@ -529,8 +529,10 @@ it without writing it: `routing.Call` reserves `Meter.Estimate` (a search reques
 asked for, a text's segments), an LLM response its prompt and `max_output_tokens` (4,096 when
 unset), renewed every minute while it streams, a TTS utterance its characters, and a stream
 (STT, STS, `routing.Slices`) a lease of one minute of its meters, renewed every 30 s and
-released when it ends. A speech-to-speech session whose lease is refused refuses its next turn
-with the money error and closes; nothing else stops a voice model replying. A transcription
+released when it ends. A speech-to-speech session whose lease is refused because its money ran
+out refuses its next turn with the money error and closes; nothing else stops a voice model
+replying. One refused because the money could not be checked (holds unshared, a balance
+unread; `policy.Transient`) refuses that turn and stays open until a renewal lands. A transcription
 keeps running, and an agent's next turn is refused by its LLM's reservation. A reservation is a
 hold under the usage id its row will carry, checked in the order above and answered from
 memory; a refusal asks no vendor and records no row. The row settles it at its cost, and a
