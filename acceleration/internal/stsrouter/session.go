@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -63,6 +64,9 @@ type Session struct {
 	closeOnce sync.Once
 }
 
+// leaseRenew is how often a conversation's lease is renewed, for three times as long.
+var leaseRenew = routing.LeaseRenew
+
 // stsTokensPerMinute is what a minute of conversation is held at in tokens, half heard and
 // half spoken, beside its seconds and audio.
 const stsTokensPerMinute = 2_000
@@ -100,7 +104,7 @@ func newSession(
 		settled:  map[string]struct{}{},
 		billed:   map[string]struct{}{},
 	}
-	session.lease = routing.StartLease(recorder, config, owner, "sts", session.id, leaseMinute)
+	session.lease = routing.StartLeaseEvery(recorder, config, owner, "sts", session.id, leaseMinute, leaseRenew, 3*leaseRenew)
 	go session.forward()
 	return session
 }
@@ -146,6 +150,9 @@ func (s *Session) SetTools(tools []llm.Tool) error { return s.provider.SetTools(
 
 // Answer returns what a tool produced.
 func (s *Session) Answer(callID string, output string, err error) error {
+	if refused := s.unpaid(); refused != nil {
+		return refused
+	}
 	return s.provider.Answer(callID, output, err)
 }
 
@@ -157,15 +164,19 @@ func (s *Session) Prompt(text string) error {
 	return s.provider.Prompt(text)
 }
 
-// unpaid is why the conversation may not go on: its lease was refused, as its money ran out,
-// and a voice model replies to every turn with nothing else to stop it. The session is closed
-// and every turn after answers the same refusal.
+// unpaid is why the conversation may not take its next turn: its lease was refused, and a voice
+// model replies to every turn with nothing else to stop it. Money that ran out closes the
+// session, and every turn after answers the same refusal. Money that could not be checked (holds
+// not shared, a balance unread) refuses the turn and keeps the session, which takes turns again
+// once a renewal lands.
 func (s *Session) unpaid() error {
 	err := s.lease.Err()
 	if err == nil {
 		return nil
 	}
-	_ = s.Close()
+	if !policy.Transient(err) {
+		_ = s.Close()
+	}
 	return stack.Wrap(err)
 }
 

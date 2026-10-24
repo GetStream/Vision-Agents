@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,7 +25,7 @@ import (
 var ErrSpendCheckUnavailable = errors.New("policy: could not share spend with the other routers; retry shortly")
 
 // errUnshared is the refusal of billable work while holds go unshared.
-var errUnshared = refusedWith(ErrSpendCheckUnavailable, "could not share spend with the other routers; retry shortly")
+var errUnshared = uncheckedWith(ErrSpendCheckUnavailable, "could not share spend with the other routers; retry shortly")
 
 // holdPrefix starts the key of a subject's shared holds, in the same cluster slot as its
 // counters: hold:{<organization>}:<subject>:<ids>.
@@ -35,6 +36,10 @@ const holdPrefix = "hold"
 const (
 	flushTimeout = time.Second
 	flushChunk   = 256
+	// flushChunks is how many chunks one pass sends at once, and flushPassTimeout bounds the
+	// whole pass.
+	flushChunks      = 4
+	flushPassTimeout = 2 * flushTimeout
 )
 
 // reasonUnshared is the refusal of billable work while holds cannot be shared.
@@ -271,38 +276,54 @@ func (m *money) flushPass(ctx context.Context) {
 	for key := range plans {
 		keys = append(keys, key)
 	}
+	// However many chunks a pass has, it gives up by its deadline: a chunk still waiting then
+	// fails at once, and its holds are written by the next pass.
+	ctx, cancelPass := context.WithTimeout(ctx, flushPassTimeout)
+	defer cancelPass()
 	failed := map[string]bool{}
 	answers := map[string]int64{}
 	var firstErr error
+	var mu sync.Mutex
+	var chunks sync.WaitGroup
+	// Chunks go flushChunks at a time, each within flushTimeout and all within flushPassTimeout,
+	// so a Redis that hangs costs a pass at most that, well inside FlushMaxLag.
+	slots := make(chan struct{}, flushChunks)
 	for start := 0; start < len(keys); start += flushChunk {
 		chunk := keys[start:min(start+flushChunk, len(keys))]
-		execs := make([]rueidis.LuaExec, len(chunk))
-		for i, key := range chunk {
-			execs[i] = rueidis.LuaExec{Keys: []string{key}, Args: append([]string{m.instance}, plans[key].args...)}
-		}
-		call, cancel := context.WithTimeout(ctx, flushTimeout)
-		results := holdsScript.ExecMulti(call, m.settings.Holds, execs...)
-		cancel()
-		for i, key := range chunk {
-			var values []int64
-			err := errors.New("policy: the holds script gave no answer")
-			if i < len(results) {
-				values, err = results[i].AsIntSlice()
+		slots <- struct{}{}
+		chunks.Go(func() {
+			defer func() { <-slots }()
+			execs := make([]rueidis.LuaExec, len(chunk))
+			for i, key := range chunk {
+				execs[i] = rueidis.LuaExec{Keys: []string{key}, Args: append([]string{m.instance}, plans[key].args...)}
 			}
-			if err == nil && len(values) != 2 {
-				err = errors.New("policy: the holds script answered " + strconv.Itoa(len(values)) + " values")
-			}
-			if err != nil {
-				failed[key] = true
-				if firstErr == nil {
-					firstErr = err
+			call, cancel := context.WithTimeout(ctx, flushTimeout)
+			results := holdsScript.ExecMulti(call, m.settings.Holds, execs...)
+			cancel()
+			mu.Lock()
+			defer mu.Unlock()
+			for i, key := range chunk {
+				var values []int64
+				err := errors.New("policy: the holds script gave no answer")
+				if i < len(results) {
+					values, err = results[i].AsIntSlice()
 				}
-				continue
+				if err == nil && len(values) != 2 {
+					err = errors.New("policy: the holds script answered " + strconv.Itoa(len(values)) + " values")
+				}
+				if err != nil {
+					failed[key] = true
+					if firstErr == nil {
+						firstErr = err
+					}
+					continue
+				}
+				answers[key] = values[0]
+				holdsPerSubject.Observe(float64(values[1]))
 			}
-			answers[key] = values[0]
-			holdsPerSubject.Observe(float64(values[1]))
-		}
+		})
 	}
+	chunks.Wait()
 	m.landFlush(plans, taken, answers, failed, time.Now())
 	if firstErr != nil {
 		holdsFlushErrors.Inc()

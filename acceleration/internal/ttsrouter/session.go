@@ -24,8 +24,10 @@ type Session struct {
 	logger   *slog.Logger
 
 	events chan tts.Event
-	// forwarded closes once every event the provider sent has been recorded.
+	// forwarded closes once every event the provider sent has been recorded, and stopped once
+	// the session is closed.
 	forwarded chan struct{}
+	stopped   chan struct{}
 
 	mu sync.Mutex
 	// inFlight tracks utterances that have not been settled into a stat row yet.
@@ -84,6 +86,7 @@ func newSession(
 		logger:    logger,
 		events:    make(chan tts.Event, 64),
 		forwarded: make(chan struct{}),
+		stopped:   make(chan struct{}),
 		inFlight:  map[string]*utterance{},
 		sent:      map[string]int64{},
 		reserved:  map[string]uuid.UUID{},
@@ -190,6 +193,7 @@ func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Q
 func (s *Session) Close() error {
 	var err error
 	s.closeOnce.Do(func() {
+		close(s.stopped)
 		err = s.provider.Close()
 		go func() {
 			<-s.forwarded
@@ -212,7 +216,18 @@ func (s *Session) forward() {
 
 	for event := range s.provider.Events() {
 		s.observe(event)
-		s.events <- event
+		select {
+		case s.events <- event:
+			continue
+		default:
+		}
+		// Once the session is closed a caller that stopped reading drops what is left, which
+		// is still recorded, rather than holding the provider's events, and what they settle,
+		// forever.
+		select {
+		case s.events <- event:
+		case <-s.stopped:
+		}
 	}
 }
 

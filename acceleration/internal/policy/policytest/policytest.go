@@ -35,9 +35,9 @@ type Money struct {
 	Writer   *routing.Writer
 }
 
-// Start runs the enforcer over databases named after name, reading money every 50 ms. It skips
-// the test without Postgres.
-func Start(t testing.TB, name string) *Money {
+// Start runs the enforcer over databases named after name, reading money every 50 ms, with the
+// settings changed. It skips the test without Postgres.
+func Start(t testing.TB, name string, change ...func(*policy.Settings)) *Money {
 	t.Helper()
 	dsn := os.Getenv("ROUTER_POSTGRES_DSN")
 	if dsn == "" {
@@ -56,10 +56,14 @@ func Start(t testing.TB, name string) *Money {
 	require.NoError(t, err)
 	client, err := usage.NewClient(usage.ClientOptions{URL: service.URL, Token: service.Token})
 	require.NoError(t, err)
-	enforcer, err := policy.New(configs, policy.Settings{
+	settings := policy.Settings{
 		Usage: client, Fresh: 50 * time.Millisecond, SpendEvery: 20 * time.Millisecond, SumEvery: 50 * time.Millisecond,
 		MaxStale: time.Minute, Idle: time.Minute, PendingTTL: time.Minute,
-	}, discard)
+	}
+	for _, apply := range change {
+		apply(&settings)
+	}
+	enforcer, err := policy.New(configs, settings, discard)
 	require.NoError(t, err)
 	t.Cleanup(enforcer.Close)
 	writer := routing.NewWriter(routing.WriterOptions{Store: opened, Logger: discard, Gate: enforcer})

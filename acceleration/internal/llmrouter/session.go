@@ -96,6 +96,8 @@ func (s *Session) keep(held *reservation) func() {
 			select {
 			case <-done:
 				return
+			case <-s.closing:
+				return
 			case <-limit.C:
 				return
 			case <-ticker.C:
@@ -127,10 +129,13 @@ var errClosed = errors.New("llmrouter: session is closed")
 // Session is a live model attached to one customer. It hands out the provider's streams
 // untouched apart from recording a stat row per response on the way past.
 type Session struct {
-	mu       sync.Mutex
-	closed   bool
-	children map[*Session]struct{}
-	fallback func(context.Context, llm.ResponseParams) (*llm.Stream, error)
+	mu     sync.Mutex
+	closed bool
+	// closing closes with the session, which stops renewing its responses' reservations.
+	closing   chan struct{}
+	closeOnce sync.Once
+	children  map[*Session]struct{}
+	fallback  func(context.Context, llm.ResponseParams) (*llm.Stream, error)
 	// hedge opens a session on another candidate of the same target, and hedgeAfter is how
 	// long a reply may say nothing before it is asked of that one as well, flowHedgeAfter the
 	// same for a flow decision. All are unset on a fallback child, which is only ever asked for
@@ -166,6 +171,7 @@ func newSession(
 		owner:    owner,
 		recorder: recorder,
 		quota:    limiter,
+		closing:  make(chan struct{}),
 	}
 }
 
@@ -282,6 +288,13 @@ func (s *Session) Wrote(response llm.Response) bool {
 
 // Close ends the session, abandoning anything still in flight.
 func (s *Session) Close() error {
+	// No reservation is renewed past the session: a response still settling is held until
+	// its last renewal expires.
+	s.closeOnce.Do(func() {
+		if s.closing != nil {
+			close(s.closing)
+		}
+	})
 	s.mu.Lock()
 	s.closed = true
 	children := make([]*Session, 0, len(s.children))
