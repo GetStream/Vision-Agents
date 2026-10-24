@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { ConfigurationError, Tools, render } from "../src/index.js";
+import { CallNotHeldError, ConfigurationError, ToolCall, Tools, render } from "../src/index.js";
 
 describe("Tools", () => {
   const nothing = new AbortController().signal;
@@ -157,5 +157,103 @@ describe("render", () => {
     looping["self"] = looping;
 
     assert.equal(render(looping), "[object Object]");
+  });
+
+  it("declares a call's policies, and leaves the router's defaults unsaid", () => {
+    const tools = new Tools()
+      .register({
+        name: "book_flight",
+        description: "Book a flight",
+        parameters: { type: "object", properties: { flight_id: { type: "string" } } },
+        approval: { title: "Book flight {flight_id}?" },
+        interruptible: true,
+        timeoutMs: 5000,
+        run: () => "booked",
+      })
+      .register({ name: "lookup", description: "Look it up", run: () => "found" });
+
+    const [booking, lookup] = tools.declared();
+    assert.equal(booking?.interruptible, true);
+    assert.equal(booking?.timeout_ms, 5000);
+    assert.deepEqual(booking?.approval, { title: "Book flight {flight_id}?" });
+    for (const policy of ["interruptible", "timeout_ms", "approval"]) {
+      assert.equal(policy in (lookup ?? {}), false, policy);
+    }
+  });
+
+  it("refuses an approval that names an argument the function does not take", () => {
+    assert.throws(
+      () =>
+        new Tools().register({
+          name: "book_flight",
+          description: "Book a flight",
+          parameters: { type: "object", properties: { flight_id: { type: "string" } } },
+          approval: { title: "Book {flight}?" },
+          run: () => "booked",
+        }),
+      (error: unknown) => error instanceof ConfigurationError && /\{flight\}/.test(error.message),
+    );
+  });
+
+  it("refuses a timeout that is not a duration", () => {
+    assert.throws(
+      () => new Tools().register({ name: "slow", description: "Slow", timeoutMs: -1, run: () => "" }),
+      ConfigurationError,
+    );
+  });
+
+  it("fails and aborts a call that takes longer than its timeout", async () => {
+    let aborted: unknown;
+    const tools = new Tools().register({
+      name: "stuck",
+      description: "Never finishes",
+      timeoutMs: 20,
+      run: (_input, signal) =>
+        new Promise(() => {
+          signal.addEventListener("abort", () => (aborted = signal.reason));
+        }),
+    });
+
+    await assert.rejects(() => tools.call("stuck", "{}", new AbortController().signal), /stuck took longer than 20 ms/);
+    assert.match(String(aborted), /took longer/);
+  });
+
+  it("hands a function the call it runs for, which does nothing without a line", async () => {
+    let seen: ToolCall | undefined;
+    const tools = new Tools().register({
+      name: "whoami",
+      description: "Who asked",
+      run: async (_input, _signal, call) => {
+        seen = call;
+        call.update("checking");
+        call.say("One moment.");
+        return (await call.disallowInterruptions()).aborted ? "stopped" : "kept";
+      },
+    });
+
+    assert.equal(await tools.call("whoami", "{}", new AbortController().signal), "kept");
+    assert.equal(seen?.id, "");
+  });
+
+  it("reports how a call is going on its line, and a call stopped before it was held", async () => {
+    const sent: [string, string, boolean][] = [];
+    const line = (holds: boolean) => ({
+      update: (id: string, text: string, verbatim: boolean) => void sent.push([id, text, verbatim]),
+      hold: async () => holds,
+    });
+    const call = new ToolCall({ id: "call_1" }, line(true));
+
+    call.update("checking");
+    call.say("One moment.");
+    const kept = await call.disallowInterruptions();
+    const stopped = await new ToolCall({ id: "call_2" }, line(false)).disallowInterruptions();
+
+    assert.deepEqual(sent, [
+      ["call_1", "checking", false],
+      ["call_1", "One moment.", true],
+    ]);
+    assert.equal(kept.aborted, false);
+    assert.equal(stopped.aborted, true);
+    assert.ok(stopped.reason instanceof CallNotHeldError);
   });
 });

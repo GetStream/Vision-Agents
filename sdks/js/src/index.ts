@@ -88,7 +88,19 @@ export {
   type Message,
 } from "./socket.js";
 
-export { Tools, render, type ParameterSchema, type Tool, type ToolApproval } from "./tools.js";
+export {
+  CallNotHeldError,
+  ToolCall,
+  Tools,
+  render,
+  type ParameterSchema,
+  type Tool,
+  type ToolApproval,
+  type ToolCallFields,
+  type ToolConversation,
+  type ToolLine,
+  type ToolUser,
+} from "./tools.js";
 
 export { LiveReasoning } from "./reasoning.js";
 
