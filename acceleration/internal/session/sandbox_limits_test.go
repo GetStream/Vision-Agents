@@ -58,6 +58,27 @@ func (s *RuntimeSuite) TestASessionsSandboxBeyondItsTierIsNotMade() {
 	s.Empty(server.Created())
 }
 
+func (s *RuntimeSuite) TestASessionsSandboxIsMadeWhileItsLimitsAreSlowToBeRead() {
+	s.daytona()
+	s.manages()
+	unanswered, err := usage.NewClient(usage.ClientOptions{URL: "http://127.0.0.1:1", Token: "none"})
+	s.Require().NoError(err)
+	money := policytest.Start(s.T(), "session_sandbox", func(settings *policy.Settings) { settings.Usage = unanswered })
+	s.manager.options.SandboxLimits = money.Enforcer
+	stamp := uuid.NewString()
+	owner := routing.Owner{CustomerID: "app-" + stamp, Attribution: routing.Attribution{OrganizationID: "org-" + stamp}}
+	s.Require().NoError(money.Store.JoinOrganization(s.ctx, owner.CustomerID, owner.Attribution.OrganizationID))
+	money.Enforcer.Join(owner.CustomerID, owner.Attribution.OrganizationID, usage.DefaultTier)
+
+	box, err := s.manager.box(s.ctx, sandboxSpec(owner, sandbox.Config{}), nil)
+
+	s.Require().NoError(err)
+	s.Require().NotNil(box, "a usage service slow to answer after a restart leaves the session its sandbox")
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().NoError(box.Close())
+}
+
 func (s *RuntimeSuite) TestASessionsSandboxRunsOnlyInAFreeSlot() {
 	s.daytona()
 	s.manages()

@@ -95,8 +95,9 @@ func networkWords(network string) string {
 // to the network than the organization the owner's work bills to may have. A size the config
 // leaves at zero is the provider's default, which every limit is taken to allow. It answers from
 // the organization's standing in memory; one never read is waited on for at most FirstRead,
-// then refused only if its tier fails closed, as a refusal that passes once it can be checked
-// (Transient). An owner in no organization, a router with no usage service or limits off,
+// then allowed, as admission allows it, until it has gone unread for MaxStale: from then a tier
+// that fails closed refuses it, as a refusal that passes once it can be checked (Transient).
+// An owner in no organization, a router with no usage service or limits off,
 // and an organization whose limits set no sandbox, are allowed anything; in shadow a refusal is
 // logged as would refuse and allowed.
 func (e *Enforcer) SandboxAllowed(ctx context.Context, owner routing.Owner, ask SandboxAsk) error {
@@ -169,13 +170,12 @@ func (e *Enforcer) sandboxLimits(ctx context.Context, owner routing.Owner, ask S
 	found := sandboxFound{organization: organization}
 	standing, read := e.money.standingOf(ctx, organization)
 	if !read {
+		// As admission does: a standing not read yet allows the sandbox, unless it has gone
+		// unread for MaxStale and the tier fails closed.
 		m := &e.money
 		m.mu.Lock()
 		acct := m.accounts[organization]
-		if acct == nil {
-			acct = &account{}
-		}
-		closed := m.failsClosed(acct, organization)
+		closed := acct != nil && time.Since(acct.wanted) > m.settings.MaxStale && m.failsClosed(acct, organization)
 		m.mu.Unlock()
 		if !closed {
 			return found, nil
@@ -290,30 +290,31 @@ func (s *sandboxSlots) call(ctx context.Context, id, verb string, args ...string
 }
 
 // Take holds a slot for one more of the organization's sandboxes, unless most are running
-// already. In shadow it is held whatever the count, which is logged as would refuse. A Redis
-// that cannot be reached holds nothing and refuses nothing.
-func (s *sandboxSlots) Take(ctx context.Context) (func(), error) {
+// already. One the provider runs already, and in shadow any, is held whatever the count; in
+// shadow one past it is logged as would refuse. A Redis that cannot be reached holds nothing
+// and refuses nothing, and the slot is taken again the next time the sandbox is asked to run.
+func (s *sandboxSlots) Take(ctx context.Context, running bool) (func(), error) {
 	e := s.enforcer
 	id := uuid.NewString()
 	force := "0"
-	if e.settings.Mode == config.LimitsShadow {
+	if running || e.settings.Mode == config.LimitsShadow {
 		force = "1"
 	}
-	held, running, err := s.call(ctx, id, "take", strconv.Itoa(s.most), force)
+	held, others, err := s.call(ctx, id, "take", strconv.Itoa(s.most), force)
 	if err != nil {
-		if e.money.refusals.due(s.organization+"\x00sandbox_slots", logEvery) {
+		if ctx.Err() == nil && e.money.refusals.due(s.organization+"\x00sandbox_slots", logEvery) {
 			e.logger.Error("could not count the organization's running sandboxes, so this one runs whatever its limit",
 				append(who(s.organization), "error", err)...)
 		}
-		return func() {}, nil
+		return nil, nil
 	}
-	if running >= s.most {
-		if refusal := e.sandboxAnswer(s.organization, s.app, s.refusal(running)); refusal != nil {
+	if !running && others >= s.most {
+		if refusal := e.sandboxAnswer(s.organization, s.app, s.refusal(others)); refusal != nil {
 			return nil, refusal
 		}
 	}
 	if !held {
-		return func() {}, nil
+		return nil, nil
 	}
 	stop := make(chan struct{})
 	done := make(chan struct{})

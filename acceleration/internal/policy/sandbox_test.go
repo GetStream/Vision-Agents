@@ -3,6 +3,7 @@
 package policy
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -184,17 +185,50 @@ func (s *PolicySuite) TestShadowAllowsASandboxItWouldRefuseAndSaysSo() {
 	s.Contains(b.logs.String(), "reason="+SandboxLimitCode)
 }
 
-func (s *PolicySuite) TestUnreadSandboxLimitsAreRefusedForATierThatFailsClosed() {
+func (s *PolicySuite) TestOffChecksNoSandboxAndCountsNone() {
+	_, client := s.redis()
+	b := s.sandboxed(sharingSlots(client), func(settings *Settings) { settings.Mode = config.LimitsOff })
+	tier := s.limited(b.tiers, usage.NetworkNone)
+	b.Join(s.app, s.org, tier.Name)
+
+	slots, err := b.Sandbox(s.ctx, ownerOf(s.app), SandboxAsk{Config: sandbox.Config{Network: true, CPU: 64}})
+
+	s.NoError(err)
+	s.Nil(slots, "no slots, so nothing bounds how many run at once")
+}
+
+// unread is an enforcer whose usage service never answers, as one slow to after a restart, with
+// the organization on the default tier, which fails closed.
+func (s *PolicySuite) unread(change ...func(*Settings)) *Enforcer {
 	unreachable, err := usage.NewClient(usage.ClientOptions{URL: "http://127.0.0.1:1", Token: "none"})
 	s.Require().NoError(err)
 	configs, err := appconfig.New(appconfig.Options{Store: s.store})
 	s.Require().NoError(err)
-	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
+	enforcer := s.newEnforcer(configs, nil, append([]func(*Settings){func(settings *Settings) {
 		settings.Usage, settings.FirstRead = unreachable, 20*time.Millisecond
-	})
+	}}, change...)...)
 	enforcer.Join(s.app, s.org, usage.DefaultTier)
+	return enforcer
+}
 
-	err = enforcer.SandboxAllowed(s.ctx, ownerOf(s.app), SandboxAsk{})
+func (s *PolicySuite) TestASlowFirstReadOfTheLimitsAllowsTheSandbox() {
+	enforcer := s.unread()
+
+	slots, err := enforcer.Sandbox(s.ctx, ownerOf(s.app), SandboxAsk{Config: sandbox.Config{Network: true}})
+
+	s.NoError(err, "unread for less than MaxStale, as admission allows it")
+	s.Nil(slots, "nothing to count against until the limits are read")
+}
+
+func (s *PolicySuite) TestSandboxLimitsUnreadForMaxStaleAreRefusedForATierThatFailsClosed() {
+	enforcer := s.unread(func(settings *Settings) { settings.MaxStale = 100 * time.Millisecond })
+	s.Require().NoError(enforcer.SandboxAllowed(s.ctx, ownerOf(s.app), SandboxAsk{}), "not yet unread for MaxStale")
+
+	var err error
+	s.eventually(func() bool {
+		err = enforcer.SandboxAllowed(s.ctx, ownerOf(s.app), SandboxAsk{})
+		return err != nil
+	}, 5*time.Second, 20*time.Millisecond, "refused once unread for MaxStale")
 
 	s.Require().ErrorIs(err, ErrSandboxLimit, "no standing, and the default tier fails closed")
 	s.True(Transient(err), "it passes once the limits can be read")
@@ -225,17 +259,17 @@ func (s *PolicySuite) TestOneSandboxMoreThanTheTierRunsAtOnceIsRefusedOnEveryRou
 
 	var releases []func()
 	for range most {
-		release, err := here.Take(s.ctx)
+		release, err := here.Take(s.ctx, false)
 		s.Require().NoError(err)
 		releases = append(releases, release)
 	}
-	_, err := there.Take(s.ctx)
+	_, err := there.Take(s.ctx, false)
 	s.Require().ErrorIs(err, ErrSandboxLimit, "another router counts this one's")
 	s.Contains(err.Error(), "at a time")
 
 	releases[0]()
 	releases[0]()
-	release, err := there.Take(s.ctx)
+	release, err := there.Take(s.ctx, false)
 	s.Require().NoError(err, "a slot given back, once, is free")
 	release()
 	for _, release := range releases[1:] {
@@ -252,11 +286,11 @@ func (s *PolicySuite) TestADeadRoutersSandboxSlotLapses() {
 	s.Require().NoError(err)
 	s.Require().True(held, "taken by a router that then died, renewing nothing")
 
-	_, err = slots.Take(s.ctx)
+	_, err = slots.Take(s.ctx, false)
 	s.Require().ErrorIs(err, ErrSandboxLimit)
 
 	s.eventually(func() bool {
-		release, err := slots.Take(s.ctx)
+		release, err := slots.Take(s.ctx, false)
 		if err != nil {
 			return false
 		}
@@ -270,13 +304,13 @@ func (s *PolicySuite) TestARunningSandboxsSlotIsRenewed() {
 	b := s.sandboxed(sharingSlots(client))
 	slots := &sandboxSlots{enforcer: b.Enforcer, organization: s.org, app: s.app, most: 1, lease: 300 * time.Millisecond,
 		refusal: func(int) error { return ErrSandboxLimit }}
-	release, err := slots.Take(s.ctx)
+	release, err := slots.Take(s.ctx, false)
 	s.Require().NoError(err)
 	defer release()
 
 	time.Sleep(time.Second)
 
-	_, err = slots.Take(s.ctx)
+	_, err = slots.Take(s.ctx, false)
 	s.ErrorIs(err, ErrSandboxLimit, "held past its lease while its sandbox runs")
 }
 
@@ -288,9 +322,54 @@ func (s *PolicySuite) TestASandboxRunsWhenTheSlotsCannotBeCounted() {
 	slots := s.slots(b)
 	proxy.stop()
 
-	release, err := slots.Take(s.ctx)
+	release, err := slots.Take(s.ctx, false)
 
 	s.NoError(err, "Redis down fails open")
-	release()
+	s.Nil(release, "no slot held, so the sandbox asks for one again")
 	s.Contains(b.logs.String(), "could not count the organization's running sandboxes")
+
+	proxy.down.Store(false)
+	s.eventually(func() bool {
+		release, err = slots.Take(s.ctx, false)
+		return err == nil && release != nil
+	}, 5*time.Second, 50*time.Millisecond, "a slot is held once Redis is back")
+	release()
+}
+
+func (s *PolicySuite) TestASandboxCanceledWhileCountingLogsNothing() {
+	proxy, client := s.redis()
+	b := s.sandboxed(sharingSlots(client))
+	tier := s.limited(b.tiers, usage.NetworkNone)
+	s.on(b.Enforcer, tier.Name)
+	slots := s.slots(b)
+	proxy.stop()
+	canceled, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	release, err := slots.Take(canceled, false)
+
+	s.NoError(err)
+	s.Nil(release)
+	s.NotContains(b.logs.String(), "could not count the organization's running sandboxes", "a session gone is not Redis failing")
+}
+
+func (s *PolicySuite) TestASandboxRunningAlreadyIsGivenASlotPastTheCount() {
+	_, client := s.redis()
+	b := s.sandboxed(sharingSlots(client))
+	slots := &sandboxSlots{enforcer: b.Enforcer, organization: s.org, app: s.app, most: 1, lease: time.Minute,
+		refusal: func(int) error { return ErrSandboxLimit }}
+	first, err := slots.Take(s.ctx, false)
+	s.Require().NoError(err)
+
+	running, err := slots.Take(s.ctx, true)
+
+	s.Require().NoError(err, "refusing it would stop nothing")
+	s.Require().NotNil(running)
+	first()
+	_, err = slots.Take(s.ctx, false)
+	s.Require().ErrorIs(err, ErrSandboxLimit, "the running one is counted")
+	running()
+	release, err := slots.Take(s.ctx, false)
+	s.Require().NoError(err)
+	release()
 }
