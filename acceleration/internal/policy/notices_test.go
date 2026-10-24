@@ -132,6 +132,15 @@ func (s *PolicySuite) TestTheCustomersThresholdWarns() {
 	s.EqualValues(20_000_000, s.notices(s.org)[0].ThresholdMicros)
 }
 
+func (s *PolicySuite) TestAnOrganizationNeverGrantedCreditIsNotWarned() {
+	enforcer := s.billed()
+	s.streamDestination(s.app)
+	enforcer.Join(s.app, s.org, usage.DefaultTier)
+	s.read(enforcer.Enforcer, s.org)
+
+	s.never(func() bool { return len(s.notices(s.org)) > 0 }, 10*quick.Fresh, 10*time.Millisecond, "nothing ran out")
+}
+
 func (s *PolicySuite) TestOffSendsNothing() {
 	enforcer := s.billed(func(settings *Settings) { settings.Mode = config.LimitsOff })
 	s.streamDestination(s.app)

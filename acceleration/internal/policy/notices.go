@@ -33,9 +33,10 @@ type notice struct {
 // what it has to spend is at or below its threshold, balance_exhausted at or below nothing, as
 // the answers' X-Stream-Balance-Warning says. A warning of a kind already written for what the
 // organization has been granted is not due again: the next one waits for a top-up or a grant.
-// Only an organization the usage service bills, with a standing read, is warned.
+// Only an organization the usage service bills, with a standing read, is warned, and only one
+// that was ever granted credit: one that never had any has not run out of it.
 func (m *money) noticeDue(key string, acct *account) (notice, bool) {
-	if !billed(key) || m.settings.Usage == nil || acct.read.IsZero() {
+	if !billed(key) || m.settings.Usage == nil || acct.read.IsZero() || acct.standing.GrantedMicros <= 0 {
 		return notice{}, false
 	}
 	threshold := acct.standing.Limits.LowBalanceMicros
