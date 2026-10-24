@@ -63,6 +63,14 @@ final class Tools
     }
 
     /**
+     * Whether a tool is registered under this name.
+     */
+    public function has(string $name): bool
+    {
+        return isset($this->tools[$name]);
+    }
+
+    /**
      * Runs one tool with the arguments the model sent, which are a JSON string on the wire.
      *
      * @throws ConfigurationException when there is no tool by that name or the arguments are not JSON
