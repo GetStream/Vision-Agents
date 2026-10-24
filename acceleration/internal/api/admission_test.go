@@ -10,12 +10,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -176,18 +179,84 @@ func (s *AdmissionSuite) TestASuspendedAccountIsForbidden() {
 	}, 10*time.Second, 50*time.Millisecond, "restored, it is admitted again")
 }
 
-func (s *AdmissionSuite) TestASpentBudgetIsAPaymentRequiredNotAServerError() {
+func (s *AdmissionSuite) TestASpentLimitIsAPaymentRequiredNotAServerError() {
 	s.usage.Credit(s.T(), s.organization(), 10_000_000)
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/app",
-		map[string]any{"budget": map[string]any{"limit_micros": 10_000, "interval": "daily"}}, nil))
+	s.limitApp(usage.Daily, 10_000)
 
-	// Searches cost $0.005 each, so the second spends the budget.
+	// Searches cost $0.005 each, so the second spends the limit.
 	status, failure := s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
 
-	s.Equal(http.StatusPaymentRequired, status, "a spent budget was a 500")
+	s.Equal(http.StatusPaymentRequired, status, "a spent limit was a 500")
 	s.Equal(ErrorTypePaymentRequired, failure.Type)
 	s.Equal(codeSpendLimitReached, failure.Code)
-	s.Contains(failure.Message, "the app's daily budget of $0.01 is spent; it resets at")
+	s.Contains(failure.Message, "the daily limit of $0.01 on app "+s.customerID()+" is spent; it resets at")
+}
+
+func (s *AdmissionSuite) TestAUsersSpentLimitIsTooManyRequestsWithRetryAfter() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	limit := store.Limit{
+		Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: s.organization(), AppID: s.customerID(),
+		Interval: usage.Daily, LimitMicros: 1, UpdatedBy: "test",
+	}
+	s.Require().NoError(s.store.CreateLimit(s.T().Context(), &limit, store.LimitAudit{CustomerID: s.customerID(), Source: store.AuditSourceAPI}))
+	spender := s.utils.uuid()
+	s.usage.Spend(s.T(), s.organization(), 1_000, func(event *usage.Event) { event.AppID, event.UserID = s.customerID(), spender })
+	asUser := s.signedIn(jwt.MapClaims{"user_id": spender}, auth.AuthTypeJWT, user, spender)
+
+	var response *http.Response
+	s.Require().Eventually(func() bool {
+		response = asUser.raw(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+		if response.StatusCode != http.StatusTooManyRequests {
+			_ = response.Body.Close()
+			return false
+		}
+		return true
+	}, 10*time.Second, 50*time.Millisecond, "refused once the user's spend is read")
+	defer response.Body.Close() //nolint:errcheck // a read-only body
+
+	var answered ErrorResponse
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&answered))
+	s.Equal(codeUserLimitReached, answered.Error.Code)
+	s.Equal(ErrorTypeRateLimited, answered.Error.Type)
+	s.Contains(answered.Error.Message, "is spent for user "+spender)
+	retry, err := strconv.Atoi(response.Header.Get("Retry-After"))
+	s.Require().NoError(err)
+	s.Positive(retry)
+	s.LessOrEqual(retry, 86_400, "the day's window ends within a day")
+	another := s.utils.uuid()
+	status, _ := s.signedIn(jwt.MapClaims{"user_id": another}, auth.AuthTypeJWT, user, another).
+		call(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+	s.NotEqual(http.StatusTooManyRequests, status, "another user of the app spent nothing")
+}
+
+func (s *AdmissionSuite) TestAUserSpentForTheDayAndTheMonthRetriesAfterTheMonth() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	for _, interval := range []usage.Interval{usage.Daily, usage.Monthly} {
+		limit := store.Limit{
+			Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: s.organization(), AppID: s.customerID(),
+			Interval: interval, LimitMicros: 1, UpdatedBy: "test",
+		}
+		s.Require().NoError(s.store.CreateLimit(s.T().Context(), &limit, store.LimitAudit{CustomerID: s.customerID(), Source: store.AuditSourceAPI}))
+	}
+	spender := s.utils.uuid()
+	s.usage.Spend(s.T(), s.organization(), 1_000, func(event *usage.Event) { event.AppID, event.UserID = s.customerID(), spender })
+	asUser := s.signedIn(jwt.MapClaims{"user_id": spender}, auth.AuthTypeJWT, user, spender)
+
+	var response *http.Response
+	s.Require().Eventually(func() bool {
+		response = asUser.raw(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+		if response.StatusCode != http.StatusTooManyRequests {
+			_ = response.Body.Close()
+			return false
+		}
+		return true
+	}, 10*time.Second, 50*time.Millisecond, "refused once the user's spend is read")
+	defer response.Body.Close() //nolint:errcheck // a read-only body
+
+	retry, err := strconv.Atoi(response.Header.Get("Retry-After"))
+	s.Require().NoError(err)
+	_, monthEnd := usage.Window(usage.Monthly, time.Now())
+	s.InDelta(time.Until(monthEnd).Seconds(), retry, 5, "tomorrow the month's limit still refuses, so the month's end")
 }
 
 func (s *AdmissionSuite) TestTheSpendHardLimitIsAPaymentRequired() {
@@ -513,7 +582,9 @@ func (s *AdmissionSuite) TestAMoneyRefusalIsTheCodeNotTheText() {
 	s.False(ok, "a message that reads like one is not one")
 	_, ok = moneyError(nil)
 	s.False(ok)
-	s.True(strings.HasPrefix(refusedRequest(errors.New("routing: unknown target")).Code, "invalid_request"))
+	var answer APIError
+	s.Require().True(errors.As(refusedRequest(errors.New("routing: unknown target")), &answer))
+	s.True(strings.HasPrefix(answer.Code, "invalid_request"))
 }
 
 func (s *AdmissionSuite) TestAScheduledDeliveryRefusedForMoneyIsRecordedUnderItsCode() {
@@ -526,7 +597,7 @@ func (s *AdmissionSuite) TestAScheduledDeliveryRefusedForMoneyIsRecordedUnderIts
 }
 
 func (s *AdmissionSuite) TestThePolicysCodesAreTheAPIs() {
-	for _, refusal := range []error{policy.ErrSuspended, policy.ErrNoCredits, policy.ErrSystemLimit, policy.ErrBudgetSpent} {
+	for _, refusal := range []error{policy.ErrSuspended, policy.ErrNoCredits, policy.ErrSystemLimit, policy.ErrBudgetSpent, policy.ErrUserLimit} {
 		answer, ok := moneyError(refusal)
 		s.Require().True(ok)
 		s.Equal(answer.Code, policy.Code(refusal), "a campaign records the code the API answers")

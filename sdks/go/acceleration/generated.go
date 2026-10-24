@@ -297,30 +297,6 @@ func (e AuthorizationKind) Valid() bool {
 	}
 }
 
-// Defines values for BudgetInterval.
-const (
-	BudgetIntervalDaily   BudgetInterval = "daily"
-	BudgetIntervalHourly  BudgetInterval = "hourly"
-	BudgetIntervalMonthly BudgetInterval = "monthly"
-	BudgetIntervalWeekly  BudgetInterval = "weekly"
-)
-
-// Valid indicates whether the value is a known member of the BudgetInterval enum.
-func (e BudgetInterval) Valid() bool {
-	switch e {
-	case BudgetIntervalDaily:
-		return true
-	case BudgetIntervalHourly:
-		return true
-	case BudgetIntervalMonthly:
-		return true
-	case BudgetIntervalWeekly:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for BusinessProfileLegalEntityType.
 const (
 	BusinessProfileLegalEntityTypeCorporation    BusinessProfileLegalEntityType = "corporation"
@@ -3296,26 +3272,6 @@ type AvailableNumber struct {
 	Vendor string `json:"vendor"`
 }
 
-// Budget A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
-type Budget struct {
-	// Interval How often a budget resets. A week starts on Monday.
-	Interval BudgetInterval `json:"interval"`
-
-	// LimitMicros The cap, in millionths of a dollar.
-	//
-	// Example: 100000000
-	LimitMicros int64 `json:"limit_micros"`
-
-	// ResetsAt When the current interval ends.
-	ResetsAt *time.Time `json:"resets_at,omitempty"`
-
-	// SpentMicros What has been spent in the current interval.
-	SpentMicros *int64 `json:"spent_micros,omitempty"`
-}
-
-// BudgetInterval How often a budget resets. A week starts on Monday.
-type BudgetInterval string
-
 // BusinessProfile Who the app is, and the brand a vendor registered it as.
 type BusinessProfile struct {
 	AuthorizedContactEmail     *string `json:"authorized_contact_email,omitempty"`
@@ -5023,7 +4979,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: the app's or the organization's budget is spent, and the message says which and when it resets, so retrying before then is refused again), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -5971,15 +5927,16 @@ type PluginWithOptions struct {
 	User *bool `json:"user,omitempty"`
 }
 
-// Policy What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
+// Policy What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits.
 type Policy struct {
 	// AllowedModels The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one.
 	//
 	// Example: ["deepseek/DeepSeek-V4-Flash-0731"]
 	AllowedModels *[]string `json:"allowed_models,omitempty"`
 
-	// Budget A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
-	Budget *Budget `json:"budget,omitempty"`
+	// Budget Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400 budget_moved, and none is read back.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Budget *map[string]interface{} `json:"budget,omitempty"`
 
 	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
@@ -12160,7 +12117,7 @@ type ClientInterface interface {
 
 	// GetAppPolicy The calling app's policy
 	//
-	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 	//
 	// Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
 	GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -17494,7 +17451,7 @@ func (c *Client) ListPhoneVendors(ctx context.Context, reqEditors ...RequestEdit
 
 // GetAppPolicy The calling app's policy
 //
-// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 //
 // Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
 func (c *Client) GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -31122,7 +31079,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetAppPolicyWithResponse The calling app's policy
 	//
-	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -53401,7 +53358,7 @@ func (c *ClientWithResponses) ListPhoneVendorsWithResponse(ctx context.Context, 
 
 // GetAppPolicyWithResponse The calling app's policy
 //
-// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 //
 // Returns a wrapper object for the known response body format(s).
 //

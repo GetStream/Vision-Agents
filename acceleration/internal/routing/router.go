@@ -134,9 +134,10 @@ var ErrModelNotAllowed = errors.New("routing: your policy does not allow this mo
 // Gate is what an organization's and an app's policies say about a customer's request
 // before anything is routed. Admit refuses a customer who may do no work at all, and
 // otherwise returns what every request of theirs is held to on top of its own, money
-// included: Admission.Spend refuses only the work that costs something.
+// included: Admission.Spend refuses only the work that costs something. The owner's key, user
+// and categories are what the customer's limits on them are checked against.
 type Gate interface {
-	Admit(ctx context.Context, customerID string) (Admission, error)
+	Admit(ctx context.Context, owner Owner) (Admission, error)
 }
 
 // Spender is a Gate that is told what a unit of work cost as soon as it is recorded, before
@@ -509,7 +510,7 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 		return ProviderConfig{}, err
 	}
 
-	admission, err := r.Admit(ctx, request.CustomerID)
+	admission, err := r.Admit(ctx, request.Owner())
 	if err != nil {
 		return ProviderConfig{}, err
 	}
@@ -628,12 +629,12 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 
 // Admit asks the customer's policies whether they may spend anything, and what their
 // requests are held to. A modality whose session serves many units of work asks it again
-// before each one, since a budget can run out mid-session.
-func (r *Router[P]) Admit(ctx context.Context, customerID string) (Admission, error) {
+// before each one, since a spend limit can run out mid-session.
+func (r *Router[P]) Admit(ctx context.Context, owner Owner) (Admission, error) {
 	if r.gate == nil {
 		return Admission{}, nil
 	}
-	return r.gate.Admit(ctx, customerID)
+	return r.gate.Admit(ctx, owner)
 }
 
 // Candidates is where a request may go, best first: a priority list where one was given,

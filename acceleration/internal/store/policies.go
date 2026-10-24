@@ -23,58 +23,12 @@ const (
 	ScopeApp PolicyScope = "app"
 )
 
-// BudgetInterval is how often a spend cap resets. Every interval starts on a UTC boundary,
-// so a new interval is a new window and nothing has to be reset.
-type BudgetInterval string
-
-const (
-	BudgetHourly  BudgetInterval = "hourly"
-	BudgetDaily   BudgetInterval = "daily"
-	BudgetWeekly  BudgetInterval = "weekly"
-	BudgetMonthly BudgetInterval = "monthly"
-)
-
-// Valid reports whether the interval is one a budget can reset on.
-func (i BudgetInterval) Valid() bool {
-	switch i {
-	case BudgetHourly, BudgetDaily, BudgetWeekly, BudgetMonthly:
-		return true
-	}
-	return false
-}
-
-// Window returns the interval containing now: where it started and where the next one
-// starts. A week starts on Monday.
-func (i BudgetInterval) Window(now time.Time) (start, end time.Time) {
-	now = now.UTC()
-	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	switch i {
-	case BudgetHourly:
-		start = now.Truncate(time.Hour)
-		return start, start.Add(time.Hour)
-	case BudgetWeekly:
-		start = day.AddDate(0, 0, -((int(day.Weekday()) + 6) % 7))
-		return start, start.AddDate(0, 0, 7)
-	case BudgetMonthly:
-		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		return start, start.AddDate(0, 1, 0)
-	default:
-		return day, day.AddDate(0, 0, 1)
-	}
-}
-
-// Budget caps what a scope may spend in one interval.
-type Budget struct {
-	LimitMicros int64          `json:"limit_micros"`
-	Interval    BudgetInterval `json:"interval"`
-}
-
-// PolicyDocument is what an organization or an app has decided.
+// PolicyDocument is what an organization or an app has decided. Spend limits are not here:
+// they are rows of their own (Limit), at every level.
 //
 // Every field is optional, and absent means "no opinion" rather than "off": an app that
 // says nothing about training inherits whatever its organization said.
 type PolicyDocument struct {
-	Budget *Budget `json:"budget,omitempty"`
 	// Quota is what one end user of the app may spend in a UTC day, on an app's document
 	// only.
 	Quota *Quota `json:"quota,omitempty"`
@@ -269,26 +223,6 @@ func (s *Store) SpendSince(ctx context.Context, customerID string, since time.Ti
 	spent, err := spendOf(ctx, s, []string{customerID}, since)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: spend since: %w", err))
-	}
-	return spent, nil
-}
-
-// OrganizationSpendSince returns what every app seen under an organization has spent since
-// a moment.
-func (s *Store) OrganizationSpendSince(ctx context.Context, organizationID string, since time.Time) (int64, error) {
-	var apps []string
-	err := s.db.NewSelect().Model((*AppOrganization)(nil)).
-		Column("app_id").Where("organization_id = ?", organizationID).
-		Scan(ctx, &apps)
-	if err != nil {
-		return 0, stack.Wrap(fmt.Errorf("store: organization spend since: %w", err))
-	}
-	if len(apps) == 0 {
-		return 0, nil
-	}
-	spent, err := spendOf(ctx, s, apps, since)
-	if err != nil {
-		return 0, stack.Wrap(fmt.Errorf("store: organization spend since: %w", err))
 	}
 	return spent, nil
 }

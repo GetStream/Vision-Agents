@@ -380,7 +380,7 @@ type spending struct {
 	owner Owner
 }
 
-func (g *spending) Admit(context.Context, string) (Admission, error) { return Admission{}, nil }
+func (g *spending) Admit(context.Context, Owner) (Admission, error) { return Admission{}, nil }
 
 func (g *spending) Spent(owner Owner, usageID uuid.UUID, micros int64) {
 	g.mu.Lock()

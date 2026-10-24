@@ -483,6 +483,21 @@ func (s *ConfigSuite) TestAUsageTokenWithoutTheServiceIsAllowed() {
 	s.Empty(settings.Usage.URL)
 }
 
+func (s *ConfigSuite) TestTheUsageServicesRedisNeedsTheService() {
+	s.T().Setenv("ROUTER_USAGE_REDIS_URL", "redis://redis:6379")
+
+	_, _, err := Load("")
+
+	s.Require().ErrorContains(err, "ROUTER_USAGE_REDIS_URL")
+	s.ErrorContains(err, "ROUTER_USAGE_URL")
+
+	s.T().Setenv("ROUTER_USAGE_URL", "http://usage:8070")
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "token")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("redis://redis:6379", settings.Usage.RedisURL)
+}
+
 func (s *ConfigSuite) TestTheUsageServiceIsReadAndExported() {
 	path := filepath.Join(s.T().TempDir(), "router.yaml")
 	s.Require().NoError(os.WriteFile(path, []byte("usage:\n  url: http://usage:8070\n  token: from-the-file\n"), 0o600))

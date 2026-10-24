@@ -34,7 +34,7 @@ func (s *StoreSuite) TestAScopeNobodyWroteAPolicyForHasTheEmptyOne() {
 func (s *StoreSuite) TestSavingAPolicyReplacesWhatWasThere() {
 	no, yes := false, true
 	s.Require().NoError(s.store.SavePolicy(s.ctx, ScopeOrganization, "org-1", PolicyDocument{
-		Budget:          &Budget{LimitMicros: 5_000_000, Interval: BudgetDaily},
+		Tags:            map[string]string{"team": "a"},
 		DataPolicy:      options.DataPolicy{AllowTraining: &no, Retention: "30d"},
 		PromptInjection: &yes,
 	}))
@@ -44,7 +44,7 @@ func (s *StoreSuite) TestSavingAPolicyReplacesWhatWasThere() {
 
 	document, err := s.store.Policy(s.ctx, ScopeOrganization, "org-1")
 	s.Require().NoError(err)
-	s.Nil(document.Budget)
+	s.Nil(document.Tags)
 	s.False(document.DataPolicy.Asks())
 	s.Require().NotNil(document.PromptInjection)
 	s.False(*document.PromptInjection)
@@ -122,18 +122,4 @@ func (s *StoreSuite) TestSpendSinceCountsOnlyTheCustomerAndTheWindow() {
 
 	s.Require().NoError(err)
 	s.Equal(int64(1_000_000), spent)
-}
-
-func (s *StoreSuite) TestAnOrganizationSpendsWhatEveryAppSeenUnderItSpent() {
-	s.Require().NoError(s.store.JoinOrganization(s.ctx, "app-1", "org-1"))
-	s.Require().NoError(s.store.JoinOrganization(s.ctx, "app-2", "org-1"))
-	s.Require().NoError(s.store.JoinOrganization(s.ctx, "app-3", "org-2"))
-	s.spend("app-1", 1_000_000, 10)
-	s.spend("app-2", 2_000_000, 10)
-	s.spend("app-3", 4_000_000, 10)
-
-	spent, err := s.store.OrganizationSpendSince(s.ctx, "org-1", s.base.Add(-time.Hour))
-
-	s.Require().NoError(err)
-	s.Equal(int64(3_000_000), spent)
 }

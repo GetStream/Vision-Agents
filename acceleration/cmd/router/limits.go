@@ -4,6 +4,9 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
+
+	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -18,7 +21,7 @@ import (
 func warnLimits(settings config.Config, logger *slog.Logger) {
 	switch settings.Limits.Mode {
 	case config.LimitsOff:
-		logger.Warn("spend limits are off: credit, the spend hard limit and budgets refuse nothing, so "+
+		logger.Warn("spend limits are off: credit, the spend hard limit and the customers' spend limits refuse nothing, so "+
 			"nothing but a laptop should run this way", "set", "ROUTER_LIMITS_MODE")
 	case config.LimitsShadow:
 		logger.Warn("spend limits are in shadow: refusals are logged as would refuse and "+
@@ -43,11 +46,53 @@ func limitsNeedSomewhereToRead(settings config.Config, pgStore *store.Store) err
 }
 
 // newPolicies is the enforcer every router, LLM response and session asks, reading money from
-// the usage service when there is one. Nil without a configuration store, which
-// limitsNeedSomewhereToRead allows only with limits off.
-func newPolicies(settings config.Config, configs *appconfig.Store, usageClient *usageservice.Client, logger *slog.Logger) (*policy.Enforcer, error) {
+// the usage service when there is one, and its spend counters from the Redis it keeps them in
+// when that is set. Nil without a configuration store, which limitsNeedSomewhereToRead allows
+// only with limits off. The returned func closes the counters' connection.
+func newPolicies(settings config.Config, configs *appconfig.Store, usageClient *usageservice.Client, logger *slog.Logger) (*policy.Enforcer, func(), error) {
 	if configs == nil {
+		return nil, func() {}, nil
+	}
+	counters, err := usageCounters(settings, usageClient, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	closeCounters := func() {
+		if counters != nil {
+			counters.Close()
+		}
+	}
+	enforcer, err := policy.New(configs, policy.Settings{Mode: settings.Limits.Mode, Usage: usageClient, Counters: counters}, logger)
+	if err != nil {
+		closeCounters()
+		return nil, nil, err
+	}
+	return enforcer, closeCounters, nil
+}
+
+// usageCounters connects to the Redis the usage service keeps its spend counters in, or nil
+// when none is set or no usage service is. A Redis that cannot be reached at startup is warned
+// of and left out, so the limits are read from the service itself until the router restarts.
+func usageCounters(settings config.Config, usageClient *usageservice.Client, logger *slog.Logger) (rueidis.Client, error) {
+	if settings.Usage.RedisURL == "" || usageClient == nil || settings.Limits.Mode == config.LimitsOff {
 		return nil, nil
 	}
-	return policy.New(configs, policy.Settings{Mode: settings.Limits.Mode, Usage: usageClient}, logger)
+	address := settings.Usage.RedisURL
+	if !strings.Contains(address, "://") {
+		address = "redis://" + address
+	}
+	options, err := rueidis.ParseURL(address)
+	if err != nil {
+		// Not wrapped: the parse error quotes the URL, and so its password.
+		return nil, errors.New("ROUTER_USAGE_REDIS_URL does not parse: want redis://[user:password@]host:port[/db], rediss:// for TLS, or host:port")
+	}
+	options.DisableCache = true
+	options.Dialer.Timeout = 2 * time.Second
+	client, err := rueidis.NewClient(options)
+	if err != nil {
+		logger.Warn("could not reach the usage service's Redis, so spend limits read the usage service itself",
+			"set", "ROUTER_USAGE_REDIS_URL", "error", err)
+		return nil, nil
+	}
+	return client, nil
 }

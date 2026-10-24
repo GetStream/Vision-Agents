@@ -121,7 +121,8 @@ the other commands that read them there.
 | `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY` | The PEM certificate and private key of the CA the proxy signs each granted host's certificate with. The router refuses to start with `ROUTER_CODE_SANDBOX_PROXY_ADDR` set and either missing, or a certificate setting that holds a private key. Only the certificate goes into a sandbox |
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
-| `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and budgets the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
+| `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
+| `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an app's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an app's policy sets its own (`quota`) |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
@@ -400,7 +401,6 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 
 | Setting | What it does |
 | ------- | ------------ |
-| `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses on a model that costs money are refused with a 402 `spend_limit_reached`. Both the app's and the organization's caps apply |
 | `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
 | `quota` | On an app's policy only: what one end user may spend in a UTC day, in place of the deployment's default. An organization's policy that sets it is a 400. See [Daily limits](#daily-limits) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
@@ -410,9 +410,33 @@ override, privileged modes, system override, prompt extraction, role manipulatio
 jailbreaks, safety bypass, role spoofing, control tokens), and decodes base64, hex and
 letter-spaced text first so an encoded attack is judged on what it says.
 
-An organization's budget sums the apps the router has seen that organization name. Behind a
-proxy that is the `X-Stream-Organization-Id` header; with API keys it is the key's app. `noauth`
-reads no organization, so only app policies apply there. Every read of a policy fails open.
+An organization's policy applies to the apps the router has seen that organization name. Behind
+a proxy that is the `X-Stream-Organization-Id` header; with API keys it is the key's app.
+`noauth` reads no organization, so only app policies apply there. Every read of a policy fails
+open. A policy has no `budget` any more: one sent is a 400 `budget_moved`, and spend limits are
+their own table (below).
+
+### Spend limits
+
+The customer's spend limits are rows of the `limits` table, one per subject, level and interval
+(`daily`, `weekly` from Monday, `biweekly` from Monday 2024-01-01, `monthly`, all UTC). A
+subject is what spends: the organization, an app, an API key, an end user of an app, a usage
+category across the organization, or one within an app (a team is the category
+`team:<name>`). A row at a level above its subject is a default for each subject of its kind
+there: an app-level `api_key` row limits every key of the app on its own, a row naming the key
+wins over it, and the app's wins over the organization's. Work is refused once any subject it
+counts for has spent its limit in the current window, so the organization's limit still refuses
+an app whose own has room: 402 `spend_limit_reached`, or 429 `user_limit_reached` with
+`Retry-After` for a limit on one end user, which stops that user alone. A reset
+(`usage_resets`) counts a subject's spend from what it had spent when it was made, until the
+window ends; the usage records are untouched. An origin (`hook:chat` and the rest) is no key a
+limit counts, and a user id the usage records leave off is no user.
+
+The organization and app budgets that policies held moved into this table with the migration
+`20261112120000_limits`: each became the organization's or the app's own limit on its interval,
+an app's under the organization it was last seen in, or under itself when it was seen in none.
+The migration stops while an hourly budget exists, since limits have no hourly interval. Coming
+down puts one budget back into each policy from its scope's own limits.
 
 ### Admission
 
@@ -424,28 +448,44 @@ customer may do, so an agent's speech never waits on a database:
   names an app starts that read, so its first session usually finds it done.
 - Its organization's money is read every 5 s, for every organization in use at once, from the
   usage service (`ROUTER_USAGE_URL`), 100 organizations a call: the status, the balance, the
-  spend hard limit and this day's and month's spend. Budgets are summed from Postgres on a loop
-  of their own every 10 s, four at a time, so a slow Postgres never makes a balance stale. With
-  no usage service there is no credit or spend hard limit, only budgets.
+  spend hard limit and this day's and month's spend. The customer's spend limits are read on a
+  loop of their own, so a slow Postgres never makes a balance stale: the organization's limits
+  and resets every 5 s, and what each subject with a limit spent from the usage service's
+  counters every second (`ROUTER_USAGE_REDIS_URL`, the Redis the service mirrors its windows
+  to), or from the service itself every 5 s when that is not set, when a counter is missing,
+  and for 5 s after that Redis fails a read.
+  With no usage service there is no credit or spend hard limit, and each limited subject's
+  spend is summed from the request rows every 10 s, four at a time.
 - What this router recorded since is held by usage id from the moment the row is recorded,
   and each ledger lets go of it on its own read: against the balance and the spend hard
   limit, once a standing asked for after the usage service had the row lands (its ack, or the
-  shard showing the row shipped, as by another router's sweeper); against the budgets, once a
-  sum asked for after the shard wrote the row lands. Counted twice for a moment, never not at
-  all. A row a ledger is never known to have is let go 10 minutes after the later of when it
-  was held and when that ledger last failed to read, and logged; while no read lands, every
-  hold is kept. A limit or a budget counts only what was held in its current UTC window; the
-  balance counts everything held.
+  shard showing the row shipped, as by another router's sweeper); against the spend limits of
+  every subject the row counts for, once a read of the counters asked for after an ack that
+  says the counters took the row lands (or a read of the service itself after any ack), or
+  with no usage service once a sum asked for after the shard wrote the row lands. Counted
+  twice for a moment, never not at all. A row a ledger is never known to have is let go 10
+  minutes after the later of when it was held and when that ledger last failed to read, and
+  logged; while no read lands, every hold is kept. While the usage service acks none of an
+  organization's rows, its limits' holds are kept too, and their 10 minutes start once acks
+  come back. A limit counts only what was held in its current UTC window; the balance counts
+  everything held.
 
 In that order: a suspended organization is refused everything, 403 `account_suspended`. A
 balance at or below what is held refuses work that costs money, 402 `insufficient_credits`.
 The organization's spend hard limit, per UTC day and calendar month, refuses it however much
 credit is left, 402 `system_limit_reached`; nothing a customer writes lifts it. Then the
-budgets, 402 `spend_limit_reached`. A model the deployment runs itself, or one that is free, is
+customer's spend limits, subject by subject (the organization, the app, each category in the
+organization and then in the app, the key, the user), 402 `spend_limit_reached`, or 429
+`user_limit_reached` for the user. A model the deployment runs itself, or one that is free, is
 still served past every one of them but a suspension. An organization is admitted until its
 first read lands. Once it has gone a minute without one, its tier's `fail_mode` decides: a
 closed tier refuses work that costs money until the balance can be read, an open one is
-admitted on the last read. The metrics are `router_admission_refresh_errors_total`,
+admitted on the last read. The customer's limits are read before the first admission that
+needs them: an organization's the first time this router sees it, and what a subject with a
+limit spent the first time it sees the subject, waiting at most 250 ms. A read that does not
+land by then, or limits and spend last read over a minute ago, are the tier's `fail_mode` to
+answer as well (an organization with no tier, or no usage service, follows the default tier,
+which fails closed). The metrics are `router_admission_refresh_errors_total`,
 `router_admission_oldest_read_seconds` and, in `shadow`, `router_admission_would_refuse_total`
 by reason.
 

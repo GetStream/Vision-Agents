@@ -91,9 +91,10 @@ def sync_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (Policy): What an organization or an app decided about spend, data handling, prompt
+        body (Policy): What an organization or an app decided about data handling, prompt
             injection, which models may be used and how usage is labelled. Every field is optional,
-            and a field left out is no opinion rather than off.
+            and a field left out is no opinion rather than off. Spend limits are not here: they are
+            /v1/spend/limits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -126,9 +127,10 @@ def sync(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (Policy): What an organization or an app decided about spend, data handling, prompt
+        body (Policy): What an organization or an app decided about data handling, prompt
             injection, which models may be used and how usage is labelled. Every field is optional,
-            and a field left out is no opinion rather than off.
+            and a field left out is no opinion rather than off. Spend limits are not here: they are
+            /v1/spend/limits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,9 +158,10 @@ async def asyncio_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (Policy): What an organization or an app decided about spend, data handling, prompt
+        body (Policy): What an organization or an app decided about data handling, prompt
             injection, which models may be used and how usage is labelled. Every field is optional,
-            and a field left out is no opinion rather than off.
+            and a field left out is no opinion rather than off. Spend limits are not here: they are
+            /v1/spend/limits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -189,9 +192,10 @@ async def asyncio(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (Policy): What an organization or an app decided about spend, data handling, prompt
+        body (Policy): What an organization or an app decided about data handling, prompt
             injection, which models may be used and how usage is labelled. Every field is optional,
-            and a field left out is no opinion rather than off.
+            and a field left out is no opinion rather than off. Spend limits are not here: they are
+            /v1/spend/limits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

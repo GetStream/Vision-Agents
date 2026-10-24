@@ -803,11 +803,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	// and two sessions sharing one stub would each consume the other's turns. The first
 	// open is the one a test reads back.
 	s.model = &scriptedLLM{reply: "Hello."}
-	var opened int
+	var opened atomic.Int64
 	reasoning := llmrouter.NewRegistry()
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
-		defer func() { opened++ }()
-		if opened == 0 {
+		if opened.Add(1) == 1 {
 			return s.model, nil
 		}
 		return &scriptedLLM{}, nil
@@ -1339,11 +1338,21 @@ func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
 }
 
 // suiteFresh is how often a suite's policies read money and their decisions again: a tenth of
-// a second rather than a router's five, so a budget a test spends is measured within it.
+// a second rather than a router's five, so a limit a test spends is measured within it.
 const suiteFresh = 100 * time.Millisecond
 
+// limitApp gives the suite's app a spend limit of its own, as the limits API writes one.
+func (s *RouterSuite) limitApp(interval usage.Interval, micros int64) store.Limit {
+	limit := store.Limit{
+		Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.app.organization.ID, AppID: s.customerID(),
+		Interval: interval, LimitMicros: micros, UpdatedBy: "test",
+	}
+	s.Require().NoError(s.store.CreateLimit(s.T().Context(), &limit, store.LimitAudit{CustomerID: s.customerID(), Source: store.AuditSourceAPI}))
+	return limit
+}
+
 func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
-	settings := policy.Settings{Mode: s.limitsMode, Fresh: suiteFresh, BudgetEvery: suiteFresh}
+	settings := policy.Settings{Mode: s.limitsMode, Fresh: suiteFresh, SpendEvery: suiteFresh, SumEvery: suiteFresh}
 	if s.limited {
 		s.shipping = true
 		s.usage = usagetest.Start(s.T(), usagetest.Options{

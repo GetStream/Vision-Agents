@@ -150,7 +150,7 @@ func TestAPriorityListFallsBackInTheOrderItWasWritten(t *testing.T) {
 // allowing is a customer whose policies allow only the models named.
 type allowing []string
 
-func (a allowing) Admit(context.Context, string) (routing.Admission, error) {
+func (a allowing) Admit(context.Context, routing.Owner) (routing.Admission, error) {
 	return routing.Admission{Models: a}, nil
 }
 

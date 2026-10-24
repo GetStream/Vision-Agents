@@ -67,6 +67,65 @@ func TestARowAckedIntoAnAckedFoldWaitsForAReadAfterItsOwnAck(t *testing.T) {
 	require.Zero(t, acct.held, "both go with a standing asked for after both acks")
 }
 
+// limitsHeldOf is what the account holds against the customer's limits.
+func limitsHeldOf(acct *account) int64 {
+	var sum int64
+	for _, held := range acct.holds {
+		if held.limits {
+			sum += held.micros
+		}
+	}
+	return sum
+}
+
+func TestALimitsHoldOutlastsAUsageServiceThatAcksNothing(t *testing.T) {
+	e, acct := holding(t)
+	e.money.settings.PendingTTL, e.money.settings.Fresh = 20*time.Millisecond, time.Millisecond
+	acct.limited = true
+	spend(e, 5)
+	time.Sleep(40 * time.Millisecond)
+
+	// Reads of the counters land, and none can have the row, which nothing acked.
+	acct.spentFrom = time.Now()
+	e.money.release(heldOrg, acct, time.Now())
+	require.EqualValues(t, 5, limitsHeldOf(acct), "kept, however long, while no row of the account is acked")
+	time.Sleep(40 * time.Millisecond)
+	acct.spentFrom = time.Now()
+	e.money.release(heldOrg, acct, time.Now())
+	require.EqualValues(t, 5, limitsHeldOf(acct))
+
+	ack(e, spend(e, 1))
+	acked := time.Now()
+	time.Sleep(time.Millisecond)
+	// A read of the service itself, after the ack, counts the acked row.
+	acct.spentFrom, acct.throughFrom = time.Now(), time.Now()
+	e.money.release(heldOrg, acct, time.Now())
+	require.EqualValues(t, 5, limitsHeldOf(acct), "the acks are back, and its timer starts again from then")
+	for limitsHeldOf(acct) > 0 && time.Since(acked) < time.Second {
+		time.Sleep(2 * time.Millisecond)
+		acct.spentFrom = time.Now()
+		e.money.release(heldOrg, acct, time.Now())
+	}
+	require.Zero(t, limitsHeldOf(acct), "a row the service never acked, among ones it does, expires")
+	require.GreaterOrEqual(t, time.Since(acked), 15*time.Millisecond, "about PendingTTL after the acks came back")
+}
+
+func TestAnAcklessHoldIsKeptAtMostSoLong(t *testing.T) {
+	e, acct := holding(t)
+	e.money.settings.PendingTTL, e.money.settings.Fresh = 10*time.Millisecond, time.Millisecond
+	acct.limited = true
+	spend(e, 5)
+
+	time.Sleep(30 * time.Millisecond)
+	acct.spentFrom = time.Now()
+	e.money.release(heldOrg, acct, time.Now())
+	require.EqualValues(t, 5, limitsHeldOf(acct), "kept past PendingTTL while nothing is acked")
+	time.Sleep(acklessAges * 10 * time.Millisecond)
+	acct.spentFrom = time.Now()
+	e.money.release(heldOrg, acct, time.Now())
+	require.Zero(t, limitsHeldOf(acct), "let go past acklessAges PendingTTLs, acks or not")
+}
+
 func TestAnIdleAccountGivesItsFoldedIDsBackToTheProcess(t *testing.T) {
 	e, acct := holding(t)
 	e.money.settings.Idle = time.Millisecond
@@ -77,7 +136,7 @@ func TestAnIdleAccountGivesItsFoldedIDsBackToTheProcess(t *testing.T) {
 	require.Equal(t, before+2, foldedInProcess.Load())
 	// The folds go while their ids are still remembered, as a fold emptied by an ack does.
 	for id, held := range acct.holds {
-		acct.count(heldOrg, held, -1)
+		acct.count(held, -1)
 		delete(acct.holds, id)
 	}
 	acct.used = time.Now().Add(-time.Hour)

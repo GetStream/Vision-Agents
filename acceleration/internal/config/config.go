@@ -127,7 +127,8 @@ type Knowledge struct {
 	StreamCost map[string]pricing.Rate `koanf:"stream_cost"`
 }
 
-// LimitsMode is how much of credit, the spend hard limit and budgets the router enforces.
+// LimitsMode is how much of credit, the spend hard limit and the customers' spend limits the
+// router enforces.
 type LimitsMode string
 
 const (
@@ -153,6 +154,10 @@ type Usage struct {
 	URL string `koanf:"url"`
 	// Token is the service's ingest token.
 	Token string `koanf:"token"`
+	// RedisURL is the Redis the service keeps every subject's spend in (its USAGE_REDIS_URL),
+	// which the customer's spend limits are read from every second. Empty: they are read from
+	// the service itself every few seconds.
+	RedisURL string `koanf:"redis_url"`
 }
 
 // Models are the language models a customer serves themselves, named custom/<name>.
@@ -522,8 +527,9 @@ var variables = map[string]string{
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
 	"telnyx.public_key":    "TELNYX_PUBLIC_KEY",
 
-	"usage.url":   "ROUTER_USAGE_URL",
-	"usage.token": "ROUTER_USAGE_TOKEN",
+	"usage.url":       "ROUTER_USAGE_URL",
+	"usage.token":     "ROUTER_USAGE_TOKEN",
+	"usage.redis_url": "ROUTER_USAGE_REDIS_URL",
 
 	"limits.mode": "ROUTER_LIMITS_MODE",
 }
@@ -784,6 +790,9 @@ func (c Config) validate() error {
 // allowed, since unsetting the URL alone is how shipping is stopped; the router warns of it.
 func (c Config) validateUsage() error {
 	if c.Usage.URL == "" {
+		if c.Usage.RedisURL != "" {
+			return errors.New("config: usage.redis_url (ROUTER_USAGE_REDIS_URL) is the usage service's Redis, so it needs usage.url (ROUTER_USAGE_URL)")
+		}
 		return nil
 	}
 	if parsed, err := url.Parse(c.Usage.URL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
@@ -948,8 +957,9 @@ func (c Config) export() error {
 		"telnyx.connection_id": c.Telnyx.ConnectionID,
 		"telnyx.public_key":    c.Telnyx.PublicKey,
 
-		"usage.url":   c.Usage.URL,
-		"usage.token": c.Usage.Token,
+		"usage.url":       c.Usage.URL,
+		"usage.token":     c.Usage.Token,
+		"usage.redis_url": c.Usage.RedisURL,
 
 		"limits.mode": string(c.Limits.Mode),
 	}

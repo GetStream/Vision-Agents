@@ -216,7 +216,7 @@ type holding struct {
 	release chan struct{}
 }
 
-func (h holding) Admit(ctx context.Context, _ string) (Admission, error) {
+func (h holding) Admit(ctx context.Context, _ Owner) (Admission, error) {
 	select {
 	case <-h.release:
 	case <-ctx.Done():
@@ -630,7 +630,7 @@ type attributing struct {
 	cached map[string]bool
 }
 
-func (a *attributing) Admit(context.Context, string) (Admission, error) {
+func (a *attributing) Admit(context.Context, Owner) (Admission, error) {
 	a.admitted.Add(1)
 	return Admission{}, nil
 }
