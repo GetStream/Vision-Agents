@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // attachWait is how long a socket waits for whichever node holds the session to answer.
@@ -168,10 +170,9 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 	defer state.detach(context.WithoutCancel(r.Context()), watcher, id)
 	connection.SetReadLimit(maxSocketMessage)
 
-	gone := make(chan struct{})
+	gone := make(chan error, 1)
 	go func() {
-		defer close(gone)
-		s.readRelayedCommands(connection, state, watcher, id)
+		gone <- s.readRelayedCommands(connection, state, watcher, id)
 	}()
 	s.writeRelayedEvents(connection, state, socket, watcher, id, watching(r), gone)
 	return true
@@ -189,14 +190,17 @@ func (s *Server) writeRelayedEvents(
 	socket *remoteSocket,
 	watcher, id string,
 	asked wanted,
-	gone <-chan struct{},
+	gone <-chan error,
 ) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 
 	for {
 		select {
-		case <-gone:
+		case stopped := <-gone:
+			if errors.Is(stopped, errUnreadableFrame) {
+				refuseUnreadable(connection)
+			}
 			return
 
 		case <-socket.closed:
@@ -231,24 +235,29 @@ func (s *Server) writeRelayedEvents(
 //
 // The frame is passed on as it arrived rather than decoded and encoded again, so the
 // holder reads exactly what the client wrote and there is one place -- applyCommand --
-// that decides what a command means.
-func (s *Server) readRelayedCommands(connection *websocket.Conn, state *relayed, watcher, id string) {
+// that decides what a command means. It is decoded here all the same, so a frame that is not
+// a command ends this socket as it ends a local one; the holder would only report it.
+//
+// It returns errUnreadableFrame for a frame that is not a command, and the read's own error
+// when the connection ended.
+func (s *Server) readRelayedCommands(connection *websocket.Conn, state *relayed, watcher, id string) error {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	for {
-		kind, payload, err := connection.ReadMessage()
+		_, payload, err := connection.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				s.logger.Debug("relayed session socket read failed", "error", err)
 			}
-			return
+			return stack.Wrap(err)
 		}
 		connection.SetReadDeadline(time.Now().Add(pongWait))
-		if kind != websocket.TextMessage || !json.Valid(payload) {
-			continue
+		var command watcherCommand
+		if json.Unmarshal(payload, &command) != nil {
+			return errUnreadableFrame
 		}
 
 		if err := state.bus.Publish(context.Background(), state.bus.Commands(), relay.Request{
