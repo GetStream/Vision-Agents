@@ -198,9 +198,15 @@ examples, no format beyond `time.Time`, and no way to register a hand-written JS
   usable idempotency key.
 - **`SessionTool` and `host_tools` gain `interruptible` and `timeout_ms`.**
   `interruptible: true` sets `ToolPolicy.Cancels` for that tool, so barge-in cancels it and
-  `tool_cancel` goes out; false is today's behaviour, answered "still running" and finished
-  later. `timeout_ms` replaces the session-wide timeout for that one tool. `host_tools`
-  gains `approval` as well, so a hosted tool can ask too.
+  `tool_cancel` goes out. Omitted or false is today's behaviour: answered "still running" and
+  finished later. False is the default, so no existing tool starts being cancelled.
+  `timeout_ms` replaces the session-wide timeout for that one tool. `host_tools` gains
+  `approval` as well, so a hosted tool can ask too.
+- **30 s is the default on both paths (M5).** `defaultHostedTimeout` drops from 2 min to
+  30 s, the session's `defaultToolTimeout`. A worker that needs longer says so, per tool
+  with `timeout_ms` or for all its tools in `host_tools`. A worker that sent no timeout,
+  which got two minutes, now gets 30 s; the READMEs and doc comments that promise two
+  minutes (Go, Ruby, Rust, [architectures](architectures.md)) change with it.
 - **Calls are addressed (M1).** Every watcher still sees `tool_call`, since a browser shows
   calls and holds approvals. But the frame says whether this watcher is the one to run it:
   `run: true` goes only to watchers that declared the tool, and of those, a tool declared by
@@ -212,18 +218,85 @@ examples, no format beyond `time.Time`, and no way to register a hand-written JS
 - **The hosted result matches the session one (M5).** It accepts `tool_call_id` (and keeps
   `id` for old workers) and content parts with images. `dispatch.ToolResult` carries
   `[]llm.ContentPart` rather than a string.
-- **`tool_update` (new command).** `{tool_call_id, text}` while the call is running. On a
-  cascade it feeds the line the agent says while a tool runs (the same slot `PreSpeech` and
-  `holdPurpose` fill), so the model phrases it. On speech-to-speech it is added to the
-  provider's conversation as context for what the model says next. An update for a call
-  that has finished is dropped.
+- **`tool_update` (new command).** `{tool_call_id, text, verbatim}` while the call is
+  running. `call.Update` sends it with `verbatim` false, `call.Say` with true. How each kind
+  of session says it is [below](#how-an-update-is-said). An update for a call that has
+  finished is dropped.
 - **`tool_hold` (new command).** `{tool_call_id}`: from now on, barge-in answers this call
   "still running" instead of cancelling it. The router answers `tool_held`, or `tool_cancel`
   if it had already cancelled it, so the SDK knows which happened first.
-- **Approval on a call.** `approval.title` may name arguments in braces, filled from the
-  call. In text this is the attachment flow that exists. On a voice call the agent asks the
-  question aloud and the call is held until the caller agrees or declines; declined, it is
-  answered as declined and never reaches the function.
+- **Approval on a voice call**, [below](#a-spoken-approval). In text it is the attachment
+  flow that exists.
+
+### How an update is said
+
+Nothing is generating while a tool runs. On a cascade, the reply that asked for the tool
+has ended, or is the line said while it runs. On speech-to-speech, the response that
+carried the function call has completed, and the model is waiting for the result. An update
+is therefore a short turn of its own, never part of another one.
+
+It is said only when the line is free: the agent is neither speaking nor generating, and the
+caller is not talking. These are the conditions `followNative` checks before it delivers a
+subagent's findings, without the one that refuses while a tool is pending. An update that
+arrives while the line is busy waits. A newer update for the same call replaces it, and the
+result arriving first drops it, since the result says more. What is said is written into the
+history like any other reply, so the answer that follows does not repeat it.
+
+| Session | `call.Update` | `call.Say` |
+| --- | --- | --- |
+| Text | The status on the call's `ai_tool_call` attachment; no turn | Posted as a message, as `Say` is today |
+| Cascade | The LLM writes one sentence from the status, the way it writes the line said while a tool runs | Spoken through TTS as written |
+| OpenAI Realtime, Qwen, OpenAI Live | `Prompt` | `Prompt`, asking for these words or close to them |
+| Gemini Live | A partial function response | The same, asking for these words |
+
+**OpenAI Realtime** (and the Qwen dialect, and OpenAI Live, which append instructions)
+uses `Prompt`, which is `response.create` with instructions. They say: tell the caller,
+in one short sentence in your own words, this status; the tool is still running, so do not
+call it again and do not guess its result. That response also sets `tool_choice: "none"`,
+so it cannot call anything (`responseRequest` gains the field). The function call stays
+open, and its `function_call_output` goes in when the result comes, as it does now.
+
+**Gemini Live** cannot be prompted here. Its function calls are blocking by default, which
+is how `gemini.go` declares them: while one is open the model says nothing, and a client
+turn is not how to reach it. Gemini's own answer is the non-blocking function. A caller tool
+is declared with `behavior: NON_BLOCKING`. Each update goes out as a `FunctionResponse`
+with the call's id, `{"status": text}`, `will_continue: true` and
+`scheduling: WHEN_IDLE`, so the model mentions it when it next has the floor. The result
+is the last response, with `will_continue` false and `scheduling: WHEN_IDLE`.
+
+Non-blocking also means the model no longer waits in silence for the result, so the
+declaration says the result will follow and is not to be guessed. That is the same wording
+`delegate_skill` uses on a native call. A Gemini model that refuses `NON_BLOCKING` keeps
+blocking calls: its updates are not spoken, and they travel in the final response as
+`updates`, so the model can still refer to them.
+
+`call.Say` on speech-to-speech cannot promise exact words. `Agent.Say` refuses there today
+for that reason. The update asks for the words "in these words or close to them", which is
+how a greeting is asked for, and the SDK documents that a native model may paraphrase.
+
+### A spoken approval
+
+`NeedsApproval("Book flight {flight_id}?")` sets `approval.title`. The SDK refuses at
+registration a `{name}` that is not an argument in the tool's schema. The router fills each
+name in from the call's arguments.
+
+The function is not run when the model asks for it. The router answers the call itself, at
+once, with the filled-in question, and offers the model `confirm_tool_call`
+(`{tool_call_id, allowed}`) while that answer is outstanding. Answering at once closes the
+model's call, which is what lets every speech-to-speech model ask the question, Gemini
+included.
+
+- On a cascade, the reply to that answer is the question as written, spoken through TTS
+  with no model turn.
+- On speech-to-speech, the model is told to ask it in these words.
+
+The caller has **15 seconds from when the question finishes playing**. A yes in that time,
+and the model calls `confirm_tool_call` with `allowed: true`. The router then sends the
+original call, with its original id, to the process that runs it, and that call's result
+becomes `confirm_tool_call`'s result. A no records the call as declined, and the function
+never sees it. Silence, or anything else, for 15 seconds also declines it, telling the model
+that the caller did not confirm and that it may ask again by calling the tool again. The 15
+seconds do not count against the tool's `Timeout`, which starts when the function does.
 
 ### In the Go SDK
 
@@ -269,13 +342,17 @@ Each step ships on its own.
    races a backend.
 3. **Router: the call on the frame and the policies.** `user` and `conversation` on
    `tool_call`; `interruptible` and `timeout_ms` on `SessionTool` and `host_tools`;
-   `tool_cancel` to hosted workers; hosted results with `tool_call_id` and images.
-   OpenAPI first, then regenerate the clients.
+   `tool_cancel` to hosted workers; hosted results with `tool_call_id` and images; the
+   hosted default down to 30 s, with the docs that say two minutes. OpenAPI first, then
+   regenerate the clients.
 4. **Router: addressed calls (M1).** `run` on the frame, declaring tools on attach, the
    server-side rule, and the immediate failure when nobody can run a call.
 5. **Router and Go: `tool_update`, `tool_hold`, `call.Update`, `call.Say`,
-   `DisallowInterruptions`.**
-6. **Approval on a voice call**, and `NeedsApproval` in Go.
+   `DisallowInterruptions`.** Text and cascade first; then OpenAI Realtime with
+   `tool_choice: "none"`; then Gemini's non-blocking declarations, which change how every
+   caller tool behaves on Gemini, so they ship behind the stssuite cases below.
+6. **Approval on a voice call**: `confirm_tool_call`, the 15 seconds, and `NeedsApproval` in
+   Go.
 7. **The rest of the SDKs** catch up on `CallFrom`, the policies and updates, Python first.
 
 ## How it is tested
@@ -293,20 +370,24 @@ Each step ships on its own.
   running, and the queued ones time out on their own deadline.
 - **Hold.** `tool_hold` racing a barge-in, both orders: the function's context ends exactly
   when the router says it cancelled.
+- **Updates on each provider**, in [stssuite](../../acceleration/internal/sts/stssuite).
+  OpenAI Realtime takes a `response.create` while a function call has no output, says the
+  status, calls nothing, and takes the output afterwards. Gemini takes a partial response
+  with `will_continue` and then the final one. Both run against the real APIs, since the
+  provider deciding is the point.
+- **Approval.** Yes, no and silence on a cascade and on each speech-to-speech provider. The
+  function runs once on a yes, with the original call id, and never otherwise. Silence
+  declines at 15 seconds after the question finished playing, not after it started.
 - **A voice eval**, beside [telephony-latency](../evals/telephony-latency.md), for
   `call.Update` on a cascade and on speech-to-speech: the status is said, once, in the
   model's words, and does not delay the result.
 
-## Not decided
+## Decided
 
-- **The default for `Interruptible`.** The router keeps every caller tool running through a
-  barge-in today. Defaulting to true would match the example above and would also start
-  cancelling every existing tool the first time somebody talks over the agent. The plan
-  above keeps false as the default.
-- **One default timeout or two.** With a per-tool timeout the defaults matter less; 30 s
-  and 2 min could stay, or both become 30 s with hosted workers asking for more.
-- **Where an update goes on speech-to-speech.** Adding context mid-call works at OpenAI and
-  Gemini differently, and a provider that cannot take it may have to say the update as
-  exact words instead.
-- **Spoken approval.** Whether the agent's question is the template as written or a line
-  the model writes from it, and how long a call waits for an answer before it is declined.
+- **`Interruptible` defaults to false.** That is what the router does today, so no existing
+  tool starts being cancelled when somebody talks over the agent. A read-only tool opts in.
+- **30 s is the default timeout on both paths.** Hosted workers that need longer ask for it.
+- **Spoken approval fills in the template and waits 15 seconds** for an answer, counted from
+  the end of the question.
+- **Updates on speech-to-speech** go through `Prompt` with tool calls switched off at
+  OpenAI, and as non-blocking partial responses at Gemini.
