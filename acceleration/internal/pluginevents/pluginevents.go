@@ -422,7 +422,7 @@ func (s *Service) run(config store.AgentConfig, declared store.PluginEvent, sub 
 	spec.Greeting = ""
 	spec.Attribution = routing.Attribution{APIKey: routing.OriginHookPlugin}
 	if sub.UserID != "" {
-		spec.Caller = routing.Caller{UserID: sub.UserID}
+		spec.Caller = routing.Caller{UserID: sub.UserID, Verified: true}
 		spec.CallerKind = auth.KindAuthenticated
 		spec.Attribution.UserID, spec.Attribution.CallerKind = sub.UserID, routing.CallerUser
 	}

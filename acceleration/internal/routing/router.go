@@ -246,8 +246,13 @@ type Caller struct {
 	// IP is where the request came from, as far as the trusted proxies can tell.
 	IP string
 	// ServerSide is a customer's own process, trusted with its spend even when it names a
-	// user, so no daily limit is counted against it.
+	// user, so it is held only to the daily quotas the customer set for that user, never to
+	// the deployment's default.
 	ServerSide bool
+	// Verified is a UserID something vouched for: a token the app signed, the proxy's word,
+	// or a delivery the app's channel or plugin signed. An anonymous caller's name is not,
+	// so it is never held to that user's own quota nor spends their day.
+	Verified bool
 }
 
 // IsZero says nobody was named: a turn that was heard, not typed.

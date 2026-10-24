@@ -61,8 +61,9 @@ func (s *QuotaSuite) SetupTest() {
 	unique := time.Now().UnixNano()
 	s.customer = fmt.Sprintf("customer-%d", unique)
 	s.caller = routing.Caller{
-		UserID: fmt.Sprintf("user-%d", unique),
-		IP:     fmt.Sprintf("192.0.2.%d", unique%256),
+		UserID:   fmt.Sprintf("user-%d", unique),
+		IP:       fmt.Sprintf("192.0.2.%d", unique%256),
+		Verified: true,
 	}
 }
 
@@ -456,6 +457,26 @@ func (s *QuotaSuite) TestTheEffectiveQuotaIsTheSources() {
 	s.Equal(Setter{Level: LevelApp, ID: s.customer}, held.Tokens.By)
 	var none *Limiter
 	s.Zero(none.Effective(s.ctx, s.customer, s.caller.UserID), "a deployment that counts nothing enforces nothing")
+}
+
+func (s *QuotaSuite) TestAnAnonymousNameIsNotHeldToThatUsersOwnQuota() {
+	// The user's own quota of 0 is no cap; a device going by their name without a token is
+	// held to the app's one message instead, and spends nothing of the user's day.
+	limiter := s.limiterWith(Limits{}, limitsByCustomer{
+		s.customer:                         {MessagesPerDay: 1},
+		s.customer + "/" + s.caller.UserID: {MessagesPerDay: 0},
+	})
+	impostor := routing.Caller{UserID: s.caller.UserID, IP: "198.51.100.7"}
+	limiter.Debit(s.ctx, s.customer, impostor, 10)
+
+	err := s.allow(limiter, s.customer, impostor)
+
+	s.Require().ErrorIs(err, ErrExhausted)
+	s.Contains(err.Error(), "for every user of app "+s.customer)
+	exists, err := s.redis.Do(s.ctx, s.redis.B().Exists().Key(customerKey(s.customer, s.caller.UserID, time.Now())).Build()).AsInt64()
+	s.Require().NoError(err)
+	s.Zero(exists, "the user's own day is untouched")
+	s.NoError(s.allow(limiter, s.customer, s.caller), "the verified user keeps their own quota")
 }
 
 // sourceFunc is a Source written inline.
