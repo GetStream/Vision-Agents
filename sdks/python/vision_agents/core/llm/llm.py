@@ -418,7 +418,12 @@ class LLM(Component):
             )
 
     def register_function(
-        self, name: Optional[str] = None, description: Optional[str] = None
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        interruptible: bool = False,
+        timeout: float = 0.0,
+        needs_approval: str = "",
     ) -> Callable:
         """
         Decorator to register a function with the LLM's function registry.
@@ -426,11 +431,23 @@ class LLM(Component):
         Args:
             name: Optional custom name for the function. If not provided, uses the function name.
             description: Optional description for the function. If not provided, uses the docstring.
+            interruptible: Let the caller talking over the agent cancel a call in flight.
+                Applies where Stream runs the agent.
+            timeout: How long one call may take, in seconds. Zero takes the session's.
+                Applies where Stream runs the agent.
+            needs_approval: A question a person answers before each call runs, with
+                {name} for an argument. Applies where Stream runs the agent.
 
         Returns:
             Decorator function.
         """
-        return self.function_registry.register(name, description)
+        return self.function_registry.register(
+            name,
+            description,
+            interruptible=interruptible,
+            timeout=timeout,
+            needs_approval=needs_approval,
+        )
 
     def get_available_functions(self) -> List[ToolSchema]:
         """Get a list of available function schemas."""
