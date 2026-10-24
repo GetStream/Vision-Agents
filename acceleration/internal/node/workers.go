@@ -34,6 +34,8 @@ const assignTimeout = 5 * time.Second
 const (
 	toolKind    = "tool"
 	messageKind = "message"
+	// cancelKind stops the request of the same id, which the asking node gave up on.
+	cancelKind = "cancel"
 )
 
 // Workers are the dispatch workers of the whole deployment, as a session on any node sees
@@ -54,6 +56,9 @@ type Workers struct {
 
 	mu      sync.Mutex
 	waiting map[string]chan workReply
+	// running is the work carried here that is still being done, by request id, so a
+	// peer giving up on it can stop it.
+	running map[string]context.CancelFunc
 }
 
 // toolOffer is what one node's workers host for an agent.
@@ -99,6 +104,7 @@ func NewWorkers(ctx context.Context, pool *dispatch.Pool, directory *Directory, 
 		replies:   directory.hosted + "replies:" + directory.address,
 		logger:    logger,
 		waiting:   map[string]chan workReply{},
+		running:   map[string]context.CancelFunc{},
 	}
 	if err := bus.Subscribe(ctx, workers.requests, func(payload []byte) { go workers.take(ctx, payload) }); err != nil {
 		return nil, err
@@ -228,6 +234,10 @@ func (w *Workers) ask(ctx context.Context, address string, request workRequest, 
 		return reply, nil
 	case <-deadline.Done():
 		if err := ctx.Err(); err != nil {
+			stop := workRequest{ID: request.ID, Kind: cancelKind, CustomerID: request.CustomerID}
+			if err := w.bus.Publish(context.WithoutCancel(ctx), w.directory.requestsFor(address), stop); err != nil {
+				w.logger.Warn("could not tell the node with the worker to stop", "kind", request.Kind, "error", err)
+			}
 			return workReply{}, fmt.Errorf("stopped: %w", err)
 		}
 		return workReply{}, fmt.Errorf("the node with the worker did not answer within %s", timeout)
@@ -263,6 +273,26 @@ func (w *Workers) take(ctx context.Context, payload []byte) {
 		w.logger.Warn("ignoring work carried here that could not be read", "error", err)
 		return
 	}
+	if request.Kind == cancelKind {
+		w.mu.Lock()
+		stop, found := w.running[request.ID]
+		w.mu.Unlock()
+		if found {
+			stop()
+		}
+		return
+	}
+
+	ctx, stop := context.WithCancel(ctx)
+	w.mu.Lock()
+	w.running[request.ID] = stop
+	w.mu.Unlock()
+	defer func() {
+		w.mu.Lock()
+		delete(w.running, request.ID)
+		w.mu.Unlock()
+		stop()
+	}()
 
 	reply := workReply{ID: request.ID}
 	var err error

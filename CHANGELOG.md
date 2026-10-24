@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+### A hosted tool that names no timeout has 30 seconds
+
+A worker on `/v1/dispatch` whose `host_tools` names no `timeout_ms` now gives each call 30 seconds, the default for the tools a session's caller runs, rather than two minutes. A worker whose tools take longer says so with `timeout_ms`.
+
 ### Go's `ToolApprovalCommand.TurnId` is a `*string`
 
 `turn_id` is optional in the session socket's `tool_approval`: an answer to a connector call held for approval needs none. The Go client's generated `acceleration.ToolApprovalCommand.TurnId` is now a `*string`, so code that sets it takes its address (AI-1640, #1182).
@@ -2579,6 +2583,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A worker on `/v1/dispatch` running a hosted tool call is sent `tool_cancel` (`id`, `session_id`) when the call's timeout passes or its session gives up on it, including when the session is on another node. It was never told, so it ran on, and its answer was dropped.
 - A session that a slow greeting delays no longer loses what happened while it was spoken: a conversation named, a connection chosen at a login, or a video frame seen before the session's row is stored are written after the row, not dropped (AI-1925). The title shows in the sessions list instead of `—`, and a fork of the ended session no longer asks for the login again.
 - A session events socket (`/v1/agents/sessions/{id}/events`) that lands on a node other than the one running the session now refuses a frame that is not a command, as the node running it does: an `error` frame, `invalid_request`, then a close with `1008`. This covers text that is not JSON, JSON that is not a command object (such as `[1]`) and a binary frame that is not JSON; a binary frame that holds a command is carried and answered as a text one. Before, the relayed socket skipped the first and the third, and stayed open after the second with an `error` event, so whichever node got the socket decided whether a bad frame ended it (AI-1924).
 - An agent runs a connector call again once the person has acted on what held it back: signed in, granted the scope a step-up asked for (`connector_scope_required`), or had the rejected token saved again. A tool that changes something was answered "You already made this exact call" from its earlier `scope_required`, `credential_rejected` or login result for the rest of the session, so the call never ran and the second step-up never began (AI-1927).

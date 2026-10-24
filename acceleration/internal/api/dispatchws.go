@@ -367,8 +367,11 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []h
 	return frame{"type": "hosting", "agent_id": agentID, "tools": names}
 }
 
-// toolCallFrame renders one hosted call for the wire.
+// toolCallFrame renders one hosted call, or the cancelling of one, for the wire.
 func toolCallFrame(call dispatch.ToolCall) frame {
+	if call.Cancel {
+		return frame{"type": "tool_cancel", "id": call.ID, "session_id": call.SessionID}
+	}
 	return frame{
 		"type":       "tool_call",
 		"id":         call.ID,

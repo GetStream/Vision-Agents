@@ -142,7 +142,7 @@ runs (this process still answers it, once the device has reported), and `display
 the words shown while it runs, such as `"Checking your order"`.
 
 The tools are declared each time the router says it is ready, and each call runs on its own
-thread. `tool_timeout` is how many seconds the router waits for one tool call; nil takes its default of two minutes. Hosting alone is enough
+thread. `tool_timeout` is how many seconds the router waits for one tool call; nil takes its default of 30 seconds. Hosting alone is enough
 to `run`, and a router that refuses the tools ends `run` with the reason.
 
 A dispatched call names the session it is for: `join(call)` opens it with voice, on the call

@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -272,7 +273,7 @@ func (s *DispatchSuite) TestHostedToolsAreKeptForTheAgentTheWorkerNames() {
 	tools, timeout := s.dispatch.HostedTools(s.customerID(), "stream-support")
 	s.Require().Len(tools, 1)
 	s.Equal("investigate_sdk", tools[0].Name)
-	s.Equal(2*time.Minute, timeout, "a worker that names no timeout takes the default")
+	s.Equal(30*time.Second, timeout, "a worker that names no timeout takes the session's default")
 }
 
 func (s *DispatchSuite) TestHostedToolsNeedAnAgentToBeFor() {
@@ -317,6 +318,41 @@ func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
 	got := <-answered
 	s.Require().NoError(got.err)
 	s.Equal("targetSdkVersion 35", got.output)
+}
+
+func (s *DispatchSuite) TestAHostedCallTheSessionGivesUpOnIsCancelledOnTheWorker() {
+	worker := s.worker()
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], "stream-support",
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+	ctx, giveUp := context.WithCancel(s.T().Context())
+	go func() {
+		_, _ = s.dispatch.RunHosted(ctx, s.customerID(), "stream-support",
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+	}()
+	s.Equal("tool_call", s.next(worker)["type"])
+
+	giveUp()
+
+	cancel := s.next(worker)
+	s.Equal("tool_cancel", cancel["type"])
+	s.Equal("call-1", cancel["id"])
+	s.Equal("session-1", cancel["session_id"])
+}
+
+func (s *DispatchSuite) TestAHostedCallThatTimesOutIsCancelledOnTheWorker() {
+	worker := s.worker()
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], "stream-support",
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, 50*time.Millisecond))
+	go func() {
+		_, _ = s.dispatch.RunHosted(s.T().Context(), s.customerID(), "stream-support",
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+	}()
+	s.Equal("tool_call", s.next(worker)["type"])
+
+	cancel := s.next(worker)
+
+	s.Equal("tool_cancel", cancel["type"])
+	s.Equal("call-1", cancel["id"])
 }
 
 func (s *DispatchSuite) TestADrainingRouterSendsItsWorkersToReconnectElsewhere() {

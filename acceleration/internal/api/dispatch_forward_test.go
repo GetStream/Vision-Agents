@@ -102,6 +102,27 @@ func (s *ForwardedDispatchSuite) TestAToolHostedByAWorkerOnAnotherNodeIsOfferedA
 	}
 }
 
+func (s *ForwardedDispatchSuite) TestACallOnAnotherNodeTheSessionGivesUpOnIsCancelledOnTheWorker() {
+	agent := "agent-" + s.utils.uuid()
+	worker := s.hostsOnTheOtherNode(agent)
+	s.Require().Eventually(func() bool {
+		offered, _ := s.elsewhere.HostedTools(s.customerID(), agent)
+		return len(offered) == 1
+	}, settleFor, 10*time.Millisecond, "the tool was never offered here")
+	ctx, giveUp := context.WithCancel(context.Background())
+	defer giveUp()
+	go func() {
+		_, _ = s.elsewhere.RunHosted(ctx, s.customerID(), agent,
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+	}()
+	s.await(worker, "tool_call")
+
+	giveUp()
+
+	cancel := s.await(worker, "tool_cancel")
+	s.Equal("call-1", cancel["id"])
+}
+
 func (s *ForwardedDispatchSuite) TestAToolIsNoLongerOfferedOnceTheWorkerHostingItLeaves() {
 	agent := "agent-" + s.utils.uuid()
 	worker := s.hostsOnTheOtherNode(agent)

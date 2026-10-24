@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// defaultHostedTimeout is how long a hosted tool is given when its worker did not say.
-const defaultHostedTimeout = 2 * time.Minute
+// defaultHostedTimeout is how long a hosted tool is given when its worker did not say, which
+// is what a session gives the tools its caller runs.
+const defaultHostedTimeout = 30 * time.Second
 
 // toolQueue is how many hosted calls may wait on one worker's socket. A call is a small
 // frame and the worker runs each on its own, so this only fills when the socket has stopped
@@ -38,6 +39,10 @@ type ToolCall struct {
 	Name      string
 	// Arguments is the JSON object the model wrote.
 	Arguments string
+	// Cancel says the call with this id is no longer wanted: its deadline passed or the
+	// session gave up on it. It travels on the same queue as the call, so it cannot
+	// overtake it.
+	Cancel bool `json:",omitempty"`
 }
 
 // ToolResult is what the worker said happened.
@@ -214,10 +219,25 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 		return result.Output, nil
 	case <-deadline.Done():
 		chosen.worker.forget(call.ID)
+		p.cancelHosted(chosen.worker, call)
 		if err := ctx.Err(); err != nil {
 			return "", fmt.Errorf("dispatch: %s stopped: %w", call.Name, err)
 		}
 		return "", fmt.Errorf("dispatch: %s did not answer within %s", call.Name, chosen.timeout)
+	}
+}
+
+// cancelHosted tells the worker running a call to stop it. A worker that has gone has
+// nothing to stop, and one whose queue is full is not reading it, so neither is waited on.
+func (p *Pool) cancelHosted(worker *Worker, call ToolCall) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.registered(worker) {
+		return
+	}
+	select {
+	case worker.toolCalls <- ToolCall{ID: call.ID, SessionID: call.SessionID, Name: call.Name, Cancel: true}:
+	default:
 	}
 }
 
