@@ -404,6 +404,23 @@ describe("Session", () => {
       await session.close();
     });
 
+    it("runs at once a call the caller already allowed out loud", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send({ ...refundCall, approved: true });
+
+      assert.deepEqual(await connection.next(), {
+        type: "tool_result",
+        tool_call_id: "call_1",
+        request_id: "m1",
+        turn_id: "t1",
+        output: "Refunded A-1042",
+      });
+      assert.deepEqual(session.approvals, []);
+      assert.deepEqual(ran, ["A-1042"]);
+      await session.close();
+    });
+
     it("stops waiting when the model cancels the call", async () => {
       const [session, connection] = await opened(refunds());
 

@@ -143,6 +143,9 @@ type Options struct {
 	// ToolPolicy is what the tool named asks of the agent (its connector binding's policy).
 	// Nil, or the zero ToolPolicy for a tool, is how every tool has always run.
 	ToolPolicy func(tool string) ToolPolicy
+	// ApprovalWait is how long a voice caller has to answer a tool's approval question,
+	// counted from when it finished playing. Zero is approvalWait, 15 seconds.
+	ApprovalWait time.Duration
 	// Tools are what the voice model may do rather than say. Each is only offered when
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
@@ -268,6 +271,16 @@ type Agent struct {
 	toolTurns map[string]string
 	// toolUpdates is what whoever runs a call last said about it, waiting for the line.
 	toolUpdates map[string]toolUpdate
+	// approvals are the calls waiting for a voice caller's yes, by call id (approval.go).
+	approvals map[string]*approval
+	// lapsedApprovals names the tool of each call silence declined, by call id, so a late
+	// yes is told to ask again.
+	lapsedApprovals map[string]string
+	// approvalQuestions are what a cascade owes the caller as written, in place of a reply
+	// to the calls that asked them.
+	approvalQuestions []string
+	// approvedRuns is the confirmation each approved call runs under, by the call's own id.
+	approvedRuns map[string]approvedRun
 	// toolsRunning names each tool still running, by call, so a caller left waiting can
 	// be told what on.
 	toolsRunning map[string]string
@@ -1616,6 +1629,7 @@ func (a *Agent) consumePresence(p *pipeline) {
 			a.respondQueued()
 			a.followUp()
 			a.sayToolUpdate()
+			a.tickApprovals()
 		case <-p.ctx.Done():
 			return
 		}
@@ -1935,6 +1949,9 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	if !a.toolReply || a.generating || a.interrupting || a.recoveringVoice != nil {
 		a.mu.Unlock()
 		return nil
+	}
+	if question := a.takeApprovalQuestionsLocked(); question != "" {
+		return a.askLocked(turnID, question)
 	}
 	history := a.replayLocked()
 	participant := a.lastParticipant

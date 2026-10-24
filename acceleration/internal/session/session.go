@@ -122,6 +122,9 @@ type ToolCall struct {
 	// Run says whether the watcher it went to is one that runs it. Every watcher sees a
 	// call, since a page shows calls, and only those that run it should answer.
 	Run bool
+	// Approved says the caller already said yes to the call, on a voice call that asked
+	// them its approval question, so nobody is to ask again.
+	Approved bool
 }
 
 // ToolHeld says a call will outlive the caller talking over the agent from now on, because

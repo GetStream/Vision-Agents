@@ -513,6 +513,9 @@ func frameOf(event session.Event) (frame, bool) {
 			"session_id": typed.SessionID,
 			"run":        typed.Run,
 		}
+		if typed.Approved {
+			call["approved"] = true
+		}
 		if typed.User != nil {
 			call["user"] = toolUserFrame(typed.User.ID, typed.User.Name)
 		}

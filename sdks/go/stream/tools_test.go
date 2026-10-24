@@ -48,6 +48,24 @@ func (s *ToolCallSuite) TestASessionDeclaresEachToolsPolicies() {
 	s.EqualValues(5000, *byName["search_flights"].TimeoutMs)
 	s.Nil(byName["book_flight"].Interruptible, "a tool that said nothing leaves the router's default")
 	s.Nil(byName["book_flight"].TimeoutMs)
+	s.Nil(byName["book_flight"].Approval)
+}
+
+func (s *ToolCallSuite) TestASessionDeclaresTheQuestionAToolAsksBeforeItRuns() {
+	backend := newRouter(s.T(), func(*testing.T, *websocket.Conn) {})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	s.Require().NoError(tools.Register(pipeline.Functions(), "book_flight", "Book a flight",
+		func(context.Context, struct {
+			FlightID string `json:"flight_id"`
+		}) (any, error) {
+			return nil, nil
+		}, tools.NeedsApproval("Book flight {flight_id}?")))
+
+	s.join(pipeline)
+
+	declared := *backend.created(s.T()).Tools
+	s.Require().Len(declared, 1)
+	s.Equal(&acceleration.SessionToolApproval{Title: "Book flight {flight_id}?"}, declared[0].Approval)
 }
 
 func (s *ToolCallSuite) TestACancelledToolCallStopsTheFunction() {
@@ -195,7 +213,7 @@ func (s *ToolCallSuite) TestACallAddressedToAnotherWatcherIsLeftAlone() {
 func (s *ToolCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 	backend := newRouter(s.T(), func(t *testing.T, connection *websocket.Conn) {
 		if err := connection.WriteJSON(map[string]any{
-			"type": "tool_call", "id": "call-3", "name": "lookup_order", "arguments": "{}", "turn_id": "turn-2",
+			"type": "tool_call", "id": "call-3", "name": "lookup_order", "arguments": "{}", "turn_id": "turn-2", "approved": true,
 			"session_id": "session-1", "user": map[string]any{"id": "jean", "name": "Jean"},
 			"conversation": map[string]any{"cid": "messaging:support-1", "custom": map[string]any{"plan": "gold"}},
 		}); err != nil {
@@ -221,6 +239,7 @@ func (s *ToolCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 		s.Equal("turn-2", call.TurnID)
 		s.Equal(tools.User{ID: "jean", Name: "Jean"}, call.User)
 		s.Equal(tools.Conversation{CID: "messaging:support-1", Custom: map[string]any{"plan": "gold"}}, call.Conversation)
+		s.True(call.Approved)
 	case <-time.After(3 * time.Second):
 		s.Fail("the function never ran")
 	}

@@ -43,7 +43,7 @@ func (s *HostedCallSuite) TestAWorkerDeclaresEachToolsPolicies() {
 	functions := tools.NewRegistry()
 	noop := func(context.Context, struct{}) (any, error) { return nil, nil }
 	s.Require().NoError(tools.Register(functions, "investigate_sdk", "Read SDK source", noop,
-		tools.Interruptible(true), tools.Timeout(90*time.Second)))
+		tools.Interruptible(true), tools.Timeout(90*time.Second), tools.NeedsApproval("Read the SDK source?")))
 	s.Require().NoError(tools.Register(functions, "search_docs", "Search the docs", noop))
 	worker := waiting(s.T(), router, DispatchOptions{})
 	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
@@ -63,8 +63,10 @@ func (s *HostedCallSuite) TestAWorkerDeclaresEachToolsPolicies() {
 	}
 	s.Equal(true, byName["investigate_sdk"]["interruptible"])
 	s.EqualValues(90000, byName["investigate_sdk"]["timeout_ms"])
+	s.Equal(map[string]any{"title": "Read the SDK source?"}, byName["investigate_sdk"]["approval"])
 	s.NotContains(byName["search_docs"], "interruptible")
 	s.NotContains(byName["search_docs"], "timeout_ms")
+	s.NotContains(byName["search_docs"], "approval")
 }
 
 func (s *HostedCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {

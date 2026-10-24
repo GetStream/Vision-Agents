@@ -19,6 +19,9 @@ type Call struct {
 	User User
 	// Conversation is where the call was made. Empty when the router did not say.
 	Conversation Conversation
+	// Approved says the caller already said yes to this call, when the function asked
+	// with NeedsApproval and the router asked them on a voice call.
+	Approved bool
 }
 
 // Line is how a running call reaches the session it runs for. The socket that delivered the

@@ -471,3 +471,91 @@ func keys(object map[string]any) []string {
 	}
 	return found
 }
+
+func (s *OpenAILiveSocketSuite) TestAToolAnsweredWhileTheModelSpeaksCarriesOnOnceItStops() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{ReplyGap: time.Second})
+	defer func() { _ = provider.Close() }()
+	speech := sts.PcmData{Samples: []int16{400, -401}, SampleRate: SampleRate, Channels: 1}
+	s.Require().NoError(conn.WriteJSON(serverEvent{Type: eventAudioDelta, Delta: base64.StdEncoding.EncodeToString(speech.Bytes())}))
+	s.awaitEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.AudioChunk); return ok })
+
+	s.Require().NoError(provider.Answer("call_1", `{"question":"Shall I book it?"}`, nil))
+
+	s.Equal("response.item.create", s.nextFrame(conn)["type"])
+	s.Equal(map[string]any{"type": "response.create"}, s.nextFrame(conn))
+	s.awaitEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.ResponseComplete); return ok },
+		"the answer asked for a reply while the model's was still open, which the server ignores")
+}
+
+func (s *OpenAILiveSocketSuite) TestAToolReplyTheModelTalkedOverIsAskedForOnceMore() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{ReplyGap: 100 * time.Millisecond})
+	defer func() { _ = provider.Close() }()
+
+	s.Require().NoError(provider.Answer("call_1", `{"question":"Shall I book it?"}`, nil))
+	s.Equal("response.item.create", s.spokenTo(conn)["type"])
+	s.Equal(map[string]any{"type": "response.create"}, s.spokenTo(conn))
+
+	speech := sts.PcmData{Samples: []int16{400, -401}, SampleRate: SampleRate, Channels: 1}
+	for range 2 {
+		s.Require().NoError(conn.WriteJSON(serverEvent{Type: eventAudioDelta, Delta: base64.StdEncoding.EncodeToString(speech.Bytes())}))
+		s.awaitEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.ResponseComplete); return ok })
+	}
+	s.Equal(map[string]any{"type": "response.create"}, s.spokenTo(conn),
+		"the model began speaking just after the reply was asked for, so the server ignored it")
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond)))
+	for {
+		var frame map[string]any
+		if err := conn.ReadJSON(&frame); err != nil {
+			break
+		}
+		s.NotEqual("response.create", frame["type"], "a reply is asked for again only once")
+	}
+}
+
+func (s *OpenAILiveSocketSuite) TestAToolReplyTheBackendBeganIsNotAskedForAgain() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{ReplyGap: 100 * time.Millisecond})
+	defer func() { _ = provider.Close() }()
+
+	s.Require().NoError(provider.Answer("call_1", `{"question":"Shall I book it?"}`, nil))
+	s.Equal("response.item.create", s.spokenTo(conn)["type"])
+	s.Equal(map[string]any{"type": "response.create"}, s.spokenTo(conn))
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage,
+		[]byte(`{"type":"response.event","delegation_id":"d1","event":{"type":"response.created","response":{"id":"r1"}}}`)))
+
+	speech := sts.PcmData{Samples: []int16{400, -401}, SampleRate: SampleRate, Channels: 1}
+	s.Require().NoError(conn.WriteJSON(serverEvent{Type: eventAudioDelta, Delta: base64.StdEncoding.EncodeToString(speech.Bytes())}))
+	s.awaitEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.ResponseComplete); return ok })
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond)))
+	for {
+		var frame map[string]any
+		if err := conn.ReadJSON(&frame); err != nil {
+			break
+		}
+		s.NotEqual("response.create", frame["type"], "the backend already began the reply")
+	}
+}
+
+// awaitEvent reads events until one matches, failing if none is already waiting.
+func (s *OpenAILiveSocketSuite) awaitEvent(provider *STS, matches func(sts.Event) bool, message ...any) {
+	timer := time.NewTimer(50 * time.Millisecond)
+	if len(message) == 0 {
+		timer.Reset(5 * time.Second)
+	}
+	defer timer.Stop()
+	for {
+		select {
+		case event := <-provider.Events():
+			if matches(event) {
+				return
+			}
+		case <-timer.C:
+			s.FailNow("the event never came", message...)
+		}
+	}
+}

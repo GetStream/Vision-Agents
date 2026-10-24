@@ -35,6 +35,9 @@ type Tool struct {
 	// Timeout is how long one call may take, in place of what the worker gave all its
 	// tools. Zero takes that.
 	Timeout time.Duration `json:",omitempty"`
+	// Approval is the question a voice caller is asked before each call runs. Empty asks
+	// nothing.
+	Approval string `json:",omitempty"`
 }
 
 // ToolCall is one call a worker is asked to run.
@@ -51,6 +54,9 @@ type ToolCall struct {
 	Name         string
 	// Arguments is the JSON object the model wrote.
 	Arguments string
+	// Approved says the caller already said yes to the call, on a voice call that asked
+	// them the tool's approval question.
+	Approved bool `json:",omitempty"`
 	// Progress is the conversation the call was made in, which the worker may hold the call
 	// on or tell how it is going while it runs. Nil when nobody is listening.
 	Progress Progress `json:"-"`

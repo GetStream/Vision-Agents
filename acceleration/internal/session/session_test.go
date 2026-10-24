@@ -2019,3 +2019,22 @@ func (s *SessionSuite) TestTextSessionWithoutSkillsOfItsOwnLoadsNone() {
 
 	s.NotContains(created.Tools(), harness.LoadSkillTool)
 }
+
+func (s *SessionSuite) TestACallTheCallerAllowedIsAskedForAsApprovedAndReplayedSo() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan ToolCall, 2)
+	tools := newBridge(time.Second, nil, func(call ToolCall) error { events <- call; return nil })
+	go func() {
+		_, _ = tools.Run(agent.WithApproval(ctx), llm.ToolCall{ID: "call-one", TurnID: "turn-one", Name: "book_flight", Arguments: "{}"})
+	}()
+	select {
+	case requested := <-events:
+		s.True(requested.Approved)
+	case <-time.After(time.Second):
+		s.FailNow("tool request was not emitted")
+	}
+	pending := tools.Pending()
+	s.Require().Len(pending, 1)
+	s.True(pending[0].Approved, "a call replayed to a watcher that attached is still approved")
+}

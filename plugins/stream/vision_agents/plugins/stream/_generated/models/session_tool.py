@@ -32,7 +32,12 @@ class SessionTool:
                 command it answers (and, for a client tool, their install), and carries this question for their client to ask.
                 The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes
                 on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The
-                caller still answers the call with tool_result either way. Every channel member can read the question.
+                caller still answers the call with tool_result either way. Every channel member can read the question. On a
+                voice call the router asks instead: it does not send the call, answers the model at once with the title, each
+                {argument} in it filled in from the call, and offers the model confirm_tool_call. A cascade says the question as
+                written; a speech-to-speech model is told to ask it in those words. Only a yes within 15 seconds of the question
+                finishing sends the call, under its own id and with approved true, and the tool's timeout starts then. A no, or
+                silence, declines it, and the call is never sent.
             display_title (str | Unset): What a call is doing, in words for the people in the conversation, such as
                 "Checking your location". Shown on the reply's ai_tool_call attachment.
             executor (SessionToolExecutor | Unset): Who runs it. A client tool runs on a person's device: in a persistent

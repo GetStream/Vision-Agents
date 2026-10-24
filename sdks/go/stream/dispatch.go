@@ -250,6 +250,9 @@ func (d *Dispatch) host() {
 			if function.Timeout > 0 {
 				tool["timeout_ms"] = function.Timeout.Milliseconds()
 			}
+			if function.Approval != "" {
+				tool["approval"] = Frame{"title": function.Approval}
+			}
 			declared = append(declared, tool)
 		}
 		d.tell(Frame{"type": "host_tools", "agent_id": offer.agentID, "tools": declared, "timeout_ms": offer.toolTimeout.Milliseconds()})

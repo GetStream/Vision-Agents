@@ -500,7 +500,8 @@ export class Session {
           if (!this.tools?.has(text(message, "name"))) {
             continue;
           }
-          const approval = this.tools.approval(text(message, "name"));
+          // A caller who already said yes on a voice call is not asked again.
+          const approval = message.approved === true ? undefined : this.tools.approval(text(message, "name"));
           if (approval) {
             this.hold(message, approval);
             this.deliver(eventOf(message));

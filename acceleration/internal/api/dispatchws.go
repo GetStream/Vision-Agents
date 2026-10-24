@@ -371,6 +371,14 @@ type hostedTool struct {
 	// Interruptible and TimeoutMs mean what they do on a session's own tool.
 	Interruptible bool `json:"interruptible"`
 	TimeoutMs     int  `json:"timeout_ms"`
+	// Approval is the question a voice caller is asked before each call runs, as on a
+	// session's own tool. Only its title is asked.
+	Approval *hostedApproval `json:"approval"`
+}
+
+// hostedApproval is the question a hosted tool asks.
+type hostedApproval struct {
+	Title string `json:"title"`
 }
 
 // hostTools records what a worker offers to run for sessions under an agent id, and says
@@ -394,10 +402,16 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []h
 		if tool.TimeoutMs < 0 {
 			return refuse(tool.Name + "'s timeout_ms cannot be negative")
 		}
-		tools = append(tools, dispatch.Tool{
+		hosted := dispatch.Tool{
 			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
 			Interruptible: tool.Interruptible, Timeout: time.Duration(tool.TimeoutMs) * time.Millisecond,
-		})
+		}
+		if tool.Approval != nil {
+			if hosted.Approval = strings.TrimSpace(tool.Approval.Title); hosted.Approval == "" {
+				return refuse(tool.Name + "'s approval needs a title")
+			}
+		}
+		tools = append(tools, hosted)
 		names = append(names, tool.Name)
 	}
 	if err := s.dispatch.Host(worker, agentID, tools, time.Duration(timeoutMs)*time.Millisecond); err != nil {
@@ -428,6 +442,9 @@ func toolCallFrame(call dispatch.ToolCall) frame {
 	}
 	if call.Conversation != nil {
 		rendered["conversation"] = toolConversationFrame(call.Conversation.CID, call.Conversation.Custom)
+	}
+	if call.Approved {
+		rendered["approved"] = true
 	}
 	return rendered
 }
