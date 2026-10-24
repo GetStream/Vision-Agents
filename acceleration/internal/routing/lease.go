@@ -46,7 +46,7 @@ func StartLease(recorder *Recorder, config ProviderConfig, owner Owner, kind, id
 }
 
 func startLease(recorder *Recorder, config ProviderConfig, owner Owner, kind, id string, minute pricing.Quantities, every, ttl time.Duration) *Lease {
-	if recorder == nil || !recorder.Billable(config) {
+	if recorder == nil || !recorder.writer.records() || !recorder.Billable(config) {
 		return nil
 	}
 	if _, holds := recorder.moneyGate().(Reserver); !holds {

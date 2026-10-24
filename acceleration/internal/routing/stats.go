@@ -338,10 +338,11 @@ func (r *Recorder) moneyGate() Gate {
 // under the usage id its row will carry, before the work starts: for at most ttl, unless the
 // row is recorded first (which settles it at its cost) or Release lets go of it. It answers at
 // once, from the gate's memory. A refusal is the money error to answer, and no vendor is to be
-// asked. Work the provider does not bill, an estimate that costs nothing, and a recorder whose
-// gate holds nothing reserve nothing.
+// asked. Work the provider does not bill, an estimate that costs nothing, a recorder whose gate
+// holds nothing, and one whose writer records nothing (so no row would settle it) reserve
+// nothing.
 func (r *Recorder) Reserve(config ProviderConfig, owner Owner, usageID uuid.UUID, estimate pricing.Quantities, ttl time.Duration) error {
-	if r == nil || usageID == uuid.Nil || !r.Billable(config) {
+	if r == nil || usageID == uuid.Nil || !r.writer.records() || !r.Billable(config) {
 		return nil
 	}
 	reserver, ok := r.moneyGate().(Reserver)
