@@ -18,6 +18,7 @@ from vision_agents.core.utils.utils import await_or_run
 
 from ._backend import Backend
 from ._socket import Socket
+from ._tool_line import Holds, SocketLine, call_of, cancel, run_call
 from .responses import RouterError, _create_response
 from .sessions import _tools
 
@@ -119,6 +120,9 @@ class Dispatch:
         self._first_retry = FIRST_RETRY
         self._socket: Optional[Socket] = None
         self._running: set[asyncio.Task[None]] = set()
+        # The hosted calls running, by session and id, which is what tool_cancel names.
+        self._hosted_calls: dict[str, asyncio.Task[None]] = {}
+        self._holds = Holds()
         # The calls and messages alone, which is what the router counts against this
         # worker's capacity. A hosted tool call is not one of them.
         self._handling = 0
@@ -404,6 +408,12 @@ class Dispatch:
                 await self._host()
             elif kind == "tool_call":
                 await self._call_hosted(frame)
+            elif kind == "tool_held":
+                self._holds.answer(str(frame.get("id", "")), True)
+            elif kind == "tool_cancel":
+                call_id = str(frame.get("id", ""))
+                key = _hosted_key(frame)
+                cancel(call_id, self._holds, self._hosted_calls.get(key))
             elif kind == "hosting":
                 logger.info(
                     "the router sends the tools of %s here", frame.get("agent_id", "")
@@ -449,6 +459,7 @@ class Dispatch:
             await self._tell(
                 {
                     "type": "tool_result",
+                    "tool_call_id": frame.get("id", ""),
                     "id": frame.get("id", ""),
                     "error": f"this worker does not run {name}",
                 }
@@ -460,9 +471,12 @@ class Dispatch:
             name,
             frame.get("session_id", ""),
         )
+        key = _hosted_key(frame)
         task = asyncio.create_task(self._run_hosted(offer.functions, frame))
         self._running.add(task)
+        self._hosted_calls[key] = task
         task.add_done_callback(self._running.discard)
+        task.add_done_callback(lambda _: self._hosted_calls.pop(key, None))
 
     async def _run_hosted(
         self, functions: FunctionRegistry, frame: dict[str, Any]
@@ -473,10 +487,16 @@ class Dispatch:
         about a tool that did not work.
         """
         name = str(frame.get("name", ""))
-        result: dict[str, object] = {"type": "tool_result", "id": frame.get("id", "")}
+        # id is tool_call_id under the name a router from before it reads.
+        result: dict[str, object] = {
+            "type": "tool_result",
+            "tool_call_id": frame.get("id", ""),
+            "id": frame.get("id", ""),
+        }
+        call = call_of(frame, "", SocketLine(self._tell, self._holds))
         try:
             arguments = json.loads(frame.get("arguments") or "{}")
-            output = await functions.call_function(name, arguments)
+            output = await run_call(functions, name, arguments, call, self._holds)
             result["output"] = output if isinstance(output, str) else json.dumps(output)
         except asyncio.CancelledError:
             raise
@@ -643,6 +663,11 @@ def _custom_of(frame: dict[str, object]) -> dict[str, str]:
     if not isinstance(custom, dict):
         return {}
     return {str(key): value for key, value in custom.items() if isinstance(value, str)}
+
+
+def _hosted_key(frame: dict[str, Any]) -> str:
+    """A hosted call's id within its session: two sessions' models can pick the same one."""
+    return f"{frame.get('session_id', '')}/{frame.get('id', '')}"
 
 
 def _call_of(frame: dict[str, object]) -> InboundCall:

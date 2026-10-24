@@ -985,6 +985,7 @@ class TestDispatch:
 
         assert answered == {
             "type": "tool_result",
+            "tool_call_id": "call-1",
             "id": "call-1",
             "output": "read android",
         }
@@ -1018,9 +1019,123 @@ class TestDispatch:
 
         assert answered == {
             "type": "tool_result",
+            "tool_call_id": "call-1",
             "id": "call-1",
             "error": "this worker does not run deploy",
         }
+
+    async def test_a_hosted_functions_policies_are_declared_to_the_router(
+        self, router: Router
+    ):
+        agent = stream.Client(url=router.url, customer_id="acme").agent("travel")
+
+        @agent.register(
+            description="Book a flight",
+            interruptible=True,
+            timeout=90,
+            needs_approval="Book flight {flight_id}?",
+        )
+        async def book_flight(flight_id: str) -> str:
+            return "booked"
+
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker.host(agent)
+        running = asyncio.create_task(worker.run())
+        try:
+            declared = await router.told_of_type("host_tools")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        tool = declared["tools"][0]
+        assert tool["interruptible"] is True
+        assert tool["timeout_ms"] == 90000
+        assert tool["approval"] == {"title": "Book flight {flight_id}?"}
+
+    async def test_a_hosted_call_the_router_cancels_stops(self, router: Router):
+        agent = stream.Client(url=router.url, customer_id="acme").agent("support")
+        started = asyncio.Event()
+        stopped = asyncio.Event()
+
+        @agent.register(description="Investigate for a long time")
+        async def investigate() -> str:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+                return "found it"
+            finally:
+                stopped.set()
+
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker.host(agent)
+        running = asyncio.create_task(worker.run())
+        try:
+            call = {"type": "tool_call", "id": "call-1", "name": "investigate"}
+            await router.hand_over({**call, "session_id": "s1"})
+            await asyncio.wait_for(started.wait(), SETTLE)
+            await router.hand_over(
+                {"type": "tool_cancel", "id": "call-1", "session_id": "s2"}
+            )
+            await asyncio.sleep(0.05)
+            assert not stopped.is_set(), "another session's call of the same id"
+            await router.hand_over(
+                {"type": "tool_cancel", "id": "call-1", "session_id": "s1"}
+            )
+            await asyncio.wait_for(stopped.wait(), SETTLE)
+            await asyncio.sleep(0.05)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert not [
+            frame for frame in router.received if frame["type"] == "tool_result"
+        ]
+
+    async def test_a_hosted_function_reads_its_call_and_says_how_it_is_going(
+        self, router: Router
+    ):
+        agent = stream.Client(url=router.url, customer_id="acme").agent("support")
+        seen: list[stream.ToolCall] = []
+
+        @agent.register(description="Investigate")
+        async def investigate() -> str:
+            seen.append(stream.current_call())
+            await stream.current_call().update("reading the logs")
+            return "found it"
+
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker.host(agent)
+        running = asyncio.create_task(worker.run())
+        try:
+            await router.hand_over(
+                {
+                    "type": "tool_call",
+                    "id": "call-1",
+                    "session_id": "s1",
+                    "turn_id": "turn-3",
+                    "name": "investigate",
+                    "user": {"id": "sam"},
+                }
+            )
+            update = await router.told_of_type("tool_update")
+            result = await router.told_of_type("tool_result")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert update == {
+            "type": "tool_update",
+            "tool_call_id": "call-1",
+            "text": "reading the logs",
+            "verbatim": False,
+        }
+        assert result["output"] == "found it"
+        assert (seen[0].id, seen[0].session_id, seen[0].turn_id) == (
+            "call-1",
+            "s1",
+            "turn-3",
+        )
+        assert seen[0].user.id == "sam"
 
     async def test_a_running_hosted_tool_does_not_hold_up_the_next(
         self, router: Router

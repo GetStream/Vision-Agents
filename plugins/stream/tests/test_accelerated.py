@@ -13,6 +13,12 @@ from vision_agents.core import Agent, User
 from vision_agents.core.agents.agents import DEFAULT_INSTRUCTIONS
 from vision_agents.core.harness import Daytona, DefaultHarness
 from vision_agents.core.llm.llm import ImageContent
+from vision_agents.core.llm.tool_call import (
+    ToolCall,
+    ToolConversation,
+    ToolUser,
+    current_call,
+)
 from vision_agents.core.llm.remote import (
     RemoteCall,
     RemotePhone,
@@ -782,6 +788,185 @@ class TestAccelerated:
         await router.send({"type": "tool_cancel", "id": "task-slow"})
         await asyncio.wait_for(cancelled.wait(), SETTLE)
         assert router.commands.empty()
+
+    async def test_a_functions_policies_are_declared_on_the_session(
+        self, router: Router, llm: stream.Accelerated, call: RemoteCall
+    ):
+        @llm.register_function(
+            description="Book a flight",
+            interruptible=True,
+            timeout=5,
+            needs_approval="Book flight {flight_id}?",
+        )
+        async def book_flight(flight_id: str) -> str:
+            return "booked"
+
+        await llm.join_remote(call)
+        try:
+            assert router.created is not None
+            declared = {tool["name"]: tool for tool in router.created["tools"]}
+        finally:
+            await llm.leave_remote()
+
+        assert declared["book_flight"]["interruptible"] is True
+        assert declared["book_flight"]["timeout_ms"] == 5000
+        assert declared["book_flight"]["approval"] == {
+            "title": "Book flight {flight_id}?"
+        }
+        for policy in ("interruptible", "timeout_ms", "approval"):
+            assert policy not in declared["weather"], "the router's defaults stand"
+
+    async def test_a_call_the_router_addresses_elsewhere_is_left_alone(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        await router.send(
+            {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "weather",
+                "arguments": json.dumps({"city": "Amsterdam"}),
+                "run": False,
+            }
+        )
+        await asyncio.sleep(0.1)
+
+        assert router.commands.empty()
+
+    async def test_a_function_reads_the_call_it_is_running_for(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        seen: list[ToolCall] = []
+
+        @joined.register_function(description="Look the caller up")
+        async def whoami() -> str:
+            seen.append(current_call())
+            return "ok"
+
+        await router.send(
+            {
+                "type": "tool_call",
+                "id": "call-3",
+                "turn_id": "turn-2",
+                "name": "whoami",
+                "arguments": "{}",
+                "user": {"id": "sam", "name": "Sam", "custom": {"tier": "gold"}},
+                "conversation": {"cid": "agent:kept", "custom": {"line": "support"}},
+                "approved": True,
+            }
+        )
+        await router.answered()
+
+        assert seen[0].id == "call-3"
+        assert seen[0].session_id == "session-1", "the session the call came over"
+        assert seen[0].turn_id == "turn-2"
+        assert seen[0].user == ToolUser(id="sam", name="Sam", custom={"tier": "gold"})
+        assert seen[0].conversation == ToolConversation(
+            cid="agent:kept", custom={"line": "support"}
+        )
+        assert seen[0].approved
+        assert current_call() == ToolCall(), "outside a call there is none"
+
+    async def test_a_function_tells_the_caller_how_it_is_going(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        @joined.register_function(description="Search flights")
+        async def search() -> str:
+            await current_call().update("checking three airlines")
+            await current_call().say("Still looking, one moment.")
+            return "found two"
+
+        await router.send(
+            {"type": "tool_call", "id": "call-4", "name": "search", "arguments": "{}"}
+        )
+
+        assert await router.answered() == {
+            "type": "tool_update",
+            "tool_call_id": "call-4",
+            "text": "checking three airlines",
+            "verbatim": False,
+        }
+        assert await router.answered() == {
+            "type": "tool_update",
+            "tool_call_id": "call-4",
+            "text": "Still looking, one moment.",
+            "verbatim": True,
+        }
+        assert (await router.answered())["output"] == "found two"
+
+    async def test_a_held_call_is_not_cancelled_by_the_caller_talking_over(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        held = asyncio.Event()
+        release = asyncio.Event()
+
+        @joined.register_function(description="Charge the card")
+        async def charge() -> str:
+            await current_call().disallow_interruptions()
+            held.set()
+            await release.wait()
+            return "charged"
+
+        await router.send(
+            {"type": "tool_call", "id": "call-5", "name": "charge", "arguments": "{}"}
+        )
+        assert await router.answered() == {
+            "type": "tool_hold",
+            "tool_call_id": "call-5",
+        }
+        await router.send({"type": "tool_held", "id": "call-5"})
+        await asyncio.wait_for(held.wait(), SETTLE)
+        await router.send({"type": "tool_cancel", "id": "call-5"})
+        await asyncio.sleep(0.05)
+        release.set()
+
+        answer = await router.answered()
+        assert answer == {
+            "type": "tool_result",
+            "tool_call_id": "call-5",
+            "output": "charged",
+        }
+
+    async def test_a_call_stopped_before_it_was_held_never_writes(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        wrote = asyncio.Event()
+        stopped = asyncio.Event()
+
+        @joined.register_function(description="Charge the card")
+        async def charge() -> str:
+            try:
+                await current_call().disallow_interruptions()
+                wrote.set()
+                return "charged"
+            finally:
+                stopped.set()
+
+        await router.send(
+            {"type": "tool_call", "id": "call-6", "name": "charge", "arguments": "{}"}
+        )
+        assert (await router.answered())["type"] == "tool_hold"
+        await router.send({"type": "tool_cancel", "id": "call-6"})
+        await asyncio.wait_for(stopped.wait(), SETTLE)
+        await asyncio.sleep(0.05)
+
+        assert not wrote.is_set()
+        assert router.commands.empty(), "a cancelled call is not answered"
+
+    async def test_a_call_that_takes_longer_than_its_timeout_fails(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        @joined.register_function(description="Never finishes", timeout=0.05)
+        async def stuck() -> str:
+            await asyncio.Event().wait()
+            return "never"
+
+        await router.send(
+            {"type": "tool_call", "id": "call-7", "name": "stuck", "arguments": "{}"}
+        )
+
+        answer = await router.answered()
+        assert answer["tool_call_id"] == "call-7"
+        assert answer["error"] == "stuck took longer than 0.05s"
 
     async def test_leaving_closes_the_session(
         self, router: Router, llm: stream.Accelerated, call: RemoteCall
