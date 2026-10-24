@@ -356,7 +356,7 @@ func (s *RecordSuite) TestMatchesLiveAnswersTheSameFiltersAsTheStore() {
 
 func (s *RecordSuite) TestFramesOfTheUsersVideoMakeTheSessionAVideoOneOnce() {
 	held := &heldRecorder{}
-	live := &Session{id: "b", modality: store.ModalityVoice, records: held}
+	live := &Session{id: "b", modality: store.ModalityVoice, records: held, recording: true}
 	frames := framesRunner{parts: []llm.ContentPart{{Image: &llm.ImagePart{URL: "data:image/jpeg;base64,AA=="}}}}
 	runner := &videoRunner{next: frames, session: live}
 
