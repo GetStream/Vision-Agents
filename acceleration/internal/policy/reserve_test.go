@@ -612,6 +612,32 @@ func (s *PolicySuite) TestAFlushOfMoreKeysThanAChunkLandsWhole() {
 	s.Zero(unflushed, "and each of its users' keys took it")
 }
 
+func (s *PolicySuite) TestAPassOfManyChunksGivesUpByItsDeadlineWhenRedisHangs() {
+	proxy, redis := s.redis()
+	s.usage().Credit(s.T(), s.org, 100_000_000)
+	enforcer := s.sharer(redis, func(settings *Settings) { settings.FlushMaxLag = time.Minute })
+	for i := range 12 * flushChunk {
+		owner := s.owner()
+		owner.UserID = "user-" + strconv.Itoa(i)
+		s.Require().NoError(enforcer.Reserve(owner, newID(), 1, time.Minute))
+	}
+	proxy.held.Store(true)
+	defer proxy.held.Store(false)
+	// The flush loop may hold some of the keys; a pass of its own takes the rest.
+	enforcer.money.mu.Lock()
+	enforcer.money.refreshedAt = time.Time{}
+	enforcer.money.mu.Unlock()
+
+	started := time.Now()
+	enforcer.money.flushPass(s.ctx)
+
+	s.Less(time.Since(started), flushPassTimeout+time.Second, "twelve chunks of a hanging Redis cost one deadline, not twelve timeouts")
+	enforcer.money.mu.Lock()
+	unflushed := len(enforcer.money.dirty)
+	enforcer.money.mu.Unlock()
+	s.Positive(unflushed, "and what was not written is kept to write")
+}
+
 func (s *PolicySuite) TestAGrantHeldOnOneRouterIsHeldOnEvery() {
 	_, redisA := s.redis()
 	_, redisB := s.redis()
