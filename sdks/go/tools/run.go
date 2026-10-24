@@ -57,6 +57,8 @@ func (r *Registry) Run(ctx context.Context, call Call, name string, arguments st
 	if arguments == "" {
 		arguments = "{}"
 	}
+	ctx, finished := startRun(ctx)
+	defer finished()
 	if call.ID == "" {
 		return r.execute(ctx, function, &call, arguments)
 	}

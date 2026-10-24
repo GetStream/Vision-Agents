@@ -121,3 +121,54 @@ func (s *HostedCallSuite) TestAPictureReachesTheRouter() {
 	s.Require().Len(parts, 2)
 	s.Equal("https://example.com/kitchen.jpg", parts[1].(map[string]any)["image_url"].(map[string]any)["url"])
 }
+
+func (s *HostedCallSuite) TestAHostedFunctionSaysHowItIsGoingAndHoldsItsWrite() {
+	heard := make(chan Frame, 32)
+	router := newPool(s.T(), func(connection *websocket.Conn) {
+		if connection.WriteJSON(Frame{"type": "tool_call", "id": "call-1", "session_id": "s", "name": "rebook_flight", "arguments": "{}"}) != nil {
+			return
+		}
+		for {
+			var frame Frame
+			if connection.ReadJSON(&frame) != nil {
+				return
+			}
+			heard <- frame
+			if frame.Type() == "tool_hold" {
+				_ = connection.WriteJSON(Frame{"type": "tool_held", "id": "call-1"})
+				return
+			}
+		}
+	})
+	functions := tools.NewRegistry()
+	s.Require().NoError(tools.Register(functions, "rebook_flight", "Move a booking", func(ctx context.Context, _ struct{}) (any, error) {
+		call := tools.CallFrom(ctx)
+		if err := call.Update(ctx, "Checking seats"); err != nil {
+			return nil, err
+		}
+		writing := call.DisallowInterruptions(ctx)
+		if writing.Err() != nil {
+			return nil, writing.Err()
+		}
+		return "rebooked", nil
+	}))
+	worker := waiting(s.T(), router, DispatchOptions{})
+	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+	ctx, cancel := context.WithCancel(s.T().Context())
+	stopped := run(s.T(), ctx, worker)
+	defer func() {
+		cancel()
+		stopped()
+	}()
+
+	s.Equal("rebooked", router.told(s.T(), "tool_result").String("output"))
+	var told []Frame
+	for len(heard) > 0 {
+		if frame := <-heard; frame.Type() != "ping" && frame.Type() != "host_tools" && frame.Type() != "load" {
+			told = append(told, frame)
+		}
+	}
+	s.Require().Len(told, 2)
+	s.Equal(Frame{"type": "tool_update", "tool_call_id": "call-1", "text": "Checking seats", "verbatim": false}, told[0])
+	s.Equal(Frame{"type": "tool_hold", "tool_call_id": "call-1"}, told[1])
+}

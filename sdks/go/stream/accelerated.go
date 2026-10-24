@@ -193,6 +193,7 @@ type Pipeline struct {
 	stop    context.CancelFunc
 	running sync.WaitGroup
 	watcher sync.WaitGroup
+	holds   holds
 }
 
 // Accelerated configures a pipeline to run remotely.
@@ -593,7 +594,10 @@ func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event) 
 			}()
 			continue
 		case "tool_cancel":
+			p.holds.answer(frame.String("id"), false)
 			p.functions.Cancel(p.sessionID(), frame.String("id"))
+		case "tool_held":
+			p.holds.answer(frame.String("id"), true)
 		}
 
 		select {
@@ -619,7 +623,8 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 		}
 	}
 
-	output, err := p.functions.Run(ctx, toolCallOf(frame, p.sessionID()), name, frame.String("arguments"))
+	line := tools.WithLine(ctx, toolLine{send: p.command, holds: &p.holds})
+	output, err := p.functions.Run(line, toolCallOf(frame, p.sessionID()), name, frame.String("arguments"))
 	if err != nil {
 		p.logger.Error("the tool failed", "tool", name, "error", err)
 		result["error"] = err.Error()

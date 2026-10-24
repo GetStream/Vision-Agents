@@ -172,6 +172,8 @@ type Dispatch struct {
 	handling atomic.Int64
 
 	pong chan struct{}
+	// holds are the hosted calls waiting to hear whether they were held.
+	holds holds
 
 	firstRetry time.Duration
 }
@@ -280,7 +282,8 @@ func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
 
 		// id is tool_call_id under the name a router from before it reads.
 		result := Frame{"type": "tool_result", "tool_call_id": id, "id": id}
-		output, err := functions.Run(ctx, toolCallOf(frame, ""), name, frame.String("arguments"))
+		line := tools.WithLine(ctx, toolLine{send: d.send, holds: &d.holds})
+		output, err := functions.Run(line, toolCallOf(frame, ""), name, frame.String("arguments"))
 		if err != nil {
 			d.logger.Error("a hosted tool failed", "tool", name, "error", err)
 			result["error"] = err.Error()
@@ -479,7 +482,10 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 			d.host()
 		case "tool_call":
 			d.runHosted(ctx, frame)
+		case "tool_held":
+			d.holds.answer(frame.String("id"), true)
 		case "tool_cancel":
+			d.holds.answer(frame.String("id"), false)
 			for _, offer := range d.hosted {
 				offer.functions.Cancel(frame.String("session_id"), frame.String("id"))
 			}
@@ -627,6 +633,14 @@ func (d *Dispatch) measure(ctx context.Context) {
 //
 // A closed socket is not an error here: every one of these is something the router would
 // like to know rather than something a conversation depends on.
+// send is tell for a caller that wants an error.
+func (d *Dispatch) send(frame Frame) error {
+	if !d.tell(frame) {
+		return errNoSocket
+	}
+	return nil
+}
+
 func (d *Dispatch) tell(frame Frame) bool {
 	d.mu.Lock()
 	socket := d.socket
