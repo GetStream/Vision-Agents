@@ -41,6 +41,10 @@ const (
 	// acklessAges is how many PendingTTLs a limits hold is kept at most while the usage service
 	// acks none of the account's rows (ackless): an hour at the default.
 	acklessAges = 6
+	// uncountable is how long a grant hold is kept after the shard wrote its row with nothing
+	// counting it: each reconcile reads a shard back store.GrantReconcileOverlap from where the
+	// last got, so one that has not found the row two passes past that never will.
+	uncountable = store.GrantReconcileOverlap + 2*reconcileEvery
 )
 
 var _ routing.Spender = (*Enforcer)(nil)
@@ -406,8 +410,9 @@ func (m *money) release(key string, acct *account, now time.Time) {
 	if counted && acct.ackless(now, m.settings.Fresh) {
 		acct.acksFailed = now
 	}
-	var expired, unwritten, waiting, waited, unacked, aged, uncounted int64
+	var expired, unwritten, waiting, waited, unacked, aged, uncounted, stranded int64
 	var emptied []uuid.UUID
+	var strandedGrants []int64
 	for id, held := range acct.holds {
 		if held.balance {
 			switch {
@@ -447,12 +452,18 @@ func (m *money) release(key string, acct *account, now time.Time) {
 			// countedByReconcile: a row whose count the grant counter still tries may count
 			// yet, and letting go of it first would overdraw the grant. A row this process
 			// never knew the shard to have goes acklessAges PendingTTLs on, as the writer may
-			// have lost it.
+			// have lost it, and one it knew written but nothing counted goes uncountable after.
 			switch {
 			case !held.countedAt.IsZero() && held.countedAt.Before(acct.grantsFrom):
 				acct.letGoGrants(held)
 			case held.writtenAt.IsZero() && now.Sub(held.made) > acklessAges*ttl:
 				uncounted += held.micros
+				acct.letGoGrants(held)
+			case held.countedAt.IsZero() && !held.writtenAt.IsZero() && now.Sub(held.writtenAt) > uncountable:
+				// The reconcile misses a row written past its overlap after it started, and
+				// AddGrantUses refuses one naming a grant long ended: neither ever counts.
+				stranded += held.micros
+				strandedGrants = append(strandedGrants, held.grants...)
 				acct.letGoGrants(held)
 			}
 		}
@@ -489,6 +500,11 @@ func (m *money) release(key string, acct *account, now time.Time) {
 	if uncounted > 0 {
 		logger.Warn("usage held against an "+noun(key)+"'s grants is let go after "+(acklessAges*ttl).String()+
 			" without this router knowing the shard wrote it", append(who(key), "micros", uncounted)...)
+	}
+	if stranded > 0 {
+		logger.Error("usage held against an "+noun(key)+"'s grants is let go "+uncountable.String()+
+			" after the shard wrote it, as nothing counted it toward them",
+			append(who(key), "grants", slices.Compact(slices.Sorted(slices.Values(strandedGrants))), "micros", stranded)...)
 	}
 	if aged > 0 {
 		logger.Warn("usage held against an "+noun(key)+"'s spend limits is let go after "+(acklessAges*ttl).String()+

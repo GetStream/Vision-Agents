@@ -265,8 +265,8 @@ func (s *ShardedStoreSuite) TestAReconcileReadsOnlyTheRowsSinceTheLastLessItsOve
 
 	now := time.Now().UTC()
 	s.uncounted(s.store, s.base.Add(time.Minute), 10, grant.ID)
-	s.uncounted(s.store, now.Add(-grantReconcileOverlap/2), 100, grant.ID)
-	s.uncounted(s.other, now.Add(-grantReconcileOverlap/2), 1_000, grant.ID)
+	s.uncounted(s.store, now.Add(-GrantReconcileOverlap/2), 100, grant.ID)
+	s.uncounted(s.other, now.Add(-GrantReconcileOverlap/2), 1_000, grant.ID)
 	s.Equal(2, s.reconcile(), "a row started before the last reconcile less its overlap is not read again")
 	s.EqualValues(grantReconcilePage+1+100+1_000, s.used(grant.ID))
 }

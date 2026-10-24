@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"bytes"
 	"log/slog"
 	"testing"
 	"time"
@@ -124,6 +125,32 @@ func TestAnAcklessHoldIsKeptAtMostSoLong(t *testing.T) {
 	acct.spentFrom = time.Now()
 	e.money.release(heldOrg, acct, time.Now())
 	require.Zero(t, limitsHeldOf(acct), "let go past acklessAges PendingTTLs, acks or not")
+}
+
+func TestAGrantHoldWrittenAndNeverCountedIsLetGoWithAnError(t *testing.T) {
+	e, acct := holding(t)
+	var logs bytes.Buffer
+	e.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	grantHeldOf := func() int64 { return acct.grantHeld[42] }
+	holdGrant := func(written, counted time.Time) {
+		held := acct.holds[spend(e, 5)]
+		held.grants, held.granted, held.writtenAt, held.countedAt = []int64{42}, true, written, counted
+		acct.countGrants(held, 1)
+	}
+	now := time.Now()
+	holdGrant(now.Add(-uncountable+time.Minute), time.Time{})
+	// Counted, though no read of the grants after it landed yet.
+	holdGrant(now.Add(-uncountable-time.Minute), now)
+
+	e.money.release(heldOrg, acct, now)
+	require.EqualValues(t, 10, grantHeldOf(), "a row the reconcile may still find, or one counted, is kept")
+	require.Empty(t, logs.String())
+
+	holdGrant(now.Add(-uncountable-time.Minute), time.Time{})
+	e.money.release(heldOrg, acct, now)
+	require.EqualValues(t, 10, grantHeldOf(), "written uncountable ago and never counted, it is let go")
+	require.Contains(t, logs.String(), `"level":"ERROR"`)
+	require.Contains(t, logs.String(), `"grants":[42]`)
 }
 
 func TestAnIdleAccountGivesItsFoldedIDsBackToTheProcess(t *testing.T) {

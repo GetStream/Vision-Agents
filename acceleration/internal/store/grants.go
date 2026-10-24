@@ -408,10 +408,10 @@ func (s *Store) GrantUsesCounted(ctx context.Context, usageIDs []uuid.UUID) (map
 }
 
 const (
-	// grantReconcileOverlap is how far before where it last got the reconcile reads a shard
+	// GrantReconcileOverlap is how far before where it last got the reconcile reads a shard
 	// again: a row written at most this long after it started is found. One written later,
 	// whose count its writer dropped too, is not.
-	grantReconcileOverlap = time.Hour
+	GrantReconcileOverlap = time.Hour
 	// grantReconcilePage is how many rows one read of a shard takes; where the reconcile got
 	// is kept after each, so one cut short goes on from there.
 	grantReconcilePage = 2_000
@@ -423,7 +423,7 @@ var ErrReconcileBusy = errors.New("store: another router is reconciling grant us
 // ReconcileGrantUses counts toward their grants the billable rows naming one, in every shard,
 // that are not counted yet: a row whose writer wrote it to its shard and dropped, or stopped
 // before, counting it in the shared database. Each shard is read on from where the last
-// reconcile of it got (limit_grant_reconciles), less grantReconcileOverlap, in started_at
+// reconcile of it got (limit_grant_reconciles), less GrantReconcileOverlap, in started_at
 // order (requests_limit_grants_idx). One router reconciles at a time, under an advisory lock
 // in the shared database: another finds ErrReconcileBusy. With one database the writer counts
 // every row as it writes it, so there is nothing to do. It says how many it counted.
@@ -472,7 +472,7 @@ func (s *Store) reconcileShard(ctx context.Context, shard bun.IDB, name string, 
 	var after time.Time
 	var afterID int64
 	if !mark.IsZero() {
-		after = mark.Add(-grantReconcileOverlap)
+		after = mark.Add(-GrantReconcileOverlap)
 	}
 	counted := 0
 	for {
