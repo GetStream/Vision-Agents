@@ -8,7 +8,7 @@ use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use tokio::task::JoinSet;
+use tokio::task::{AbortHandle, JoinSet};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +19,7 @@ use crate::responses::{AgentResponse, Responses};
 use crate::session::Session;
 use crate::sessions::AgentRef;
 use crate::socket::{Frame, Incoming, SocketSender};
+use crate::tool_call::{Holds, Line, ToolCall, to_run};
 use crate::tools::Tools;
 use crate::types;
 
@@ -135,7 +136,20 @@ impl Hosting {
             .tools
             .declared()
             .into_iter()
-            .map(|tool| json!({"name": tool.name, "description": tool.description, "parameters": tool.parameters}))
+            .map(|tool| {
+                let mut declared = json!({"name": tool.name, "description": tool.description, "parameters": tool.parameters});
+                // Only what differs from the router's defaults, as a session declares them.
+                if tool.interruptible == Some(true) {
+                    declared["interruptible"] = json!(true);
+                }
+                if let Some(timeout_ms) = tool.timeout_ms.filter(|timeout| *timeout > 0) {
+                    declared["timeout_ms"] = json!(timeout_ms);
+                }
+                if let Some(approval) = &tool.approval {
+                    declared["approval"] = json!(approval);
+                }
+                declared
+            })
             .collect();
         let timeout_ms = self
             .tool_timeout
@@ -380,6 +394,9 @@ impl Dispatch {
         let mut latency_ms = 0.0;
         let mut report = tokio::time::interval_at(Instant::now() + REPORT_EVERY, REPORT_EVERY);
         let mut failure = None;
+        // The hosted calls running, by what tool_cancel names them by.
+        let hosted_calls: Arc<SyncMutex<HashMap<String, AbortHandle>>> = Default::default();
+        let holds = Holds::default();
 
         loop {
             while running.try_join_next().is_some() {}
@@ -440,24 +457,57 @@ impl Dispatch {
                     }
                 }
                 // Not awaited inline: a tool can take a minute, and this socket also delivers the next.
+                "tool_call" if !to_run(&frame) => {}
                 "tool_call" => {
                     let (id, name) = (frame.text("id").to_string(), frame.text("name").to_string());
                     let Some(offer) = hosted.iter().find(|offer| offer.runs(&name)) else {
-                        tell(&sender, json!({"type": "tool_result", "id": id, "error": format!("this worker does not run {name}")})).await;
+                        tell(&sender, json!({"type": "tool_result", "tool_call_id": id, "id": id, "error": format!("this worker does not run {name}")})).await;
                         continue;
                     };
-                    let (tools, sender) = (offer.tools.clone(), sender.clone());
-                    let arguments = frame.text("arguments").to_string();
+                    let key = hosted_key(&frame);
+                    let line = Line {
+                        sender: sender.clone(),
+                        holds: holds.clone(),
+                        key: key.clone(),
+                    };
+                    let call = ToolCall::of(&frame, "", line);
+                    let (tools, arguments) =
+                        (offer.tools.clone(), frame.text("arguments").to_string());
+                    // Spawned here rather than in the task below, so a tool_cancel read next finds it.
+                    let calling =
+                        tokio::spawn(async move { tools.call_as(&name, &arguments, call).await });
+                    hosted_calls
+                        .lock()
+                        .expect("hosted calls")
+                        .insert(key.clone(), calling.abort_handle());
+                    let (sender, hosted_calls, holds) =
+                        (sender.clone(), hosted_calls.clone(), holds.clone());
                     running.spawn(async move {
-                        let outcome =
-                            tokio::spawn(async move { tools.call(&name, &arguments).await }).await;
+                        let outcome = calling.await;
+                        holds.forget(&key);
+                        // Gone from the table means cancelled: the model has moved on without it.
+                        if hosted_calls.lock().expect("hosted calls").remove(&key).is_none() {
+                            return;
+                        }
                         let result = match outcome {
-                            Ok(Ok(output)) => json!({"type": "tool_result", "id": id, "output": output}),
-                            Ok(Err(error)) => json!({"type": "tool_result", "id": id, "error": error}),
-                            Err(_) => json!({"type": "tool_result", "id": id, "error": "the tool panicked"}),
+                            Ok(Ok(output)) => json!({"type": "tool_result", "tool_call_id": id, "id": id, "output": output}),
+                            Ok(Err(error)) => json!({"type": "tool_result", "tool_call_id": id, "id": id, "error": error}),
+                            Err(_) => json!({"type": "tool_result", "tool_call_id": id, "id": id, "error": "the tool panicked"}),
                         };
                         tell(&sender, result).await;
                     });
+                }
+                "tool_held" => holds.answer(&hosted_key(&frame), true),
+                // A call held through interruptions is not cancelled by one.
+                "tool_cancel" => {
+                    let key = hosted_key(&frame);
+                    holds.answer(&key, false);
+                    if !holds.held(&key)
+                        && let Some(calling) =
+                            hosted_calls.lock().expect("hosted calls").remove(&key)
+                    {
+                        calling.abort();
+                    }
                 }
                 "hosting_refused" => {
                     // A worker whose tools were refused is one nobody will call.
@@ -521,6 +571,12 @@ impl Dispatch {
 }
 
 /// The frame that ends one piece of work, with what went wrong if anything did.
+/// What `tool_cancel` and `tool_held` name a hosted call by: ids are only unique within a
+/// session, and one worker runs calls for many.
+fn hosted_key(frame: &Frame) -> String {
+    format!("{}/{}", frame.text("session_id"), frame.text("id"))
+}
+
 fn done(work_id: &str, error: Option<String>) -> Value {
     let mut done = json!({"type": "done", "work_id": work_id});
     if let Some(error) = error {
