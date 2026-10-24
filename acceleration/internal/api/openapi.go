@@ -301,6 +301,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
 	s.registerPolicies(api)
+	s.registerUserPolicies(api)
 	s.registerLimitGrants(api)
 	s.registerLimits(api)
 	s.registerSettings(api)
