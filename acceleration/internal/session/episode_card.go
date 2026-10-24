@@ -55,7 +55,7 @@ func newCallCards(pgStore *store.Store, stream *streamapp.Clients, logger *slog.
 func (c *callCards) started(created *Session, stream streamapp.Bound) {
 	// The spec as the session started, read here, on the caller: the card is written off the
 	// start, while SetSettings may change created.spec.
-	spec := created.spec
+	spec := created.Spec()
 	if c == nil || !spec.EpisodeCards || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
 		return
 	}

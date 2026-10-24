@@ -64,7 +64,7 @@ func (s *StreamsSuite) TestAudioSentUpComesBackTranscribed() {
 
 	pcm := audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1}
 	s.Require().NoError(listening.WriteMessage(websocket.BinaryMessage, pcm.Bytes()))
-	s.ears.emitter.Send(stt.Transcript{
+	s.ears().emitter.Send(stt.Transcript{
 		Text: "a call costs a penny", Mode: stt.ModeFinal, Confidence: 0.9,
 		Language: "en", Provider: "stub", Model: "stub-stt",
 	})
@@ -276,6 +276,7 @@ func (s *StreamsSuite) TestACallerThatNeverAnswersTheCloseIsHungUpOn() {
 			var timeout net.Error
 			s.False(errors.As(err, &timeout) && timeout.Timeout(), "the router still holds the socket: %v", err)
 			s.ErrorIs(err, io.EOF)
+			s.Greater(time.Since(began), closeWait/2, "the router waits for the caller's close rather than hanging up at once")
 			s.Less(time.Since(began), 1500*time.Millisecond, "the router waits for the close for about a second")
 			return
 		}
@@ -370,9 +371,6 @@ func (s *StreamsSuite) TestTheStartedFrameNamesTheVoiceSpeaking() {
 	s.Equal("library-voice", started["voice"])
 }
 
-// The name order matters: tests run alphabetically and every TTS socket in the suite shares
-// one stub voice, so this one must sort after TestSpeechComesBackAsAudioThatDescribesItself,
-// or its still-open socket reads the audio that test sends.
 func (s *StreamsSuite) TestTheStartedFrameOfAVoiceAskedForNoneNamesNone() {
 	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
 
@@ -385,7 +383,7 @@ func (s *StreamsSuite) TestSpeechComesBackAsAudioThatDescribesItself() {
 	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
 	s.Equal("started", s.nextFrame(speaking)["type"])
 
-	s.voice.emitter.Send(tts.AudioChunk{
+	s.speaking().emitter.Send(tts.AudioChunk{
 		SynthesisID: "s1",
 		Audio:       audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24_000, Channels: 1},
 	})
@@ -395,6 +393,50 @@ func (s *StreamsSuite) TestSpeechComesBackAsAudioThatDescribesItself() {
 	s.EqualValues(24_000, binary.LittleEndian.Uint32(payload[0:4]))
 	s.EqualValues(1, binary.LittleEndian.Uint16(payload[4:6]))
 	s.Equal([]int16{1, 2, 3}, audio.FromBytes(payload[audioHeader:], 24_000, 1).Samples)
+}
+
+func (s *StreamsSuite) TestASocketLeftOpenDoesNotHearTheNextSocketsVoice() {
+	left := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
+	s.Equal("started", s.nextFrame(left)["type"])
+	leftVoice := s.speaking()
+	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
+	s.Equal("started", s.nextFrame(speaking)["type"])
+	s.Require().NotSame(leftVoice, s.speaking(), "each socket is given a voice of its own")
+
+	s.speaking().emitter.Send(tts.AudioChunk{
+		SynthesisID: "s1",
+		Audio:       audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24_000, Channels: 1},
+	})
+
+	_, payload := s.next(speaking)
+	s.Len(payload, audioHeader+6)
+	s.Require().NoError(left.SetReadDeadline(time.Now().Add(200 * time.Millisecond)))
+	_, _, err := left.ReadMessage()
+	var timeout net.Error
+	s.Require().ErrorAs(err, &timeout, "the socket left open reads nothing")
+	s.True(timeout.Timeout())
+}
+
+func (s *StreamsSuite) TestAModelTheDeploymentHasNoKeyForIsListedUnavailable() {
+	var providers []Provider
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/stt/providers", nil, &providers))
+
+	available := map[string]bool{}
+	for _, provider := range providers {
+		available[provider.Provider+"/"+provider.Model] = provider.Health.Available
+	}
+	s.Equal(false, available["unconfigured/"+unconfiguredModel], "listed, and not available")
+	s.Equal(true, available["echoing/echoing-model"], "a model the deployment can build stays available")
+}
+
+func (s *StreamsSuite) TestAStreamToAModelTheDeploymentHasNoKeyForIsRefusedNamingTheKey() {
+	listening := s.start("/v1/stt/stream", frame{"target": "unconfigured/" + unconfiguredModel})
+
+	refused := s.nextFrame(listening)
+	s.Equal("error", refused["type"])
+	s.Contains(refused["error"], "unconfigured: api key is required (set UNCONFIGURED_API_KEY)")
+	s.EqualValues(1, s.unconfiguredBuilds.Load(),
+		"built once, to learn it cannot be, and never tried: a model nobody can reach is no stat against its health")
 }
 
 func (s *StreamsSuite) TestAReplyStreamsBackAndThenSaysItIsComplete() {

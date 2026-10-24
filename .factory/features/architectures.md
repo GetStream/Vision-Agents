@@ -83,7 +83,7 @@ The rules around a call are the worker's, not the session's:
 | Question | Answer |
 | ------------------------------------------ | --------------------------------------------------------------- |
 | Two tools with one name | The caller's wins. Whoever opened the session asked for that one |
-| How long a call has | The worker's `timeout_ms`, two minutes by default, not the session's tool timeout |
+| How long a call has | The worker's `timeout_ms`, 30 seconds by default as on a session, not the session's tool timeout |
 | The worker disconnects mid-call | The call fails at once rather than waiting out the timeout |
 | Several workers host the same agent | They take turns, and one whose queue is full is passed over |
 | The router restarts | The Go worker reconnects and declares what it hosts again |

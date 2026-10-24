@@ -1779,8 +1779,10 @@ final class SessionTool {
     required this.description,
     this.displayTitle,
     this.executor,
+    this.interruptible,
     required this.name,
     this.parameters,
+    this.timeoutMs,
   });
 
   factory SessionTool.fromJson(Object? value) {
@@ -1799,10 +1801,18 @@ final class SessionTool {
         null => null,
         final Object value => _string(value, 'SessionTool.executor'),
       },
+      interruptible: switch (json['interruptible']) {
+        null => null,
+        final Object value => _bool(value, 'SessionTool.interruptible'),
+      },
       name: _string(json['name'], 'SessionTool.name'),
       parameters: switch (json['parameters']) {
         null => null,
         final Object value => _object(value, 'SessionTool.parameters'),
+      },
+      timeoutMs: switch (json['timeout_ms']) {
+        null => null,
+        final Object value => _int(value, 'SessionTool.timeout_ms'),
       },
     );
   }
@@ -1811,16 +1821,20 @@ final class SessionTool {
   final String description;
   final String? displayTitle;
   final String? executor;
+  final bool? interruptible;
   final String name;
   final Map<String, Object?>? parameters;
+  final int? timeoutMs;
 
   Map<String, Object?> toJson() => {
     if (approval case final value?) 'approval': value.toJson(),
     'description': description,
     'display_title': ?displayTitle,
     'executor': ?executor,
+    'interruptible': ?interruptible,
     'name': name,
     'parameters': ?parameters,
+    'timeout_ms': ?timeoutMs,
   };
 }
 

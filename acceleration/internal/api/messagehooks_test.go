@@ -61,6 +61,24 @@ func (s *MessageHooksSuite) TestAMessageOnAChannelAConversationAlreadyRanOnReach
 	}
 }
 
+// A plain chat channel, which no line binds, keeps the config of the conversation it last held
+// over the one it names.
+func (s *MessageHooksSuite) TestAChannelThatHeldAConversationIsAnsweredByItsConfigOverTheOneItNames() {
+	ran, named := s.holds(), s.holds()
+	s.ran(ran)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{"%s": "%s"}`, ConfigField, named)))
+
+	select {
+	case message := <-worker.Messages():
+		s.Equal(ran, message.ConfigID)
+	case <-time.After(settleFor):
+		s.Fail("the message never reached the worker")
+	}
+}
+
 func (s *MessageHooksSuite) TestAChannelThatNamesItsConfigIsAnsweredWithoutEverHavingHeldAConversation() {
 	// This is a conversation that starts in writing: somebody opened a support chat
 	// rather than ringing a number, so there is no call row to say whose channel it is.

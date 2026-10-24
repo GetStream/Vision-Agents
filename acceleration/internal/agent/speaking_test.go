@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
@@ -155,7 +157,8 @@ func (s *AgentSuite) TestAnUtteranceFinishedBeforeTheTrackTakesItIsStillHeardBef
 	spoke, _ := firstOf[Spoke](reported)
 	s.Require().GreaterOrEqual(heardAt(reported, spoke.SynthesisID), 0, "the line was never reported heard")
 	s.Less(heardAt(reported, spoke.SynthesisID), spokeAt(reported, spoke.SynthesisID))
-	s.Never(func() bool { return countOf[Speaking](s.reported()) > 1 }, 300*time.Millisecond, 10*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Speaking](events.seen()) > 1 }, 300*time.Millisecond, 10*time.Millisecond,
 		"the track taking it later reported it heard a second time")
 }
 
@@ -184,7 +187,8 @@ func (s *AgentSuite) TestAnUtteranceCutOffBeforeAnyOfItWentOutIsNeverReportedHea
 
 	s.synthesises(said.TurnID)
 
-	s.Never(func() bool { return countOf[Speaking](s.reported()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Speaking](events.seen()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
 		"audio that was dropped was reported heard")
 }
 
@@ -216,6 +220,8 @@ func (s *AgentSuite) TestANativeReplyIsReportedHeardWithItsTranscriptBeforeItIsS
 	s.Equal("Hi there.", speaking.Text)
 	s.Equal("r1", spoke.SynthesisID)
 	s.EqualValues(len("Hi there."), spoke.Characters, "a speech-to-speech model's are its transcript's")
+	s.Equal(&MessageSpan{End: 9}, speaking.Message, "its message is its transcript")
+	s.Equal(&MessageSpan{End: 9}, spoke.Message)
 	s.Less(heardAt(reported, "r1"), spokeAt(reported, "r1"))
 }
 
@@ -312,6 +318,7 @@ func (s *AgentSuite) TestAnUtteranceTalkedOverSaysHowMuchOfItWasHeard() {
 	s.Equal(said.TurnID, cut.SynthesisID)
 	s.Positive(cut.HeardMs)
 	s.LessOrEqual(cut.HeardMs, 20.0, "never more than the two 10 ms chunks published")
+	s.Equal(&MessageSpan{End: 21}, cut.Message, "where the line it was heard of is in its message")
 }
 
 func (s *AgentSuite) TestAReplyCutOffBeforeAnyOfItWasHeardSaysNothingOfWhatWasHeard() {
@@ -325,14 +332,15 @@ func (s *AgentSuite) TestAReplyCutOffBeforeAnyOfItWasHeardSaysNothingOfWhatWasHe
 	s.Equal(said.TurnID, cut.TurnID)
 	s.Empty(cut.SynthesisID)
 	s.Zero(cut.HeardMs)
+	s.Nil(cut.Message)
 }
 
 func (s *AgentSuite) TestAnUtteranceThatFinishedIsNotOpenedAgainByALateDelta() {
 	s.join(true)
-	s.agent.sending("turn-1", "turn-1", "Hello")
+	s.agent.sending("turn-1", "turn-1", "Hello", MessageSpan{End: 5})
 	s.agent.takeUtterance("turn-1")
 
-	s.agent.sending("turn-1", "turn-1", " again")
+	s.agent.sending("turn-1", "turn-1", " again", MessageSpan{Start: 5, End: 11})
 
 	s.agent.mu.Lock()
 	defer s.agent.mu.Unlock()
@@ -358,7 +366,7 @@ func (s *AgentSuite) TestAnUtteranceTheVoiceRefusedIsLetGoOf() {
 	s.voice.refuses = errors.New("stub: refused")
 	s.voice.mu.Unlock()
 
-	s.Error(s.agent.speakSentence("turn-1", "Hello there."))
+	s.Error(s.agent.speakSentence("turn-1", "Hello there.", MessageSpan{End: 12}))
 
 	s.agent.mu.Lock()
 	defer s.agent.mu.Unlock()
@@ -371,7 +379,7 @@ func (s *AgentSuite) TestAStreamedDeltaTheVoiceRefusedIsLetGoOf() {
 	s.voice.refuses = errors.New("stub: refused")
 	s.voice.mu.Unlock()
 
-	s.Error(s.agent.speakSentence("turn-1", "Hello there."))
+	s.Error(s.agent.speakSentence("turn-1", "Hello there.", MessageSpan{End: 12}))
 
 	s.agent.mu.Lock()
 	defer s.agent.mu.Unlock()
@@ -380,7 +388,7 @@ func (s *AgentSuite) TestAStreamedDeltaTheVoiceRefusedIsLetGoOf() {
 
 func (s *AgentSuite) TestClosingTheAgentLetsGoOfWhatItWasSaying() {
 	s.join(true)
-	s.agent.sending("turn-1", "turn-1", "Hello")
+	s.agent.sending("turn-1", "turn-1", "Hello", MessageSpan{End: 5})
 
 	s.Require().NoError(s.agent.Close())
 
@@ -416,4 +424,150 @@ func (s *AgentSuite) TestANativeReplyTheSessionDroppedIsLetGoOfWhenTheSessionEnd
 		defer agent.mu.Unlock()
 		return len(agent.heard) == 0
 	}, 2*time.Second, time.Millisecond, "it never completes, so it would be kept forever")
+}
+
+// repliedWith has the agent answer with the model's deltas, and returns the reply's message as
+// the transcript keeps it once said (the Responded text), with what was reported of it. It
+// first checks that message is how the message shown while it was written (its deltas)
+// starts, so offsets into one are offsets into the other.
+func (s *AgentSuite) repliedWith(streamingVoice bool, deltas ...string) (string, []Event) {
+	s.join(streamingVoice)
+	s.model.reply = deltas
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool {
+		reported := s.reported()
+		return countOf[Responded](reported) == 1 && countOf[Spoke](reported) == len(sentTo(s.voice.spoken()))
+	}, "the reply was never spoken")
+	reported := s.reported()
+	responded, _ := firstOf[Responded](reported)
+	var written strings.Builder
+	for _, event := range reported {
+		if delta, ok := event.(ResponseDelta); ok {
+			written.WriteString(delta.Text)
+		}
+	}
+	s.True(strings.HasPrefix(written.String(), responded.Text),
+		"the message settled as %q, which is not how %q started", responded.Text, written.String())
+	return responded.Text, reported
+}
+
+// heardIn is the part of a message an utterance was said from.
+func heardIn(message string, span *MessageSpan) string {
+	runes := []rune(message)
+	return string(runes[min(span.Start, len(runes)):min(span.End, len(runes))])
+}
+
+// spokenFrom checks each utterance reported spoken was said from the message, one after
+// another from its start to its end, and returns what each was said from, by synthesis.
+func (s *AgentSuite) spokenFrom(message string, reported []Event) map[string]string {
+	from := map[string]string{}
+	at := 0
+	for _, event := range reported {
+		spoke, ok := event.(Spoke)
+		if !ok {
+			continue
+		}
+		s.Require().NotNil(spoke.Message, "%s says nothing of where it is in the message", spoke.SynthesisID)
+		s.Equal(at, spoke.Message.Start, "%s does not start where the one before it ended", spoke.SynthesisID)
+		at = spoke.Message.End
+		from[spoke.SynthesisID] = heardIn(message, spoke.Message)
+	}
+	s.Equal(utf8.RuneCountInString(message), at, "the utterances do not reach the end of %q", message)
+	return from
+}
+
+func (s *AgentSuite) TestEachSentenceIsSaidFromWhereItIsInTheReplysMessage() {
+	message, reported := s.repliedWith(false, "Hello there. ", "How are you?")
+
+	from := s.spokenFrom(message, reported)
+
+	sent := sentTo(s.voice.spoken())
+	s.Len(from, 2)
+	for id, said := range from {
+		s.Equal(sent[id], strings.TrimSpace(said))
+	}
+	for _, event := range reported {
+		if speaking, ok := event.(Speaking); ok {
+			s.Equal(sent[speaking.SynthesisID], strings.TrimSpace(heardIn(message, speaking.Message)),
+				"it starts being heard from the same place")
+		}
+	}
+}
+
+func (s *AgentSuite) TestDigitsTheVoiceIsToldTheCountOfAreSaidFromTheMessagesOwnWords() {
+	message, reported := s.repliedWith(false, "Your card ends in last four 1234. ", "Is that right?")
+
+	from := s.spokenFrom(message, reported)
+
+	s.Contains(slices.Collect(maps.Values(sentTo(s.voice.spoken()))), "Your card ends in last four digits, 1234.")
+	s.ElementsMatch([]string{"Your card ends in last four 1234.", " Is that right?"}, slices.Collect(maps.Values(from)))
+}
+
+func (s *AgentSuite) TestADirectionTheVoiceActsIsNotCountedInTheMessage() {
+	s.performing = "You may write stage directions in square brackets."
+	message, reported := s.repliedWith(false, "[laughs] That ", "is a good one. Sure thing [sighs] that ", "works for me.")
+
+	from := s.spokenFrom(message, reported)
+
+	s.Equal("That is a good one. Sure thing that works for me.", message)
+	s.Contains(said(s.voice.spoken()), "[laughs]", "the voice is still given the directions to act")
+	s.ElementsMatch([]string{"That is a good one.", " Sure thing that works for me."}, slices.Collect(maps.Values(from)))
+}
+
+func (s *AgentSuite) TestADirectionTheVoiceCannotActIsTakenOutOfTheMessageAndWhatItIsSentAlike() {
+	message, reported := s.repliedWith(false, "[laughs] That ", "is a good one.")
+
+	from := s.spokenFrom(message, reported)
+
+	s.Equal("That is a good one.", message)
+	s.ElementsMatch([]string{"That is a good one."}, slices.Collect(maps.Values(from)))
+}
+
+func (s *AgentSuite) TestASentenceHeldBackIsInNoUtteranceAndOutOfTheMessage() {
+	message, reported := s.repliedWith(false, "Sure, I can help with that. ", "The caller wants a refund.")
+
+	from := s.spokenFrom(message, reported)
+
+	s.Equal("Sure, I can help with that.", message)
+	s.ElementsMatch([]string{"Sure, I can help with that."}, slices.Collect(maps.Values(from)))
+}
+
+func (s *AgentSuite) TestBlankSpaceBeforeAReplyIsNotInItsMessage() {
+	message, reported := s.repliedWith(false, "\n ", "Hello there. ", "How are you?")
+
+	from := s.spokenFrom(message, reported)
+
+	s.Equal("Hello there. How are you?", message)
+	s.ElementsMatch([]string{"Hello there.", " How are you?"}, slices.Collect(maps.Values(from)))
+}
+
+func (s *AgentSuite) TestAStreamedReplyIsSaidFromItsMessageAsFarAsItHadBeenSent() {
+	message, reported := s.repliedWith(true, "Your card ends in last four 1234. ", "Is that right?")
+
+	from := s.spokenFrom(message, reported)
+
+	s.Equal(map[string]string{s.voice.spoken()[0].ID: message}, from, "one utterance, all of the message")
+	speaking, _ := firstOf[Speaking](reported)
+	s.Require().NotNil(speaking.Message)
+	s.Zero(speaking.Message.Start)
+	s.True(strings.HasPrefix(message, heardIn(message, speaking.Message)))
+	s.GreaterOrEqual(speaking.Message.End, utf8.RuneCountInString("Your card ends in last four 1234."),
+		"the first sentence had been sent before any of it was heard")
+}
+
+func (s *AgentSuite) TestALineSaidAsWrittenIsAllOfItsMessage() {
+	s.join(true)
+
+	s.Require().NoError(s.agent.Say(s.ctx, "Welcome to the café."))
+
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the line was never spoken")
+	speaking, _ := firstOf[Speaking](s.reported())
+	spoke, _ := firstOf[Spoke](s.reported())
+	whole := &MessageSpan{End: 20}
+	s.Equal(whole, speaking.Message)
+	s.Equal(whole, spoke.Message)
 }

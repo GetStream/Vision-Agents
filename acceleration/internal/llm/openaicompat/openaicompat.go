@@ -110,7 +110,7 @@ type Options struct {
 	ReplayReasoning bool
 	// ResultsFollowCalls is set for a server that refuses a conversation in which anything
 	// comes between a tool call and its results, as MiniMax's does with a 400: what the
-	// caller said while a tool ran is moved after the results (strictToolOrder).
+	// caller said while a tool ran is moved after the results (StrictToolOrder).
 	ResultsFollowCalls bool
 	// Prefill opens every reply with these words, which the model continues rather than
 	// repeats, such as an empty thinking block for a model that cannot be told not to
@@ -504,7 +504,7 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 	}
 	input := request.Input
 	if l.options.ResultsFollowCalls {
-		input = strictToolOrder(input)
+		input = StrictToolOrder(input)
 	}
 	var pendingImages []openai.ChatCompletionContentPartUnionParam
 	for _, message := range input {

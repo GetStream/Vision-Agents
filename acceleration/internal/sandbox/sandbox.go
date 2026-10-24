@@ -9,6 +9,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -149,14 +150,34 @@ type Granted interface {
 	Grants() []Grant
 }
 
+// gitHost is the host git clones and pushes to for a GitHub grant
+// (https://docs.github.com/en/get-started/git-basics/about-remote-repositories).
+const gitHost = "github.com"
+
 // Tool describes running code in box to a model, with the env vars its grants give code.
 func Tool(box Sandbox) llm.Tool {
 	description := "Run a short Python program and read back what it printed. Use it for anything you would otherwise have to work out in your head, such as arithmetic, dates or parsing, and for making files such as images. Print what you want to know. A skill's own scripts are under skills/<name>/; run one in another language through subprocess, such as subprocess.run([\"go\", \"run\", \"skills/pdf/scripts/merge.go\"])."
 	if granted, ok := box.(Granted); ok {
 		for _, grant := range granted.Grants() {
 			hosts := strings.Join(grant.Hosts, ", ")
-			description += fmt.Sprintf(" Code may call %s with $%s: send it over HTTPS as `Authorization: Bearer $%s`; "+
-				"the value is a placeholder that works only for %s, only in a request header.", hosts, grant.Env, grant.Env, hosts)
+			// github.com refuses Bearer from git (probe, 2026-10-22T03:53Z), so it is not offered
+			// for it; git takes the Basic form below.
+			bearer := slices.DeleteFunc(slices.Clone(grant.Hosts), func(host string) bool { return host == gitHost })
+			if len(bearer) > 0 {
+				description += fmt.Sprintf(" Code may call %s with $%s: send it over HTTPS as `Authorization: Bearer $%s`; "+
+					"the value is a placeholder that works only for %s, only in a request header.", strings.Join(bearer, ", "), grant.Env, grant.Env, hosts)
+			} else {
+				description += fmt.Sprintf(" $%s is a placeholder that works only for %s, only in a request header.", grant.Env, hosts)
+			}
+			if !slices.Contains(grant.Hosts, gitHost) {
+				continue
+			}
+			// The user name is GitHub's for a token
+			// (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
+			// Both brokers replace it there: live staging E2E, 2026-10-22, session
+			// 01a16514-923c-7843-9214-40a94453f194 (Daytona) and the proxy's A15.
+			description += fmt.Sprintf(" git over HTTPS takes it as the password in the remote's URL, such as "+
+				"https://x-access-token:$%s@%s/<owner>/<repo>.git.", grant.Env, gitHost)
 		}
 	}
 	return llm.Tool{

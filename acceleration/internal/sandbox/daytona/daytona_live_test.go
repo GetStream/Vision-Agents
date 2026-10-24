@@ -88,7 +88,7 @@ func (s *LiveSuite) box(session string) *Sandbox {
 // sandbox, for A8 and A9.
 const attack = `
 import base64, glob, json, os, socket, ssl, time, urllib.error, urllib.parse, urllib.request
-P, Q, OTHER = os.environ["PROBE_TOKEN"], os.environ["PLAIN_TOKEN"], %q
+P, Q, OTHER, PLAIN = os.environ["PROBE_TOKEN"], os.environ["PLAIN_TOKEN"], %q, %q
 def get(url, headers={}, data=None, context=None):
     for attempt in range(4):
         try:
@@ -118,8 +118,8 @@ try:
     out["a11"] = get("https://" + ip + "/headers", {"Host": "httpbin.org", "X-Probe": P}, context=ssl._create_unverified_context())
 except Exception as e:
     out["a11"] = "ERROR %%s: %%s" %% (type(e).__name__, e)
-out["a12"] = get("https://httpbin.org/headers", {"X-Probe": P[:12] + " " + P[12:], "X-Encoded": base64.b64encode(P.encode()).decode(),
-    "Authorization": "Basic " + base64.b64encode(("u:" + P).encode()).decode()})
+out["a12"] = get("https://httpbin.org/headers", {"X-Probe": P[:12] + " " + P[12:], "X-Encoded": base64.b64encode(P.encode()).decode()})
+out["basic"] = get("https://httpbin.org/basic-auth/x-access-token/" + PLAIN, {"Authorization": "Basic " + base64.b64encode(("x-access-token:" + Q).encode()).decode()})
 out["c_httpbingo"] = get("https://httpbingo.org/headers")
 out["c_query"] = get("https://httpbin.org/anything?t=hello")
 out["c_fake"] = get("https://httpbin.org/headers", {"X-Probe": "dtn_secret_notarealone00"})
@@ -132,7 +132,7 @@ print(json.dumps(out))
 type seen map[string]string
 
 func (s *LiveSuite) run(box *Sandbox, other string) seen {
-	result, err := box.Run(s.ctx, fmt.Sprintf(attack, other), nil)
+	result, err := box.Run(s.ctx, fmt.Sprintf(attack, other, s.plain), nil)
 	s.Require().NoError(err)
 	s.Require().Zero(result.ExitCode, result.Output)
 	var out seen
@@ -196,6 +196,13 @@ func (s *LiveSuite) TestTheAttacksOnDaytonasEgress() {
 		"A12": probe[:12] + " " + probe[12:]} {
 		results[id] = s.unsubstituted(id, a[strings.ToLower(id)], sent)
 	}
+
+	// Basic auth's password in Base64, the way git sends it, in a request of its own (Daytona
+	// refuses a request that also carries a placeholder it does not substitute). The response
+	// scrubs the canary back to the placeholder even inside the Base64, so an echo shows
+	// nothing; httpbin's basic-auth answers 200 only if the password reaching it is the canary.
+	// Daytona substitutes there (live staging E2E, 2026-10-22), and nothing else pins that.
+	s.Contains(a["basic"], `"authenticated": true`, "Basic: %s", a["basic"])
 
 	// A8: another sandbox's placeholder is not this sandbox's credential.
 	second := s.box("live-b")

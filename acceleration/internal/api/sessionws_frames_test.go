@@ -9,9 +9,11 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -265,4 +267,64 @@ func TestASpokeFrameCarriesTheCharactersSynthesisedAndTheUtterance(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, `{"audio_duration_ms":900,"characters":12,"synthesis_id":"turn-1#0","time_to_first_byte_ms":140,"turn_id":"turn-1","type":"spoke"}`,
 		string(raw))
+}
+
+func TestASpeakingFrameSaysWhereItsUtteranceIsInTheReplysMessage(t *testing.T) {
+	at := time.Date(2026, 10, 22, 9, 30, 0, 0, time.UTC)
+
+	sent, ok := frameOf(agent.Speaking{TurnID: "turn-1", SynthesisID: "turn-1#1",
+		Text: "Your card ends in last four digits, 1234.", Message: &agent.MessageSpan{Start: 6, End: 39}, At: at})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.Equal(t, `{"at":"2026-10-22T09:30:00Z","delay_ms":0,"message_end":39,"message_start":6,"synthesis_id":"turn-1#1","text":"Your card ends in last four digits, 1234.","turn_id":"turn-1","type":"speaking"}`,
+		string(raw))
+}
+
+func TestASpokeFrameSaysWhereAllOfItsUtteranceIsInTheReplysMessage(t *testing.T) {
+	sent, ok := frameOf(agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1", Characters: 48, AudioDurationMs: 2900,
+		Message: &agent.MessageSpan{End: 41}})
+
+	require.True(t, ok)
+	require.Equal(t, 0, sent["message_start"])
+	require.Equal(t, 41, sent["message_end"])
+}
+
+func TestAnInterruptedFrameSaysWhereTheUtteranceCutIsInTheReplysMessage(t *testing.T) {
+	sent, ok := frameOf(agent.Interrupted{TurnID: "turn-1", SynthesisID: "turn-1#2", HeardMs: 420,
+		Message: &agent.MessageSpan{Start: 39, End: 70}})
+
+	require.True(t, ok)
+	require.Equal(t, 39, sent["message_start"])
+	require.Equal(t, 70, sent["message_end"])
+}
+
+func TestFramesOfAnUtteranceWithNoKnownPlaceInTheMessageLeaveItOut(t *testing.T) {
+	// A client reading a router before message offsets counts the voice's characters, and
+	// one with nothing to go by here does the same.
+	for _, event := range []agent.Event{
+		agent.Speaking{TurnID: "turn-1", SynthesisID: "turn-1", Text: "Hi."},
+		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1", Characters: 3},
+		agent.Interrupted{TurnID: "turn-1"},
+	} {
+		sent, ok := frameOf(event)
+
+		require.True(t, ok)
+		require.NotContains(t, sent, "message_start")
+		require.NotContains(t, sent, "message_end")
+	}
+}
+
+func TestACallTheCallerAlreadyAllowedSaysSoOnBothSockets(t *testing.T) {
+	asked, ok := frameOf(session.ToolCall{ID: "call-1", Name: "book_flight", Arguments: `{}`, Run: true, Approved: true})
+	require.True(t, ok)
+	require.Equal(t, true, asked["approved"])
+
+	plain, ok := frameOf(session.ToolCall{ID: "call-2", Name: "book_flight", Arguments: `{}`, Run: true})
+	require.True(t, ok)
+	require.NotContains(t, plain, "approved", "a call nobody was asked about carries no approval")
+
+	require.Equal(t, true, toolCallFrame(dispatch.ToolCall{ID: "call-1", Name: "book_flight", Approved: true})["approved"])
+	require.NotContains(t, toolCallFrame(dispatch.ToolCall{ID: "call-2", Name: "book_flight"}), "approved")
 }

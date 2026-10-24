@@ -369,6 +369,10 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 			return store.PhoneNumber{}, stack.Wrap(err)
 		}
 	}
+	// Refused before the vendor is paid, since a number in another form would not be recorded.
+	if !store.IsE164(purchase.E164) {
+		return store.PhoneNumber{}, stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, purchase.E164))
+	}
 	provider, err := s.registry.Open(purchase.Vendor)
 	if err != nil {
 		return store.PhoneNumber{}, err

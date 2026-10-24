@@ -12,13 +12,23 @@ final readonly class TranscriptMessage
 {
     public function __construct(
         public \DateTimeImmutable $createdAt,
+        // The stored line's id. A line a participant was heard saying has the line_id its session's hearing and heard...
+        public string $id,
         // Who said it, the agent under its own user id.
         public string $speaker,
         public string $text,
         // Whether the agent said it rather than somebody it was talking to. It is what the line was stored as, so it...
         public ?bool $agent = null,
+        // The line is still being written: a reply still streaming, or words still being said, stored as they first w...
+        public ?bool $generating = null,
+        // The reply was cut off, by the caller talking over it or its voice failing. Its text is what it was going to...
+        public ?bool $interrupted = null,
         // That speaker's display name, when they have one.
         public ?string $name = null,
+        // Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update o...
+        public ?string $purpose = null,
+        // The turn a reply was written for, as the session's response frames name it.
+        public ?string $turnId = null,
     ) {
     }
 
@@ -29,10 +39,15 @@ final readonly class TranscriptMessage
     {
         return new self(
             createdAt: Json::date($data, 'created_at'),
+            id: Json::string($data, 'id'),
             speaker: Json::string($data, 'speaker'),
             text: Json::string($data, 'text'),
             agent: array_key_exists('agent', $data) && $data['agent'] !== null ? Json::bool($data, 'agent') : null,
+            generating: array_key_exists('generating', $data) && $data['generating'] !== null ? Json::bool($data, 'generating') : null,
+            interrupted: array_key_exists('interrupted', $data) && $data['interrupted'] !== null ? Json::bool($data, 'interrupted') : null,
             name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
+            purpose: array_key_exists('purpose', $data) && $data['purpose'] !== null ? Json::string($data, 'purpose') : null,
+            turnId: array_key_exists('turn_id', $data) && $data['turn_id'] !== null ? Json::string($data, 'turn_id') : null,
         );
     }
 
@@ -45,13 +60,26 @@ final readonly class TranscriptMessage
     {
         $out = [];
         $out['created_at'] = Json::dateValue($this->createdAt);
+        $out['id'] = $this->id;
         $out['speaker'] = $this->speaker;
         $out['text'] = $this->text;
         if ($this->agent !== null) {
             $out['agent'] = $this->agent;
         }
+        if ($this->generating !== null) {
+            $out['generating'] = $this->generating;
+        }
+        if ($this->interrupted !== null) {
+            $out['interrupted'] = $this->interrupted;
+        }
         if ($this->name !== null) {
             $out['name'] = $this->name;
+        }
+        if ($this->purpose !== null) {
+            $out['purpose'] = $this->purpose;
+        }
+        if ($this->turnId !== null) {
+            $out['turn_id'] = $this->turnId;
         }
         return $out;
     }

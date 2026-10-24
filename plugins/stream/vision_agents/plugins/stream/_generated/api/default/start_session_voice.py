@@ -116,7 +116,8 @@ def sync_detailed(
 
     Starting voice on a session that is already on its call changes nothing, and naming another call
     while it is on is refused. A conversation in writing that ended is carried on under the same id, as
-    a message to it is.
+    a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the
+    socket was its call, and stopping voice hung it up, so open a new socket.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -158,7 +159,8 @@ def sync(
 
     Starting voice on a session that is already on its call changes nothing, and naming another call
     while it is on is refused. A conversation in writing that ended is carried on under the same id, as
-    a message to it is.
+    a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the
+    socket was its call, and stopping voice hung it up, so open a new socket.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -195,7 +197,8 @@ async def asyncio_detailed(
 
     Starting voice on a session that is already on its call changes nothing, and naming another call
     while it is on is refused. A conversation in writing that ended is carried on under the same id, as
-    a message to it is.
+    a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the
+    socket was its call, and stopping voice hung it up, so open a new socket.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -235,7 +238,8 @@ async def asyncio(
 
     Starting voice on a session that is already on its call changes nothing, and naming another call
     while it is on is refused. A conversation in writing that ended is carried on under the same id, as
-    a message to it is.
+    a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the
+    socket was its call, and stopping voice hung it up, so open a new socket.
 
     Args:
         id (str): The session, as returned when it was created.

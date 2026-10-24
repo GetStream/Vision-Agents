@@ -6,7 +6,7 @@ import VisionAgentsCore
 /// Whether the call is still being joined is the glow's to show, beside these. There is
 /// nothing here for playing the agent: joining the call is what does that.
 struct CallControls: View {
-    let voice: VoiceSession
+    @ObservedObject var voice: VoiceSession
 
     var body: some View {
         VStack(spacing: 16) {

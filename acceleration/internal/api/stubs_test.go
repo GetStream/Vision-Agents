@@ -305,9 +305,17 @@ func (s *scriptedLLM) holds() {
 
 // quietSTT hears nothing, since these tests drive a session over HTTP rather than through
 // a microphone.
-type quietSTT struct{ emitter *stt.Emitter }
+type quietSTT struct {
+	emitter *stt.Emitter
+	// started is told when the router starts it, which a readiness probe never does.
+	started func(*quietSTT)
+}
 
-func (s *quietSTT) Start(context.Context) error                     { return nil }
+func (s *quietSTT) Start(context.Context) error {
+	s.started(s)
+	return nil
+}
+
 func (s *quietSTT) ProcessAudio(stt.PcmData, stt.Participant) error { return nil }
 func (s *quietSTT) Events() <-chan stt.Event                        { return s.emitter.Events() }
 func (s *quietSTT) Provider() string                                { return "stub" }
@@ -398,36 +406,41 @@ func (batchOnlySTT) Close() error                                    { return ni
 func (batchOnlySTT) Provider() string                                { return "batch" }
 func (batchOnlySTT) Model() string                                   { return batchModel }
 
-// recordingTTS keeps what it was asked to say.
+// unconfiguredModel is new each run, as refusingModel is: health is kept in a Redis other
+// runs share.
+var unconfiguredModel = fmt.Sprintf("unconfigured-%d", time.Now().UnixNano())
+
+// errUnconfigured is what a vendor's factory says on a deployment never given its key, as
+// microsoft.New says on one with no AZURE_MAI_API_KEY.
+var errUnconfigured = errors.New("unconfigured: api key is required (set UNCONFIGURED_API_KEY)")
+
+// recordingTTS keeps what it was asked to say, in a log the suite's voices share.
 type recordingTTS struct {
 	emitter *tts.Emitter
+	said    *saidLog
+	// voice is the one it was opened with.
+	voice string
+	// started is told when the router starts it, which a readiness probe never does.
+	started func(*recordingTTS)
+}
 
+// saidLog is what every voice it is handed to was told to say, in order.
+type saidLog struct {
 	mu   sync.Mutex
 	said []string
-	// voice is the one it was last opened with.
-	voice string
 }
 
-// opened is the voice opened again, in the voice asked.
-func (s *recordingTTS) opened(voice string) *recordingTTS {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.voice = voice
-	return s
-}
+func (s *recordingTTS) Voice() string { return s.voice }
 
-func (s *recordingTTS) Voice() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.voice
+func (s *recordingTTS) Start(context.Context) error {
+	s.started(s)
+	return nil
 }
-
-func (s *recordingTTS) Start(context.Context) error { return nil }
 
 func (s *recordingTTS) Synthesize(request tts.Request) error {
-	s.mu.Lock()
-	s.said = append(s.said, request.Text)
-	s.mu.Unlock()
+	s.said.mu.Lock()
+	s.said.said = append(s.said.said, request.Text)
+	s.said.mu.Unlock()
 
 	if request.Final {
 		s.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID})
@@ -448,11 +461,11 @@ func (s *recordingTTS) Close() error {
 	return nil
 }
 
-// spoken is everything this voice has been told to say.
-func (s *recordingTTS) spoken() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.said...)
+// spoken is everything the voices given this log have been told to say.
+func (l *saidLog) spoken() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.said...)
 }
 
 // recordedTranscriber transcribes whatever it is handed into the same transcript, so a job

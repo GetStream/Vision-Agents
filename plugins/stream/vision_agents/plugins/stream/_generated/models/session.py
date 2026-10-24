@@ -50,7 +50,8 @@ class Session:
         incognito (bool | Unset): Nothing about this session was recorded. It is reported so a caller can see that what
             they asked for is what they got, but it is never read back from storage: an incognito session has no row to read
             it from.
-        instructions (str | Unset):
+        instructions (str | Unset): What the agent was told, the session's own or its config's. Read by a backend only:
+            a device is never given it.
         last_response_at (datetime.datetime | Unset): When the agent last answered. This is what a most-recently-used
             ordering of conversations reads, since a session renamed long after it ended has not become more recent.
         llm (str | Unset): The provider and model answering, once routing has picked one.

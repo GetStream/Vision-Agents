@@ -1,7 +1,9 @@
+import Combine
 import Foundation
-import Observation
+import StreamCore
 
-/// A live conversation, in a shape SwiftUI can bind to.
+/// A live conversation, in a shape SwiftUI can bind to: hold it with `@StateObject` or
+/// `@ObservedObject`.
 ///
 /// The whole object is on the main actor: it exists to be read by views, and the alternative
 /// -- an actor holding the state with a main-actor copy beside it -- means two truths and a
@@ -9,23 +11,22 @@ import Observation
 /// own, and the read loop below is main-actor isolated, so folding an event into the
 /// transcript needs no hop and no lock.
 @MainActor
-@Observable
-public final class AgentSession {
+public final class AgentSession: ObservableObject {
     /// The session the router opened, as of the last `update`.
-    public private(set) var session: Session
+    @Published public private(set) var session: Session
 
     /// The transcript and what the agent is doing.
-    public private(set) var conversation = Conversation()
+    @Published public private(set) var conversation = Conversation()
 
     /// Whether the socket is still carrying the conversation.
-    public private(set) var isConnected = false
+    @Published public private(set) var isConnected = false
 
     /// Why the socket stopped, or nil. A conversation that ended normally has none.
-    public private(set) var failure: AgentsError?
+    @Published public private(set) var failure: AgentsError?
 
     /// Calls of tools that ask first, waiting for the person to answer with `decide`, oldest
     /// first. A conversation kept in Stream Chat also shows each on its reply's step.
-    public private(set) var approvals: [ToolApprovalRequest] = []
+    @Published public private(set) var approvals: [ToolApprovalRequest] = []
 
     /// What the router holds this session by, which is what addresses it and its socket.
     public var id: String { session.id }
@@ -127,7 +128,7 @@ public final class AgentSession {
     /// replaces the labels whole.
     @discardableResult
     public func update(
-        title: String? = nil, description: String? = nil, custom: [String: JSONValue]? = nil
+        title: String? = nil, description: String? = nil, custom: [String: RawJSON]? = nil
     ) async throws -> Session {
         session = try await VisionAgents(backend: backend).sessions.update(
             session.id, title: title, description: description, custom: custom)
@@ -201,7 +202,7 @@ public final class AgentSession {
         if let call = event.toolCall {
             answer(call)
         } else if event.kind == .toolCancel {
-            approvals.removeAll { $0.id == event["id"].stringValue }
+            approvals.removeAll { $0.id == event.string("id") }
         }
     }
 
@@ -227,8 +228,8 @@ public final class AgentSession {
     /// agent can ask the person to show it again.
     private func show(_ frames: CameraFrames, for call: AgentEvent.ToolCall) {
         let arguments = call.argumentValues
-        let at = Date(timeIntervalSince1970: (arguments["at_ms"]?.doubleValue ?? Date().timeIntervalSince1970 * 1000) / 1000)
-        let limit = Int(arguments["limit"]?.doubleValue ?? 1)
+        let at = Date(timeIntervalSince1970: (arguments["at_ms"]?.numberValue ?? Date().timeIntervalSince1970 * 1000) / 1000)
+        let limit = Int(arguments["limit"]?.numberValue ?? 1)
         let answer: Command
         do {
             let selected = try frames.select(at: at, limit: limit)

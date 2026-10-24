@@ -22,10 +22,11 @@ import (
 // stubProvider stands in for a real provider so routing decisions can be tested without
 // credentials. startErr makes it refuse to start, which is what failover reacts to.
 type stubProvider struct {
-	provider string
-	model    string
-	startErr error
-	closed   bool
+	provider   string
+	model      string
+	dataPolicy options.DataPolicy
+	startErr   error
+	closed     bool
 }
 
 func (s *stubProvider) Start(context.Context) error { return s.startErr }

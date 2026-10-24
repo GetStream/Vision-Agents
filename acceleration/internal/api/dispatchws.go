@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -80,16 +83,16 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	// channel until a call arrives. Without being told, it would sit there until the next
 	// ping failed and hold the worker's place in the rotation for that whole time, which
 	// is calls handed to a socket nobody is on the other end of.
-	gone := make(chan struct{})
+	gone := make(chan error, 1)
 	pongs := make(chan float64)
 	replies := make(chan frame)
 	writerDone := make(chan struct{})
-	defer close(writerDone)
+	stopTaking := sync.OnceFunc(func() { close(writerDone) })
+	defer stopTaking()
 	go func() {
-		defer close(gone)
-		s.readWorker(connection, worker, pongs, replies, writerDone)
+		gone <- s.readWorker(connection, worker, pongs, replies, writerDone)
 	}()
-	s.writeCalls(connection, worker, gone, pongs, replies)
+	s.writeCalls(connection, worker, gone, pongs, replies, stopTaking)
 
 	s.logger.Info("a dispatch worker stopped waiting", "worker", worker.ID)
 }
@@ -138,9 +141,14 @@ func registrationOf(r *http.Request) (dispatch.Registration, string) {
 }
 
 // writeCalls pushes calls and messages to the worker until it goes away, is released, or
-// the socket breaks. Both queues close together, so either arm reporting a closed channel
-// means the worker was released.
-func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan struct{}, pongs <-chan float64, replies <-chan frame) {
+// the socket breaks. gone carries why the reader stopped, and stopTaking tells
+// the reader the writer takes no more pongs or replies from it.
+func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan error, pongs <-chan float64, replies <-chan frame, stopTaking func()) {
+	// A reader left handing over a pong would never read the worker's answer to the close.
+	end := func(code int, reason string) {
+		stopTaking()
+		closeBeforeReader(connection, code, reason, gone)
+	}
 	connection.SetWriteDeadline(time.Now().Add(writeWait))
 	ready := frame{"type": "ready", "worker_id": worker.ID}
 	if err := connection.WriteJSON(ready); err != nil {
@@ -165,13 +173,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
-		case call, open := <-worker.ToolCalls():
-			if !open {
-				connection.SetWriteDeadline(time.Now().Add(writeWait))
-				connection.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "dispatch stopped"))
-				return
-			}
+		case call := <-worker.ToolCalls():
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(toolCallFrame(call)); err != nil {
 				// The session waiting on it is failed when the worker is released, which
@@ -181,13 +183,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
-		case call, open := <-worker.Calls():
-			if !open {
-				connection.SetWriteDeadline(time.Now().Add(writeWait))
-				connection.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "dispatch stopped"))
-				return
-			}
+		case call := <-worker.Calls():
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(callFrame(call)); err != nil {
 				// The call is already out of the pool, so there is nobody else it can be
@@ -197,13 +193,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
-		case message, open := <-worker.Messages():
-			if !open {
-				connection.SetWriteDeadline(time.Now().Add(writeWait))
-				connection.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "dispatch stopped"))
-				return
-			}
+		case message := <-worker.Messages():
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(messageFrame(message)); err != nil {
 				s.logger.Error("could not hand a message to a worker",
@@ -218,12 +208,13 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 			}
 
 		case <-s.draining:
-			connection.SetWriteDeadline(time.Now().Add(writeWait))
-			connection.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseGoingAway, "router restarting"))
+			end(websocket.CloseGoingAway, "router restarting")
 			return
 
-		case <-gone:
+		case stopped := <-gone:
+			if errors.Is(stopped, errUnreadableFrame) {
+				refuseUnreadable(connection)
+			}
 			return
 		}
 	}
@@ -232,9 +223,10 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 // readWorker applies what the worker sends back, which is how it is doing and whether it
 // took the call.
 //
-// A frame it cannot read is reported and skipped rather than closing the socket: dropping a
-// worker over one bad message would take the calls it is already in with it.
-func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker, pongs chan<- float64, replies chan<- frame, writerDone <-chan struct{}) {
+// A message of a type it does not know is reported and skipped rather than closing the
+// socket: dropping a worker over one bad message would take the calls it is already in with
+// it. A frame that is not JSON at all returns errUnreadableFrame.
+func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker, pongs chan<- float64, replies chan<- frame, writerDone <-chan struct{}) error {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
@@ -261,18 +253,29 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			AgentID   string       `json:"agent_id"`
 			Tools     []hostedTool `json:"tools"`
 			TimeoutMs int          `json:"timeout_ms"`
-			// ID, Output and Error answer one hosted tool call.
-			ID     string `json:"id"`
-			Output string `json:"output"`
-			Error  string `json:"error"`
+			// ToolCallID, Output and Error answer one hosted tool call, as a session's
+			// tool_result does: Output is a string or a parts array. ID is ToolCallID under
+			// the name workers sent it by before.
+			ToolCallID string          `json:"tool_call_id"`
+			ID         string          `json:"id"`
+			Output     json.RawMessage `json:"output"`
+			Error      string          `json:"error"`
+			// Text and Verbatim say how a running hosted call is going, as a session's
+			// tool_update does.
+			Text     string `json:"text"`
+			Verbatim bool   `json:"verbatim"`
 		}
-		if err := connection.ReadJSON(&report); err != nil {
+		_, payload, err := connection.ReadMessage()
+		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				s.logger.Debug("dispatch socket read failed", "worker", worker.ID, "error", err)
 			}
-			return
+			return nil
 		}
 		connection.SetReadDeadline(time.Now().Add(pongWait))
+		if json.Unmarshal(payload, &report) != nil {
+			return errUnreadableFrame
+		}
 
 		switch report.Type {
 		case "load":
@@ -290,7 +293,7 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			select {
 			case pongs <- report.At:
 			case <-writerDone:
-				return
+				return nil
 			}
 
 		case "host_tools":
@@ -298,14 +301,41 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			select {
 			case replies <- reply:
 			case <-writerDone:
-				return
+				return nil
 			}
 
 		case "tool_result":
-			if !worker.Resolve(report.ID, dispatch.ToolResult{Output: report.Output, Failure: report.Error}) {
-				s.logger.Debug("a hosted tool answered a call nobody is waiting on",
-					"worker", worker.ID, "id", report.ID)
+			id := report.ToolCallID
+			if id == "" {
+				id = report.ID
 			}
+			result := dispatch.ToolResult{Failure: report.Error}
+			if parts, err := parseToolOutput(report.Output); err != nil {
+				result.Failure = "the tool's output could not be read: " + err.Error()
+			} else {
+				result.Output = parts
+			}
+			if !worker.Resolve(id, result) {
+				s.logger.Debug("a hosted tool answered a call nobody is waiting on",
+					"worker", worker.ID, "id", id)
+			}
+
+		case "tool_update":
+			worker.Update(report.ToolCallID, report.Text, report.Verbatim)
+
+		case "tool_hold":
+			// The conversation may be on another node, so the answer is a round trip that
+			// the worker's other frames are not held up behind.
+			go func(id string) {
+				reply := frame{"type": "tool_held", "id": id}
+				if sessionID, held := worker.Hold(id); !held {
+					reply = frame{"type": "tool_cancel", "id": id, "session_id": sessionID}
+				}
+				select {
+				case replies <- reply:
+				case <-writerDone:
+				}
+			}(report.ToolCallID)
 
 		case "done":
 			// What the worker is holding is what it has been handed and not yet reported,
@@ -338,6 +368,17 @@ type hostedTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
+	// Interruptible and TimeoutMs mean what they do on a session's own tool.
+	Interruptible bool `json:"interruptible"`
+	TimeoutMs     int  `json:"timeout_ms"`
+	// Approval is the question a voice caller is asked before each call runs, as on a
+	// session's own tool. Only its title is asked.
+	Approval *hostedApproval `json:"approval"`
+}
+
+// hostedApproval is the question a hosted tool asks.
+type hostedApproval struct {
+	Title string `json:"title"`
 }
 
 // hostTools records what a worker offers to run for sessions under an agent id, and says
@@ -358,7 +399,19 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []h
 		if tool.Name == "" || tool.Description == "" {
 			return refuse("every hosted tool needs a name and a description")
 		}
-		tools = append(tools, dispatch.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+		if tool.TimeoutMs < 0 {
+			return refuse(tool.Name + "'s timeout_ms cannot be negative")
+		}
+		hosted := dispatch.Tool{
+			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
+			Interruptible: tool.Interruptible, Timeout: time.Duration(tool.TimeoutMs) * time.Millisecond,
+		}
+		if tool.Approval != nil {
+			if hosted.Approval = strings.TrimSpace(tool.Approval.Title); hosted.Approval == "" {
+				return refuse(tool.Name + "'s approval needs a title")
+			}
+		}
+		tools = append(tools, hosted)
 		names = append(names, tool.Name)
 	}
 	if err := s.dispatch.Host(worker, agentID, tools, time.Duration(timeoutMs)*time.Millisecond); err != nil {
@@ -371,15 +424,51 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []h
 	return frame{"type": "hosting", "agent_id": agentID, "tools": names}
 }
 
-// toolCallFrame renders one hosted call for the wire.
+// toolCallFrame renders one hosted call, or the cancelling of one, for the wire.
 func toolCallFrame(call dispatch.ToolCall) frame {
-	return frame{
+	if call.Cancel {
+		return frame{"type": "tool_cancel", "id": call.ID, "session_id": call.SessionID}
+	}
+	rendered := frame{
 		"type":       "tool_call",
 		"id":         call.ID,
 		"session_id": call.SessionID,
+		"turn_id":    call.TurnID,
 		"name":       call.Name,
 		"arguments":  call.Arguments,
 	}
+	if call.User != nil {
+		rendered["user"] = toolUserFrame(call.User.ID, call.User.Name)
+	}
+	if call.Conversation != nil {
+		rendered["conversation"] = toolConversationFrame(call.Conversation.CID, call.Conversation.Custom)
+	}
+	if call.Approved {
+		rendered["approved"] = true
+	}
+	return rendered
+}
+
+// toolUserFrame is who a tool call was made for, as both sockets carry it.
+func toolUserFrame(id, name string) frame {
+	user := frame{"id": id}
+	if name != "" {
+		user["name"] = name
+	}
+	return user
+}
+
+// toolConversationFrame is the conversation a tool call was made in, as both sockets carry
+// it. custom is always an object, so a client reads an empty one rather than a missing one.
+func toolConversationFrame(cid string, custom map[string]any) frame {
+	if custom == nil {
+		custom = map[string]any{}
+	}
+	conversation := frame{"custom": custom}
+	if cid != "" {
+		conversation["cid"] = cid
+	}
+	return conversation
 }
 
 // callFrame renders one arriving call for the wire.

@@ -581,6 +581,10 @@ type stub struct {
 	inbound Inbound
 	// monthly is what a number bought here costs a month.
 	monthly int64
+	// ordered counts the numbers this vendor was asked to sell, and released the numbers it
+	// was told to take back.
+	ordered  int
+	released []string
 }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
@@ -592,13 +596,17 @@ func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
 }
 
 func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
+	s.ordered++
 	if s.err != nil {
 		return Number{}, s.err
 	}
 	return Number{E164: order.E164, Vendor: s.vendor, Country: "US", MonthlyCostMicros: s.monthly}, nil
 }
 
-func (s *stub) ReleaseNumber(context.Context, string) error { return s.err }
+func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {
+	s.released = append(s.released, e164)
+	return s.err
+}
 
 func (s *stub) ConfigureInbound(_ context.Context, inbound Inbound) error {
 	s.inbound = inbound

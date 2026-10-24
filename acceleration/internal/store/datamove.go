@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ErrChangesExpired says the cursor a caller is resuming from is older than anything
@@ -475,6 +477,11 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	if err != nil {
 		return err
 	}
+	if table == "phone_numbers" {
+		if err := importableNumber(ctx, db, customerID, row); err != nil {
+			return err
+		}
+	}
 	shape, err := s.shapeOf(ctx, table)
 	if err != nil {
 		return err
@@ -541,6 +548,66 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	return nil
 }
 
+// digitsKey is a number as most vendors read the one they are given, as SQL over a text
+// value: its digits. Plivo, DIDWW, Vonage and Bird drop the plus; Twilio, Telnyx and Sinch
+// read it as written, which its digits only widen.
+const digitsKey = `regexp_replace(%s, '[^0-9]', '', 'g')`
+
+// vendorKeys is a number as a vendor that reads it another way does. Bandwidth also drops
+// the 1 of an 11-digit number (bandwidth.digits), so +15551234567 and +5551234567 are one
+// number there.
+var vendorKeys = map[string]string{
+	"bandwidth": `regexp_replace(regexp_replace(%s, '[^0-9]', '', 'g'), '^1([0-9]{10})$', '\1')`,
+}
+
+// importableNumber refuses an imported number the customer would hold in a form other than
+// E.164, or that another customer holds. Every bought number is held in the deployment's one
+// account at its vendor, and releasing it there is what holding it here allows, so a number
+// two customers held would be one either of them could give back. The unique index on what
+// is held compares the text as written, so it sees neither another form of a number nor the
+// same number at another vendor. A number given back is only its bill's history and imports
+// as written; one on the customer's own trunk is in no account here.
+//
+// Two imports of one number into two customers at the same moment can both pass this.
+func importableNumber(ctx context.Context, db bun.IDB, customerID string, row json.RawMessage) error {
+	// Read the way the insert reads it, by exact column name: a JSON decoder also matches a
+	// key in another case, which the insert then leaves out.
+	var e164, vendor sql.NullString
+	var released bool
+	if err := db.QueryRowContext(ctx,
+		"SELECT e164, vendor, released_at IS NOT NULL FROM jsonb_populate_record(NULL::phone_numbers, ?::jsonb)",
+		string(row)).Scan(&e164, &vendor, &released); err != nil {
+		return fmt.Errorf("store: read an imported number: %w", err)
+	}
+	if released {
+		return nil
+	}
+	if !IsE164(e164.String) {
+		return stack.Wrap(fmt.Errorf("%w: %q", ErrNotE164, e164.String))
+	}
+	if vendor.String == "sip_trunk" {
+		return nil
+	}
+	// Compared as the vendor it would be given back at reads a number, so a number held in
+	// another form, before every write checked the form, is found as well.
+	key, found := vendorKeys[vendor.String]
+	if !found {
+		key = digitsKey
+	}
+	var held bool
+	if err := db.QueryRowContext(ctx, fmt.Sprintf(`
+SELECT EXISTS (SELECT 1 FROM phone_numbers
+WHERE customer_id <> ? AND released_at IS NULL AND vendor <> 'sip_trunk' AND %s = %s)`,
+		fmt.Sprintf(key, "e164"), fmt.Sprintf(key, "?::text")),
+		customerID, e164.String).Scan(&held); err != nil {
+		return fmt.Errorf("store: who holds an imported number: %w", err)
+	}
+	if held {
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrNumberHeldElsewhere, e164.String))
+	}
+	return nil
+}
+
 // identity is what the importing deployment overwrites on every row of this table, which
 // is whose it is. A table holding more than one kind of row has the kind forced too, so
 // an app-scope policy cannot be imported as its organization's.
@@ -567,9 +634,14 @@ func (t dataTable) identity() string {
 		return "jsonb_build_object('customer_id', ?::text, 'password_kek_version', 0)"
 	}
 	// An attached number arrives without its bridge password for the same reason, so its key
-	// version stays behind too rather than describing a password that is not there.
+	// version stays behind too rather than describing a password that is not there. Nor does
+	// where its calls go: the trunk, route and call it was attached to are named by whatever
+	// the importer wrote, and a hook that finds one call under two customers' numbers answers
+	// it for neither (ErrAmbiguousHook). It arrives needing to be attached again.
 	if t.name == "phone_numbers" {
-		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL)"
+		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL," +
+			" 'stream_trunk_id', NULL, 'stream_route_id', NULL, 'stream_call_id', NULL," +
+			" 'stream_call_type', NULL, 'bridge_uri', NULL, 'bridge_username', NULL)"
 	}
 	// A request was billed by the deployment that recorded it, so this one never ships it, and
 	// what that one's usage service answered for it is not this one's: a reship of the rows

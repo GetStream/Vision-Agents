@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -454,7 +455,7 @@ func (s *LLMRouterSuite) TestTheBuiltInOpusEntrySeesWhatItDeclares() {
 		s.NoError(json.NewDecoder(r.Body).Decode(&body))
 		sent <- body
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"id\":\"r\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a rose\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n")
+		fmt.Fprint(w, claudeAnswer("a rose", 5, 2))
 	}))
 	s.T().Cleanup(server.Close)
 	config, err := routing.DefaultConfig()
@@ -481,7 +482,45 @@ func (s *LLMRouterSuite) TestTheBuiltInOpusEntrySeesWhatItDeclares() {
 	s.Equal("a rose", response.OutputText)
 	body := <-sent
 	s.Equal("claude-opus-5-5", body["model"])
-	s.Contains(fmt.Sprint(body["messages"]), "image_url")
+	s.Contains(fmt.Sprint(body["messages"]), "base64")
+}
+
+func (s *LLMRouterSuite) TestClaudesCacheIsCountedAndPricedLikeAnyOtherCache() {
+	// Of a 100k-token prompt, 90k were read from the cache and 9k written to it.
+	answer := strings.Replace(claudeAnswer("done", 1000, 10), `"input_tokens":1000`,
+		`"input_tokens":1000,"cache_creation_input_tokens":9000,"cache_read_input_tokens":90000`, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, answer)
+	}))
+	s.T().Cleanup(server.Close)
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	registry := NewRegistry()
+	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: server.URL, Model: spec.Model}))
+	})
+	router, err := New(Options{Config: config[routing.LLM], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "anthropic/claude-opus-5-5"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { session.Close() })
+
+	timings := make(chan llm.CallTiming, 1)
+	stream, err := session.Create(s.ctx, llm.ResponseParams{
+		Input:    []llm.Message{{Role: llm.User, Content: "why"}},
+		OnTiming: func(timing llm.CallTiming) { timings <- timing },
+	})
+	s.Require().NoError(err)
+	_, err = llm.Collect(stream)
+	s.Require().NoError(err)
+
+	timing := <-timings
+	s.EqualValues(100_000, timing.InputTokens, "the whole prompt, cached and written parts included")
+	s.EqualValues(90_000, timing.CachedInputTokens)
+	// $4/M for 1k fresh, $0.20/M for 90k read, $5/M for 9k written, $20/M for 10 out.
+	s.EqualValues(4_000+18_000+45_000+200, timing.CostMicros)
 }
 
 func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabilities() {

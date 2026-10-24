@@ -144,7 +144,7 @@ func withStored(ctx context.Context, settings config.Config, logger *slog.Logger
 		return err
 	}
 	defer pgStore.Close()
-	secrets, err := newSecretSealer(settings)
+	secrets, err := newSecretSealer(ctx, settings)
 	if err != nil {
 		return err
 	}

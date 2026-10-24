@@ -618,7 +618,59 @@ func (s *RecordingsSuite) TestAPriorityListOfModelsThatOnlyStreamIsRefused() {
 	_, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"mock"}})
 
 	s.Require().ErrorIs(err, routing.ErrRequest)
-	s.ErrorContains(err, "mock/mock-tts can only stream speech, not record it")
+	s.EqualError(err, "routing: mock/mock-tts can only stream speech, not record it; models that record: "+
+		"cartesia/sonic-3.6, inworld/inworld-tts-2-batch, elevenlabs/eleven_v3")
+}
+
+func (s *RecordingsSuite) TestAPriorityListOfLiveModelsAloneIsRefusedNamingTheBatchModelsThatRecord() {
+	// On 569e94d4d each was accepted by Check and failed in Record: "routing: nothing in the
+	// priority list ... can serve this request", not a request error.
+	for _, providers := range [][]string{
+		{"cartesia/sonic-preview"},
+		{"speechify"},
+		{"tts-fast"},
+		{"cartesia/sonic-preview", "elevenlabs/eleven_flash_v2_5"},
+	} {
+		s.Run(strings.Join(providers, ","), func() {
+			s.built = nil
+			_, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: providers})
+
+			s.Require().ErrorIs(err, routing.ErrRequest, "the caller's to change")
+			s.EqualError(err, "routing: nothing in the priority list "+strings.Join(providers, ", ")+" can serve this request; "+
+				"a recording keeps only a list's batch models, and these are models for live calls; "+
+				"batch models that record: cartesia/sonic-3.6, inworld/inworld-tts-2-batch, elevenlabs/eleven_v3")
+			s.Empty(s.built, "nothing is built")
+		})
+	}
+}
+
+func (s *RecordingsSuite) TestAPriorityListOfAnUnknownNameAndALiveModelIsRefusedNamingTheUnknownName() {
+	// Probed on 569e94d4d: Record failed it with the unknown target in the message.
+	_, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"nope/nope", "cartesia/sonic-preview"}})
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.EqualError(err, `routing: nothing in the priority list nope/nope, cartesia/sonic-preview can serve this request: `+
+		`routing: unknown target "nope/nope"; a recording keeps only a list's batch models, and these are models for live calls; `+
+		"batch models that record: cartesia/sonic-3.6, inworld/inworld-tts-2-batch, elevenlabs/eleven_v3")
+}
+
+func (s *RecordingsSuite) TestAPriorityListWithALiveModelAndABatchModelIsStillServedByTheBatchModel() {
+	// Probed on 569e94d4d: Check passed, served by elevenlabs/eleven_v3.
+	served, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"cartesia/sonic-preview", "elevenlabs/eleven_v3"}})
+
+	s.Require().NoError(err)
+	s.Equal("elevenlabs/eleven_v3", served)
+}
+
+func (s *RecordingsSuite) TestAPriorityListOfUnknownNamesIsStillLeftToRecord() {
+	// Probed on 569e94d4d: Check passed, and Record refused it in these words.
+	recordings := s.newRecordings()
+	recording := Recording{CustomerID: "acme", Options: options.TTS{Target: "en-recorded", Providers: []string{"nope/nope"}}, Text: "hello"}
+
+	s.Require().NoError(recordings.Check(s.ctx, recording))
+	_, _, err := recordings.Record(s.ctx, recording)
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.EqualError(err, `routing: nothing in the priority list nope/nope can serve this request: routing: unknown target "nope/nope"`)
 }
 
 func (s *RecordingsSuite) TestAPriorityListNamingCartesiaIsServedByItsBatchModel() {
@@ -716,6 +768,7 @@ func (s *RecordingsSuite) TestARecordingOnTheQualityShortcutIsServedByElevenLabs
 
 func (s *RecordingsSuite) TestARecordingSaysItWasSpokenInTheDefaultVoiceWhenNoneWasAsked() {
 	// Probed on b1e563f98: the recorder was built for elevenlabs.DefaultVoiceID.
+	s.T().Setenv("ELEVENLABS_VOICE_ID", "")
 	recorded, _, err := s.newRecordings().Record(s.ctx, Recording{
 		CustomerID: "acme", Options: options.TTS{Target: "en-recorded"}, Text: "hello",
 	})

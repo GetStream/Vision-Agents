@@ -18,6 +18,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 )
 
 // PluginEventsSuite covers MCP events end to end: the router subscribes on a plugin's
@@ -80,7 +81,7 @@ func (s *PluginEventsSuite) TestADeliveryRetriedOpensNoSecondConversation() {
 func (s *PluginEventsSuite) TestADeliveryNotSignedWithTheSecretIsRefused() {
 	config := s.subscribedAgent(nil)
 	sub := s.mcp.subscription(s.T(), config.Name)
-	forged, err := plugins.NewWebhookSecret()
+	forged, err := webhook.NewSecret()
 	s.Require().NoError(err)
 	sub.secret = forged
 
@@ -102,7 +103,7 @@ func (s *PluginEventsSuite) TestADeliveryWarnsOfTheDeprecationAndStillOpensAConv
 func (s *PluginEventsSuite) TestADeliveryNotSignedWithTheSecretWarnsOfNothing() {
 	config := s.subscribedAgent(nil)
 	sub := s.mcp.subscription(s.T(), config.Name)
-	forged, err := plugins.NewWebhookSecret()
+	forged, err := webhook.NewSecret()
 	s.Require().NoError(err)
 	sub.secret = forged
 
@@ -312,7 +313,7 @@ func challenge(url, secret string) (bool, error) {
 
 func signedPost(url, secret, id string, body []byte) (*http.Response, error) {
 	now := time.Now()
-	signature, err := plugins.SignWebhook(secret, id, now, body)
+	signature, err := webhook.Sign(secret, id, now, body)
 	if err != nil {
 		return nil, err
 	}

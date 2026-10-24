@@ -193,7 +193,7 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 		}
 		if complete, ok := event.(sts.ResponseComplete); ok && complete.Interrupted {
 			a.mu.Lock()
-			cutID, heardMs := a.cutShortLocked(complete.ResponseID, time.Now())
+			cut := a.cutShortLocked(complete.ResponseID, time.Now())
 			_, abandoned := a.abandoned[complete.ResponseID]
 			a.abandoned[complete.ResponseID] = struct{}{}
 			playing := a.speakingTurn == complete.ResponseID
@@ -204,7 +204,7 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			}
 			if !abandoned {
 				a.turns.interrupt(complete.ResponseID)
-				a.emitter.Send(Interrupted{TurnID: complete.ResponseID, Participant: participant, SynthesisID: cutID, HeardMs: heardMs})
+				a.emitter.Send(cut.cut(Interrupted{TurnID: complete.ResponseID, Participant: participant}))
 			}
 		}
 		select {
@@ -503,7 +503,9 @@ func (a *Agent) saidNative(transcript sts.OutputTranscript) {
 	a.mu.Lock()
 	a.saying = a.spoken.String()
 	if heard := a.heard[transcript.ResponseID]; heard != nil {
+		// The message is the transcript, trimmed once the reply settles.
 		heard.text = a.saying
+		heard.message.End = utf8.RuneCountInString(strings.TrimSpace(a.saying))
 	}
 	a.mu.Unlock()
 	a.emitter.Send(ResponseDelta{TurnID: transcript.ResponseID, Text: transcript.Text})
@@ -526,7 +528,7 @@ func (a *Agent) replyStarted(started sts.ResponseStarted) {
 	a.waitingSince = time.Time{}
 	prompt := a.heardText
 	a.mu.Unlock()
-	a.sending(started.ResponseID, started.ResponseID, "")
+	a.sending(started.ResponseID, started.ResponseID, "", MessageSpan{})
 
 	if !waiting.IsZero() {
 		a.turns.started(started.ResponseID, kindCaller)
@@ -551,6 +553,13 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 		err = marked.PublishAudioMarked(chunk.Audio, withUtterance(a.turns.marksFor(chunk.ResponseID), heard))
 	} else {
 		err = a.options.Edge.PublishAudio(chunk.Audio)
+	}
+	if errors.Is(err, ErrCallLeft) {
+		if a.leftNoted != chunk.ResponseID {
+			a.leftNoted = chunk.ResponseID
+			a.logger.Debug("dropping audio for a call that has been left", "response", chunk.ResponseID)
+		}
+		return
 	}
 	if err != nil {
 		a.fail(err, "edge")
@@ -608,7 +617,7 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 		if !alreadyAbandoned {
 			cut := Interrupted{TurnID: complete.ResponseID, Participant: participant}
 			if heardMs, ok := heard.heardBy(time.Now()); ok {
-				cut.SynthesisID, cut.HeardMs = complete.ResponseID, heardMs
+				cut.SynthesisID, cut.HeardMs, cut.Message = complete.ResponseID, heardMs, heard.span()
 			}
 			a.turns.interrupt(complete.ResponseID)
 			a.emitter.Send(cut)
@@ -630,6 +639,7 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 			TurnID:            complete.ResponseID,
 			SynthesisID:       complete.ResponseID,
 			Characters:        int64(utf8.RuneCountInString(said)),
+			Message:           &MessageSpan{End: utf8.RuneCountInString(said)},
 			AudioDurationMs:   complete.AudioDurationMs,
 			TimeToFirstByteMs: complete.TimeToFirstByteMs,
 		})
@@ -752,6 +762,8 @@ func (a *Agent) consumeNativePresence(p *pipeline) {
 		select {
 		case <-ticker.C:
 			a.followUp()
+			a.sayNativeToolUpdate()
+			a.tickApprovals()
 		case <-p.ctx.Done():
 			return
 		}

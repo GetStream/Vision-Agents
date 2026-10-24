@@ -74,6 +74,14 @@ const resumeAttempts = 3
 // 3.8 Live Extended Thinking takes LOW, MEDIUM or HIGH and closes the socket otherwise.
 var requiredThinking = map[string]string{"gemini-3.8-live-extended-thinking": "LOW"}
 
+// nonBlockingModels are the models whose NON_BLOCKING calls have been heard keeping the
+// conversation going and saying an update's detail (probed 2026-10-24). 3.8 Live Extended
+// Thinking times out answering a tool call either way, so it is left blocking.
+var nonBlockingModels = map[string]bool{"gemini-3.1-flash-live-preview": true, "gemini-3.8-live": true}
+
+// TakesNonBlocking reports whether a model's tools are best declared NON_BLOCKING.
+func TakesNonBlocking(model string) bool { return nonBlockingModels[model] }
+
 // activityStart and activityEnd are the detector's "Start of sentence" and "End of sentence"
 // signals (https://ai.google.dev/api/live#VoiceActivity). The end arrives with the reply
 // (probed 2026-10-20 on gemini-3.8-live and 3.1-flash-live-preview), so only its audioOffset
@@ -87,6 +95,15 @@ const (
 // with a turnComplete that is not the end of its answer: it spoke a filler, and more of the
 // same reply is coming.
 const interactionInProgress = "IN_PROGRESS"
+
+// schedulingWhenIdle has the model take a NON_BLOCKING call's response up once it is not
+// speaking, rather than cutting itself off for it.
+const schedulingWhenIdle = "WHEN_IDLE"
+
+// nonBlockingNote is what a NON_BLOCKING tool's declaration adds, since the model keeps
+// talking while the call runs.
+const nonBlockingNote = "Its result comes back later: say you are on it, keep the conversation going, " +
+	"and do not guess the result."
 
 // Options configures the provider. APIKey falls back to GOOGLE_API_KEY.
 type Options struct {
@@ -103,6 +120,10 @@ type Options struct {
 	Instructions string
 	// Tools are what the model may call, also taken once.
 	Tools []llm.Tool
+	// NonBlocking declares the tools NON_BLOCKING: the model keeps talking while a call runs,
+	// can be told how it is going (UpdateCall), and hears its result when it is next idle.
+	// Only for a model that takes such declarations.
+	NonBlocking bool
 	// SilenceMs and PrefixPaddingMs tune the model's own silence timer.
 	SilenceMs       *int
 	PrefixPaddingMs *int
@@ -202,6 +223,7 @@ type functionDeclaration struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	Behavior    string         `json:"behavior,omitempty"`
 }
 
 type realtimeInputConfig struct {
@@ -240,6 +262,10 @@ type functionResponse struct {
 	ID       string         `json:"id"`
 	Name     string         `json:"name"`
 	Response map[string]any `json:"response"`
+	// WillContinue and Scheduling answer a NON_BLOCKING call: whether more responses follow,
+	// and when the model is to take this one up.
+	WillContinue *bool  `json:"willContinue,omitempty"`
+	Scheduling   string `json:"scheduling,omitempty"`
 }
 
 // serverMessage is a frame sent by the Live API.
@@ -522,10 +548,34 @@ func (s *STS) Answer(callID string, output string, err error) error {
 	if err != nil {
 		response = map[string]any{"error": err.Error()}
 	}
+	answer := functionResponse{ID: callID, Name: name, Response: response}
+	if s.options.NonBlocking {
+		closed := false
+		answer.WillContinue, answer.Scheduling = &closed, schedulingWhenIdle
+	}
+	return s.send(clientMessage{ToolResponse: &toolResponse{FunctionResponses: []functionResponse{answer}}})
+}
+
+// UpdatesCalls reports whether the session's calls are NON_BLOCKING, so an open one can be
+// told of.
+func (s *STS) UpdatesCalls() bool { return s.options.NonBlocking && len(s.options.Tools) > 0 }
+
+// UpdateCall tells the model how an open call is going with a partial response, which it
+// takes up when it is next idle. The call stays open for its Answer.
+func (s *STS) UpdateCall(update sts.CallUpdate) error {
+	if !s.UpdatesCalls() {
+		return stack.Wrap(sts.ErrNoCallUpdates)
+	}
+	s.mu.Lock()
+	name := s.calls[update.CallID]
+	s.mu.Unlock()
+	if name == "" {
+		return fmt.Errorf("gemini: no tool call %q is open", update.CallID)
+	}
+	open := true
 	return s.send(clientMessage{ToolResponse: &toolResponse{FunctionResponses: []functionResponse{{
-		ID:       callID,
-		Name:     name,
-		Response: response,
+		ID: update.CallID, Name: name, WillContinue: &open, Scheduling: schedulingWhenIdle,
+		Response: map[string]any{"status": update.Status, "instructions": update.Guidance},
 	}}}})
 }
 
@@ -650,11 +700,16 @@ func (s *STS) setup(handle string) *setup {
 	if len(s.options.Tools) > 0 {
 		declarations := make([]functionDeclaration, 0, len(s.options.Tools))
 		for _, offered := range s.options.Tools {
-			declarations = append(declarations, functionDeclaration{
+			declared := functionDeclaration{
 				Name:        offered.Name,
 				Description: offered.Description,
 				Parameters:  offered.Parameters,
-			})
+			}
+			if s.options.NonBlocking {
+				declared.Behavior = "NON_BLOCKING"
+				declared.Description = strings.TrimSpace(declared.Description + " " + nonBlockingNote)
+			}
+			declarations = append(declarations, declared)
 		}
 		configured.Tools = []toolDeclarations{{FunctionDeclarations: declarations}}
 	}

@@ -395,6 +395,19 @@ func (s *ProxySuite) TestTheTokenSchemeAndABasicPasswordAreSubstitutedToo() {
 	s.Equal(basic("x-access-token", s.placeholder), response.Header.Get("X-Echo-Authorization"))
 }
 
+// TestABasicEchoComesBackAsThePlaceholderForAnyUser: the Base64 of user:token is not aligned like
+// the Base64 of the token alone, and git's user name is the remote's (x-access-token, git or a
+// short one), so the echo of each is put back as the placeholder's own.
+func (s *ProxySuite) TestABasicEchoComesBackAsThePlaceholderForAnyUser() {
+	token := "gho_first-token-of-the-connection"
+	for _, user := range []string{"git", "a"} {
+		response, _ := s.get(basic(user, s.placeholder))
+
+		s.Equal(basic(user, s.placeholder), response.Header.Get("X-Echo-Authorization"), user)
+		s.NotContains(response.Header.Get("X-Echo-Authorization"), base64.StdEncoding.EncodeToString([]byte(user+":"+token)), user)
+	}
+}
+
 // TestAPlaceholderInAnyOtherFormIsSentAsItIs is A12: no other form of Authorization is
 // read, an encoded or split placeholder included.
 func (s *ProxySuite) TestAPlaceholderInAnyOtherFormIsSentAsItIs() {
@@ -1481,4 +1494,14 @@ func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// TestTheListenerTLSHoldsTLS12AndHTTP11: the floor and the protocol a tunnel's TLS has. Go's
+// own default floor is TLS 1.2 today, so the setting is read from the config, which a default
+// would not show.
+func (s *ProxySuite) TestTheListenerTLSHoldsTLS12AndHTTP11() {
+	config := s.newProxy(s.store).ListenerTLS("203.0.113.7")
+
+	s.Equal(uint16(tls.VersionTLS12), config.MinVersion)
+	s.Equal([]string{"http/1.1"}, config.NextProtos)
 }

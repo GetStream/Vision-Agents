@@ -92,10 +92,12 @@ func (s *SandboxGrantsSuite) TestASandboxBindingGivesTheSandboxItsEnvVarAndHosts
 	s.sandboxRevision()
 	id := s.connection("", "primary")
 
-	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	config := s.config(sandboxed(s.fixed("crm", id, "whoami")))
+
+	box, _ := s.opened(config)
 
 	s.Equal([]sandbox.Grant{{Connection: core.ConnectionRef{CustomerID: s.customerID, ConnectionID: id}, Binding: "crm",
-		Scheme: bearer.Name, Env: "CRM_TOKEN", Hosts: []string{"api.crm.example", "*.crm.example"}}}, box.(sandbox.Granted).Grants())
+		Config: config.ID, Connector: s.connectorID, Selection: selectionFixed, Scheme: bearer.Name, Env: "CRM_TOKEN", Hosts: []string{"api.crm.example", "*.crm.example"}}}, box.(sandbox.Granted).Grants())
 	s.Contains(harness.SandboxTool(box).Description, "`Authorization: Bearer $CRM_TOKEN`")
 }
 
@@ -250,7 +252,9 @@ const proxyCA = "-----BEGIN CERTIFICATE-----\nY2E=\n-----END CERTIFICATE-----\n"
 // TestTheProxyBrokerSendsTheSandboxThroughTheProxy: with code_sandbox.broker proxy, run_code's
 // sandbox may reach the proxy alone, its runs go there, it holds a placeholder, and the proxy
 // finds the connection's token behind it, for this session, and the allowed domains. No secret
-// prefix is needed. A connection deleted mid-session is withdrawn, in the session's log.
+// prefix is needed. A binding the config drops gets no token at the next request, and gets it
+// again once put back before a run (A16). A connection deleted mid-session is withdrawn, in the
+// session's log.
 func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() {
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
@@ -265,7 +269,9 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 		CACert: []byte(proxyCA)}
 	s.sandboxRevision()
 	id := s.connection("", "primary")
-	spec := s.spec(s.config(sandboxed(s.fixed("crm", id, "whoami"))), "", nil)
+	binding := sandboxed(s.fixed("crm", id, "whoami"))
+	config := s.config(binding)
+	spec := s.spec(config, "", nil)
 	spec.ID, spec.Sandbox, spec.SandboxOptions = uuid.NewString(), daytonaProvider, sandbox.Config{AllowedDomains: []string{"PyPI.org", "Files.PythonHosted.org"}}
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
@@ -291,10 +297,19 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	s.Equal([]string{"pypi.org", "files.pythonhosted.org"}, record.Allowed)
 	s.Require().Len(record.Grants, 1)
 	s.Equal(api.created["env"].(map[string]any)["CRM_TOKEN"], record.Grants[0].Placeholder)
-	token, err := egress.ResolverTokens(s.resolver, s.registry.Schemes)(s.ctx, record.Grants[0])
+	tokens := SandboxProxyTokens(s.resolver, s.store, s.registry.Schemes)
+	token, err := tokens(s.ctx, record.Grants[0])
 	s.Require().NoError(err)
 	s.Equal(tokenOf("primary"), token)
 	s.NotContains(string(raw), tokenOf("primary"))
+
+	s.rebind(config)
+	_, err = tokens(s.ctx, record.Grants[0])
+	s.Require().ErrorIs(err, sandbox.ErrNoCredential)
+	s.rebind(config, binding)
+	token, err = tokens(s.ctx, record.Grants[0])
+	s.Require().NoError(err)
+	s.Equal(tokenOf("primary"), token)
 
 	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, id))
 	_, err = box.Run(s.ctx, "print(1)", nil)
@@ -418,6 +433,65 @@ func (s *SandboxGrantsSuite) TestADeletedConnectionIsWithdrawnBeforeTheNextRun()
 	s.Contains(s.logs.String(), "credential is withdrawn from the sandbox")
 }
 
+// TestABindingRemovedMidSessionIsWithdrawnBeforeTheNextRun is A16 under Daytona's broker: once
+// the config drops the binding, the next run_code finds no credential behind the sandbox's env
+// var. Putting the binding back gives this sandbox nothing again: the next session gets it.
+func (s *SandboxGrantsSuite) TestABindingRemovedMidSessionIsWithdrawnBeforeTheNextRun() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	binding := sandboxed(s.fixed("crm", id, "whoami"))
+	config := s.config(binding)
+	box, _ := s.opened(config)
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().True(api.offered("CRM_TOKEN"))
+
+	s.rebind(config)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.False(api.offered("CRM_TOKEN"))
+	s.Contains(s.logs.String(), "credential is withdrawn from the sandbox")
+	s.rebind(config, binding)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.False(api.offered("CRM_TOKEN"))
+}
+
+// TestABindingTheConfigNoLongerHoldsAsOpenedGivesNoCredential: each way the config can stop
+// binding a grant as the session opened it withdraws it, as recheck refuses a tool call. A
+// config that cannot be read just now does not.
+func (s *SandboxGrantsSuite) TestABindingTheConfigNoLongerHoldsAsOpenedGivesNoCredential() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	config := s.config(sandboxed(s.fixed("crm", id, "whoami")))
+	box, _ := s.opened(config)
+	grant := box.(sandbox.Granted).Grants()[0]
+	s.Require().NoError(SandboxBound(s.ctx, s.store, grant))
+	connector, selection, connection := grant, grant, grant
+	connector.Connector = uuid.NewString()
+	selection.Selection = selectionSession
+	connection.Connection.ConnectionID = s.connection("", "secondary")
+	for name, changed := range map[string]sandbox.Grant{"connector": connector, "selection": selection, "connection": connection} {
+		s.ErrorIs(SandboxBound(s.ctx, s.store, changed), sandbox.ErrNoCredential, name)
+	}
+	chosen := s.config(sandboxed(s.chosen("crm", "whoami")))
+	selection.Config = chosen.ID
+	s.NoError(SandboxBound(s.ctx, s.store, selection), "a session binding takes the caller's connection")
+
+	s.rebind(config, s.fixed("crm", id, "whoami"))
+	s.ErrorIs(SandboxBound(s.ctx, s.store, grant), sandbox.ErrNoCredential, "sandbox unset")
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, s.customerID, config.ID))
+	s.ErrorIs(SandboxBound(s.ctx, s.store, grant), sandbox.ErrNoCredential, "config deleted")
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	err = SandboxBound(s.ctx, closed, grant)
+	s.Require().Error(err)
+	s.NotErrorIs(err, sandbox.ErrNoCredential)
+}
+
 // TestAConnectionThatCannotBeReadJustNowKeepsItsSecret: a store that cannot answer is no
 // reason to withdraw, as on base.
 func (s *SandboxGrantsSuite) TestAConnectionThatCannotBeReadJustNowKeepsItsSecret() {
@@ -435,6 +509,35 @@ func (s *SandboxGrantsSuite) TestAConnectionThatCannotBeReadJustNowKeepsItsSecre
 	s.manager.options.Connectors.Resolver, err = resolver.New(resolver.Config{Store: closed, Credentials: credentials, Schemes: s.registry.Schemes})
 	s.Require().NoError(err)
 
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.True(api.offered("CRM_TOKEN"))
+	s.Contains(s.logs.String(), "it keeps the one it has")
+}
+
+// TestAConfigThatCannotBeReadJustNowGivesNoTokenAndKeepsTheSecret: the check that the config
+// still binds the grant reads it first. When it cannot, the broker gets no token and no
+// withdrawal, so it keeps the secret it has without renewing it, though the connection holds a
+// newer credential.
+func (s *SandboxGrantsSuite) TestAConfigThatCannotBeReadJustNowGivesNoTokenAndKeepsTheSecret() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, d := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().True(api.offered("CRM_TOKEN"))
+	grant := box.(sandbox.Granted).Grants()[0]
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	s.manager.options.Store = closed
+
+	token, err := s.manager.sandboxTokens(d.schemes)(s.ctx, grant)
+	s.Require().Error(err)
+	s.NotErrorIs(err, sandbox.ErrNoCredential)
+	s.Empty(token.Value)
 	_, err = box.Run(s.ctx, "print(1)", nil)
 
 	s.Require().NoError(err)

@@ -31,8 +31,12 @@ final readonly class ConnectionInvocation
         // The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an inc...
         /** @var list<InvocationArgument>|null */
         public ?array $arguments = null,
+        // Why the call failed: the start of the provider's error body when it answered with a 4xx or a 5xx, else what...
+        public ?string $errorMessage = null,
         // How the call failed. Absent for a call that answered.
         public InvocationErrorType|string|null $errorType = null,
+        // The HTTP status the provider answered the call's last request with. Absent for a call that answered, and fo...
+        public ?int $providerStatus = null,
         // The session that called it. Absent for an incognito session, whose calls are tied to no conversation.
         public ?string $sessionId = null,
     ) {
@@ -53,7 +57,9 @@ final readonly class ConnectionInvocation
             startedAt: Json::date($data, 'started_at'),
             tool: Json::string($data, 'tool'),
             arguments: array_key_exists('arguments', $data) && $data['arguments'] !== null ? array_map(InvocationArgument::fromArray(...), Json::objects($data, 'arguments')) : null,
+            errorMessage: array_key_exists('error_message', $data) && $data['error_message'] !== null ? Json::string($data, 'error_message') : null,
             errorType: array_key_exists('error_type', $data) && $data['error_type'] !== null ? Json::enum($data, 'error_type', InvocationErrorType::class) : null,
+            providerStatus: array_key_exists('provider_status', $data) && $data['provider_status'] !== null ? Json::int($data, 'provider_status') : null,
             sessionId: array_key_exists('session_id', $data) && $data['session_id'] !== null ? Json::string($data, 'session_id') : null,
         );
     }
@@ -77,8 +83,14 @@ final readonly class ConnectionInvocation
         if ($this->arguments !== null) {
             $out['arguments'] = array_map(static fn (InvocationArgument $each): array => $each->toArray(), $this->arguments);
         }
+        if ($this->errorMessage !== null) {
+            $out['error_message'] = $this->errorMessage;
+        }
         if ($this->errorType !== null) {
             $out['error_type'] = Json::enumValue($this->errorType);
+        }
+        if ($this->providerStatus !== null) {
+            $out['provider_status'] = $this->providerStatus;
         }
         if ($this->sessionId !== null) {
             $out['session_id'] = $this->sessionId;

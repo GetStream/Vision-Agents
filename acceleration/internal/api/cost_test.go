@@ -158,9 +158,9 @@ func (s *CostSuite) TestATranscriptCarriesItsCost() {
 	s.Require().NoError(listening.WriteJSON(frame{"type": "start", "target": "en-low-latency"}))
 	s.await(listening, "started")
 
-	s.ears.emitter.Send(stt.Transcript{Text: "not yet", Mode: stt.ModeReplacement, Provider: "stub", Model: "stub-stt"})
+	s.ears().emitter.Send(stt.Transcript{Text: "not yet", Mode: stt.ModeReplacement, Provider: "stub", Model: "stub-stt"})
 	interim := s.await(listening, "transcript")
-	s.ears.emitter.Send(stt.Transcript{Text: "a call costs a penny", Mode: stt.ModeFinal, AudioDurationMs: 60_000,
+	s.ears().emitter.Send(stt.Transcript{Text: "a call costs a penny", Mode: stt.ModeFinal, AudioDurationMs: 60_000,
 		Provider: "stub", Model: "stub-stt"})
 	settled := s.await(listening, "transcript")
 
@@ -193,7 +193,7 @@ func (s *CostSuite) TestAnUtteranceCarriesItsCost() {
 	s.Require().NoError(speaking.WriteJSON(frame{"type": "speak", "id": "s1", "text": line}))
 	s.Require().Eventually(func() bool { return slices.Contains(s.voice.spoken(), line) }, settleFor, 10*time.Millisecond)
 
-	s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: "s1", Characters: int64(len(line)), AudioDurationMs: 2_000,
+	s.speaking().emitter.Send(tts.SynthesisComplete{SynthesisID: "s1", Characters: int64(len(line)), AudioDurationMs: 2_000,
 		Provider: "stub", Model: "stub-tts"})
 	complete := s.await(speaking, "synthesis_complete")
 

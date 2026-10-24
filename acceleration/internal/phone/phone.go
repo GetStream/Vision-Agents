@@ -28,6 +28,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // maxInitialDigits is how many keys can be pressed when a call is answered. Twilio takes
@@ -57,7 +58,7 @@ var premiumPrefixes = []string{"+1900", "+1976"}
 // Dialable reports whether a call may be placed to the number. Only a full E.164 number is,
 // which also keeps short codes such as 911, 112 or 988 from being dialled as they are.
 func Dialable(to string) error {
-	if !e164Pattern.MatchString(to) {
+	if !store.IsE164(to) {
 		return stack.Wrap(fmt.Errorf("phone: %q is not a full number in E.164 form, such as +15125550123", to))
 	}
 	for _, prefix := range premiumPrefixes {

@@ -219,6 +219,9 @@ type Speaking struct {
 	// as written or of a sentence a voice took on its own, and the start of a reply a
 	// streaming voice is still being sent. A speech-to-speech model's transcript so far.
 	Text string
+	// Message is where that text is in the reply's Chat message, which is not the text: a
+	// streaming voice's grows as it is sent more. Nil from an agent with no record of it.
+	Message *MessageSpan
 	// At is when the track took its first audible frame, or for an utterance reported
 	// before the track got to it (one that finished being made behind speech still queued),
 	// when it was reported.
@@ -239,6 +242,9 @@ type Spoke struct {
 	// Characters is how much text was synthesised, or for a speech-to-speech model how long
 	// its transcript is, in Unicode code points.
 	Characters int64
+	// Message is where all of it is in the reply's Chat message, as on its Speaking. Nil
+	// for a synthesis the agent has no record of.
+	Message *MessageSpan
 	// AudioDurationMs is how much speech was published.
 	AudioDurationMs float64
 	// TimeToFirstByteMs is how long the participant waited to hear anything.
@@ -358,6 +364,18 @@ type ToolStarted struct {
 
 func (ToolStarted) isAgentEvent() {}
 
+// ToolUpdated is what whoever runs a call said about it while it runs (ToolUpdate): a
+// status the agent says in its own words, or Verbatim words it says as written.
+type ToolUpdated struct {
+	ID       string
+	TurnID   string
+	Tool     string
+	Text     string
+	Verbatim bool
+}
+
+func (ToolUpdated) isAgentEvent() {}
+
 // ToolApprovalDecided is a person's answer to a call that waited for their approval. It
 // changes how the call is shown; the call itself is still answered by its result.
 type ToolApprovalDecided struct {
@@ -449,6 +467,9 @@ type Interrupted struct {
 	// than was published. Empty when none of the turn's open utterances had been heard.
 	SynthesisID string
 	HeardMs     float64
+	// Message is where all that utterance had been sent is in the reply's Chat message, for
+	// a reader to take HeardMs of it. Nil with SynthesisID empty.
+	Message *MessageSpan
 }
 
 func (Interrupted) isAgentEvent() {}

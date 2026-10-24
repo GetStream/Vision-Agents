@@ -288,7 +288,7 @@ func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
 	for _, address := range []string{"", "https://proxy.stg.example:8091", "http://sbx:secret@proxy.stg.example:8091", "http://:8091",
-		"proxy.stg.example:8091", "http://203.0.113.7:8091/%zz", "https://203.0.113.7:8091", "http://sbx:secret@203.0.113.7:8091",
+		"proxy.stg.example:8091", "http://203.0.113.7:8091/%zz", "http://sbx:secret@203.0.113.7:8091",
 		"http://0.0.0.0:8091", "http://127.0.0.1:8091", "http://10.1.2.3:8091", "http://172.16.0.1:8091", "http://192.168.1.1:8091",
 		"http://169.254.169.254:8091", "http://255.255.255.255:8091", "http://203.0.113.7", "http://203.0.113.7:0",
 		"http://203.0.113.7:99999", "http://203.0.113.7:8091/", "http://203.0.113.7:8091/path", "http://203.0.113.7:8091?a=b",
@@ -327,12 +327,105 @@ func (s *ConfigSuite) TestTheProxyBrokersProxyIsAnIPv4Address() {
 	for _, address := range []string{"http://proxy.stg.example:8091", "http://[2001:db8::7]:8091", "http://[::ffff:203.0.113.7]:8091"} {
 		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
 		_, _, err := Load("")
-		s.ErrorContains(err, "code_sandbox.proxy_public_url (http://<public IPv4 address>:port", address)
+		s.ErrorContains(err, "code_sandbox.proxy_public_url (http://<public IPv4 address>:port or https://<public IPv4 address>:port", address)
 	}
 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
 	_, _, err := Load("")
 	s.NoError(err, "only the proxy broker sends a sandbox there")
+}
+
+// TestAnHTTPSProxyURLHasTheRulesOfAnHTTPOne: https is the proxy serving TLS, at a public IPv4
+// address and a port, and with no user, path, query or fragment.
+func (s *ConfigSuite) TestAnHTTPSProxyURLHasTheRulesOfAnHTTPOne() {
+	for _, address := range []string{"https://proxy.stg.example:8091", "https://sbx:secret@203.0.113.7:8091",
+		"https://10.1.2.3:8091", "https://127.0.0.1:8091", "https://169.254.169.254:8091", "https://[2001:db8::7]:8091",
+		"https://203.0.113.7", "https://203.0.113.7:0", "https://203.0.113.7:8091/", "https://203.0.113.7:8091?a=b",
+		"https://203.0.113.7:8091#frag", "ftp://203.0.113.7:8091", "httpx://203.0.113.7:8091"} {
+		_, ok := ProxyURL(address)
+		s.False(ok, address)
+	}
+
+	public, ok := ProxyURL("https://203.0.113.7:8091")
+	s.Require().True(ok)
+	s.Equal("https", public.Scheme)
+	s.Equal("203.0.113.7", public.Hostname())
+}
+
+// TestTheProxyBrokerTakesAnHTTPSProxyURL: its sandboxes reach the proxy through their TLS
+// tunnel, and the router serves the proxy over TLS.
+func (s *ConfigSuite) TestTheProxyBrokerTakesAnHTTPSProxyURL() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "https://203.0.113.7:8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal(CodeSandbox{Broker: "proxy", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
+		ProxyPublicURL: "https://203.0.113.7:8091", IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, config.CodeSandbox)
+}
+
+// TestAnHTTPSProxyURLTheListenerCannotServeIsRefused: the daytona broker with a proxy address
+// and an https URL a sandbox cannot use would serve plain HTTP in silence. An http URL and no
+// URL load as on base.
+func (s *ConfigSuite) TestAnHTTPSProxyURLTheListenerCannotServeIsRefused() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "https://proxy.example:8091")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "an https URL that is not https://<public IPv4 address>:port")
+	for _, address := range []string{"http://proxy.example:8091", "", "https://203.0.113.7:8091"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
+		_, _, err = Load("")
+		s.NoError(err, address)
+	}
+}
+
+// TestAnHTTPSProxyURLWithoutAProxyAddressLoadsAsOnBase: with no listener the URL is never served,
+// so base loads it.
+func (s *ConfigSuite) TestAnHTTPSProxyURLWithoutAProxyAddressLoadsAsOnBase() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", "")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "https://proxy.example:8091")
+
+	_, _, err := Load("")
+
+	s.NoError(err)
+}
+
+// TestTheHTTPSSchemeIsRefusedInAnyCase: a URL scheme is case-insensitive (RFC 3986 3.1).
+func (s *ConfigSuite) TestTheHTTPSSchemeIsRefusedInAnyCase() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "HTTPS://proxy.example:8091")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "an https URL that is not https://<public IPv4 address>:port")
+}
+
+// TestTheRefusalOfAnHTTPSProxyURLNamesNoCredential: the URL's user is a credential.
+func (s *ConfigSuite) TestTheRefusalOfAnHTTPSProxyURLNamesNoCredential() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "https://sbx:canary-tok@proxy.example:8091")
+
+	_, _, err := Load("")
+
+	s.Require().ErrorContains(err, "proxy.example:8091")
+	s.NotContains(err.Error(), "canary-tok")
+	s.NotContains(err.Error(), "sbx")
 }
 
 // TestTheProxysCACertificateHoldsNoKey: every sandbox is given it.
@@ -536,6 +629,26 @@ func (s *ConfigSuite) TestLimitsModeMustBeKnown() {
 		s.Require().ErrorContains(err, "ROUTER_LIMITS_MODE", mode)
 		s.ErrorContains(err, "enforce, shadow or off")
 	}
+}
+
+func (s *ConfigSuite) TestTheKMSKeyIsReadFromTheEnvironment() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.Auth.KMSKey, "no KMS key unless one is named")
+
+	s.T().Setenv("ROUTER_AUTH_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/k")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal("projects/p/locations/l/keyRings/r/cryptoKeys/k", config.Auth.KMSKey)
+}
+
+func (s *ConfigSuite) TestAKMSKeyFromAFileIsExported() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("auth:\n  kms_key: projects/p/locations/l/keyRings/r/cryptoKeys/k\n"), 0o600))
+
+	_, _, err := Load(path)
+	s.Require().NoError(err)
+	s.Equal("projects/p/locations/l/keyRings/r/cryptoKeys/k", os.Getenv("ROUTER_AUTH_KMS_KEY"))
 }
 
 func (s *ConfigSuite) TestStreamTenancyDefaultsToDeployment() {

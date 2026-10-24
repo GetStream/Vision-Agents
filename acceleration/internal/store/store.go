@@ -1510,8 +1510,8 @@ func (s *Store) ModelRequests(ctx context.Context, modality string, since time.T
 
 // RecordNumber stores a number a customer now holds.
 func (s *Store) RecordNumber(ctx context.Context, number *PhoneNumber) error {
-	if number.E164 == "" {
-		return stack.Wrap(errors.New("store: a number is required"))
+	if !IsE164(number.E164) {
+		return stack.Wrap(fmt.Errorf("%w: %q", ErrNotE164, number.E164))
 	}
 	if number.Vendor == "" {
 		return stack.Wrap(errors.New("store: vendor is required"))
@@ -1721,6 +1721,11 @@ func (s *Store) CustomerNumbers(ctx context.Context, customerID string, includeR
 func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumber, error) {
 	if customerID == "" || e164 == "" {
 		return PhoneNumber{}, stack.Wrap(errors.New("store: a customer and a number are required"))
+	}
+	// Nobody holds a number written another way, and the vendor may read it as one somebody
+	// else holds.
+	if !IsE164(e164) {
+		return PhoneNumber{}, stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not a number %s holds", e164, customerID)})
 	}
 
 	var number PhoneNumber

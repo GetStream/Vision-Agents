@@ -39,7 +39,7 @@ binding on agent config "support": name linear, connection.type session, tools [
 | Setting | Why |
 |---|---|
 | `ROUTER_CONNECTORS_ENABLED=true` | Off by default |
-| `ROUTER_AUTH_KEK` (or `ROUTER_AUTH_KEK_V<n>` + `ROUTER_AUTH_KEK_VERSION`) | Seals the credentials. The router refuses to start without it when connectors are on. Changing it makes stored credentials unreadable |
+| `ROUTER_AUTH_KEK` (or `ROUTER_AUTH_KEK_V<n>` + `ROUTER_AUTH_KEK_VERSION`) | Seals the credentials. The router refuses to start without it when connectors are on. Changing it makes stored credentials unreadable. A hosted deployment sets `ROUTER_AUTH_KMS_KEY` + `ROUTER_AUTH_KEK_V<n>_WRAPPED` in its place: README, «The key encryption key in Cloud KMS» |
 | `ROUTER_PUBLIC_URL` | The provider sends the browser back to `<ROUTER_PUBLIC_URL>/v1/agents/connectors/oauth/callback`. The dashboard shows this redirect URI on each OAuth connector |
 | `DASHBOARD_BASE_URL` | The consent popup reports back only to this origin, unless the consent was started with a `return_url` (`createAuthorization`'s, or for a login or step-up the chat asks for, the session's own from `createSession`), which then replaces it. Unset, a consent without one reports to the wrong place and the dashboard waits forever |
 | `ROUTER_CORS_ORIGINS` | The dashboard origin, when the browser calls the router directly |
@@ -162,13 +162,26 @@ session's `return_url`. On iOS that is StreamChatAI's `AIToolAuthorizationView`,
 `examples/voice_agents/swift_assistant` uses for Gmail and Linear. A spoken turn on a call has
 no reply to show it on, so by voice the binding answers that it is not available.
 
+`require_approval: ["create_issue", "delete_*"]` on a binding holds each call of a tool it names
+until the session's user allows it. The call's step is `awaiting_approval`, addressed to them, and
+nothing reaches the provider before they answer with `tool_approval` (`tool_call_id`, the reply's
+`request_id`, `allowed`), on their socket or their backend's. Declined, or not answered in ten
+minutes, the call is not sent and the model is told. A session with nobody to ask (incognito, a
+run, a shared chat, an MCP event's) refuses the call at once. An entry must match a tool the
+binding grants, and `sandbox: true` is refused beside it (`session/connector_approval.go`).
+Beside a sensitive connector (Nessy), a binding's write tool needs `require_approval`: the
+config is refused unless each tool it grants only reads (`read_only_tools`) or is held, and a
+`tool_patterns` binding needs an entry such as `*` that matches each pattern as written
+(`api/configs.go`, `sensitiveBindingsComplaint`). In agent.yaml it is `require_approval:` on
+the connector entry.
+
 For a session your backend creates, pass the end user's connection in
 `connector_bindings: [{"name": "linear", "connection_id": "…"}]`. Leave it out and the
 router uses the user's only connected connection to that connector, if there is exactly one.
 
 `agent.yaml`: the sync API accepts `connectors`, and the Go SDK folder reader reads the block
 (`sdks/go/agents/config.go`, `connectorBindings`). An entry whose `connection:` the app does not have
-is left out with a warning, and the rest of the agent syncs; `required: true` makes it an error.
+is left out with a warning, and the rest of the agent syncs; `required: true` makes it an error. `sandbox: true` lets code in the session's sandbox call the connector's API with the binding's connection.
 The left-out entries go to the router as `left_out_connectors` and are served on the agent config.
 Other SDKs: unverified, check `git grep connectors sdks/js/src plugins/stream` before relying on it.
 
@@ -183,19 +196,36 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - With the Daytona broker, the router needs `ROUTER_CODE_SANDBOX_SECRET_PREFIX` (`stg` on staging; lowercase letters and
   digits only, so one router's sweep never matches another's); without it a session
   with such a binding is refused. Each session's secret is `va_<prefix>_<session>_<binding>_<8 hex>`.
+- A prefix belongs to one deployment (one Redis), and `stg` is never used locally: routers that
+  share a prefix delete each other's secrets.
 - With the Daytona broker, the grant's hosts join the sandbox's domain allow list; a config with
   `network: true` or a `network_allow_list` keeps its own.
 - A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
   the session.
 - Before each run a new credential revision updates the secret; a connection that needs a
-  reconnect, or was deleted, withdraws it. Daytona refuses a request that carries a placeholder it
+  reconnect, or was deleted, withdraws it, and so does a binding the agent config dropped, no
+  longer marks `sandbox`, or binds to another connector or connection (AI-1686, as the tool
+  recheck refuses a call). A withdrawn grant stays withdrawn for the session, even when the binding is put
+  back; the next session gets it. The proxy broker also checks the binding on every request, so
+  the placeholder stops at once; it costs one agent config read per request. Daytona refuses a request that carries a placeholder it
   does not substitute (another host, the query, another session's): 502 «could not reach upstream
   host».
 - Daytona substitutes `Authorization: Basic <placeholder>` and `Basic user:<placeholder>` to a
   granted host when the value is not Base64-encoded (live Basic-auth check, staging 2026-10-21).
-  It does not substitute a Base64-encoded Basic header (Daytona docs). So git, which sends
-  Base64 Basic, still does not work through the Daytona broker.
+  It also substitutes inside a Base64-encoded Basic header, which is how git sends it (live
+  staging E2E, 2026-10-22, session `01a16514-923c-7843-9214-40a94453f194`: `git ls-remote` of a public repo with
+  `Authorization: Basic b64(x-access-token:$GITHUB_TOKEN)` exited 0, with a fake placeholder it
+  got 502). Daytona's docs say it does not («Transformed placeholders»); the live result wins.
+- Git over HTTPS under both brokers: `run_code` tells the model `git clone https://x-access-token:$GITHUB_TOKEN@github.com/<owner>/<repo>.git`.
+  Shown live under Daytona: `git ls-remote` of a public repo with `x-access-token:<placeholder>` as Basic
+  auth (see above). `unverified` under Daytona: `git clone` (upload-pack POST), `git push`
+  (receive-pack), a private repo, a user name other than `x-access-token`. The proxy broker's
+  tests cover its push (`brokertest` A15).
+  GitHub refuses the token as `Authorization: Bearer` from git (401 to `git-receive-pack`, probe
+  2026-10-22T03:53:09Z; Basic `x-access-token:<token>` was taken), so `run_code`'s description
+  gives git the URL form. GitHub revision 7 grants github.com (AI-1576); a connection on
+  revision 6 keeps its two API hosts until it is reconnected.
 - `sandbox: true` lets the code call every API the token's scopes allow, outside the binding's tool
   grants, the connector limiter and the audit. That is intended.
 - Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
@@ -207,8 +237,12 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   staging (v0.6.103, 2026-10-21) a request got 200 at 16 s and 502 at 36 s after the router
   withdrew the secret, so the lag is between 16 and 36 s. Wave 14's proxy broker resolves per
   request and stops substituting at once.
-- Known limit: a router crash, or a Close that fails or times out, leaves the secret (a live
-  token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it.
+- Known limit: a router crash, or a Close that Daytona refuses, leaves the secret (a live
+  token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it. A
+  Close that times out behind a running run deletes the secret (or the proxy's record) at
+  once; the sandbox stays.
+- A provider's error text never reaches a log or an error: both brokers log the error's class
+  (`sandbox.ErrorClass`), and a required grant fails with `sandbox.ErrNoCredential` or the class.
 - `ROUTER_CODE_SANDBOX_BROKER=proxy` uses the router's egress proxy (`internal/sandbox/egress`)
   instead of Daytona Secrets. It needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` (the proxy
   as a sandbox reaches it, `http://<public IPv4 address>:port`: no path, query, user, or private,
@@ -217,6 +251,7 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   `ROUTER_CODE_SANDBOX_PROXY_ADDR` and `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`; without them it does
   not start. A host name, an IPv6 address or a non-public address in the public URL also stops the start. It needs no
   secret prefix.
+- An `https` `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` runs a TLS tunnel in the sandbox (`internal/sandbox/egress/AGENTS.md`): the proxy env vars name `127.0.0.1:3128`, and the image needs `python3`.
 - How egress is forced: Daytona's network allow list holds the proxy's address alone
   (`<address>/32`). Daytona gets no domain allow list and no `OutboundProxyUrl`. The sandbox then
   reaches the proxy and, of Daytona's own network, only the netleash gateway (172.20.0.1:18080,
@@ -232,11 +267,16 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
     `localhost,127.0.0.1,::1`;
   - `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` name
     `/tmp/va-egress-ca-bundle.pem`, and `NODE_EXTRA_CA_CERTS` names the proxy's CA certificate,
-    `/tmp/va-egress-ca.pem`.
+    `/tmp/va-egress-ca.pem`;
+  - `GIT_HTTP_PROXY_AUTHMETHOD=basic`: git sends the proxy credential on its first `CONNECT`
+    instead of waiting for a 407 (git-config(1), `http.proxyAuthMethod`:
+    https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpproxyAuthMethod).
   Before any code runs, the router writes the bundle: the image's own roots and that CA.
   Daytona's image is Debian 13, whose roots are `/etc/ssl/certs/ca-certificates.crt` (live
   probe, 2026-10-21). An image with no roots file runs no code. The proxy puts the token in place
-  of the placeholder in `Authorization` (Bearer, `token`, or Basic), so git works too.
+  of the placeholder in `Authorization` (Bearer, `token`, or Basic), so git works too:
+  `git push https://x-access-token:$GITHUB_TOKEN@github.com/<owner>/<repo>.git`. The pushed
+  content is never rewritten: a file holding the placeholder arrives with it (A15, `brokertest`).
 - DNS behind the proxy: the sandbox has none. The proxy looks up each host. A client that does
   not read the proxy env vars (a raw socket, a DNS lookup) reaches nothing. Plain HTTP through
   the proxy is refused.

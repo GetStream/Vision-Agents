@@ -29,9 +29,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 )
 
 // The Standard Webhooks spec, opened October 6, 2026:
@@ -309,7 +309,7 @@ func (f *Forwarder) CheckURL(ctx context.Context, raw string) error {
 func (f *Forwarder) NewSecret(customerID, connectorID, id string) (Secret, error) {
 	// 32 random bytes, inside the spec's «Between 24 bytes (192 bits) and 64 bytes (512 bits)»,
 	// base64 after whsec_, the form MCP Events subscriptions already use.
-	plain, err := plugins.NewWebhookSecret()
+	plain, err := webhook.NewSecret()
 	if err != nil {
 		return Secret{}, stack.Wrap(err)
 	}
@@ -392,7 +392,7 @@ func ProviderEvent(m core.Manifest, header http.Header, body []byte) Event {
 func sign(id string, at time.Time, body []byte, secrets ...string) (string, error) {
 	signatures := make([]string, 0, len(secrets))
 	for _, secret := range secrets {
-		signature, err := plugins.SignWebhook(secret, id, at, body)
+		signature, err := webhook.Sign(secret, id, at, body)
 		if err != nil {
 			return "", stack.Wrap(err)
 		}

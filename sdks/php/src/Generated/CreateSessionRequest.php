@@ -73,6 +73,8 @@ final readonly class CreateSessionRequest
         // Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both...
         /** @var array<string, string>|null */
         public ?array $tags = null,
+        // The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It se...
+        public ?string $timezone = null,
         // What to call the conversation, for a list a person reads, until the router names a persistent one for what...
         public ?string $title = null,
         // How long the model waits for a tool result. Zero is the default.
@@ -126,6 +128,7 @@ final readonly class CreateSessionRequest
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            timezone: array_key_exists('timezone', $data) && $data['timezone'] !== null ? Json::string($data, 'timezone') : null,
             title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
             toolTimeoutMs: array_key_exists('tool_timeout_ms', $data) && $data['tool_timeout_ms'] !== null ? Json::int($data, 'tool_timeout_ms') : null,
             tools: array_key_exists('tools', $data) && $data['tools'] !== null ? array_map(SessionTool::fromArray(...), Json::objects($data, 'tools')) : null,
@@ -234,6 +237,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
+        }
+        if ($this->timezone !== null) {
+            $out['timezone'] = $this->timezone;
         }
         if ($this->title !== null) {
             $out['title'] = $this->title;

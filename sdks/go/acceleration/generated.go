@@ -3058,6 +3058,9 @@ type AgentConnectorBinding struct {
 	// Policy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
 	Policy *ConnectorBindingPolicy `json:"policy,omitempty"`
 
+	// RequireApproval Names or path.Match patterns of the binding's tools whose every call waits for a person to allow it before the router sends it, such as create_issue or delete_*. The step of the call asks the session's user in its conversation, who answers with the session socket's tool_approval. Declined, or not answered in 10 minutes, the call is not sent and the model is told so. A session with nobody to ask, such as an incognito one or one opened by an MCP event, refuses the call at once. Each entry must match a tool the binding grants, or one of its tool_patterns. Refused with sandbox, whose code calls the API with nobody asked. At most 128, the cap tools has.
+	RequireApproval *[]string `json:"require_approval,omitempty"`
+
 	// Required Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
 	Required *bool `json:"required,omitempty"`
 
@@ -5152,7 +5155,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -7185,7 +7188,7 @@ type ScheduledTaskRun struct {
 	// DeliveredTo Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
 	DeliveredTo string `json:"delivered_to"`
 
-	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
+	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
 	Error      *string    `json:"error"`
 	FinishedAt *time.Time `json:"finished_at"`
 	Id         string     `json:"id"`
@@ -7358,7 +7361,9 @@ type Session struct {
 	Id         string  `json:"id"`
 
 	// Incognito Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
-	Incognito    *bool   `json:"incognito,omitempty"`
+	Incognito *bool `json:"incognito,omitempty"`
+
+	// Instructions What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it.
 	Instructions *string `json:"instructions,omitempty"`
 
 	// LastResponseAt When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
@@ -7573,7 +7578,7 @@ type SessionState string
 
 // SessionTool One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
 type SessionTool struct {
-	// Approval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+	// Approval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. On a voice call the router asks instead: it does not send the call, answers the model at once with the title, each {argument} in it filled in from the call, and offers the model confirm_tool_call. A cascade says the question as written; a speech-to-speech model is told to ask it in those words. Only a yes within 15 seconds of the question finishing sends the call, under its own id and with approved true, and the tool's timeout starts then. A no, or silence, declines it, and the call is never sent.
 	Approval *SessionToolApproval `json:"approval,omitempty"`
 
 	// Description What the model is told the tool does, which is the whole of how it decides when to reach for one.
@@ -7584,16 +7589,22 @@ type SessionTool struct {
 
 	// Executor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
 	Executor *SessionToolExecutor `json:"executor,omitempty"`
-	Name     string               `json:"name"`
+
+	// Interruptible Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes.
+	Interruptible *bool  `json:"interruptible,omitempty"`
+	Name          string `json:"name"`
 
 	// Parameters A JSON Schema object describing the arguments.
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+
+	// TimeoutMs How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's.
+	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
 }
 
 // SessionToolExecutor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
 type SessionToolExecutor string
 
-// SessionToolApproval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+// SessionToolApproval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. On a voice call the router asks instead: it does not send the call, answers the model at once with the title, each {argument} in it filled in from the call, and offers the model confirm_tool_call. A cascade says the question as written; a speech-to-speech model is told to ask it in those words. Only a yes within 15 seconds of the question finishing sends the call, under its own id and with approved true, and the tool's timeout starts then. A no, or silence, declines it, and the call is never sent.
 type SessionToolApproval struct {
 	// AllowTitle The label of the button that allows the call.
 	AllowTitle *string `json:"allow_title,omitempty"`
@@ -8495,16 +8506,18 @@ type TimelineEntry struct {
 	TurnId    string   `json:"turn_id"`
 }
 
-// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself.
+// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out.
 type ToolApprovalCommand struct {
 	Allowed   bool   `json:"allowed"`
 	RequestId string `json:"request_id"`
 
 	// Summary Shown on the declined call, such as "Location not shared".
-	Summary    *string                 `json:"summary,omitempty"`
-	ToolCallId string                  `json:"tool_call_id"`
-	TurnId     string                  `json:"turn_id"`
-	Type       ToolApprovalCommandType `json:"type"`
+	Summary    *string `json:"summary,omitempty"`
+	ToolCallId string  `json:"tool_call_id"`
+
+	// TurnId The turn of the call. Required, except for a connector call whose binding sets require_approval.
+	TurnId *string                 `json:"turn_id,omitempty"`
+	Type   ToolApprovalCommandType `json:"type"`
 }
 
 // ToolApprovalCommandType defines model for ToolApprovalCommand.Type.
@@ -8640,7 +8653,7 @@ type TranscriptionRequest struct {
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
 	ConfigId *string `json:"config_id,omitempty"`
 
-	// Inline Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later; a request refused for money is answered 402 or 403 instead, as any request is. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+	// Inline Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later; a request refused for money is answered 402 or 403 instead, as any request is. No database is required. Cancelling the request cancels the work. The audio goes in source.audio, at most 8 MiB, with no source.url and no callback, else a 400; deadline 90 seconds. Default false retains asynchronous stored jobs.
 	Inline *bool `json:"inline,omitempty"`
 
 	// Options How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
@@ -11661,6 +11674,8 @@ type ClientInterface interface {
 	//
 	// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
 	//
+	// If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped: deleting it again later deletes the rest.
+	//
 	// To end a call and keep the conversation, stop the session instead.
 	//
 	// Corresponds with DELETE /v1/agents/sessions/{id} (the `DeleteSession` operationId).
@@ -11669,7 +11684,7 @@ type ClientInterface interface {
 	// GetSession One session
 	//
 	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11895,7 +11910,7 @@ type ClientInterface interface {
 	//
 	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 	//
-	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the socket was its call, and stopping voice hung it up, so open a new socket.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -11906,7 +11921,7 @@ type ClientInterface interface {
 	//
 	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 	//
-	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the socket was its call, and stopping voice hung it up, so open a new socket.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -15973,6 +15988,8 @@ func (c *Client) QuerySessions(ctx context.Context, body QuerySessionsJSONReques
 //
 // Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
 //
+// If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped: deleting it again later deletes the rest.
+//
 // To end a call and keep the conversation, stop the session instead.
 //
 // Corresponds with DELETE /v1/agents/sessions/{id} (the `DeleteSession` operationId).
@@ -15991,7 +16008,7 @@ func (c *Client) DeleteSession(ctx context.Context, id string, reqEditors ...Req
 // GetSession One session
 //
 // Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
 //
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16457,7 +16474,7 @@ func (c *Client) StopSessionVoice(ctx context.Context, id string, reqEditors ...
 //
 // The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 //
-// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the socket was its call, and stopping voice hung it up, so open a new socket.
 //
 // Takes any type of body and a specified content type.
 //
@@ -16478,7 +16495,7 @@ func (c *Client) StartSessionVoiceWithBody(ctx context.Context, id string, conte
 //
 // The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 //
-// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the socket was its call, and stopping voice hung it up, so open a new socket.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -32020,6 +32037,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
 	//
+	// If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped: deleting it again later deletes the rest.
+	//
 	// To end a call and keep the conversation, stop the session instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -32030,7 +32049,7 @@ type ClientWithResponsesInterface interface {
 	// GetSessionWithResponse One session
 	//
 	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -32276,7 +32295,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 	//
-	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the socket was its call, and stopping voice hung it up, so open a new socket.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -32287,7 +32306,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 	//
-	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the socket was its call, and stopping voice hung it up, so open a new socket.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -60328,6 +60347,8 @@ func (c *ClientWithResponses) QuerySessionsWithResponse(ctx context.Context, bod
 //
 // Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
 //
+// If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped: deleting it again later deletes the rest.
+//
 // To end a call and keep the conversation, stop the session instead.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -60344,7 +60365,7 @@ func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, id 
 // GetSessionWithResponse One session
 //
 // Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -60734,7 +60755,7 @@ func (c *ClientWithResponses) StopSessionVoiceWithResponse(ctx context.Context, 
 //
 // The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 //
-// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the socket was its call, and stopping voice hung it up, so open a new socket.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -60751,7 +60772,7 @@ func (c *ClientWithResponses) StartSessionVoiceWithBodyWithResponse(ctx context.
 //
 // The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 //
-// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the socket was its call, and stopping voice hung it up, so open a new socket.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

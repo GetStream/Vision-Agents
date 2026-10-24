@@ -20,7 +20,7 @@ final readonly class McpServer
     public function __construct(
         // What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
         public string $name,
-        // Its Streamable HTTP endpoint, over https.
+        // Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local addre...
         public string $url,
         // How the server described itself when the config was saved. Absent when it did not answer.
         public ?McpServerBranding $branding = null,

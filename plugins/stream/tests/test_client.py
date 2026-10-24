@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Any, AsyncIterator, Awaitable, Callable
 
@@ -31,6 +32,10 @@ class Router:
         # refusals answers a "METHOD /path" with a web.Response built from these keywords
         # instead of its handler, as the router or a proxy in front of it would refuse it.
         self.refusals: dict[str, dict[str, Any]] = {}
+        # frames are sent on the events socket as soon as a client is on it, and commands
+        # are what the client sent back on it.
+        self.frames: list[dict[str, Any]] = []
+        self.commands: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
     def app(self) -> web.Application:
         app = web.Application(middlewares=[self._refuse])
@@ -250,10 +255,13 @@ class Router:
     async def _events(self, request: web.Request) -> web.WebSocketResponse:
         socket = web.WebSocketResponse()
         await socket.prepare(request)
+        for frame in self.frames:
+            await socket.send_json(frame)
         # Held open until the client goes away, which is what a conversation with nothing
         # happening on it looks like.
-        async for _ in socket:
-            pass
+        async for message in socket:
+            if message.type == web.WSMsgType.TEXT:
+                await self.commands.put(json.loads(message.data))
         return socket
 
     async def _record(self, request: web.Request) -> None:
@@ -334,6 +342,87 @@ class TestSessions:
         assert body["incognito"] is False
         for field in ("call_id", "call_type", "text", "instructions"):
             assert field not in body
+
+    async def test_a_call_for_a_tool_held_elsewhere_is_left_for_whoever_holds_it(
+        self, api: stream.Client, router: Router
+    ):
+        agent = api.agent("docs")
+
+        @agent.register(description="Look up an order")
+        async def lookup_order() -> str:
+            return "found"
+
+        router.frames = [
+            {"type": "tool_call", "id": "call-1", "name": "book_flight"},
+            {"type": "tool_call", "id": "call-2", "name": "lookup_order"},
+        ]
+        session = await agent.sessions.create(stream.SessionOptions())
+        try:
+            answer = await asyncio.wait_for(router.commands.get(), 2)
+            assert answer["tool_call_id"] == "call-2"
+            await asyncio.sleep(0.1)
+            assert router.commands.empty()
+        finally:
+            await session.close()
+
+    async def test_a_call_addressed_here_runs_with_its_call_and_its_policies(
+        self, api: stream.Client, router: Router
+    ):
+        agent = api.agent("docs")
+        seen: list[stream.ToolCall] = []
+
+        @agent.register(description="Look up an order", timeout=2.5)
+        async def lookup_order() -> str:
+            seen.append(stream.current_call())
+            await stream.current_call().update("searching the archive")
+            return "found"
+
+        router.frames = [
+            {"type": "tool_call", "id": "call-1", "name": "lookup_order", "run": False},
+            {
+                "type": "tool_call",
+                "id": "call-2",
+                "turn_id": "turn-1",
+                "name": "lookup_order",
+                "run": True,
+            },
+        ]
+        session = await agent.sessions.create(stream.SessionOptions())
+        try:
+            update = await asyncio.wait_for(router.commands.get(), 2)
+            answer = await asyncio.wait_for(router.commands.get(), 2)
+            await asyncio.sleep(0.1)
+            assert router.commands.empty(), "the call addressed elsewhere is left"
+        finally:
+            await session.close()
+
+        assert (
+            router.body("POST", "/v1/agents/sessions")["tools"][0]["timeout_ms"] == 2500
+        )
+        assert update == {
+            "type": "tool_update",
+            "tool_call_id": "call-2",
+            "text": "searching the archive",
+            "verbatim": False,
+        }
+        assert answer["tool_call_id"] == "call-2"
+        assert (seen[0].id, seen[0].session_id, seen[0].turn_id) == (
+            "call-2",
+            "session-1",
+            "turn-1",
+        )
+
+    async def test_a_held_call_is_still_reported_to_whoever_reads_events(
+        self, api: stream.Client, router: Router
+    ):
+        router.frames = [{"type": "tool_held", "id": "call-1"}]
+        session = await api.agent("docs").sessions.create(stream.SessionOptions())
+        try:
+            event = await asyncio.wait_for(anext(session.events()), 2)
+        finally:
+            await session.close()
+
+        assert event.kind == "tool_held"
 
     async def test_a_session_asked_to_start_voice_is_on_its_call(
         self, api: stream.Client, router: Router

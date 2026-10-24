@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
@@ -147,6 +148,9 @@ type Options struct {
 	// ToolPolicy is what the tool named asks of the agent (its connector binding's policy).
 	// Nil, or the zero ToolPolicy for a tool, is how every tool has always run.
 	ToolPolicy func(tool string) ToolPolicy
+	// ApprovalWait is how long a voice caller has to answer a tool's approval question,
+	// counted from when it finished playing. Zero is approvalWait, 15 seconds.
+	ApprovalWait time.Duration
 	// Tools are what the voice model may do rather than say. Each is only offered when
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
@@ -268,6 +272,22 @@ type Agent struct {
 	// the event loop and the floor until Cerebras answered.
 	generatingCancel map[string]context.CancelFunc
 	toolCancels      map[string]context.CancelFunc
+	// toolContexts is each running call's context, which says whether it was cancelled.
+	toolContexts map[string]context.Context
+	// toolTurns is the turn each running call belongs to.
+	toolTurns map[string]string
+	// toolUpdates is what whoever runs a call last said about it, waiting for the line.
+	toolUpdates map[string]toolUpdate
+	// approvals are the calls waiting for a voice caller's yes, by call id (approval.go).
+	approvals map[string]*approval
+	// lapsedApprovals names the tool of each call silence declined, by call id, so a late
+	// yes is told to ask again.
+	lapsedApprovals map[string]string
+	// approvalQuestions are what a cascade owes the caller as written, in place of a reply
+	// to the calls that asked them.
+	approvalQuestions []string
+	// approvedRuns is the confirmation each approved call runs under, by the call's own id.
+	approvedRuns map[string]approvedRun
 	// toolsRunning names each tool still running, by call, so a caller left waiting can
 	// be told what on.
 	toolsRunning map[string]string
@@ -340,6 +360,10 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// compactedAway is what compaction took out of history, oldest first. The model reads
+	// a summary of it instead, but what the caller said and the tools returned are still
+	// facts of the call, and the checks on a tool call's arguments are made against them.
+	compactedAway []llm.Message
 	// opened is the line the agent opened the conversation with before anybody spoke, told
 	// to the model in its instructions rather than kept as a turn (Say).
 	opened string
@@ -388,6 +412,9 @@ type Agent struct {
 	// a provider is still sending. It holds one entry per interruption and lives only as
 	// long as the call.
 	abandoned map[string]struct{}
+	// leftNoted is the reply whose audio for a left call was last logged, so a reply logs
+	// it once rather than once per chunk. Only the speech-to-speech consumer touches it.
+	leftNoted string
 	// unheard is the caller turn being answered while none of its reply has gone out, which
 	// the same caller saying more makes stale.
 	unheard unheardReply
@@ -506,6 +533,10 @@ type Agent struct {
 
 	// chunk assembles model deltas into sentences. Only the model consumer touches it.
 	chunk chunker
+	// performed is what the chunker has been given of the reply for a voice that acts
+	// directions, which the reply's message has none of: where a sentence is in the
+	// message is found from it.
+	performed []rune
 	// directions takes the voice's stage directions out of the reply. They are meant for
 	// the provider that can act them, so they never reach a reader or the history.
 	directions tts.Directions
@@ -1204,6 +1235,16 @@ func (a *Agent) History() []llm.Message {
 	return append([]llm.Message(nil), a.history...)
 }
 
+// record returns the whole call: what compaction took out of the history as well as the
+// history itself. Whether a caller said a value or a tool returned it does not stop being
+// true when the model is handed a summary instead. Before this, an ID a tool returned was
+// refused as made up once the result had been summarised away.
+func (a *Agent) record() []llm.Message {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append(append([]llm.Message(nil), a.compactedAway...), a.history...)
+}
+
 // Finish waits for the agent to stop talking, so a caller can hang up without cutting off
 // the last sentence. Work still running counts as talking: the caller was told an answer
 // was coming. It returns the context's error if the wait outlasts it.
@@ -1588,6 +1629,8 @@ func (a *Agent) consumePresence(p *pipeline) {
 			// with no TTS complete to pick it up.
 			a.respondQueued()
 			a.followUp()
+			a.sayToolUpdate()
+			a.tickApprovals()
 		case <-p.ctx.Done():
 			return
 		}
@@ -1748,6 +1791,7 @@ func (a *Agent) ask(ready candidate) {
 		AnotherVoice: anotherVoice,
 		Waited:       a.converse.waitedOn(ready),
 		Ended:        ready.Ended,
+		InParts:      a.converse.inParts(ready.Participant.ID),
 	}); err != nil {
 		a.dropSpeculation(ready.ID)
 		a.converse.Unasked(ready.ID)
@@ -1908,6 +1952,9 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	if !a.toolReply || a.generating || a.interrupting || a.recoveringVoice != nil {
 		a.mu.Unlock()
 		return nil
+	}
+	if question := a.takeApprovalQuestionsLocked(); question != "" {
+		return a.askLocked(turnID, question)
 	}
 	history := a.replayLocked()
 	participant := a.lastParticipant
@@ -2252,7 +2299,7 @@ func composedFor(purpose string) string {
 	switch purpose {
 	case idlePurpose:
 		return PurposeCheckIn
-	case updatePurpose:
+	case updatePurpose, statusPurpose, toolSaidPurpose:
 		return PurposeUpdate
 	}
 	return ""
@@ -2263,7 +2310,7 @@ func composedKind(purpose string) string {
 	switch purpose {
 	case holdPurpose:
 		return kindHold
-	case updatePurpose:
+	case updatePurpose, statusPurpose, toolSaidPurpose:
 		return kindUpdate
 	}
 	return kindCheckIn
@@ -2569,7 +2616,7 @@ func (a *Agent) say(turnID, delta string) {
 	// text -- a markdown link, an array literal -- and taking it out corrupts the reply.
 	plain := speech
 	if !a.options.Text {
-		plain = a.directions.Add(speech)
+		plain = a.messageText(a.directions.Add(speech))
 	}
 	if plain != "" {
 		a.spoken.WriteString(plain)
@@ -2590,11 +2637,11 @@ func (a *Agent) say(turnID, delta string) {
 		return
 	}
 
-	for _, sentence := range a.chunk.Add(speech) {
-		if a.withhold(sentence) {
+	for _, sentence := range a.sentencesOf(speech) {
+		if a.withhold(sentence.text) {
 			continue
 		}
-		if err := a.speakSentence(turnID, sentence); err != nil {
+		if err := a.speakSentence(turnID, sentence.text, a.inMessage(sentence)); err != nil {
 			a.fail(err, "tts")
 		}
 	}
@@ -2721,7 +2768,7 @@ func (a *Agent) finish(response llm.Response) {
 	// was only ever text. In writing the stripper never ran, so there is nothing held.
 	plain := tail
 	if !a.options.Text {
-		plain = a.directions.Add(tail) + a.directions.Flush()
+		plain = a.messageText(a.directions.Add(tail) + a.directions.Flush())
 	}
 	a.spoken.WriteString(plain)
 	if !a.performs {
@@ -2740,17 +2787,17 @@ func (a *Agent) finish(response llm.Response) {
 			a.emitter.Send(ResponseDelta{TurnID: response.ID, Text: plain})
 		}
 	} else {
-		for _, sentence := range a.chunk.Add(tail) {
-			if a.withhold(sentence) {
+		for _, sentence := range a.sentencesOf(tail) {
+			if a.withhold(sentence.text) {
 				continue
 			}
-			if err := a.speakSentence(response.ID, sentence); err != nil {
+			if err := a.speakSentence(response.ID, sentence.text, a.inMessage(sentence)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
 		// Whatever did not end in punctuation is still worth saying.
-		if remainder := a.chunk.Flush(); remainder != "" && !a.withhold(remainder) {
-			if err := a.speakSentence(response.ID, remainder); err != nil {
+		if remainder := a.chunk.Flush(); remainder.text != "" && !a.withhold(remainder.text) {
+			if err := a.speakSentence(response.ID, remainder.text, a.inMessage(remainder)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
@@ -2762,8 +2809,7 @@ func (a *Agent) finish(response llm.Response) {
 		// once the work is handed over.
 		if a.fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
 			if filler := a.preSpeech(calls); filler != "" {
-				a.spoken.WriteString(filler)
-				if err := a.speakSentence(response.ID, filler); err != nil {
+				if err := a.speakSentence(response.ID, filler, a.appendSpoken(filler)); err != nil {
 					a.fail(err, "tts")
 				}
 			} else {
@@ -2773,8 +2819,7 @@ func (a *Agent) finish(response llm.Response) {
 		// A reply that failed before a word of it was said leaves the caller waiting for
 		// one that is not coming, and after "one moment" that silence is the answer lost.
 		if response.Status == llm.StatusFailed && strings.TrimSpace(a.spoken.String()) == "" {
-			a.spoken.WriteString(lostReply)
-			if err := a.speakSentence(response.ID, lostReply); err != nil {
+			if err := a.speakSentence(response.ID, lostReply, a.appendSpoken(lostReply)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
@@ -3107,7 +3152,7 @@ func calledInCall(history []llm.Message, tool string) bool {
 		}
 	}
 	return slices.ContainsFunc(history, func(message llm.Message) bool {
-		return message.Role == llm.ToolResult && names[message.ToolCallID] == tool && !failedResult(message.Content)
+		return message.Role == llm.ToolResult && names[message.ToolCallID] == tool && !failedResult(message.Content) && !undoneResult(message.Content)
 	})
 }
 
@@ -3399,7 +3444,7 @@ func changedSinceCaller(history []llm.Message, counts func(tool string) bool) bo
 		switch history[i].Role {
 		case llm.ToolResult:
 			name := names[history[i].ToolCallID]
-			if !failedResult(history[i].Content) && !readsOnly(name) && counts(name) {
+			if !failedResult(history[i].Content) && !undoneResult(history[i].Content) && !readsOnly(name) && counts(name) {
 				return true
 			}
 		case llm.User:
@@ -3428,7 +3473,7 @@ func toolRanSinceCaller(history []llm.Message) bool {
 	for i := len(history) - 1; i >= 0; i-- {
 		switch history[i].Role {
 		case llm.ToolResult:
-			if !failedResult(history[i].Content) {
+			if !failedResult(history[i].Content) && !undoneResult(history[i].Content) {
 				return true
 			}
 		case llm.User:
@@ -3556,6 +3601,13 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			} else {
 				err = a.options.Edge.PublishAudio(speech)
 			}
+			if errors.Is(err, ErrCallLeft) {
+				if dropping != typed.SynthesisID {
+					dropping = typed.SynthesisID
+					a.logger.Debug("dropping audio for a call that has been left", "synthesis", typed.SynthesisID)
+				}
+				continue
+			}
 			if err != nil {
 				a.fail(err, "edge")
 			}
@@ -3607,6 +3659,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 					TurnID:            turnOf(typed.SynthesisID),
 					SynthesisID:       typed.SynthesisID,
 					Characters:        typed.Characters,
+					Message:           done.span(),
 					AudioDurationMs:   typed.AudioDurationMs,
 					TimeToFirstByteMs: typed.TimeToFirstByteMs,
 				})
@@ -3740,6 +3793,7 @@ func (a *Agent) applyCompaction(compacted harness.Compacted) {
 		return
 	}
 	before := len(a.history)
+	a.compactedAway = append(a.compactedAway, a.history[:len(compacted.Prefix)]...)
 	tail := append([]llm.Message(nil), a.history[len(compacted.Prefix):]...)
 	a.history = append([]llm.Message{{
 		Role:    llm.System,
@@ -3902,12 +3956,13 @@ func pauseCounted(text string) string {
 	return countedDigits.ReplaceAllString(text, "$1 $2 digits, $3")
 }
 
-// speakSentence sends one sentence of a reply to the voice.
+// speakSentence sends one sentence of a reply to the voice, from where it is in the reply's
+// message.
 //
 // A streaming provider takes a turn's sentences as deltas of one utterance, which keeps a
 // turn to a single billed synthesis. A provider that cannot take deltas gets each sentence
 // as its own final request instead.
-func (a *Agent) speakSentence(turnID, text string) error {
+func (a *Agent) speakSentence(turnID, text string, message MessageSpan) error {
 	voice := a.voice()
 	if voice == nil {
 		return errors.New("agent: not joined")
@@ -3924,17 +3979,18 @@ func (a *Agent) speakSentence(turnID, text string) error {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
 		a.begin()
-		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true})
+		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message)
 	}
 
 	if a.openTurn != turnID {
 		a.openTurn = turnID
 		a.begin()
 	}
-	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text})
+	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text}, message)
 }
 
-// speakWhole says a piece of text that is already complete, as one utterance.
+// speakWhole says a piece of text that is already complete, as one utterance. Its message,
+// if it has one, is the text.
 func (a *Agent) speakWhole(turnID, text string) error {
 	voice := a.voice()
 	if voice == nil {
@@ -3942,7 +3998,8 @@ func (a *Agent) speakWhole(turnID, text string) error {
 	}
 	a.turns.ttsStarted(turnID, time.Now())
 	a.begin()
-	if err := a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text, Final: true}); err != nil {
+	whole := MessageSpan{End: utf8.RuneCountInString(text)}
+	if err := a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text, Final: true}, whole); err != nil {
 		// Refused, it is never said, so it is not counted as being said either.
 		a.settle()
 		return err
@@ -3987,6 +4044,7 @@ func (a *Agent) claimReply(turnID string) {
 // finished or was interrupted.
 func (a *Agent) resetTurn() {
 	a.chunk.Reset()
+	a.performed = a.performed[:0]
 	a.harness.Reset()
 	a.directions.Reset()
 	a.spoken.Reset()
@@ -4088,7 +4146,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		return false
 	}
 	heard, played := a.voiced == turnID, time.Since(a.voicedAt)
-	cutID, heardMs := a.cutShortLocked(turnID, time.Now())
+	cut := a.cutShortLocked(turnID, time.Now())
 	a.abandoned[turnID] = struct{}{}
 	a.interrupting = true
 	a.speakingTurn = ""
@@ -4135,7 +4193,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	}
 
 	a.turns.interrupt(turnID)
-	a.emitter.Send(Interrupted{TurnID: turnID, Participant: participant, SynthesisID: cutID, HeardMs: heardMs})
+	a.emitter.Send(cut.cut(Interrupted{TurnID: turnID, Participant: participant}))
 	a.mu.Lock()
 	a.interrupting = false
 	a.mu.Unlock()
@@ -4296,6 +4354,7 @@ func turnOf(synthesisID string) string {
 func (a *Agent) Continue(previous *Agent) {
 	previous.mu.Lock()
 	history := append([]llm.Message(nil), previous.history...)
+	compactedAway := append([]llm.Message(nil), previous.compactedAway...)
 	// A copy: the old agent can still keep a turn between this and its Close, and would
 	// write to a map the new agent reads.
 	speakers := maps.Clone(previous.speakers)
@@ -4304,6 +4363,7 @@ func (a *Agent) Continue(previous *Agent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = history
+	a.compactedAway = compactedAway
 	a.speakers = speakers
 	a.opened = opened
 }

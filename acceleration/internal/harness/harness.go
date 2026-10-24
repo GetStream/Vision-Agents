@@ -205,6 +205,9 @@ type Harness struct {
 	stored stored
 	// compaction is private summary work in flight.
 	compaction *compaction
+	// measured is the history MaybeCompact last judged, so the next judgement can tell a
+	// prompt the provider has seen the start of from one rewritten since.
+	measured []llm.Message
 
 	// scan splits replies into speech and requests for help. Only the consumer of the
 	// model's deltas touches it, which is one goroutine.

@@ -689,7 +689,7 @@ type Transcription struct {
 type TranscriptionRequest struct {
 	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns."`
 	ConfigId *string            `json:"config_id,omitempty" doc:"A stored router config to take the options from. Anything named here as well overrides that one field of it."`
-	Inline   *bool              `json:"inline,omitempty" doc:"Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later; a request refused for money is answered 402 or 403 instead, as any request is. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs." default:"false"`
+	Inline   *bool              `json:"inline,omitempty" doc:"Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later; a request refused for money is answered 402 or 403 instead, as any request is. No database is required. Cancelling the request cancels the work. The audio goes in source.audio, at most 8 MiB, with no source.url and no callback, else a 400; deadline 90 seconds. Default false retains asynchronous stored jobs." default:"false"`
 	Options  *SttOptions        `json:"options,omitempty"`
 	Source   RecordingSource    `json:"source"`
 	Tags     *map[string]string `json:"tags,omitempty" doc:"Cost labels for this job."`

@@ -1,5 +1,7 @@
 import Foundation
-import OpenAPIRuntime
+// `User` and `RawJSON` cross the public API, so an app importing this has them, as Stream Chat
+// and Stream Video hand over theirs.
+@_exported import StreamCore
 
 /// What a session should be, for the cases the shorthands do not cover.
 ///
@@ -29,7 +31,8 @@ public struct SessionOptions: Sendable {
     public var llm: String?
     public var stt: String?
     public var tts: String?
-    /// A provider-specific voice id.
+    /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+    /// the name you gave it. Prefix it with `custom:` to mean only yours.
     public var voice: String?
     /// Functions of yours the agent may call, answered on this device.
     public var tools: [AgentTool] = []
@@ -177,7 +180,7 @@ public struct VisionAgents: Sendable {
 
     /// Starts a session without following it, for a caller building its own state layer.
     public func createSession(_ options: SessionOptions) async throws -> Session {
-        let body = Components.Schemas.CreateSessionRequest(
+        let body = CreateSessionRequest(
             agent: options.agent.flatMap { $0.isEmpty ? nil : $0 },
             configId: options.configID.flatMap { $0.isEmpty ? nil : $0 },
             description: options.description,
@@ -189,11 +192,10 @@ public struct VisionAgents: Sendable {
             returnUrl: options.returnURL?.absoluteString,
             startVoice: options.startVoice ? true : nil,
             stt: options.stt,
-            tags: options.tags.isEmpty
-                ? nil : .init(additionalProperties: options.tags),
+            tags: options.tags.isEmpty ? nil : options.tags,
             title: options.title,
             tools: options.tools.map {
-                Components.Schemas.SessionTool(
+                SessionTool(
                     approval: $0.approval.map {
                         .init(
                             allowTitle: $0.allowTitle, declineTitle: $0.declineTitle,
@@ -201,20 +203,15 @@ public struct VisionAgents: Sendable {
                     },
                     description: $0.description,
                     displayTitle: $0.displayTitle,
-                    executor: $0.executor.flatMap { .init(rawValue: $0.rawValue) },
+                    executor: $0.executor.map { .init(rawValue: $0.rawValue) },
                     name: $0.name,
-                    parameters: $0.parameters.map(container(for:)))
+                    // A schema that is not an object describes no arguments the router can read.
+                    parameters: $0.parameters.map { $0.dictionaryValue ?? [:] })
             },
             tts: options.tts,
             voice: options.voice)
 
-        let output = try await call { try await $0.createSession(body: .json(body)) }
-        switch output {
-        case .created(let response):
-            return Session(try response.body.json)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        return Session(try await call { try await $0.createSession(createSessionRequest: body) })
     }
 
     /// Follows a session this caller already has open, without creating one.
@@ -230,13 +227,7 @@ public struct VisionAgents: Sendable {
     /// Stops a session, which is how the agent leaves. What it recorded and remembered is
     /// kept; `sessions.delete` takes it away.
     public func close(sessionID: String) async throws {
-        let output = try await call { try await $0.stopSession(path: .init(id: sessionID)) }
-        switch output {
-        case .noContent:
-            return
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        try await call { try await $0.stopSession(id: sessionID) }
     }
 
     /// One page of a session's turns as the router wrote them down, oldest first.
@@ -256,15 +247,8 @@ public struct VisionAgents: Sendable {
     /// A conversation kept in Stream Chat cannot be rewound, because the channel would still
     /// hold the later turns: fork it at the response instead.
     public func rewind(sessionID: String, to responseID: String) async throws {
-        let output = try await call {
-            try await $0.rewindSession(
-                path: .init(id: sessionID), body: .json(.init(responseId: responseID)))
-        }
-        switch output {
-        case .noContent:
-            return
-        default:
-            throw AgentsError.undescribedSuccess
+        try await call {
+            try await $0.rewindSession(id: sessionID, rewindSessionRequest: .init(responseId: responseID))
         }
     }
 
@@ -272,25 +256,17 @@ public struct VisionAgents: Sendable {
     ///
     /// Follow the fork the way any session is followed, with `attach(sessionID:)`.
     public func fork(sessionID: String, _ options: ForkOptions = ForkOptions()) async throws -> Session {
-        let body = Components.Schemas.ForkSessionRequest(
+        let body = ForkSessionRequest(
             configId: options.agent.flatMap { $0.isEmpty ? nil : $0 },
             messages: options.withoutHistory ? false : nil,
             projectId: options.projectID,
             responseId: options.responseID.flatMap { $0.isEmpty ? nil : $0 },
             title: options.title)
 
-        let output = try await call {
-            try await $0.forkSession(path: .init(id: sessionID), body: .json(body))
-        }
-        switch output {
-        case .created(let response):
-            return Session(try response.body.json)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        return Session(try await call { try await $0.forkSession(id: sessionID, forkSessionRequest: body) })
     }
 
-    private func call<T>(_ body: (Client) async throws -> T) async throws -> T {
+    private func call<T>(_ body: (DefaultAPI) async throws -> T) async throws -> T {
         try await backend.call(body)
     }
 }
@@ -350,68 +326,39 @@ public struct Sessions: Sendable {
 
     /// One conversation, whether or not it is still being held.
     public func get(_ id: String) async throws -> Session {
-        let output = try await agents.backend.call { try await $0.getSession(path: .init(id: id)) }
-        switch output {
-        case .ok(let response):
-            return Session(try response.body.json)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        Session(try await agents.backend.call { try await $0.getSession(id: id) })
     }
 
     /// Renames or relabels a conversation, running or ended. Nil leaves a field as it is, and
     /// `custom` replaces the labels whole.
     public func update(
         _ id: String, title: String? = nil, description: String? = nil,
-        custom: [String: JSONValue]? = nil
+        custom: [String: RawJSON]? = nil
     ) async throws -> Session {
-        let body = Components.Schemas.UpdateSessionRequest(
-            custom: custom.map(labels(for:)), description: description, title: title)
-        let output = try await agents.backend.call {
-            try await $0.updateSession(path: .init(id: id), body: .json(body))
-        }
-        switch output {
-        case .ok(let response):
-            return Session(try response.body.json)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        let body = UpdateSessionRequest(custom: custom, description: description, title: title)
+        return Session(
+            try await agents.backend.call { try await $0.updateSession(id: id, updateSessionRequest: body) })
     }
 
     /// Has the agent join a session's call, `agent:<session id>`, and carry the conversation on
     /// there. Starting voice that is already on does nothing.
     public func startVoice(_ id: String) async throws -> Session {
-        let output = try await agents.backend.call { try await $0.startSessionVoice(path: .init(id: id)) }
-        switch output {
-        case .ok(let response):
-            return Session(try response.body.json)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        Session(
+            try await agents.backend.call {
+                try await $0.startSessionVoice(id: id, startSessionVoiceRequest: .init())
+            })
     }
 
     /// Takes the agent off a session's call and carries the conversation on in writing.
     /// Stopping voice that is off does nothing.
     public func stopVoice(_ id: String) async throws -> Session {
-        let output = try await agents.backend.call { try await $0.stopSessionVoice(path: .init(id: id)) }
-        switch output {
-        case .ok(let response):
-            return Session(try response.body.json)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        Session(try await agents.backend.call { try await $0.stopSessionVoice(id: id) })
     }
 
     /// Deletes a conversation, running or ended: it is stopped, and its turns and what it
     /// remembered are deleted with it.
     public func delete(_ id: String) async throws {
-        let output = try await agents.backend.call { try await $0.deleteSession(path: .init(id: id)) }
-        switch output {
-        case .noContent:
-            return
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        try await agents.backend.call { try await $0.deleteSession(id: id) }
     }
 
     /// A session's turns, for one read back from `query` rather than held.
@@ -420,7 +367,7 @@ public struct Sessions: Sendable {
     }
 
     private func sessions(matching text: String?, _ query: SessionQuery) async throws -> Page<Session> {
-        let body = Components.Schemas.SessionQuery(
+        let body = SessionQueryPayload(
             cursor: query.cursor,
             filter: .init(
                 agent: equals(agent),
@@ -428,70 +375,33 @@ public struct Sessions: Sendable {
                 modality: equals(query.modality?.rawValue),
                 projectId: equals(query.projectID),
                 state: equals(query.state?.rawValue),
-                text: text.map { .init(_dollar_q: $0) }),
-            limit: query.limit.map(Int64.init))
-        let output = try await agents.backend.call { try await $0.querySessions(body: .json(body)) }
-        switch output {
-        case .ok(let response):
-            let page = try response.body.json
-            return Page(
-                items: page.items.map(Session.init), hasMore: page.hasMore,
-                nextCursor: page.nextCursor)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+                text: text.map { .init(q: $0) }),
+            limit: query.limit)
+        let page = try await agents.backend.call { try await $0.querySessions(sessionQueryPayload: body) }
+        return Page(
+            items: page.items.map(Session.init), hasMore: page.hasMore, nextCursor: page.nextCursor)
     }
 }
 
 /// A filter field matching `value` exactly, or nil to leave the field out.
-private func equals(_ value: String?) -> Components.Schemas.Equals? {
-    value.flatMap { $0.isEmpty ? nil : .case1($0) }
+private func equals(_ value: String?) -> String? {
+    value.flatMap { $0.isEmpty ? nil : $0 }
 }
 
 extension Backend {
     /// Runs one request, reporting a transport failure as one and leaving cancellation alone.
-    func call<T>(_ body: (Client) async throws -> T) async throws -> T {
+    func call<T>(_ body: (DefaultAPI) async throws -> T) async throws -> T {
         do {
             return try await body(client())
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as AgentsError {
             throw error
-        } catch let error as ClientError {
-            if error.underlyingError is CancellationError { throw CancellationError() }
-            if let error = error.underlyingError as? AgentsError { throw error }
+        } catch let error as DecodingError {
             // A response arrived, so this is a success whose body did not read.
-            if error.response != nil { throw AgentsError.unreadable("\(error.underlyingError)") }
-            throw AgentsError.transport(error.underlyingError)
+            throw AgentsError.unreadable("\(error)")
         } catch {
             throw AgentsError.transport(error)
         }
     }
-}
-
-extension AgentsError {
-    /// An operation's answer that is neither the success it names nor a failure, which
-    /// `FailureMiddleware` threw before the generated client read it: a success status the spec
-    /// does not describe.
-    static let undescribedSuccess = AgentsError.unreadable("a success status the spec does not describe")
-}
-
-/// Hands a JSON Schema object to the generated client, which holds open-ended objects in a
-/// container of its own.
-private func container(for schema: JSONValue) -> Components.Schemas.SessionTool.ParametersPayload {
-    let encoded = try? JSONEncoder().encode(schema)
-    let decoded =
-        encoded.flatMap {
-            try? JSONDecoder().decode([String: OpenAPIValueContainer].self, from: $0)
-        } ?? [:]
-    return .init(additionalProperties: decoded)
-}
-
-private func labels(for custom: [String: JSONValue]) -> Components.Schemas.UpdateSessionRequest.CustomPayload {
-    let encoded = try? JSONEncoder().encode(custom)
-    let decoded =
-        encoded.flatMap {
-            try? JSONDecoder().decode([String: OpenAPIValueContainer].self, from: $0)
-        } ?? [:]
-    return .init(additionalProperties: decoded)
 }

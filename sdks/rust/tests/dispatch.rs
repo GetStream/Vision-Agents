@@ -8,7 +8,9 @@ use axum::http::Method;
 use serde_json::json;
 use support::{Server, claims, response, session};
 use tokio::sync::mpsc;
-use vision_agents::{Agent, AgentRef, Client, Dispatch, Error, InboundCall, InboundMessage};
+use vision_agents::{
+    Agent, AgentRef, Client, Dispatch, Error, InboundCall, InboundMessage, ToolCall, types,
+};
 
 fn stream_support(client: &Client) -> AgentRef {
     let agent = client.agent("stream-support");
@@ -77,12 +79,17 @@ async fn a_hosted_function_is_declared_and_answered_over_the_dispatch_socket() {
     for _ in 0..3 {
         answered.push(socket.expect("tool_result").await);
     }
+    // The slow call does not hold up the others, which answer in whichever order they finish.
+    assert_eq!(
+        answered.pop().unwrap(),
+        json!({"type": "tool_result", "tool_call_id": "call-1", "id": "call-1", "output": "read slow"})
+    );
+    answered.sort_by_key(|result| result["id"].as_str().unwrap().to_string());
     assert_eq!(
         answered,
         vec![
-            json!({"type": "tool_result", "id": "call-3", "error": "this worker does not run deploy"}),
-            json!({"type": "tool_result", "id": "call-2", "output": "read android"}),
-            json!({"type": "tool_result", "id": "call-1", "output": "read slow"}),
+            json!({"type": "tool_result", "tool_call_id": "call-2", "id": "call-2", "output": "read android"}),
+            json!({"type": "tool_result", "tool_call_id": "call-3", "id": "call-3", "error": "this worker does not run deploy"}),
         ]
     );
 
@@ -441,4 +448,161 @@ async fn a_message_a_session_already_holds_gets_no_agent_of_its_own() {
     };
     assert!(reason.contains("answer"), "{reason}");
     assert!(server.seen().is_empty());
+}
+
+/// A worker hosting `pay`, which holds itself through interruptions, `slow`, which may be
+/// interrupted, and `fast`; ready and declared, on the socket returned.
+async fn hosting_payments(
+    server: &Server,
+) -> (
+    Dispatch,
+    tokio::task::JoinHandle<vision_agents::Result<()>>,
+    support::Accepted,
+    serde_json::Value,
+) {
+    let agent = server.client().agent("payments");
+    agent
+        .tools
+        .register_call(
+            types::SessionTool {
+                name: "pay".into(),
+                description: "Pays".into(),
+                approval: Some(types::SessionToolApproval {
+                    title: "Pay {amount}?".into(),
+                    ..Default::default()
+                }),
+                parameters: json!({"type": "object", "properties": {"amount": {"type": "number"}}})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            },
+            |_, call: ToolCall| async move {
+                call.disallow_interruptions().await?;
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok::<_, Error>(format!("paid for {}", call.session_id))
+            },
+        )
+        .unwrap();
+    agent
+        .tools
+        .register_call(
+            types::SessionTool {
+                name: "slow".into(),
+                description: "Takes a while".into(),
+                interruptible: Some(true),
+                timeout_ms: Some(30000),
+                ..Default::default()
+            },
+            |_, _| async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok::<_, String>("done")
+            },
+        )
+        .unwrap();
+    agent
+        .tools
+        .register("fast", "Does not", json!({}), |_| async {
+            Ok::<_, String>("done")
+        });
+    let dispatch = Dispatch::new(server.client());
+    dispatch.host(&agent, None);
+    let running = {
+        let dispatch = dispatch.clone();
+        tokio::spawn(async move { dispatch.run().await })
+    };
+    let mut socket = server.accept().await;
+    socket
+        .send(json!({"type": "ready", "worker_id": "w-1"}))
+        .await;
+    let declared = socket.expect("host_tools").await;
+    (dispatch, running, socket, declared)
+}
+
+#[tokio::test]
+async fn a_hosted_function_is_declared_with_only_the_policies_it_sets() {
+    let server = Server::start().await;
+    let (dispatch, running, _socket, declared) = hosting_payments(&server).await;
+
+    let tools = declared["tools"].as_array().unwrap();
+    let by_name = |name: &str| {
+        tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        by_name("pay")["approval"],
+        json!({"title": "Pay {amount}?"})
+    );
+    assert_eq!(by_name("pay").get("interruptible"), None);
+    assert_eq!(by_name("slow")["interruptible"], true);
+    assert_eq!(by_name("slow")["timeout_ms"], 30000);
+    assert_eq!(
+        by_name("fast"),
+        json!({"name": "fast", "description": "Does not", "parameters": {}})
+    );
+
+    dispatch.stop();
+    running.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_hosted_call_cancelled_by_an_interruption_is_not_answered() {
+    let server = Server::start().await;
+    let (dispatch, running, mut socket, _) = hosting_payments(&server).await;
+
+    socket
+        .send(json!({"type": "tool_call", "id": "c1", "session_id": "s1", "name": "slow", "arguments": "{}"}))
+        .await;
+    socket
+        .send(json!({"type": "tool_call", "id": "c1", "session_id": "s2", "name": "fast", "arguments": "{}", "run": false}))
+        .await;
+    // Ids are only unique within a session: this names a call that is not running.
+    socket
+        .send(json!({"type": "tool_cancel", "id": "c1", "session_id": "s3"}))
+        .await;
+    socket
+        .send(json!({"type": "tool_cancel", "id": "c1", "session_id": "s1"}))
+        .await;
+    socket
+        .send(json!({"type": "tool_call", "id": "c2", "session_id": "s1", "name": "fast", "arguments": "{}"}))
+        .await;
+
+    assert_eq!(
+        socket.expect("tool_result").await,
+        json!({"type": "tool_result", "tool_call_id": "c2", "id": "c2", "output": "done"})
+    );
+    dispatch.stop();
+    // Stopping waits for work in flight, so a call left running would answer here.
+    running.await.unwrap().unwrap();
+    assert_eq!(socket.next().await, None);
+}
+
+#[tokio::test]
+async fn a_hosted_call_held_through_interruptions_is_answered() {
+    let server = Server::start().await;
+    let (dispatch, running, mut socket, _) = hosting_payments(&server).await;
+
+    socket
+        .send(json!({"type": "tool_call", "id": "c1", "session_id": "s1", "name": "pay", "arguments": "{}"}))
+        .await;
+    assert_eq!(
+        socket.expect("tool_hold").await,
+        json!({"type": "tool_hold", "tool_call_id": "c1"})
+    );
+    socket
+        .send(json!({"type": "tool_held", "id": "c1", "session_id": "s1"}))
+        .await;
+    socket
+        .send(json!({"type": "tool_cancel", "id": "c1", "session_id": "s1"}))
+        .await;
+
+    assert_eq!(
+        socket.expect("tool_result").await,
+        json!({"type": "tool_result", "tool_call_id": "c1", "id": "c1", "output": "paid for s1"})
+    );
+    dispatch.stop();
+    running.await.unwrap().unwrap();
 }

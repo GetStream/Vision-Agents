@@ -7,6 +7,7 @@ on:
     paths:
       - 'sdks/kotlin/**'
       - 'sdks/swift/**'
+      - 'Package.swift'
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
@@ -17,6 +18,7 @@ on:
     paths:
       - 'sdks/kotlin/**'
       - 'sdks/swift/**'
+      - 'Package.swift'
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
@@ -55,6 +57,7 @@ jobs:
               - '.github/workflows/client-sdks.yml'
             swift:
               - 'sdks/swift/**'
+              - 'Package.swift'
               - 'examples/voice_agents/swift_demo/app/**'
               - 'acceleration/api/openapi.yaml'
               - '.github/workflows/client-sdks.yml'
@@ -141,32 +144,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - uses: actions/cache@v4
-        id: generator
-        with:
-          path: .codegen/swift/swift-openapi-generator
-          key: swift-openapi-generator-1.13.1-${{ runner.os }}-xcode27
-
-      - name: Build swift-openapi-generator
-        if: steps.generator.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p /tmp/oapigen .codegen/swift
-          cat > /tmp/oapigen/Package.swift <<'EOF'
-          // swift-tools-version:6.0
-          import PackageDescription
-          let package = Package(
-              name: "oapigen",
-              dependencies: [.package(url: "https://github.com/apple/swift-openapi-generator", exact: "1.13.1")]
-          )
-          EOF
-          swift build -c release --product swift-openapi-generator --package-path /tmp/oapigen
-          cp /tmp/oapigen/.build/release/swift-openapi-generator .codegen/swift/
-
-      - name: Generated client matches the spec
-        run: |
-          uv run sdks/swift/generate.py
-          changed=$(git status --porcelain -- sdks/swift/core/Sources/VisionAgentsCore/Generated)
-          if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
+      # The client is generated with Stream's generator, which lives in the chat repository
+      # and is not checked out here, so this checks only that every operation it calls is
+      # still one a device may reach. PostureTests reads the committed client against the spec.
+      - name: Client operations are still client-side
+        run: uv run sdks/swift/generate.py --check
 
       # Both builds resolve into one checkout directory and compile into one DerivedData, so
       # the Stream SDKs and WebRTC are fetched and built once a run rather than twice.
@@ -174,12 +156,11 @@ jobs:
         id: packages
         with:
           path: ${{ runner.temp }}/spm
-          key: spm-${{ runner.os }}-xcode27-${{ hashFiles('sdks/swift/**/Package.swift', 'sdks/swift/**/Package.resolved', 'examples/voice_agents/swift_demo/app/SwiftDemo.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: spm-${{ runner.os }}-xcode27-${{ hashFiles('Package.swift', 'examples/voice_agents/swift_demo/app/SwiftDemo.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-xcode27-
 
       # The package is iOS only, so it is tested on a simulator rather than with `swift test`.
       - name: Build core tests
-        working-directory: sdks/swift/core
         timeout-minutes: 15
         run: |
           device=$(xcrun simctl list devices available -j | python3 -c "import json, sys; devices = json.load(sys.stdin)['devices']; print(next(d['udid'] for runtime, found in devices.items() if 'iOS' in runtime for d in found if d['name'].startswith('iPhone')))")
@@ -197,7 +178,6 @@ jobs:
       # waiting after the tests have finished. A failure's diagnostics take the simulator
       # ten minutes to give up on and add nothing the test log lacks.
       - name: Test core
-        working-directory: sdks/swift/core
         timeout-minutes: 10
         run: |
           xcodebuild test-without-building -scheme vision-agents-core -destination "platform=iOS Simulator,id=$SIMULATOR" \

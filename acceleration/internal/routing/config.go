@@ -173,6 +173,9 @@ type Usage struct {
 	// CachedInputTokens is the part of the prompt the provider served from its cache. It
 	// is priced at the cheaper cached rate and excluded from the standard input rate.
 	CachedInputTokens int64
+	// CacheWriteInputTokens is the part of the prompt written into the provider's cache. It
+	// is priced at the write rate where the model has one, and as fresh input otherwise.
+	CacheWriteInputTokens int64
 	// OutputTokens is everything generated, reasoning included.
 	OutputTokens int64
 	// Images is how many pictures were drawn.

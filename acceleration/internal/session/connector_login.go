@@ -207,6 +207,9 @@ func loginTools(alias string) []harness.Tool {
 // askIn has the logins ask in conv, the session's own conversation, and keep what they open
 // with chose.
 func (d *dispatcher) askIn(conv *persistent.Conversation, chose func(name, connectionID string)) {
+	if conv != nil {
+		d.approvals.asksIn(conv)
+	}
 	if d.logins != nil && conv != nil {
 		d.logins.ask, d.logins.canAsk = conv.AskToConnect, conv.CanAskToConnect
 		d.logins.shows, d.logins.connected = conv.ShowsLogin, conv.ConnectorConnected
@@ -245,19 +248,11 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 		return nil, errUnknownTool(name)
 	}
 	// Logged as Run logs a call, one row for each, refused or run.
-	started := time.Now()
 	arguments := string(asked.Arguments)
 	if arguments == "" || arguments == "null" {
 		arguments = "{}"
 	}
-	run := llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments}
-	if err := d.recheck(ctx, found); err != nil {
-		d.record(found, run, started, failure{kind: store.InvocationDenied}, err)
-		return nil, err
-	}
-	parts, how, err := d.call(ctx, found, run)
-	d.record(found, run, started, how, err)
-	return parts, err
+	return d.checkedCall(ctx, found, llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments})
 }
 
 // openOrAsk is the login's opened binding, or else what the model reads instead. A call whose

@@ -8,7 +8,16 @@ from .remote import (
     RemotePipeline,
     RemotePipelineError,
 )
-from .function_registry import FunctionRegistry, function_registry
+from .function_registry import FunctionRegistry, ToolPolicy, function_registry
+from .tool_call import (
+    CallNotHeld,
+    ToolCall,
+    ToolConversation,
+    ToolLine,
+    ToolUser,
+    calling,
+    current_call,
+)
 
 __all__ = [
     "LLM",
@@ -26,5 +35,13 @@ __all__ = [
     "RemotePipeline",
     "RemotePipelineError",
     "FunctionRegistry",
+    "ToolPolicy",
     "function_registry",
+    "CallNotHeld",
+    "ToolCall",
+    "ToolConversation",
+    "ToolLine",
+    "ToolUser",
+    "calling",
+    "current_call",
 ]

@@ -30,11 +30,14 @@ func NewTranscriberRegistry() *Transcribers { return routing.NewRegistry[stt.Tra
 // file in front of it.
 func DefaultTranscriberRegistry() *Transcribers {
 	registry := NewTranscriberRegistry()
+	// Every factory here only reads config, so a model the deployment has no key or endpoint
+	// for is listed unavailable and never routed to.
+	registry.Probe()
 
 	registry.Register(deepgram.ProviderName, func(spec routing.Spec) (stt.Transcriber, error) {
 		return deepgram.NewPrerecorded(deepgram.PrerecordedOptions{
 			Model:     spec.Model,
-			MipOptOut: trainingRefused(spec),
+			MipOptOut: optsOut(spec),
 			Logger:    spec.Logger,
 		})
 	})

@@ -150,6 +150,14 @@ func (c *Conversation) FollowUpReply(id string) (state, text string, known bool)
 	return record.State, record.Reply, known
 }
 
+// FollowUpMessage is the id of the reply to the follow-up under id, or "" for an id the
+// conversation does not hold.
+func (c *Conversation) FollowUpMessage(id string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.data.Commands[id].AssistantMessageID
+}
+
 // rememberAsked keeps a finished reply that asked for a login, to mark it once the login is
 // made. Only the latest few are kept: an older button is one nobody is waiting on.
 func (c *Conversation) rememberAsked(m Message) {

@@ -183,7 +183,8 @@ const didNotWork = "That did not work: "
 // answeredSinceCaller returns the result of an identical call, the same tool with the same
 // arguments, already answered since the caller last spoke. After a result Gemma often asks
 // for the same call again, and run twice a dispatch or a booking is made twice. A call that
-// failed may be tried again, since what failed may not fail twice.
+// failed may be tried again, since what failed may not fail twice, and so may one whose result
+// says nothing was done (undoneResult).
 //
 // A call that changes something is matched across the whole call: Nemotron booked a table,
 // heard "Yes, please go ahead" and booked it again, and a forced chase made Qwen book the same
@@ -195,7 +196,7 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 	changes := !readsOnly(call.Name)
 	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
-			strings.Contains(history[i].Content, notRun) {
+			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) {
 			continue
 		}
 		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
@@ -207,6 +208,38 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 		}
 	}
 	return "", false
+}
+
+// routerStatuses are the statuses only the router answers a connector call it held back with
+// (internal/session: connector_login.go, step_up.go, connector_tools.go; internal/plugins:
+// user.go) until the person signs in or grants a scope. A tool does not use them for its own
+// results, so they count on the status alone.
+var routerStatuses = []string{"authorization_required", "scope_required", "credential_rejected"}
+
+// sharedStatuses are statuses the router also answers with when a sign-in or an approval ended
+// without the person acting (internal/session: connector_login.go, connector_approval.go;
+// internal/plugins/user.go; internal/conversation/parts.go) but a third-party tool uses too:
+// {"status":"stopped","recording_id":"r1"} is a write that was done. They count only in the
+// router's own shape, exactly {status, message}.
+var sharedStatuses = []string{"declined", "expired", "failed", "stopped", "unavailable"}
+
+// undoneResult reports whether a tool result is one the router held back (routerStatuses,
+// sharedStatuses): nothing was done. Once the person has acted, the same call must run: the
+// step-up's own result tells the model to call it again.
+func undoneResult(content string) bool {
+	var body map[string]json.RawMessage
+	if json.Unmarshal([]byte(content), &body) != nil {
+		return false
+	}
+	var status string
+	if json.Unmarshal(body["status"], &status) != nil {
+		return false
+	}
+	if slices.Contains(routerStatuses, status) {
+		return true
+	}
+	_, hasMessage := body["message"]
+	return slices.Contains(sharedStatuses, status) && hasMessage && len(body) == 2
 }
 
 // refusedBefore returns the answer of an identical call the tool already refused on this
@@ -351,7 +384,7 @@ func succeeded(history []llm.Message, name string, passed bool) bool {
 			continue
 		}
 		content := strings.ReplaceAll(message.Content, " ", "")
-		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) ||
+		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) || undoneResult(message.Content) ||
 			passed && (strings.Contains(content, `"error"`) || strings.Contains(content, `"ok":false`)) {
 			continue
 		}
@@ -450,17 +483,28 @@ func unspelled(arguments string) string {
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
 	cancels := telephonyTool(requested.Call.Name) ||
-		a.options.ToolPolicy != nil && a.options.ToolPolicy(requested.Call.Name).Cancels
+		a.options.ToolPolicy != nil && a.options.ToolPolicy(a.approvedName(requested.Call)).Cancels
 	a.mu.Lock()
 	parent := a.ctx
 	if parent == nil {
 		parent = context.Background()
+	}
+	if requester := a.requesterLocked(); requester != (Requester{}) {
+		parent = WithRequester(parent, requester)
 	}
 	ctx, cancel := context.WithCancel(parent)
 	if a.toolCancels == nil {
 		a.toolCancels = map[string]context.CancelFunc{}
 	}
 	a.toolCancels[requested.Call.ID] = cancel
+	if a.toolContexts == nil {
+		a.toolContexts = map[string]context.Context{}
+	}
+	a.toolContexts[requested.Call.ID] = ctx
+	if a.toolTurns == nil {
+		a.toolTurns = map[string]string{}
+	}
+	a.toolTurns[requested.Call.ID] = requested.TurnID
 	if a.toolsRunning == nil {
 		a.toolsRunning = map[string]string{}
 	}
@@ -485,6 +529,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		cancel()
 		a.mu.Lock()
 		delete(a.toolCancels, requested.Call.ID)
+		delete(a.toolContexts, requested.Call.ID)
+		delete(a.toolTurns, requested.Call.ID)
 		delete(a.toolHolds, requested.Call.ID)
 		a.mu.Unlock()
 	}()
@@ -506,39 +552,49 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	tool, _ := a.availableTools().Lookup(requested.Call.Name)
 	// ran is whether the tool was called: the router refuses some calls itself, before it.
 	var ran bool
-	if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
+	// What the caller said and the tools returned is checked against the whole call, not the
+	// history the model reads: compaction summarises that, and a value it summarised away
+	// was still said or returned.
+	record := a.record()
+	if requested.Call.Name == confirmTool && a.offersConfirm() {
+		ran = true
+		parts, err = a.confirm(ctx, requested.Call)
+	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
-	} else if first := unmetPrerequisite(tool, a.availableTools().Tools, a.History()); first != "" {
+	} else if first := unmetPrerequisite(tool, a.availableTools().Tools, record); first != "" {
 		parts = llm.TextParts(fmt.Sprintf(runFirst, requested.Call.Name, first, first))
-	} else if key, value, known, unfound := unfoundID(a.History(), requested.Call, toolNames(a.availableTools())); unfound {
+	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools())); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
-	} else if key, known, missing := missingID(a.History(), requested.Call, a.availableTools()); missing {
+	} else if key, known, missing := missingID(record, requested.Call, a.availableTools()); missing {
 		parts = llm.TextParts(unfoundIDResult(key, "", known))
 	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
 	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
 		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
 	} else if key, value, misshapen := misshapenLastFour(requested.Call); misshapen {
-		parts = llm.TextParts(misshapenResult(key, value, a.History()))
-	} else if key, value, heard, unheard := unheardNumber(a.History(), requested.Call); unheard {
+		parts = llm.TextParts(misshapenResult(key, value, record))
+	} else if key, value, heard, unheard := unheardNumber(record, requested.Call); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
-	} else if name, spelled, misspelled := misspelledName(a.History(), requested.Call); misspelled {
+	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
 		parts = llm.TextParts(misspelledResult(name, spelled))
-	} else if name, stand := placeholderName(requested.Call); stand {
+	} else if name, stand := placeholderName(record, requested.Call); stand {
 		parts = llm.TextParts(placeholderResult(name))
 	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {
 		var said string
 		ran = true
 		said, files, err = a.runCode(ctx, requested.Call)
 		parts = llm.TextParts(said)
+	} else if question := a.approvalQuestion(tool); question != "" {
+		parts = a.askApproval(requested.Call, question)
 	} else {
 		ran = true
 		parts, left, err = a.callTool(ctx, requested.Call)
 	}
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
+	delete(a.toolUpdates, requested.Call.ID)
 	a.mu.Unlock()
 	// Visual tool results go to the vision worker in both native and cascade calls. The
 	// call is still open in the history it is handed, which a provider refuses to replay.
@@ -555,6 +611,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	}
 	result := llm.TextOf(parts)
 	a.mu.Lock()
+	if hold == nil {
+		hold = a.toolHolds[requested.Call.ID]
+	}
 	a.resolveToolLocked(requested.Call, parts, hold, ctx.Err() != nil)
 	if !left && !a.native() && ctx.Err() == nil && a.followsTool(requested) {
 		a.toolReply = true
@@ -583,7 +642,10 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 			a.mu.Lock()
 			a.nativeAwaiting = true
 			a.mu.Unlock()
-			if err := model.Answer(requested.Call.ID, result, nil); err != nil {
+			err := model.Answer(requested.Call.ID, result, nil)
+			if err == nil {
+				a.askedApproval(requested.Call.ID)
+			} else {
 				a.mu.Lock()
 				a.nativeAwaiting = false
 				a.mu.Unlock()
@@ -737,6 +799,9 @@ func (a *Agent) availableTools() harness.Tools {
 		if runnable {
 			available.Tools = append(available.Tools, tool)
 		}
+	}
+	if a.offersConfirm() {
+		available.Tools = append(available.Tools, confirmToolDefinition())
 	}
 	if a.loadsSkills() {
 		available.Tools = append(available.Tools, a.options.Skills.LoadTool())
@@ -1129,6 +1194,26 @@ func (a *Agent) stopTools() {
 		cancel()
 	}
 	a.toolReply = false
+}
+
+// HoldTool makes a running call that an interruption would cancel outlive one from now on,
+// as a call to a tool that never asked to be cancelled does: answered stillRunning, and its
+// result told when it comes. It reports false when the call is not running, which for a
+// call that was is an interruption that came first.
+func (a *Agent) HoldTool(id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	id = a.runningAsLocked(id)
+	if ctx, running := a.toolContexts[id]; !running || ctx.Err() != nil {
+		return false
+	}
+	if a.toolHolds == nil {
+		a.toolHolds = map[string]*toolHold{}
+	}
+	if a.toolHolds[id] == nil {
+		a.toolHolds[id] = &toolHold{}
+	}
+	return true
 }
 
 // dropTool cancels the calls to a tool still running, because the caller no longer wants

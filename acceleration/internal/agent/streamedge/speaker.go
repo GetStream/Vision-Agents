@@ -2,7 +2,6 @@ package streamedge
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -160,7 +159,7 @@ func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time,
 	defer s.mu.Unlock()
 
 	if s.closed {
-		return time.Time{}, errors.New("streamedge: the call has been left")
+		return time.Time{}, fmt.Errorf("streamedge: %w", agent.ErrCallLeft)
 	}
 	if s.encoder == nil {
 		// Low delay keeps the encoder in CELT, which a voice is coded in at these rates

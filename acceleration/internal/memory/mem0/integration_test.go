@@ -30,7 +30,13 @@ func TestMem0IntegrationSuite(t *testing.T) {
 	suite.Run(t, new(Mem0IntegrationSuite))
 }
 
+// SetupSuite runs the suite only when asked: RUN_MEM0_SUITE=1 as well as MEM0_API_KEY. It
+// writes and searches real memories on mem0's quota, and a key in the repo's .env alone is
+// not asking.
 func (s *Mem0IntegrationSuite) SetupSuite() {
+	if os.Getenv("RUN_MEM0_SUITE") != "1" {
+		s.T().Skip("RUN_MEM0_SUITE=1 runs this suite against the real mem0")
+	}
 	if os.Getenv(apiKeyEnvVar) == "" {
 		s.T().Skip(apiKeyEnvVar + " not set")
 	}

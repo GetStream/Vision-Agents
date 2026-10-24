@@ -66,7 +66,7 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 		return nil, refusedRequest(err)
 	}
 	s.rememberTimezone(ctx, customerID, spec)
-	return &createSessionResponse{Body: sessionOf(created)}, nil
+	return &createSessionResponse{Body: sessionOf(ctx, created)}, nil
 }
 
 // rememberTimezone stores the zone a session was opened in as its user's zone, so what a

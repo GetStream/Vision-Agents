@@ -347,6 +347,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		"ttft_ms", ttftMs, "duration_ms", durationMs,
 		"input_tokens", stat.InputTokens,
 		"cached_tokens", stat.CachedInputTokens,
+		"cache_write_tokens", response.Usage.InputTokensDetails.CacheWriteTokens,
 		"output_tokens", stat.OutputTokens,
 		"reasoning_tokens", response.Usage.OutputTokensDetails.ReasoningTokens,
 		"estimated", estimated,

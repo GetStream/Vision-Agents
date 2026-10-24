@@ -15,13 +15,19 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
 
 const apiKeyEnvVar = "MEM0_API_KEY"
@@ -37,6 +43,25 @@ const errorBodyLimit = 2048
 
 // deletePageSize is how many memories are deleted per batch, well under mem0's 1000.
 const deletePageSize = 100
+
+// The calls this store makes, as its metrics, spans and log name them.
+const (
+	opSearch = "search"
+	opAdd    = "add"
+	opList   = "list"
+	opDelete = "delete"
+)
+
+// How a call ended, as its metrics name it.
+const (
+	outcomeOK        = "ok"
+	outcomeHTTPError = "http_error"
+	outcomeTransport = "transport_error"
+	outcomeDecode    = "decode_error"
+)
+
+// tracer records each call to mem0 under the caller's span.
+var tracer = tracing.Tracer("memory/mem0")
 
 // Options configures a Store. The key falls back to the environment, the way every other
 // provider in this service is configured.
@@ -113,7 +138,7 @@ func (s *Store) Recall(ctx context.Context, query memory.Query) (memory.Recalled
 	}
 
 	var response searchResponse
-	if err := s.call(ctx, http.MethodPost, "/v3/memories/search/", body, &response); err != nil {
+	if err := s.call(ctx, opSearch, query.Scope, http.MethodPost, "/v3/memories/search/", body, &response); err != nil {
 		return memory.Recalled{}, err
 	}
 
@@ -158,7 +183,7 @@ func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm
 	}
 
 	var response addResponse
-	if err := s.call(ctx, http.MethodPost, "/v3/memories/add/", body, &response); err != nil {
+	if err := s.call(ctx, opAdd, scope, http.MethodPost, "/v3/memories/add/", body, &response); err != nil {
 		return memory.Billed{}, err
 	}
 	s.logger.Debug("queued a conversation to remember", "event", response.EventID, "status", response.Status)
@@ -170,7 +195,8 @@ func (s *Store) Truncate(ctx context.Context, appID, userID string) (memory.Bill
 	if appID == "" || userID == "" {
 		return memory.Billed{}, stack.Wrap(errors.New("mem0: truncating needs an app id and a user id"))
 	}
-	return s.deleteMatching(ctx, map[string]any{"app_id": appID, "user_id": userID})
+	return s.deleteMatching(ctx, memory.Scope{AppID: appID, UserID: userID},
+		map[string]any{"app_id": appID, "user_id": userID})
 }
 
 // ForgetRun deletes what one session of one app taught mem0.
@@ -178,26 +204,31 @@ func (s *Store) ForgetRun(ctx context.Context, appID, runID string) (memory.Bill
 	if appID == "" || runID == "" {
 		return memory.Billed{}, stack.Wrap(errors.New("mem0: forgetting a session needs an app id and a run id"))
 	}
-	return s.deleteMatching(ctx, map[string]any{"app_id": appID, "run_id": runID})
+	return s.deleteMatching(ctx, memory.Scope{AppID: appID, RunID: runID},
+		map[string]any{"app_id": appID, "run_id": runID})
 }
 
 // deleteMatching deletes every memory the filters match, a page at a time, and counts the
-// requests it made: each listing and each batch delete.
+// requests it made: each listing and each batch delete. who is whose memories they are, for
+// the log.
 //
 // mem0's delete-all endpoint takes one entity and ignores the rest, so asked for an app and
 // a run it deletes the whole app. Listing by filter and deleting by id is the only way to
 // delete exactly what was asked for.
-func (s *Store) deleteMatching(ctx context.Context, filters map[string]any) (memory.Billed, error) {
+func (s *Store) deleteMatching(ctx context.Context, who memory.Scope, filters map[string]any) (memory.Billed, error) {
 	var billed memory.Billed
 	deleted := map[string]bool{}
 	for {
 		var page listResponse
 		path := fmt.Sprintf("/v3/memories/?page=1&page_size=%d", deletePageSize)
-		if err := s.call(ctx, http.MethodPost, path, listRequest{Filters: filters}, &page); err != nil {
+		if err := s.call(ctx, opList, who, http.MethodPost, path, listRequest{Filters: filters}, &page); err != nil {
 			return billed, err
 		}
 		billed.Requests++
 		if len(page.Results) == 0 {
+			if len(deleted) == 0 {
+				emptyLists.Inc()
+			}
 			return billed, nil
 		}
 
@@ -211,7 +242,7 @@ func (s *Store) deleteMatching(ctx context.Context, filters map[string]any) (mem
 			batch.Memories = append(batch.Memories, batchMemory{MemoryID: found.ID})
 		}
 		var response batchDeleteResponse
-		if err := s.call(ctx, http.MethodDelete, "/v1/batch/", batch, &response); err != nil {
+		if err := s.call(ctx, opDelete, who, http.MethodDelete, "/v1/batch/", batch, &response); err != nil {
 			return billed, err
 		}
 		billed.Requests++
@@ -228,15 +259,60 @@ func (s *Store) Client() *http.Client { return s.client }
 // Close releases nothing: the store holds no connection of its own.
 func (s *Store) Close() error { return nil }
 
-func (s *Store) call(ctx context.Context, method, path string, body, into any) error {
+// call sends one request to mem0 and records it as a metric, a span and a debug line. A
+// failure is not logged here: every caller logs the error returned, which carries what mem0
+// answered.
+func (s *Store) call(ctx context.Context, op string, who memory.Scope, method, path string, body, into any) error {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("mem0: encode %s: %w", path, err))
 	}
 
+	ctx, span := tracer.Start(ctx, "mem0."+op, trace.WithAttributes(attribute.String("mem0.op", op)))
+	defer span.End()
+	started := time.Now()
+	status, outcome, err := s.send(ctx, method, path, encoded, into)
+	elapsed := time.Since(started)
+
+	statusLabel := "none"
+	if status != 0 {
+		statusLabel = strconv.Itoa(status)
+		span.SetAttributes(attribute.Int("http.response.status_code", status))
+	}
+	calls.WithLabelValues(op, statusLabel, outcome).Inc()
+	callSeconds.WithLabelValues(op, outcome).Observe(elapsed.Seconds())
+
+	fields := []any{"op", op, "app_id", who.AppID}
+	if who.UserID != "" {
+		fields = append(fields, "user_id", who.UserID)
+	}
+	if who.RunID != "" {
+		fields = append(fields, "run_id", who.RunID)
+	}
+	fields = append(fields, "status", statusLabel, "outcome", outcome, "latency_ms", elapsed.Milliseconds())
+
+	switch {
+	case outcome == outcomeHTTPError:
+		// The status alone, not the error: mem0's body may repeat what it was sent.
+		span.SetStatus(codes.Error, http.StatusText(status))
+	case err != nil:
+		tracing.Fail(span, err)
+	default:
+		if count, counted := resultCount(into); counted {
+			span.SetAttributes(attribute.Int("mem0.results", count))
+			fields = append(fields, "results", count)
+		}
+	}
+	s.logger.Debug("called mem0", fields...)
+	return err
+}
+
+// send makes one request and decodes mem0's answer into into. The status is mem0's, zero
+// when it never answered.
+func (s *Store) send(ctx context.Context, method, path string, encoded []byte, into any) (int, string, error) {
 	request, err := http.NewRequestWithContext(ctx, method, s.baseURL+path, bytes.NewReader(encoded))
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("mem0: %s: %w", path, err))
+		return 0, outcomeTransport, stack.Wrap(fmt.Errorf("mem0: %s: %w", path, err))
 	}
 	request.Header.Set("Authorization", "Token "+s.apiKey)
 	request.Header.Set("Content-Type", "application/json")
@@ -244,19 +320,38 @@ func (s *Store) call(ctx context.Context, method, path string, body, into any) e
 
 	response, err := s.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("mem0: %s: %w", path, err))
+		return 0, outcomeTransport, stack.Wrap(fmt.Errorf("mem0: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("mem0: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		// mem0 answers a spent billing-period quota with 429 as well as a burst, so the
+		// error names both.
+		limited := ""
+		if response.StatusCode == http.StatusTooManyRequests {
+			limited = " (mem0 quota or rate limit)"
+		}
+		return response.StatusCode, outcomeHTTPError, stack.Wrap(fmt.Errorf("mem0: %s: %s%s: %s",
+			path, response.Status, limited, strings.TrimSpace(string(detail))))
 	}
 
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("mem0: decode %s: %w", path, err))
+		return response.StatusCode, outcomeDecode, stack.Wrap(fmt.Errorf("mem0: decode %s: %w", path, err))
 	}
-	return nil
+	return response.StatusCode, outcomeOK, nil
+}
+
+// resultCount is how many memories a search or a list answered with. Other answers hold
+// none, and say so.
+func resultCount(into any) (int, bool) {
+	switch decoded := into.(type) {
+	case *searchResponse:
+		return len(decoded.Results), true
+	case *listResponse:
+		return len(decoded.Results), true
+	}
+	return 0, false
 }
 
 // filtersFor scopes a search to who the memories belong to. An app id narrows it further,

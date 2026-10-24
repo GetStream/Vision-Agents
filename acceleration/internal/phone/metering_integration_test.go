@@ -75,7 +75,7 @@ func (s *MeteringSuite) withSandbox(sandbox dlc.Sandbox) {
 	s.T().Cleanup(s.recorder.Close)
 	s.clock = &meteringClock{at: time.Now().UTC().Truncate(time.Second)}
 	s.customer = "customer-" + uuid.NewString()
-	s.e164 = "+1512" + uuid.NewString()[:7]
+	s.e164 = aNumber()
 	s.vendor = &stub{vendor: "telnyx", monthly: 1_000_000}
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
@@ -721,7 +721,7 @@ func (s *MeteringSuite) TestALegCarriesItsAppsOrganization() {
 }
 
 func (s *MeteringSuite) TestABoughtNumberIsBilledItsFirstMonth() {
-	bought, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: "+1512" + uuid.NewString()[:7], Owner: s.owner()})
+	bought, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: aNumber(), Owner: s.owner()})
 	s.Require().NoError(err)
 
 	month := s.row(ModelNumber)
@@ -732,7 +732,7 @@ func (s *MeteringSuite) TestABoughtNumberIsBilledItsFirstMonth() {
 }
 
 func (s *MeteringSuite) TestANumberWhosePriceIsOnlyInItsOfferIsBilledTheOffer() {
-	e164 := "+1512" + uuid.NewString()[:7]
+	e164 := aNumber()
 	s.vendor.monthly = 0
 	s.vendor.offers = []Available{{E164: "+15125550000", MonthlyCostMicros: 9}, {E164: e164, MonthlyCostMicros: 1_500_000}}
 
@@ -746,7 +746,7 @@ func (s *MeteringSuite) TestANumberWhosePriceIsOnlyInItsOfferIsBilledTheOffer() 
 func (s *MeteringSuite) TestANumberWithNoPriceIsBillableWorkWithNoPrice() {
 	s.vendor.monthly = 0
 
-	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: "+1512" + uuid.NewString()[:7], Owner: s.owner()})
+	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: aNumber(), Owner: s.owner()})
 	s.Require().NoError(err)
 
 	month := s.row(ModelNumber)
@@ -757,7 +757,7 @@ func (s *MeteringSuite) TestANumberWithNoPriceIsBillableWorkWithNoPrice() {
 func (s *MeteringSuite) TestANumberIsBilledEachMonthAfterTheOneItWasBoughtIn() {
 	// The suite's own number, which has no price, is not the one under test.
 	s.Require().NoError(s.store.ReleaseNumber(s.ctx, s.customer, s.e164, s.clock.now()))
-	bought, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: "+1512" + uuid.NewString()[:7], Owner: s.owner()})
+	bought, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: aNumber(), Owner: s.owner()})
 	s.Require().NoError(err)
 	s.row(ModelNumber)
 	rentals := Rentals{Store: s.store, Recorder: s.recorder, Logger: slog.New(slog.DiscardHandler)}
@@ -789,7 +789,7 @@ func (s *MeteringSuite) TestANumberIsBilledEachMonthAfterTheOneItWasBoughtIn() {
 
 func (s *MeteringSuite) TestAMonthThatBeganBeforeFromIsNeverBilled() {
 	now := time.Now().UTC().Truncate(time.Second)
-	e164 := "+1512" + uuid.NewString()[:7]
+	e164 := aNumber()
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
 		E164: e164, Vendor: s.vendor.vendor, Country: "US", CustomerID: s.customer,
 		MonthlyCostMicros: 1_000_000, PurchasedAt: now.AddDate(0, -1, -10),

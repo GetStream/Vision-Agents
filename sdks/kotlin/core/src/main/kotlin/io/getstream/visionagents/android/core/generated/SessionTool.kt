@@ -42,7 +42,9 @@ import kotlinx.serialization.encoding.Encoder
  * @param approval 
  * @param displayTitle What a call is doing, in words for the people in the conversation, such as \"Checking your location\". Shown on the reply's ai_tool_call attachment.
  * @param executor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+ * @param interruptible Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes.
  * @param parameters A JSON Schema object describing the arguments.
+ * @param timeoutMs How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's.
  */
 @Serializable
 
@@ -66,9 +68,17 @@ internal data class SessionTool (
     @SerialName(value = "executor")
     val executor: SessionTool.Executor? = null,
 
+    /* Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes. */
+    @SerialName(value = "interruptible")
+    val interruptible: kotlin.Boolean? = null,
+
     /* A JSON Schema object describing the arguments. */
     @Contextual @SerialName(value = "parameters")
-    val parameters: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null
+    val parameters: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null,
+
+    /* How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's. */
+    @SerialName(value = "timeout_ms")
+    val timeoutMs: kotlin.Long? = null
 
 ) {
 

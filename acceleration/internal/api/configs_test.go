@@ -2146,6 +2146,54 @@ func (s *ConfigsSuite) TestNessyBesideAConnectorWithOneOutboundSourceAmongSevera
 	s.Contains(failure, `connector binding "code" can send data out with no person's approval`)
 }
 
+// sessionGranting binds connectorID through the connection a session's end user picks,
+// granting tools by name.
+func sessionGranting(connectorID, alias string, tools ...string) map[string]any {
+	binding := sessionGitHubGranting(alias, tools...)
+	binding["connector_id"] = connectorID
+	return binding
+}
+
+// Every tool google_drive.yaml, google_docs.yaml and bigquery.yaml list in read_only_tools
+// only reads, so a binding granting only those sits beside nessy.
+func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfDriveDocsAndBigQueryIsAccepted() {
+	s.useInternalApp()
+
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"),
+		sessionGranting("google_drive", "files", "download_file_content", "get_file_metadata",
+			"get_file_permissions", "list_recent_files", "read_file_content", "search_files"),
+		sessionGranting("google_docs", "docs", "read_doc"),
+		sessionGranting("bigquery", "warehouse", "list_dataset_ids", "get_dataset_info", "list_table_ids",
+			"get_table_info", "execute_sql_readonly", "get_query_results", "get_job"),
+	}})
+
+	s.Len(value(created.Connectors), 4)
+}
+
+// A tool the source leaves out of read_only_tools may write, so a binding granting one beside
+// tools that only read is refused, each such binding named.
+func (s *ConfigsSuite) TestNessyBesideAWriteToolOfDriveDocsOrBigQueryNamesEachBindingGrantingOne() {
+	s.useInternalApp()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{
+			sessionNessy("customers"),
+			sessionGranting("google_drive", "drive_copy", "search_files", "copy_file"),
+			sessionGranting("google_drive", "drive_create", "create_file"),
+			sessionGranting("google_drive", "drive_read", "read_file_content"),
+			sessionGranting("google_docs", "docs_update", "read_doc", "update_doc"),
+			sessionGranting("bigquery", "bq_execute", "execute_sql"),
+			sessionGranting("bigquery", "bq_cancel", "get_job", "cancel_job"),
+		},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
+		`and connector binding "drive_copy", connector binding "drive_create", connector binding "docs_update", `+
+		`connector binding "bq_execute", connector binding "bq_cancel" can send data out with no person's approval`)
+}
+
 // nessy.yaml's source says outbound: false, so nessy alone, or twice, is accepted.
 func (s *ConfigsSuite) TestNessyAloneIsAccepted() {
 	s.useInternalApp()
@@ -2239,6 +2287,19 @@ func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsItsOutboundTool
 	})
 
 	s.Len(value(created.Connectors), 1)
+}
+
+// TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfDriveDocsAndBigQuery is the
+// control: the base, 29091a594, answered 201 to the same request (ai-1844/author-1.md,
+// «Control probe»).
+func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfDriveDocsAndBigQuery() {
+	created := s.createConfig(map[string]any{"name": "builder", "connectors": []map[string]any{
+		sessionGranting("google_drive", "files", "create_file", "copy_file"),
+		sessionGranting("google_docs", "docs", "update_doc"),
+		sessionGranting("bigquery", "warehouse", "execute_sql", "cancel_job"),
+	}})
+
+	s.Len(value(created.Connectors), 3)
 }
 
 // TestAnUpdateKeepingABindingToAForceDeletedConnectorIsAccepted: a forced connector delete

@@ -41,6 +41,7 @@ var (
 	ErrNoTools           = errors.New("sts: this model does not call tools")
 	ErrInstructionsFixed = errors.New("sts: this model takes its instructions only when the session opens")
 	ErrToolsFixed        = errors.New("sts: this model takes its tools only when the session opens")
+	ErrNoCallUpdates     = errors.New("sts: this model cannot be told how an open tool call is going")
 )
 
 // Capabilities is what one model can be asked for.
@@ -167,6 +168,28 @@ type STS interface {
 	SampleRate() int
 	// Capabilities is what this model can be asked for.
 	Capabilities() Capabilities
+}
+
+// CallUpdater is a model that can be told how a tool call it is waiting on is going, and
+// says so to the caller while the call stays open.
+type CallUpdater interface {
+	// UpdatesCalls reports whether this session takes UpdateCall.
+	UpdatesCalls() bool
+	// UpdateCall has the model speak about an open call. It calls no tool for that, and the
+	// call still waits for its Answer. One that takes none returns ErrNoCallUpdates.
+	UpdateCall(update CallUpdate) error
+}
+
+// CallUpdate is what a model is told about a call that is still open.
+type CallUpdate struct {
+	CallID string
+	// Status is what whoever runs the call reports, or with Verbatim, words to say.
+	Status   string
+	Verbatim bool
+	// Guidance is how to say it, and Instructions the agent's own, for a model whose reply
+	// takes instructions in place of the session's.
+	Guidance     string
+	Instructions string
 }
 
 // Voiced is a model that can say which voice it speaks in. Empty means the vendor

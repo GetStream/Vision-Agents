@@ -84,6 +84,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -99,11 +100,25 @@ const suiteConnections = 5
 // settleFor is how long a test waits for something crossing a socket or a queue to arrive.
 const settleFor = 5 * time.Second
 
-// migrated runs the migrations once for every suite in the run: they set goose's globals
-// and attach triggers, neither of which two suites may do at once.
-var migrated struct {
-	sync.Once
-	err error
+// migrated runs the migrations once per database for every suite in the run: they set
+// goose's globals and attach triggers, neither of which two suites may do at once.
+var migrated = struct {
+	sync.Mutex
+	databases map[string]bool
+}{databases: map[string]bool{}}
+
+// migrate applies the migrations to the suite's database, unless a suite before it did.
+func migrate(ctx context.Context, db *store.Store, dsn string) error {
+	migrated.Lock()
+	defer migrated.Unlock()
+	if migrated.databases[dsn] {
+		return nil
+	}
+	if err := db.Migrate(ctx); err != nil {
+		return err
+	}
+	migrated.databases[dsn] = true
+	return nil
 }
 
 // redisDB hands each suite a Redis database of its own, so the queues one suite works
@@ -117,6 +132,23 @@ var redisDB atomic.Int32
 func runSuite(t *testing.T, s suite.TestingSuite) {
 	t.Parallel()
 	suite.Run(t, s)
+}
+
+// BeforeTest, in a suite with a database of its own, requires that no scheduled task is left
+// and empties the table once the test is done, whoever's tasks they are, so none a test leaves
+// due is claimed by the next test's worker. It runs after SetupTest, which may start tasks of its own.
+func (s *RouterSuite) BeforeTest(_, _ string) {
+	if s.database == "" || s.store == nil {
+		return
+	}
+	t := s.T()
+	count, err := s.store.DB().NewSelect().Model((*store.ScheduledTask)(nil)).Count(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, count, "a task is left from an earlier test or run")
+	t.Cleanup(func() {
+		_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(context.Background())
+		require.NoError(t, err)
+	})
 }
 
 // suiteKEK seals the secrets of the keys the suite makes. It is the same for every suite,
@@ -192,7 +224,12 @@ type RouterSuite struct {
 	// deploymentKnown has the suite's Stream say which app is the deployment's own, as a
 	// deployment-mode router that was given its app id does.
 	deploymentKnown bool
-	server          *httptest.Server
+	// database gives the suite a database of its own, named after it, in place of the one
+	// the suites share, for a suite whose tests act on rows other tests made: a
+	// scheduled-task worker claims every task due in its database, whoever made it. A
+	// suite sets it before SetupSuite runs.
+	database string
+	server   *httptest.Server
 	// router is the suite's router itself, for what cmd/router calls on it besides serving.
 	router *Server
 	app    testApp
@@ -222,16 +259,24 @@ type RouterSuite struct {
 	serverClient          *testClient
 
 	// The stubs standing in for providers, for a test to read back what the router asked
-	// them for. model answers questions, vision is the one that can see, voice keeps what
-	// it was told to say, knowledge keeps the passages written to it. holding answers once a
-	// test lets it, for a summary that has to still be in the writing.
+	// them for. model answers questions, vision is the one that can see, knowledge keeps the
+	// passages written to it. holding answers once a test lets it, for a summary that has to
+	// still be in the writing.
 	model     *scriptedLLM
 	vision    *scriptedLLM
 	holding   *scriptedLLM
-	voice     *recordingTTS
-	ears      *quietSTT
 	knowledge *knowledgeBase
 	memories  *keptMemories
+	// voice keeps what every stub voice was told to say. Each socket is given a stub voice
+	// and transcriber of its own, so one a test left open cannot read what the next test
+	// sends; newestVoice and newestEars are the last the router started, read through
+	// speaking and ears.
+	voice       *saidLog
+	speechMu    sync.Mutex
+	newestVoice *recordingTTS
+	newestEars  *quietSTT
+	// unconfiguredBuilds counts what the "unconfigured" transcriber was asked to build.
+	unconfiguredBuilds atomic.Int64
 	// noted are the "noted" models opened so far, one per session, newest last, for a test
 	// whose sessions each need a model of their own to read back.
 	notedMu sync.Mutex
@@ -266,6 +311,9 @@ type RouterSuite struct {
 	// metering is what memory, knowledge and voice cloning record through, as the process
 	// writer is in cmd/router.
 	metering *routing.Recorder
+	// memoryOff gives the router no memory store, as a deployment with no memory provider
+	// has, for a control suite to set before it starts the harness.
+	memoryOff bool
 
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
@@ -338,6 +386,9 @@ type RouterSuite struct {
 	// providers listen on loopback, which egress refuses, to set before it starts the harness.
 	// Nil is egress's, as in the router.
 	connectorHTTP *http.Client
+	// approvalWait is how long a connector call held for approval waits, for a suite to set
+	// before it starts the harness. Zero is the router's ten minutes.
+	approvalWait time.Duration
 	// publicURL and dashboardURL are the router's ROUTER_PUBLIC_URL and DASHBOARD_BASE_URL,
 	// for a suite about connector consents to set before it starts the harness. Empty leaves
 	// them unset, as a deployment that never set them has.
@@ -427,6 +478,7 @@ func (s *RouterSuite) SetupSuite() {
 	if dsn == "" || redisAddr == "" {
 		s.T().Skip("ROUTER_POSTGRES_DSN and ROUTER_REDIS_ADDR must be set")
 	}
+	s.forgetPhoneVendors()
 	ctx := context.Background()
 	logger := slog.New(slog.DiscardHandler)
 	if s.logs != nil {
@@ -436,19 +488,27 @@ func (s *RouterSuite) SetupSuite() {
 	// A shard database and Redis run the suite as a hosted shard runs: the shared rows in one
 	// place and the calls, sessions and requests in another.
 	options := store.Options{DSN: testDatabase(s.T(), dsn)}
+	if s.database != "" {
+		options.DSN = testenv.Database(options.DSN, s.database)
+	}
 	if shardDSN := os.Getenv("ROUTER_POSTGRES_SHARD_DSN"); shardDSN != "" {
 		options.ShardDSN = testDatabase(s.T(), shardDSN)
 	}
 	pgStore, err := store.OpenShards(options)
 	s.Require().NoError(err)
 	pgStore.DB().SetMaxOpenConns(suiteConnections)
-	migrated.Do(func() { migrated.err = pgStore.Migrate(ctx) })
-	s.Require().NoError(migrated.err)
+	s.Require().NoError(migrate(ctx, pgStore, options.DSN))
 	s.store = pgStore
 	s.T().Cleanup(func() { s.Require().NoError(pgStore.Close()) })
 	// Registered before everything that records, so it runs once all of it has closed and
 	// written what it held.
 	s.T().Cleanup(s.assertEveryRowNamesAKey)
+	if s.database != "" {
+		// Only a suite's own database is emptied, never the shared one. A run killed by
+		// -timeout skips its cleanups, and the database outlives it.
+		_, err := pgStore.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(ctx)
+		s.Require().NoError(err)
+	}
 
 	liveClient, err := live.New(live.Options{Address: redisAddr, Shard: live.Shard{Address: os.Getenv("ROUTER_REDIS_SHARD_ADDR")}})
 	s.Require().NoError(err)
@@ -510,7 +570,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.transports = transports
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
-		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL)}, logger)
+		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
@@ -771,13 +831,42 @@ func (s *RouterSuite) mcpTransport() *http.Client {
 	}}
 }
 
+// speaking is the stub voice the router started last, the one a test's newest socket speaks
+// in.
+func (s *RouterSuite) speaking() *recordingTTS {
+	s.speechMu.Lock()
+	defer s.speechMu.Unlock()
+	return s.newestVoice
+}
+
+// ears is the stub transcriber the router started last, the one a test's newest socket
+// hears through.
+func (s *RouterSuite) ears() *quietSTT {
+	s.speechMu.Lock()
+	defer s.speechMu.Unlock()
+	return s.newestEars
+}
+
+func (s *RouterSuite) spoke(voice *recordingTTS) {
+	s.speechMu.Lock()
+	defer s.speechMu.Unlock()
+	s.newestVoice = voice
+}
+
+func (s *RouterSuite) heard(ears *quietSTT) {
+	s.speechMu.Lock()
+	defer s.speechMu.Unlock()
+	s.newestEars = ears
+}
+
 // routers builds every modality against stubs that answer in process. What a real vendor
 // makes of real audio is that provider package's own suite; what is under test here is the
 // HTTP surface in front of it.
 func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger *slog.Logger) *Streams {
-	s.ears = &quietSTT{emitter: stt.NewEmitter(64)}
 	hearing := sttrouter.NewRegistry()
-	hearing.Register("stub", func(routing.Spec) (stt.STT, error) { return s.ears, nil })
+	hearing.Register("stub", func(routing.Spec) (stt.STT, error) {
+		return &quietSTT{emitter: stt.NewEmitter(64), started: s.heard}, nil
+	})
 	hearing.Register("refusing", func(routing.Spec) (stt.STT, error) {
 		return &refusingSTT{emitter: stt.NewEmitter(64)}, nil
 	})
@@ -787,6 +876,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	hearing.Register("batch", func(routing.Spec) (stt.STT, error) { return batchOnlySTT{}, nil })
 	// A live model whose vendor is down: its socket fails to open the way batchOnlySTT's does.
 	hearing.Register("down", func(routing.Spec) (stt.STT, error) { return batchOnlySTT{}, nil })
+	hearing.Register("unconfigured", func(routing.Spec) (stt.STT, error) {
+		s.unconfiguredBuilds.Add(1)
+		return nil, errUnconfigured
+	})
 	// Reached by name only: no shortcut asks for Latin.
 	heard := routableConfig()
 	// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
@@ -796,7 +889,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	}, routing.ProviderConfig{Provider: "refusing", Model: handingOverModel, Languages: []string{"la"}, Realtime: true},
 		routing.ProviderConfig{Provider: "echoing", Model: "echoing-model", Languages: []string{"la"}, Realtime: true},
 		routing.ProviderConfig{Provider: "batch", Model: batchModel, Languages: []string{"la"}},
-		routing.ProviderConfig{Provider: "down", Model: downModel, Languages: []string{"la"}, Realtime: true})
+		routing.ProviderConfig{Provider: "down", Model: downModel, Languages: []string{"la"}, Realtime: true},
+		routing.ProviderConfig{Provider: "unconfigured", Model: unconfiguredModel, Languages: []string{"la"}, Realtime: true})
+	// As the deployment's own registries do: what cannot be built is listed unavailable.
+	hearing.Probe()
 	transcriber, err := sttrouter.New(sttrouter.Options{
 		Config: heard, Registry: hearing, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
 	})
@@ -877,7 +973,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	// A model that runs the tool calls its test queued in the suite's schedulingScript,
 	// one call per person who speaks, for the scheduling tools' tests.
 	reasoning.Register("scheduling", func(routing.Spec) (llmrouter.Provider, error) {
-		model := &schedulingModel{script: &s.schedulingScript}
+		model := &schedulingModel{script: &s.schedulingScript, failing: s.schedulingScript.failingTurns()}
 		s.scheduledMu.Lock()
 		s.scheduled = append(s.scheduled, model)
 		s.scheduledMu.Unlock()
@@ -905,10 +1001,14 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
 
-	s.voice = &recordingTTS{emitter: tts.NewEmitter(64)}
+	s.voice = &saidLog{}
 	speaking := ttsrouter.NewRegistry()
-	speaking.Register("stub", func(spec routing.Spec) (tts.TTS, error) { return s.voice.opened(spec.Voice), nil })
-	speaking.Register("plain", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaking.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
+		return &recordingTTS{emitter: tts.NewEmitter(64), said: s.voice, voice: spec.Voice, started: s.spoke}, nil
+	})
+	speaking.Register("plain", func(routing.Spec) (tts.TTS, error) {
+		return &recordingTTS{emitter: tts.NewEmitter(64), said: s.voice, started: s.spoke}, nil
+	})
 	ttsConfig := s.ttsConfig
 	if len(ttsConfig.Providers) == 0 {
 		ttsConfig = routableConfig()
@@ -1016,11 +1116,15 @@ func (s *RouterSuite) sessionManager(
 	if s.memoryStore != nil {
 		remembering = s.memoryStore
 	}
+	var metering *metered.Memory
+	if !s.memoryOff {
+		metering = metered.NewMemory(remembering, s.metering)
+	}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		LLM:           streams.LLM,
 		STT:           streams.STT,
 		TTS:           streams.TTS,
-		Memory:        metered.NewMemory(remembering, s.metering),
+		Memory:        metering,
 		Transcript:    s.transcripts,
 		Conversations: conversations,
 		Stream:        s.stream,
@@ -1102,6 +1206,19 @@ func (s *RouterSuite) authenticator() auth.Authenticator {
 	authenticator, err := auth.New(auth.APIKey, s.configs.Lookup(s.sealer))
 	s.Require().NoError(err)
 	return authenticator
+}
+
+// forgetPhoneVendors unsets every credential a phone vendor is opened with, so no suite
+// searches or buys at a real vendor whatever keys testenv loaded from the repo's .env. The
+// suites share one process, and a parallel suite cannot use t.Setenv, so they go for all.
+func (s *RouterSuite) forgetPhoneVendors() {
+	config, err := phone.DefaultConfig()
+	s.Require().NoError(err)
+	for _, vendor := range config.Vendors {
+		for _, name := range vendor.Credentials {
+			s.Require().NoError(os.Unsetenv(name))
+		}
+	}
 }
 
 // telephony serves the phone paths against the real vendor registry with no credentials
@@ -1761,6 +1878,14 @@ func (d testData) instructedAgent(instructions string) *string {
 			Name: "agent-" + d.suite.utils.uuid(), Instructions: &instructions,
 		}, &created))
 	return &created.Id
+}
+
+// briefed is request with instructions of its own, such as the brief of a customer somebody
+// practises on, returned with the brief.
+func (d testData) briefed(request CreateSessionRequest) (CreateSessionRequest, string) {
+	brief := "Be a customer whose order " + d.suite.utils.uuid() + " never came."
+	request.Instructions = &brief
+	return request, brief
 }
 
 // createUser is a client signed in as a new end user of the suite's app.

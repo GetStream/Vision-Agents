@@ -40,7 +40,16 @@ import (
 
 // settleFor is how long a test waits for an expectation to become true. The flow crosses
 // several goroutines, so the alternative to waiting is asserting on a race.
+//
+// A wait ends as soon as what it waits for happens, so this only bounds how long a broken
+// flow takes to fail. It must stay at or below the agent's fallback timers (defaultPatience,
+// 3s, converse.go:68, stops a tool the interruption should have stopped): a longer wait
+// is satisfied by the fallback and passes with the interruption broken.
 const settleFor = 3 * time.Second
+
+// closeFor is how long closesAtEnd gives the agent to close. Nothing there waits for a
+// fallback to cover for a broken flow, so it may outlast settleFor on a slow runner.
+const closeFor = 10 * time.Second
 
 // loopbackEdge is a call with no network in it: audio is pushed in from the test and
 // whatever the agent says is kept for inspection.
@@ -227,12 +236,13 @@ type stubLLM struct {
 	refuses error
 
 	// scripts are the responses handed out, keyed by the id the caller correlates on, so
-	// a test can write one as it goes and see which were abandoned.
+	// a test can write one as it goes and see which were abandoned. A second response for
+	// the same id, as a reply started before its ruling and the one asked in its place,
+	// takes the key.
 	scripts map[string]*llmtest.Script
 	order   []string
-	// handed is every response handed out. A reply started before its ruling and the one
-	// written in its place share a turn's id, so the later one replaces the earlier in
-	// scripts, and Close must still end both.
+	// handed is every response handed out, those that lost their key too, so Close ends
+	// each one: a response nobody ends keeps its reader, and the agent's Close, waiting.
 	handed []*llmtest.Script
 
 	// composes are the lines the model writes when the agent asks it for one (compose),
@@ -294,6 +304,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	s.scripts[params.ID] = script
 	s.handed = append(s.handed, script)
 	s.order = append(s.order, params.ID)
+	s.handed = append(s.handed, script)
 	reply := append([]string(nil), s.reply...)
 	thinking := append([]string(nil), s.thinking...)
 	first := len(s.asked) == 1
@@ -359,18 +370,40 @@ func (s *stubLLM) composeRequests() []llm.ResponseParams {
 
 // writes streams a piece of a response the test is writing itself.
 func (s *stubLLM) writes(responseID, delta string) {
-	s.script(responseID).OutputText(delta)
+	s.opened(responseID).OutputText(delta)
 }
 
 // finishes settles a response the test was writing itself.
 func (s *stubLLM) finishes(responseID string) {
-	s.script(responseID).Done()
+	s.opened(responseID).Done()
+}
+
+// opened is the script for responseID once Create has stored it. The request is recorded
+// before the script is stored, so a test that read the ID from requests() waits here for it.
+func (s *stubLLM) opened(responseID string) *llmtest.Script {
+	deadline := time.Now().Add(settleFor)
+	for {
+		if script := s.script(responseID); script != nil {
+			return script
+		}
+		if time.Now().After(deadline) {
+			panic("the response " + responseID + " was never opened")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func (s *stubLLM) script(responseID string) *llmtest.Script {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.scripts[responseID]
+}
+
+// abandoned is whether the response for responseID was abandoned. A response whose request
+// is recorded but whose script is not stored yet (Create has not come back) is not.
+func (s *stubLLM) abandoned(responseID string) bool {
+	script := s.script(responseID)
+	return script != nil && script.Abandoned()
 }
 
 func (s *stubLLM) Close() error {
@@ -802,6 +835,9 @@ type AgentSuite struct {
 
 	agent  *Agent
 	events *collector
+	// over is closed when the test ends, before its agent closes, so a fake tool still
+	// holding a call lets it go rather than hold the agent's shutdown.
+	over chan struct{}
 }
 
 func TestAgentSuite(t *testing.T) {
@@ -834,6 +870,7 @@ func (s *AgentSuite) SetupTest() {
 	s.voiceName = ""
 	s.logs = nil
 	s.backup = nil
+	s.over = make(chan struct{})
 	if s.agentID == "" {
 		s.agentID = "agent-1"
 	}
@@ -932,8 +969,7 @@ func (s *AgentSuite) joinText() {
 	s.Require().NoError(agent.Join(s.ctx))
 
 	s.events = collect(agent)
-	s.T().Cleanup(func() { <-s.events.done })
-	s.T().Cleanup(func() { _ = agent.Close() })
+	s.closesAtEnd(agent)
 }
 
 // join builds an agent over the stubs and joins the loopback call.
@@ -958,7 +994,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 
 	logger := slog.New(slog.DiscardHandler)
 	if s.logs != nil {
-		logger = slog.New(slog.NewJSONHandler(s.logs, nil))
+		logger = slog.New(slog.NewJSONHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 
 	transcription := sttrouter.NewRegistry()
@@ -1080,8 +1116,33 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	// The collector is waited on last, after the agent has closed its event channel, so no
 	// goroutine from this test outlives it.
 	s.events = collect(agent)
-	s.T().Cleanup(func() { <-s.events.done })
-	s.T().Cleanup(func() { _ = agent.Close() })
+	s.closesAtEnd(agent)
+}
+
+// closesAtEnd closes the agent once the test ends. It lets go of the fake tools first, then
+// gives the agent and its event stream closeFor to close, so a goroutine nothing will end
+// fails the test that left it instead of holding the package until go test's 10 m timeout.
+// The test's own T is kept, because the suite has moved back to the parent by cleanup.
+func (s *AgentSuite) closesAtEnd(agent *Agent) {
+	t, over, events := s.T(), s.over, s.events
+	t.Cleanup(func() {
+		select {
+		case <-over:
+		default:
+			close(over)
+		}
+		closed := make(chan struct{})
+		go func() {
+			_ = agent.Close()
+			<-events.done
+			close(closed)
+		}()
+		select {
+		case <-closed:
+		case <-time.After(closeFor):
+			t.Errorf("the agent did not close within %s: one of its goroutines waits on something nothing will end", closeFor)
+		}
+	})
 }
 
 // speak pushes a chunk of a participant's audio into the call.
@@ -1121,6 +1182,18 @@ func (s *AgentSuite) synthesises(turnID string) {
 func (s *AgentSuite) heardSomeOf(turnID string) {
 	s.synthesises(turnID)
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "none of the reply went out")
+}
+
+// replyWentOut waits until the reply the agent is saying has begun to go out. Words said
+// before that are the caller moving on from a reply they never heard, and words said after it
+// are them talking over it; a stub voice says a reply within microseconds, so a test about one
+// of the two waits for its side of that line rather than racing it.
+func (s *AgentSuite) replyWentOut() {
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.voiced == s.agent.speakingTurn
+	}, "the reply never went out")
 }
 
 func (s *AgentSuite) says(participant stt.Participant, text string) {
@@ -1503,7 +1576,8 @@ func (s *AgentSuite) TestASpeculativeReplyStartsBeforeTheRulingAndIsSpokenOnlyAf
 	s.eventually(func() bool { return len(s.model.requests()) == 1 },
 		"the reply should be asked for while the flow controller is still deciding")
 	s.Len(s.flow.requests(), 1)
-	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
 		"nothing may be spoken before the ruling says to answer")
 	s.Empty(s.agent.History(), "the words are not the conversation's until they are answered")
 
@@ -1531,7 +1605,8 @@ func (s *AgentSuite) TestASpeculativeReplyIsDroppedWhenTheRulingDoesNotAnswer() 
 
 	close(ruling)
 
-	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
 		"a reply to speech the agent was not meant to answer must never be heard")
 	s.Empty(s.agent.History())
 	s.Zero(countOf[Responding](s.reported()))
@@ -1585,7 +1660,8 @@ func (s *AgentSuite) TestAUnifiedReplyThatIgnoresItsTurnIsNeverHeard() {
 	s.says(participant, "mom where is my backpack")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply was never asked for")
-	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
 		"words the agent was not meant to answer must never be answered")
 	s.Empty(s.agent.History())
 }
@@ -1600,7 +1676,8 @@ func (s *AgentSuite) TestWithoutSpeculationTheReplyWaitsForTheRuling() {
 	s.says(participant, "hello")
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
 
-	s.Never(func() bool { return len(s.model.requests()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+	model := s.model
+	s.Never(func() bool { return len(model.requests()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
 		"without speculation the reply is only asked for once the ruling is in")
 	close(ruling)
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply never started")
@@ -1680,6 +1757,9 @@ func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller()
 	s.saysInVoice(participant, "what time is my flight", "A")
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
 		"the caller's own turn was never considered")
+	// The second voice waits for the caller's answer to be asked for: said while the first
+	// ruling is still coming back, it is more of the caller's turn and supersedes that ruling.
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
 
 	s.saysInVoice(participant, "mom where is my backpack", "B")
 	s.eventually(func() bool { return len(s.flow.requests()) == 2 },
@@ -1689,9 +1769,12 @@ func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller()
 	s.NotContains(asked[0].Input[0].Content, "different voice",
 		"the first voice heard on a track is the caller's")
 	s.Contains(asked[1].Input[0].Content, "different voice")
-	// The caller's answer is asked for on the turn's goroutine, once the flow decision is in,
-	// so it can still be on its way when the second voice has been considered.
-	s.eventually(func() bool { return len(s.model.requests()) > 0 }, "the caller was never answered")
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			decided, ok := event.(Decided)
+			return ok && decided.Kind == string(ActIgnore)
+		})
+	}, "the second voice was never ruled on")
 	s.Len(s.model.requests(), 1, "only the caller was answered")
 }
 
@@ -1869,6 +1952,39 @@ func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
 	s.Require().True(ok)
 	s.Equal(4, event.Before)
 	s.Equal(3, event.After)
+}
+
+func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
+	// τ³ telecom: get_customer_by_phone returned C1001, a compaction summarised the result
+	// away, and refuel_data with C1001 was refused as an ID no tool had given.
+	tools := []string{"get_customer_by_phone", "get_details_by_id", "refuel_data"}
+	looked := []llm.Message{
+		{Role: llm.User, Content: "It's five five five dash one two three dash two zero zero two."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_customer_by_phone"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"customer_id": "C1001", "full_name": "John Smith"}`},
+		{Role: llm.Assistant, Content: "I found your account, John."},
+	}
+	recent := []llm.Message{
+		{Role: llm.User, Content: "Can you add two gigabytes to my line?"},
+	}
+	emitter := NewEmitter(eventBuffer)
+	defer emitter.Close()
+	agent := &Agent{
+		emitter: emitter,
+		history: append(append([]llm.Message(nil), looked...), recent...),
+	}
+	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "John Smith asked for more data."})
+	refuel := llm.ToolCall{Name: "refuel_data", Arguments: `{"customer_id":"C1001","line_id":"L1002","gb_amount":2}`}
+
+	_, _, _, unfound := unfoundID(agent.History(), refuel, tools)
+	s.True(unfound, "the model's history no longer holds the result")
+	_, _, _, unfound = unfoundID(agent.record(), refuel, tools)
+	s.False(unfound, "the call's record still does")
+
+	summary := agent.History()[0]
+	agent.applyCompaction(harness.Compacted{Prefix: agent.History()[:2], Summary: "Still John Smith."})
+	s.Equal(append(append(append(append([]llm.Message(nil), looked...), summary), recent...), agent.History()...), agent.record(),
+		"what each compaction took is kept once, in the order it happened, ahead of the history")
 }
 
 func (s *AgentSuite) TestLateCompactionCannotReplaceAChangedPrefix() {
@@ -2096,7 +2212,7 @@ func (s *AgentSuite) TestMemoriesBelongToTheCustomerAndTheApp() {
 	s.join(true)
 
 	s.Equal(memory.Scope{
-		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		AppID: "acme", UserID: "acme", AgentID: s.agentID, RunID: "session-1",
 		Extra: map[string]string{"app_id": "router"},
 	}, s.remembers.scopedTo(), "the app id is always the customer, and a caller's own only narrows it")
 }
@@ -2151,7 +2267,7 @@ func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
 
 	s.eventually(func() bool { return len(s.remembers.remembered()) == 1 }, "nothing was remembered")
 	s.Equal(memory.Scope{
-		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		AppID: "acme", UserID: "acme", AgentID: s.agentID, RunID: "session-1",
 		Extra: map[string]string{"app_id": "router"},
 	}, s.remembers.writtenAs())
 	exchange := s.remembers.remembered()[0]
@@ -2479,7 +2595,8 @@ func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
 		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
 			countOf[Spoke](s.reported()) >= 1
 	}, "the first reply never finished")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
 		presenceTick+100*time.Millisecond, 10*time.Millisecond,
 		"a follow-up must not start while speech is still going out")
 
@@ -2507,7 +2624,8 @@ func (s *AgentSuite) TestAStuckPlayoutSignalDoesNotStrandAFollowUp() {
 		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
 			countOf[Spoke](s.reported()) >= 1
 	}, "the first reply never finished")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
 		presenceTick+100*time.Millisecond, 10*time.Millisecond,
 		"a fresh tail still gets time to drain")
 
@@ -3412,11 +3530,13 @@ func (s *AgentSuite) TestBargeInDropsQueuedSpeechBeforeTheVoiceInterruptReturns(
 
 	s.False(s.edge.SpeechPending(), "queued speech must be dropped before a blocking voice interruption returns")
 	s.Empty(s.edge.heard(), "audio queued before the interruption must be removed")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
 		100*time.Millisecond, 5*time.Millisecond, "the replacement reply must wait for the voice interruption")
 
 	s.synthesises(turnID)
-	s.Require().Never(func() bool { return len(s.edge.heard()) > 0 },
+	edge := s.edge
+	s.Require().Never(func() bool { return len(edge.heard()) > 0 },
 		100*time.Millisecond, 5*time.Millisecond, "late audio from the abandoned reply must stay unheard")
 
 	openVoice()
@@ -3809,7 +3929,8 @@ func (s *AgentSuite) TestAReplyThatPromisesNothingIsNotChasedUp() {
 	s.says(participant, "can you check an order")
 
 	s.eventually(func() bool { return s.spokenText("Which order is it") }, "the reply was not spoken")
-	s.Never(func() bool { return len(s.model.requests()) > 1 }, 200*time.Millisecond, 10*time.Millisecond,
+	model := s.model
+	s.Never(func() bool { return len(model.requests()) > 1 }, 200*time.Millisecond, 10*time.Millisecond,
 		"a question to the caller owes no tool")
 }
 
@@ -4773,6 +4894,57 @@ func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke()
 	}
 	_, repeated = answeredSinceCaller(failed, llm.ToolCall{Name: "lookup_appointment", Arguments: `{}`})
 	s.False(repeated, "a call that failed may be tried again")
+}
+
+func (s *AgentSuite) TestACallTheRouterHeldBackRunsOnceThePersonHasActed() {
+	echo := llm.ToolCall{ID: "1", Name: "crm__echo", Arguments: `{"text":"a joke"}`}
+	answered := func(result string) bool {
+		history := []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{echo}},
+			{Role: llm.ToolResult, ToolCallID: "1", Content: result},
+			{Role: llm.User, Content: "I pressed it, try again."},
+		}
+		_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: echo.Name, Arguments: echo.Arguments})
+		return repeated
+	}
+
+	// What internal/session answers a connector call it did not send with.
+	for _, status := range []string{"authorization_required", "scope_required", "credential_rejected",
+		"declined", "expired", "failed", "stopped", "unavailable"} {
+		s.False(answered(`{"status":"`+status+`","message":"Tell them to press it."}`), status)
+	}
+	s.True(answered(`{"status":"sent","message":"Nash heard the joke."}`), "a status that says it was done answers the call")
+
+	// A third-party write that was done and reports its new state under a generic status.
+	for _, result := range []string{
+		`{"status":"stopped","recording_id":"r1"}`,
+		`{"status":"declined","event_id":"e1"}`,
+		`{"status":"expired","id":"cs_1"}`,
+		`{"status":"failed","job_id":"j1","rows_written":120}`,
+		`{"status":"unavailable","message":"x","agent":"a1"}`,
+	} {
+		s.True(answered(result), result)
+	}
+}
+
+func (s *AgentSuite) TestAClaimIsNotBackedByACallTheRouterHeldBack() {
+	held := `{"status":"scope_required","message":"Tell them to press it."}`
+	done := `{"status":"sent","message":"Nash heard the joke."}`
+	history := func(result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.User, Content: "Send it."},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "crm__send_message"}}},
+			{Role: llm.ToolResult, ToolCallID: "1", Content: result},
+		}
+	}
+	s.False(calledInCall(history(held), "crm__send_message"))
+	s.True(calledInCall(history(done), "crm__send_message"))
+	s.False(changedSinceCaller(history(held), anyTool))
+	s.True(changedSinceCaller(history(done), anyTool))
+	s.False(toolRanSinceCaller(history(held)))
+	s.True(toolRanSinceCaller(history(done)))
+	s.False(succeeded(history(held), "crm__send_message", false))
+	s.True(succeeded(history(done), "crm__send_message", false))
 }
 
 func (s *AgentSuite) TestANameSpelledOutIsCalledWithTheNameAlone() {

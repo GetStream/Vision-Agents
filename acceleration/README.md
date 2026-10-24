@@ -111,15 +111,17 @@ the other commands that read them there.
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
+| `ROUTER_AUTH_KEK_V<n>_WRAPPED` | Version `n` of the keyring as base64 ciphertext a KMS wrapped with the AAD `router-kek-v<n>`, in place of `ROUTER_AUTH_KEK_V<n>`. The router unwraps it at startup with `ROUTER_AUTH_KMS_KEY` into the same key, so the rows it sealed still open. Setting both forms of one version is refused |
+| `ROUTER_AUTH_KMS_KEY`   | The Cloud KMS key that unwraps every `ROUTER_AUTH_KEK_V<n>_WRAPPED`, as `projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>`. The router calls Cloud KMS once at startup, with Application Default Credentials. Unset, only the plain keys are read. See «The key encryption key in Cloud KMS» |
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default, or `proxy`, the egress proxy (`internal/sandbox/egress`), which needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL`, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, and the proxy served by the same router (`ROUTER_CODE_SANDBOX_PROXY_ADDR`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`). Behind the proxy a sandbox reaches the proxy alone, and the proxy reaches its grants' hosts and the config's `allowed_domains`; a config with `network: true` and no `allowed_domains`, or with a `network_allow_list`, is refused when a session with a sandbox binding starts |
-| `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it |
+| `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it. A prefix belongs to one deployment (one Redis): routers that share a prefix delete each other's secrets, so never use `stg` locally |
 | `ROUTER_CODE_SANDBOX_PROXY_ADDR` | Where the router serves the sandbox egress proxy (`internal/sandbox/egress`), such as `:8091` on staging. Unset, the default, serves none. Needs Redis and connectors on |
 | `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY` | The PEM certificate and private key of the CA the proxy signs each granted host's certificate with. The router refuses to start with `ROUTER_CODE_SANDBOX_PROXY_ADDR` set and either missing, or a certificate setting that holds a private key. Only the certificate goes into a sandbox |
-| `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS |
+| `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
 | `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
@@ -168,6 +170,50 @@ the other commands that read them there.
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
 | `EXAMPLE_BASE_URL`      | Optional; points `cmd/agent`'s demo link at another deployment |
+
+### The key encryption key in Cloud KMS
+
+A hosted deployment can keep its key encryption key out of its secrets. Cloud KMS wraps the
+key once. At each start the router unwraps it with one `Decrypt` call and then seals and opens
+rows in memory, as before. The key is the same string, so every row it sealed still opens and
+the nodes of a deployment still agree. A laptop keeps the plain `ROUTER_AUTH_KEK`.
+
+1. Make a symmetric Cloud KMS key, and give the router's service account
+   `roles/cloudkms.cryptoKeyDecrypter` on that key only. `roles/cloudkms.admin` cannot decrypt
+   ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
+   opened 2026-10-22):
+
+   ```bash
+   gcloud kms keys add-iam-policy-binding KEY --keyring=KEYRING --location=LOCATION \
+     --member=serviceAccount:ROUTER_SERVICE_ACCOUNT --role=roles/cloudkms.cryptoKeyDecrypter
+   ```
+
+2. Wrap the current key as version 1, with the AAD `router-kek-v1` (`router-kek-v<n>` for
+   version `n`). `printf %s` adds no newline: the unwrapped key must be the same bytes as the
+   plain one, or no row opens. `gcloud kms encrypt` reads a `-` input from stdin and writes
+   the ciphertext to stdout for `-`
+   ([gcloud kms encrypt](https://docs.cloud.google.com/sdk/gcloud/reference/kms/encrypt),
+   opened 2026-10-22). The ciphertext is raw bytes, and the plaintext and the AAD cannot both
+   be stdin (`lib/surface/kms/encrypt.py` in Google Cloud SDK 580.0.0). GNU `base64` breaks
+   lines, so `tr` joins them. Whoever runs it needs `roles/cloudkms.cryptoKeyEncrypter` on the
+   key, which `roles/cloudkms.admin` lacks too
+   ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
+   opened 2026-10-22):
+
+   ```bash
+   printf %s "$ROUTER_AUTH_KEK" | gcloud kms encrypt --key=KEY --keyring=KEYRING \
+     --location=LOCATION --plaintext-file=- --ciphertext-file=- \
+     --additional-authenticated-data-file=<(printf %s router-kek-v1) | base64 | tr -d '\n'
+   ```
+
+3. Set `ROUTER_AUTH_KMS_KEY` to the key's resource name and `ROUTER_AUTH_KEK_V1_WRAPPED` to the
+   base64, then remove `ROUTER_AUTH_KEK` and `ROUTER_AUTH_KEK_V1`: a version set both ways is
+   refused. The wrapped value is ciphertext, so it can live in plain chart values.
+4. Restart. A start that cannot unwrap a key stops, and its error names the variable and the
+   KMS error, never the key or the ciphertext.
+
+To roll back, set `ROUTER_AUTH_KEK` to the same key again and unset `ROUTER_AUTH_KMS_KEY` and
+`ROUTER_AUTH_KEK_V1_WRAPPED`. The router then reads the plain key and calls no KMS.
 
 ## Authentication
 
@@ -1952,6 +1998,10 @@ Key rows, sealed secrets, OAuth access and refresh tokens, organizations and app
 exported. A moved deployment mints its own keys and re-authorizes its plugin connections.
 Voice recordings live in the bucket rather than in Postgres, so their rows move and copying
 the bucket is the operator's.
+
+A phone number still held moves only in E.164 form (`+15551234567`) and only while no other
+app here holds it; one given back moves as written. A moved number arrives detached: its
+trunk, route and call stay behind, so it is attached again where it arrives.
 
 Changes are captured by a trigger per table writing into `data_changes`, gated on a row in
 `data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting

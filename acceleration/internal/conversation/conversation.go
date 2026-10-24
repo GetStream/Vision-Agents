@@ -327,6 +327,8 @@ type FinishedReply struct {
 	Customer  string
 	CID       string
 	MessageID string
+	// CommandID is the command or follow-up the reply answers, if any (Message.CommandID).
+	CommandID string
 	Text      string
 	// Files are what the agent's own code made for the reply (Message.Files), stored in
 	// Stream Chat, which the bridge sends on as links (T62a, AI-921).
@@ -1459,6 +1461,10 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		unsaved = true
+	case agent.ToolUpdated:
+		if e.Verbatim || !c.acceptTurn(e.TurnID, false) || !reported(m, e.ID, e.Text) {
+			return
+		}
 	case agent.ToolRan:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -1488,7 +1494,9 @@ func (c *Conversation) Observe(event agent.Event) {
 				switch r.Status {
 				case "answered":
 					t.Summary = fmt.Sprintf("Verified %d source citations", len(r.Citations))
-				case "unavailable", "research_failed", "insufficient_evidence":
+				// A held connector call that was declined or stopped was never sent
+				// (session.holdForApproval).
+				case "unavailable", "declined", "stopped", "research_failed", "insufficient_evidence":
 					t.Status = "failed"
 					t.Summary = strings.TrimSpace(strings.ReplaceAll(r.Status+" "+r.Code, "_", " "))
 				}
@@ -1933,8 +1941,8 @@ func (c *Conversation) finishedReply(op operation) (FinishedReply, bool) {
 		!c.thread {
 		return FinishedReply{}, false
 	}
-	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, Text: m.Text,
-		Files: append([]sandbox.Attachment(nil), m.Files...)}, true
+	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, CommandID: m.CommandID,
+		Text: m.Text, Files: append([]sandbox.Attachment(nil), m.Files...)}, true
 }
 
 // retire takes a conversation released retireAfter ago, with nothing left to write, out of

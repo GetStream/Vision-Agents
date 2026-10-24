@@ -43,10 +43,10 @@ type Manifest struct {
 	// every manifest stored before it stays as it was.
 	Internal bool `yaml:"internal,omitempty" json:"internal,omitempty"`
 	// Sensitive is a connector whose tools read private data. An agent config that binds one
-	// binds no tool that sends data out (sensitiveBindingsComplaint in internal/api/configs.go),
-	// since a model that reads untrusted text could be steered into sending out what it read
-	// («Nessy as a connector» on AI-1538, change 13). Left out of the JSON when false, so the
-	// JSON of every manifest stored before it stays as it was.
+	// binds no tool that sends data out with no person's approval (sensitiveBindingsComplaint in
+	// internal/api/configs.go), since a model that reads untrusted text could be steered into
+	// sending out what it read («Nessy as a connector» on AI-1538, change 13). Left out of the
+	// JSON when false, so the JSON of every manifest stored before it stays as it was.
 	Sensitive bool `yaml:"sensitive,omitempty" json:"sensitive,omitempty"`
 	// Setup is what a person does at the provider before the first consent, as the plugin
 	// catalog's setup_url and setup_steps say it (internal/plugins/plugins.yaml), so a
@@ -84,8 +84,9 @@ type Manifest struct {
 	// email captured from the id_token must be the one the app's backend last said that user
 	// signs in with, or the grant is refused and nothing is stored. It needs a capture rule
 	// named email from the id_token (OpenID Connect Core 1.0 section 5.1's claim), so the
-	// scheme checks the token's iss, aud and exp. Left out of the JSON when false, so the JSON
-	// of every manifest stored before it stays as it was.
+	// scheme checks the token's iss, aud and exp. An email_verified capture, if any, must come
+	// from the id_token too. Left out of the JSON when false, so the JSON of every manifest
+	// stored before it stays as it was.
 	OwnerEmail bool `yaml:"owner_email,omitempty" json:"owner_email,omitempty"`
 	// RevokeOnDelete has a connection's delete ask the provider to revoke its grant
 	// (Scheme.Revoke) once the row is gone. A failure is logged and the delete stands. Opt-in
@@ -229,11 +230,22 @@ type SourceRule struct {
 	// is taken to send data out, so it is true (SendsOut). Left out of the JSON when nil, so
 	// the JSON of every manifest stored before it stays as it was.
 	Outbound *bool `yaml:"outbound,omitempty" json:"outbound,omitempty"`
+	// ReadOnlyTools are the source's tools that only read, by the name the source lists each
+	// under, for a server that offers tools that write beside them. Each has a vendor source
+	// beside it in the manifest. A tool left out may write. Left out of the JSON when empty,
+	// so the JSON of every manifest stored before it stays as it was.
+	ReadOnlyTools []string `yaml:"read_only_tools,omitempty" json:"read_only_tools,omitempty"`
 }
 
 // SendsOut reports whether a tool of the source may send data out of the conversation.
 func (r SourceRule) SendsOut() bool {
 	return r.Outbound == nil || *r.Outbound
+}
+
+// SendsOutTool reports whether the source's tool called name may send data out of the
+// conversation: unless the source says outbound: false or lists it in read_only_tools.
+func (r SourceRule) SendsOutTool(name string) bool {
+	return r.SendsOut() && !slices.Contains(r.ReadOnlyTools, name)
 }
 
 // ToolRule is what a manifest says about one tool of a source.
@@ -602,6 +614,12 @@ func (m Manifest) Validate() error {
 	if email := captures[OwnerEmailCapture]; m.OwnerEmail && (email.From != FromIDToken || email.Optional) {
 		fail("owner_email", "needs a capture rule named %s, from the id_token and not optional", OwnerEmailCapture)
 	}
+	// An email_verified the consent reads is the same id_token's word on that email, never the
+	// callback's (browser-controlled) or another source's. It may be optional: a provider that
+	// sends none leaves only the email to compare.
+	if verified, ok := captures[OwnerEmailVerified]; m.OwnerEmail && ok && verified.From != FromIDToken {
+		fail("owner_email", "a capture rule named %s must come from the id_token", OwnerEmailVerified)
+	}
 
 	for i, name := range m.Identity {
 		field := fmt.Sprintf("identity[%d]", i)
@@ -710,6 +728,17 @@ func (m Manifest) Validate() error {
 			if len(tool.NeedsScopes) == 0 {
 				fail(field+".needs_scopes", "is required: a tool that needs no scope is left out")
 			}
+		}
+		readOnly := map[string]bool{}
+		for j, tool := range source.ReadOnlyTools {
+			field := fmt.Sprintf("%s.read_only_tools[%d]", field, j)
+			if tool == "" {
+				fail(field, "is empty")
+			}
+			if readOnly[tool] {
+				fail(field, "%q is named twice", tool)
+			}
+			readOnly[tool] = true
 		}
 	}
 

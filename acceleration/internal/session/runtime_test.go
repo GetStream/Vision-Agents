@@ -4,7 +4,6 @@ package session
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -32,11 +31,6 @@ import (
 // runtimeSlice is how long a slice of runtime runs in these tests, so a session lives
 // through several in a fraction of a second.
 const runtimeSlice = 50 * time.Millisecond
-
-// refusingEdge is a call the agent cannot join.
-type refusingEdge struct{ *quietEdge }
-
-func (refusingEdge) Join(context.Context) error { return errors.New("the call refused the agent") }
 
 // RuntimeSuite opens sessions on a manager over Postgres and reads back what their time cost
 // and what they wrote down.

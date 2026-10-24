@@ -96,7 +96,8 @@ def sync_detailed(
     is the conversation the caller is having. A session belonging to somebody else is reported as not
     found rather than refused, so this is not a way to find out whose an id is.
     A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+    device asks the backend for, and the instructions of a running session, which a device is never
+    given.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -131,7 +132,8 @@ def sync(
     is the conversation the caller is having. A session belonging to somebody else is reported as not
     found rather than refused, so this is not a way to find out whose an id is.
     A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+    device asks the backend for, and the instructions of a running session, which a device is never
+    given.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -161,7 +163,8 @@ async def asyncio_detailed(
     is the conversation the caller is having. A session belonging to somebody else is reported as not
     found rather than refused, so this is not a way to find out whose an id is.
     A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+    device asks the backend for, and the instructions of a running session, which a device is never
+    given.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -194,7 +197,8 @@ async def asyncio(
     is the conversation the caller is having. A session belonging to somebody else is reported as not
     found rather than refused, so this is not a way to find out whose an id is.
     A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+    device asks the backend for, and the instructions of a running session, which a device is never
+    given.
 
     Args:
         id (str): The session, as returned when it was created.

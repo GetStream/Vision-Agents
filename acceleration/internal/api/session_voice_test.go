@@ -143,6 +143,35 @@ func (s *SessionVoiceSuite) TestADeviceStartsVoiceOnItsSessionsOwnCall() {
 	s.Equal(opened.Id, started.CallId)
 }
 
+// A device starting and stopping voice on its session is not given its brief.
+func (s *SessionVoiceSuite) TestADeviceTurningVoiceOnAndOffReadsNoBrief() {
+	request, _ := s.data.briefed(textSession(nil))
+	opened := s.serverClient.actingFor(s.client).createSession(request)
+
+	var started, stopped Session
+	s.Require().Equal(http.StatusOK, s.client.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/voice", nil, &started))
+	s.Require().Equal(http.StatusOK, s.client.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/voice", nil, &stopped))
+
+	s.Nil(started.Instructions)
+	s.Nil(stopped.Instructions)
+}
+
+// The control: a backend starting and stopping voice is given the brief.
+func (s *SessionVoiceSuite) TestABackendTurningVoiceOnAndOffReadsTheBrief() {
+	request, brief := s.data.briefed(textSession(nil))
+	opened := s.serverClient.createSession(request)
+
+	started := s.startVoice(opened.Id)
+	var stopped Session
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/voice", nil, &stopped))
+
+	s.Equal(brief, value(started.Instructions))
+	s.Equal(brief, value(stopped.Instructions))
+}
+
 func (s *SessionVoiceSuite) TestVoiceStartedAgainGoesBackToTheNamedCall() {
 	s.inOwnApp()
 	call := s.namedCall()

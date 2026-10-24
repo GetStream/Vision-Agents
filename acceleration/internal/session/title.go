@@ -137,7 +137,7 @@ func (s *Session) name(event Event) {
 
 func (s *Session) retitle(ctx context.Context, said []spoken) error {
 	n := s.naming
-	named, err := n.titles.ask(ctx, s.spec, s.id, said)
+	named, err := n.titles.ask(ctx, s.Spec(), s.id, said)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,9 @@ func (s *Session) retitle(ctx context.Context, said []spoken) error {
 	}
 
 	if n.titles.records != nil {
-		n.titles.records.Described(s.spec.CustomerID, s.id, named.Title, named.Description, nil)
+		s.afterRow(func() {
+			n.titles.records.Described(s.spec.CustomerID, s.id, named.Title, named.Description, nil)
+		})
 	}
 	return n.service.Describe(ctx, s.spec.CustomerID, s.spec.ConversationID, named.Title, named.Description)
 }
