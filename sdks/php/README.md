@@ -169,6 +169,43 @@ A tool runs while the session is watched, in its own fiber. What it throws is se
 model as the tool's error. `register` also takes `displayTitle:`, what the reply's tool call
 shows, and `executor: 'client'` for a tool a person's device runs instead.
 
+A tool can say how the backend treats its calls, and its callable can take the call it runs
+for as a second argument:
+
+```php
+use GetStream\VisionAgents\ToolCall;
+
+$agent->tools->register('book_flight', 'Book a flight for the caller', [
+    'type' => 'object',
+    'properties' => ['flight_id' => ['type' => 'string']],
+], function (array $args, ToolCall $call): string {
+    $call->update('checking seats');
+    $call->disallowInterruptions();
+    return $bookings->book($args['flight_id'], user: $call->user->id, key: $call->id);
+}, timeout: 20, approval: 'Book flight {flight_id}?');
+```
+
+- `interruptible: true` lets the caller talking over the agent cancel a call in flight. By
+  default it keeps running and the model is told it is still going.
+- `timeout:` is how long one call may take, in seconds, in place of the session's. A call that
+  takes longer fails. Only a tool waiting on Amp (`delay()`, Amp's HTTP client) is timed out
+  while it waits; a blocking call is not.
+- `approval:` is a question the caller answers before each call runs, where each `{name}` is
+  one of the tool's parameters. On a voice call the agent asks it out loud and waits 15
+  seconds for a yes, and `$call->approved` is then true. In writing it goes to the app. A
+  `{name}` that is not a parameter throws `ConfigurationException` when the tool is registered.
+
+`$call->id` is the id the model gave the call, which a call sent again keeps, so it is the key
+to make a side effect happen once; `sessionId`, `turnId`, `user` and `conversation` say where
+it came from. `update($text)` says how the call is going: a voice agent tells the caller in its
+own words once nobody is talking. `say($text)` has it say `$text` as written, which a
+speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call going from then
+on, for a write that must not stop halfway, and throws `CallNotHeldException` when the router
+had already cancelled it. A PHP fiber cannot be stopped from outside, so a call that was
+cancelled or ran out of time keeps running with `$call->cancelled()` true, and its answer is
+dropped; pass `$call->cancellation()` to Amp's I/O to have it stop with the call. A call the
+router addresses to another watcher (`run: false`) is left alone.
+
 ## Phone
 
 ```php
@@ -227,7 +264,9 @@ $dispatch->host($agent, toolTimeoutMs: 0); // 0: the router waits its default 30
 $dispatch->run();
 ```
 
-Each call runs in its own fiber. A refusal throws `HostingRefusedException`, and
+Each call runs in its own fiber. A hosted tool takes the same `interruptible:`, `timeout:` and
+`approval:` (asked on a voice call), can take its call, and is cancelled when the router gives
+up on it. A refusal throws `HostingRefusedException`, and
 `$dispatch->hosting` lists the agent ids the router accepted.
 
 ## Guests
