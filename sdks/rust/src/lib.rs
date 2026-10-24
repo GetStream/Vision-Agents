@@ -24,6 +24,7 @@ mod sessions;
 mod simulations;
 mod socket;
 mod stream;
+mod tool_call;
 mod tools;
 #[rustfmt::skip]
 pub mod types;
@@ -44,4 +45,5 @@ pub use sessions::{AgentRef, Memories, Query, Sessions};
 pub use simulations::{SimulationRuns, Simulations};
 pub use socket::{Frame, Incoming, Socket, SocketReceiver, SocketSender};
 pub use stream::{Call, DEFAULT_CALL_TYPE, STREAM_API, StreamApp};
+pub use tool_call::{ToolCall, ToolConversation, ToolUser};
 pub use tools::Tools;
