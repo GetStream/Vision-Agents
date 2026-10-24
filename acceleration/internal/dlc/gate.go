@@ -132,6 +132,21 @@ type Usage struct {
 // ErrRefused when it may not, or the refusal of money Admit answers. The order is money, the
 // opt-out, the sandbox, then the organization's channel limits (Limiting).
 func (g *Gate) Allow(ctx context.Context, customerID, channel, to string) error {
+	return g.allow(ctx, customerID, channel, to, Call{})
+}
+
+// Call is a Stream call, by its type and id.
+type Call struct {
+	Type, ID string
+}
+
+// AllowTransfer is Allow for a transfer of the call into to: the leg being transferred is
+// already up and is not counted against the calls allowed at once, so the human's new leg is.
+func (g *Gate) AllowTransfer(ctx context.Context, customerID, to string, into Call) error {
+	return g.allow(ctx, customerID, Voice, to, into)
+}
+
+func (g *Gate) allow(ctx context.Context, customerID, channel, to string, into Call) error {
 	admission, err := g.admit(ctx, customerID)
 	if err != nil {
 		return err
@@ -149,7 +164,7 @@ func (g *Gate) Allow(ctx context.Context, customerID, channel, to string) error 
 	if err := g.inSandbox(ctx, customerID, channel, to); err != nil {
 		return err
 	}
-	return g.withinTier(ctx, admission, customerID, channel, to)
+	return g.withinTier(ctx, admission, customerID, channel, to, into)
 }
 
 // inSandbox refuses what the sandbox does not allow an app none of whose use cases is approved.
@@ -191,12 +206,13 @@ func (g *Gate) Dialed(ctx context.Context, customerID, organizationID, to string
 	g.countChannel(ctx, customerID, organizationID, Voice, to, 0)
 }
 
-// Talked counts how long a call of an app's in organizationID lasted: its seconds against the
-// sandbox while it holds the app, and its minutes, rounded up, against the organization's
-// voice limit a day.
-func (g *Gate) Talked(ctx context.Context, customerID, organizationID string, lasted time.Duration) {
+// Talked counts how long a leg of an app's call in organizationID lasted: its seconds against
+// the sandbox while it holds the app, and for an outbound leg its minutes, rounded up, against
+// the organization's voice limit a day. Calls people make to the app's numbers are not what
+// that limit holds back, so they never use it up.
+func (g *Gate) Talked(ctx context.Context, customerID, organizationID string, outbound bool, lasted time.Duration) {
 	g.count(ctx, customerID, secondsField, int64(lasted.Seconds()))
-	if minutes := int64(math.Ceil(lasted.Minutes())); minutes > 0 {
+	if minutes := int64(math.Ceil(lasted.Minutes())); outbound && minutes > 0 {
 		g.countChannel(ctx, customerID, organizationID, Voice, "", minutes)
 	}
 }

@@ -536,8 +536,10 @@ func (s *Service) send(ctx context.Context, created *session.Session, owner rout
 			s.logger.Info("not writing back on a channel", "channel", line.Kind, "reason", err)
 			continue
 		}
-		s.say(ctx, line, provider, message, reply, owner)
-		s.gate.Sent(ctx, customerID, string(line.Kind), message.From)
+		// Only a reply the provider took counts against the day: an outage uses none of it.
+		if s.say(ctx, line, provider, message, reply, owner) {
+			s.gate.Sent(ctx, customerID, string(line.Kind), message.From)
+		}
 	}
 }
 
@@ -570,11 +572,15 @@ func answering(customerID, userID string) routing.Owner {
 		APIKey: routing.OriginPhoneInbound, UserID: userID, CallerKind: routing.CallerUser}}
 }
 
-func (s *Service) say(ctx context.Context, line Account, provider Provider, message Message, reply Reply, owner routing.Owner) {
+// say writes reply back to whoever sent message, and reports whether the provider took it; a
+// failure is logged.
+func (s *Service) say(ctx context.Context, line Account, provider Provider, message Message, reply Reply, owner routing.Owner) bool {
 	if err := s.deliver(ctx, line, provider, message.From, message.Thread, reply, owner); err != nil {
 		s.logger.Error("could not write back on a channel", "channel", line.Kind,
 			"number", line.E164, "error", err)
+		return false
 	}
+	return true
 }
 
 // hold serializes the turns for one person, so their second message carries on the

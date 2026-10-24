@@ -20,6 +20,11 @@ import (
 // wouldRefuseEvery is how often shadow logs the same organization's would-be refusal.
 const wouldRefuseEvery = time.Minute
 
+// RingWindow is how long a dialed leg nobody has answered counts as a call at once: longer than
+// the vendors ring by default, so a burst of dials is counted while it rings, and short enough
+// that a leg whose answer was never heard stops counting soon after.
+const RingWindow = 2 * time.Minute
+
 // withinTier refuses what the organization's channel limits do not allow, in enforce; in
 // shadow it logs it and allows. Each channel is its own key: a Linq text is checked as
 // imessage whichever of iMessage, RCS or SMS carries it.
@@ -27,7 +32,7 @@ const wouldRefuseEvery = time.Minute
 // The countries are checked first, then today's count, then today's recipients, then for a
 // call the calls up now. The daily counts fail open with Redis, as the sandbox's do; the
 // calls up are read from Postgres and fail open too, logged.
-func (g *Gate) withinTier(ctx context.Context, admission routing.Admission, customerID, channel, to string) error {
+func (g *Gate) withinTier(ctx context.Context, admission routing.Admission, customerID, channel, to string, into Call) error {
 	if !g.limiting() || admission.Limits == nil || admission.OrganizationID == "" {
 		return nil
 	}
@@ -35,7 +40,7 @@ func (g *Gate) withinTier(ctx context.Context, admission routing.Admission, cust
 	if !ok {
 		return nil
 	}
-	refusal, reason := g.overTier(ctx, admission.OrganizationID, tierNamed(admission.LimitsTier), channel, to, limits)
+	refusal, reason := g.overTier(ctx, admission.OrganizationID, tierNamed(admission.LimitsTier), channel, to, into, limits)
 	if refusal == nil {
 		return nil
 	}
@@ -58,8 +63,9 @@ func tierNamed(tier string) string {
 }
 
 // overTier is why the limits refuse a text or call to on channel, with a short reason for the
-// logs, or nil. Neither names the number.
-func (g *Gate) overTier(ctx context.Context, organization, tier, channel, to string, limits usage.ChannelLimits) (error, string) {
+// logs, or nil. Neither names the number. into is the call a transfer is into, whose leg up
+// already is not counted against the calls allowed at once.
+func (g *Gate) overTier(ctx context.Context, organization, tier, channel, to string, into Call, limits usage.ChannelLimits) (error, string) {
 	if len(limits.Countries) > 0 {
 		country := region.Of(to)
 		if country == "" {
@@ -77,16 +83,18 @@ func (g *Gate) overTier(ctx context.Context, organization, tier, channel, to str
 			if channel == Voice {
 				unit = "minutes"
 			}
-			return stack.Wrap(fmt.Errorf("%w: %s tier allows %d %s of %s a day, and today's are used up",
+			return stack.Wrap(fmt.Errorf("%w: %s tier allows %d %s of %s a day, and those of today (UTC) are used up",
 				ErrRefused, tier, *limits.PerDay, unit, channel)), "per_day"
 		}
 		if ok && limits.RecipientsPerDay != nil && !today.reached && today.recipients >= int64(*limits.RecipientsPerDay) {
-			return stack.Wrap(fmt.Errorf("%w: %s tier allows %s to %d recipients a day, and today's are all reached; "+
+			return stack.Wrap(fmt.Errorf("%w: %s tier allows %s to %d recipients a day, and that many were reached today (UTC); "+
 				"the ones already reached can still be", ErrRefused, tier, channel, *limits.RecipientsPerDay)), "recipients_per_day"
 		}
 	}
 	if channel == Voice && limits.Concurrent != nil {
-		up, err := g.store.OpenCallLegs(ctx, organization)
+		up, inCall, err := g.store.OpenCallLegs(ctx, organization, time.Now().Add(-RingWindow), into.Type, into.ID)
+		// The leg being transferred is one of the call's.
+		up -= min(inCall, 1)
 		if err != nil {
 			g.logger.Error("could not count the calls an organization has up, allowing", "organization", organization, "error", err)
 		} else if up >= *limits.Concurrent {

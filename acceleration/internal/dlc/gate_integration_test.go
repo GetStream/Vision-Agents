@@ -182,10 +182,7 @@ func (s *GateSuite) TestTheConcurrentCallLimitCountsOpenLegs() {
 	s.limit(map[string]usage.ChannelLimits{dlc.Voice: {Concurrent: new(1)}})
 	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123"))
 
-	s.leg(false)
-	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123"), "a leg still ringing is no call up")
-
-	up := s.leg(true)
+	up := s.leg(store.Outbound, time.Now(), true)
 	err := s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123")
 	s.ErrorIs(err, dlc.ErrRefused)
 	s.ErrorContains(err, "allows 1 calls at once")
@@ -197,17 +194,49 @@ func (s *GateSuite) TestTheConcurrentCallLimitCountsOpenLegs() {
 	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123"), "once it ended")
 }
 
-// leg opens an outbound leg of the organization's, its phone joined when up, and returns its
-// call.
-func (s *GateSuite) leg(up bool) string {
+func (s *GateSuite) TestDialsStillRingingCountAgainstTheCallsAtOnce() {
+	const limit = 3
+	s.limit(map[string]usage.ChannelLimits{dlc.Voice: {Concurrent: new(limit)}})
+	s.leg(store.Outbound, time.Now().Add(-dlc.RingWindow-time.Minute), false)
+	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123"), "a leg rung longer than any ring is not ringing")
+
+	for range limit {
+		s.Require().NoError(s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123"))
+		s.leg(store.Outbound, time.Now(), false)
+	}
+
+	err := s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123")
+	s.ErrorIs(err, dlc.ErrRefused, "the dial after the limit, with every leg before it still ringing")
+	s.ErrorContains(err, "allows 3 calls at once")
+}
+
+func (s *GateSuite) TestATransferDoesNotCountTheLegItTransfers() {
+	s.limit(map[string]usage.ChannelLimits{dlc.Voice: {Concurrent: new(1)}})
+	parent := s.leg(store.Inbound, time.Now(), true)
+
+	s.NoError(s.gate.AllowTransfer(s.ctx, s.app(), "+15125550123", dlc.Call{Type: "default", ID: parent}),
+		"the caller's leg is not counted against the human's")
+	s.ErrorIs(s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123"), dlc.ErrRefused,
+		"an inbound leg still counts against a new outbound call")
+	s.ErrorIs(s.gate.AllowTransfer(s.ctx, s.app(), "+15125550123", dlc.Call{Type: "default", ID: "another-call"}),
+		dlc.ErrRefused, "nor is another call's leg left out")
+
+	s.leg(store.Outbound, time.Now(), false)
+	s.ErrorIs(s.gate.AllowTransfer(s.ctx, s.app(), "+15125550123", dlc.Call{Type: "default", ID: parent}),
+		dlc.ErrRefused, "a human already ringing elsewhere counts")
+}
+
+// leg opens a leg of the organization's in a call of its own, dialed at dialed, its phone
+// joined when up, and returns its call.
+func (s *GateSuite) leg(direction string, dialed time.Time, up bool) string {
 	call := "call-" + uuid.NewString()
 	leg := store.CallLeg{
 		CustomerID: s.app(), OrganizationID: s.owner.OrganizationID, CallType: "default", CallID: call,
-		Vendor: "telnyx", Direction: store.Outbound, LocalNumber: "+15125550100", RemoteNumber: "+15125550123",
+		StreamSessionID: "session-" + call, Vendor: "telnyx", Direction: direction,
+		LocalNumber: "+15125550100", RemoteNumber: "+15125550123", DialedAt: dialed,
 	}
 	if up {
-		now := time.Now()
-		leg.StartedAt = &now
+		leg.StartedAt = &dialed
 	}
 	opened, err := s.money.Store.OpenCallLeg(s.ctx, &leg)
 	s.Require().NoError(err)
@@ -218,15 +247,24 @@ func (s *GateSuite) leg(up bool) string {
 func (s *GateSuite) TestCallMinutesCountRoundedUpAgainstTheDay() {
 	s.limit(map[string]usage.ChannelLimits{dlc.Voice: {PerDay: new(3)}})
 
-	s.gate.Talked(s.ctx, s.app(), s.owner.OrganizationID, 61*time.Second)
+	s.gate.Talked(s.ctx, s.app(), s.owner.OrganizationID, true, 61*time.Second)
 	s.Equal(int64(2), s.sent(dlc.Voice), "two started minutes")
 	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123"))
 
-	s.gate.Talked(s.ctx, s.app(), "", time.Second)
+	s.gate.Talked(s.ctx, s.app(), "", true, time.Second)
 	s.Equal(int64(3), s.sent(dlc.Voice), "the organization found by the app")
 	err := s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123")
 	s.ErrorIs(err, dlc.ErrRefused)
 	s.ErrorContains(err, "allows 3 minutes of voice a day")
+}
+
+func (s *GateSuite) TestInboundMinutesDoNotUseUpTheDay() {
+	s.limit(map[string]usage.ChannelLimits{dlc.Voice: {PerDay: new(1)}})
+
+	s.gate.Talked(s.ctx, s.app(), s.owner.OrganizationID, false, time.Hour)
+
+	s.Zero(s.sent(dlc.Voice))
+	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123"), "a busy support line still dials out")
 }
 
 func (s *GateSuite) TestACallsRecipientIsCountedWhenDialed() {
