@@ -115,6 +115,14 @@ type Lifecycle struct {
 	StoppedDelete time.Duration
 }
 
+// Slots bound how many sandboxes may run at once. A sandbox takes a slot before it is made or
+// started again, and gives it back once it stops running, for idling or because it is gone.
+type Slots interface {
+	// Take holds a slot for a sandbox about to run, or refuses it with why; release gives it
+	// back, and is safe to call twice.
+	Take(ctx context.Context) (release func(), err error)
+}
+
 // Sandbox runs code somewhere isolated from everything that matters.
 type Sandbox interface {
 	// Run executes a piece of Python and returns what it printed, and the files named in
