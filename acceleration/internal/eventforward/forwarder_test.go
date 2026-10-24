@@ -5,9 +5,11 @@ package eventforward
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -263,6 +265,64 @@ func (s *ForwarderSuite) TestACustomerWithoutDestinationsQueuesNothing() {
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM connector_event_deliveries d "+
 		"JOIN connector_event_destinations t ON t.id = d.destination_id WHERE t.customer_id LIKE 'nobody-%'").Scan(&rows))
 	s.Zero(rows)
+}
+
+// The router's own events, such as a warning that an organization's credit is running out, go
+// to the stream destinations of the organization's apps, each signed with its destination's
+// own secret, by the same worker a provider's events go through.
+func (s *ForwarderSuite) TestStreamEventsReachAStreamDestination() {
+	type received struct {
+		header http.Header
+		body   []byte
+	}
+	got := make(chan received, 4)
+	target := s.destination(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got <- received{header: r.Header.Clone(), body: body}
+	})
+	forwarder := s.forwarder(target.Client())
+	organization, app := "organization-"+uuid.NewString(), "customer-"+uuid.NewString()
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, app, organization))
+	destination := store.EventDestination{
+		ID: uuid.NewString(), CustomerID: app, ConnectorID: store.StreamSource, URL: target.URL, Forward: store.ForwardAll,
+	}
+	secret, err := forwarder.NewSecret(destination.CustomerID, destination.ConnectorID, destination.ID)
+	s.Require().NoError(err)
+	destination.SecretSealed, destination.KEKVersion = secret.Sealed, secret.Version
+	s.Require().NoError(s.store.CreateEventDestination(s.ctx, &destination))
+	notice := store.BalanceNotice{OrganizationID: organization, Kind: store.NoticeBalanceLow, GrantedMicros: 10, BalanceMicros: 4, ThresholdMicros: 5}
+	delivery := store.EventDelivery{
+		ID: "balance:" + organization + ":balance_low:10", Headers: map[string]string{"Content-Type": "application/json"}, NextAttemptAt: time.Now(),
+	}
+
+	sent, queued, err := s.store.NoteBalance(s.ctx, notice, delivery, func(appID string) ([]byte, error) {
+		return []byte(`{"type":"account.balance_low","data":{"app_id":"` + appID + `"}}`), nil
+	})
+	s.Require().NoError(err)
+	s.True(sent)
+	s.Equal(1, queued)
+	forwarder.Wake()
+
+	var arrived received
+	select {
+	case arrived = <-got:
+	case <-time.After(5 * time.Second):
+		s.FailNow("the stream destination got nothing")
+	}
+	s.JSONEq(`{"type":"account.balance_low","data":{"app_id":"`+app+`"}}`, string(arrived.body), "the app's own body")
+	s.Equal(delivery.ID, arrived.header.Get(headerID))
+	s.Equal("application/json", arrived.header.Get("Content-Type"))
+	at, err := strconv.ParseInt(arrived.header.Get(headerTimestamp), 10, 64)
+	s.Require().NoError(err)
+	signed, err := sign(delivery.ID, time.Unix(at, 0), arrived.body, secret.Plain)
+	s.Require().NoError(err)
+	s.Equal(signed, arrived.header.Get(headerSignature), "signed with the destination's own secret")
+
+	again, queued, err := s.store.NoteBalance(s.ctx, notice, delivery, func(string) ([]byte, error) { return []byte(`{}`), nil })
+	s.Require().NoError(err)
+	s.False(again, "the same warning is written once")
+	s.Zero(queued)
+	s.Never(func() bool { return len(got) > 0 }, 300*time.Millisecond, 20*time.Millisecond, "and sent once")
 }
 
 // forwarder is a started forwarder whose retries wait a millisecond, sending through client;

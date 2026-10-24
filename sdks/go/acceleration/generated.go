@@ -10975,6 +10975,8 @@ type ClientInterface interface {
 	//
 	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
 	//
+	// The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -10985,6 +10987,8 @@ type ClientInterface interface {
 	// CreateConnectorEventDestination Forward a connector's provider events to a URL
 	//
 	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -14628,6 +14632,8 @@ func (c *Client) ListConnectorEventDestinations(ctx context.Context, id string, 
 //
 // Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
 //
+// The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -14648,6 +14654,8 @@ func (c *Client) CreateConnectorEventDestinationWithBody(ctx context.Context, id
 // CreateConnectorEventDestination Forward a connector's provider events to a URL
 //
 // Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -30931,6 +30939,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
 	//
+	// The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -30941,6 +30951,8 @@ type ClientWithResponsesInterface interface {
 	// CreateConnectorEventDestinationWithResponse Forward a connector's provider events to a URL
 	//
 	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -58417,6 +58429,8 @@ func (c *ClientWithResponses) ListConnectorEventDestinationsWithResponse(ctx con
 //
 // Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
 //
+// The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -58433,6 +58447,8 @@ func (c *ClientWithResponses) CreateConnectorEventDestinationWithBodyWithRespons
 // CreateConnectorEventDestinationWithResponse Forward a connector's provider events to a URL
 //
 // Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //

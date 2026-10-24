@@ -54,6 +54,7 @@ worker (every router)                       off the request
 - **A claimed row is one router's.** The claim ranks due rows from the statement's start, then locks them and checks `next_attempt_at` again on the locked row: a row another router leased in between is skipped (`TestTwoRoutersClaimingAtOnceTakeEachDeliveryOnce`).
 - **Every destination URL goes through egress.** `CheckURL` at create (`egress.ValidatePublicHTTPSURL`), and the worker's client is `egress.NewClient`. Redirects are never followed.
 - **Only a provider app's route forwards.** A connector's own route is the operator's app, whose events are no one customer's.
+- **The router's own events come from the built-in source `stream`.** A destination whose connector id is `stream` (`store.StreamSource`) needs no provider app, and is created, listed, rotated and deleted with the same operations. The policies' money loop queues `account.balance_low` and `account.balance_exhausted` for every `stream` destination of every app of the organization, whatever its forward, in the transaction that writes the warning's `balance_notices` row (`store.NoteBalance`), so one warning is queued once however many routers saw it. It wakes the worker (`Forwarder.Wake`); the send is this package's, signing included.
 - **The channel bridge does not change by mode.** A message is written to its thread channel whenever one agent config binds the connection, in either mode. Mode C is a connection no agent config binds plus a destination of `all`.
 
 ## Open

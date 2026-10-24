@@ -13320,15 +13320,17 @@ paths:
       description: |-
         Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
 
+        The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
+
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: createConnectorEventDestination
       parameters:
-        - description: The connector, such as slack_bot.
+        - description: The connector, such as slack_bot, or stream for the router's own events.
           in: path
           name: id
           required: true
           schema:
-            description: The connector, such as slack_bot.
+            description: The connector, such as slack_bot, or stream for the router's own events.
             type: string
       requestBody:
         content:

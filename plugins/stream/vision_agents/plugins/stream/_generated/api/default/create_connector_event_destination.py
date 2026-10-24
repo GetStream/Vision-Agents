@@ -113,10 +113,17 @@ def sync_detailed(
     provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries
     the destination's signing secret, once.
 
+    The id `stream` is the router's own events, which need no provider app: `account.balance_low` once
+    the organization's balance is at or below its warning threshold, and `account.balance_exhausted`
+    once it is at or below nothing, each sent once per crossing to every `stream` destination of every
+    app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type,
+    timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id
+    is `balance:<organization>:<kind>:<granted_micros>`.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The connector, such as slack_bot.
+        id (str): The connector, such as slack_bot, or stream for the router's own events.
         body (ConnectorEventDestinationRequest): An event destination to create. An unknown field
             is refused rather than ignored.
 
@@ -152,10 +159,17 @@ def sync(
     provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries
     the destination's signing secret, once.
 
+    The id `stream` is the router's own events, which need no provider app: `account.balance_low` once
+    the organization's balance is at or below its warning threshold, and `account.balance_exhausted`
+    once it is at or below nothing, each sent once per crossing to every `stream` destination of every
+    app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type,
+    timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id
+    is `balance:<organization>:<kind>:<granted_micros>`.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The connector, such as slack_bot.
+        id (str): The connector, such as slack_bot, or stream for the router's own events.
         body (ConnectorEventDestinationRequest): An event destination to create. An unknown field
             is refused rather than ignored.
 
@@ -186,10 +200,17 @@ async def asyncio_detailed(
     provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries
     the destination's signing secret, once.
 
+    The id `stream` is the router's own events, which need no provider app: `account.balance_low` once
+    the organization's balance is at or below its warning threshold, and `account.balance_exhausted`
+    once it is at or below nothing, each sent once per crossing to every `stream` destination of every
+    app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type,
+    timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id
+    is `balance:<organization>:<kind>:<granted_micros>`.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The connector, such as slack_bot.
+        id (str): The connector, such as slack_bot, or stream for the router's own events.
         body (ConnectorEventDestinationRequest): An event destination to create. An unknown field
             is refused rather than ignored.
 
@@ -223,10 +244,17 @@ async def asyncio(
     provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries
     the destination's signing secret, once.
 
+    The id `stream` is the router's own events, which need no provider app: `account.balance_low` once
+    the organization's balance is at or below its warning threshold, and `account.balance_exhausted`
+    once it is at or below nothing, each sent once per crossing to every `stream` destination of every
+    app of the organization, whatever its forward. A top-up or a grant re-arms them. The body is `{type,
+    timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id
+    is `balance:<organization>:<kind>:<granted_micros>`.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The connector, such as slack_bot.
+        id (str): The connector, such as slack_bot, or stream for the router's own events.
         body (ConnectorEventDestinationRequest): An event destination to create. An unknown field
             is refused rather than ignored.
 

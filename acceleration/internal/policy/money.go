@@ -291,6 +291,11 @@ type account struct {
 	// them as it counts this router's holds.
 	remote       map[string]int64
 	remoteGrants map[int64]int64
+	// warning is the balance the organization's policy warns at, over its tier's, as the
+	// decisions in use last said; nil where it sets none. noticed is, by kind, what the
+	// organization had been granted when the last warning of that kind was written.
+	warning *int64
+	noticed map[string]int64
 }
 
 // subjectSpend is one subject's spend in the current window of each interval, as last read.
@@ -429,12 +434,14 @@ func (m *money) every(ctx context.Context, interval time.Duration, kick <-chan s
 // none, that a decision in use names and has none.
 func (m *money) inUse(now time.Time) []string {
 	keys := map[string]bool{}
+	warnings := map[string]*int64{}
 	for app, decided := range m.enforcer.inUse(now) {
 		key := decided.organization
 		if key == "" {
 			key = appAccount(app)
 		}
 		keys[key] = true
+		warnings[key] = decided.balanceWarning
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -443,6 +450,7 @@ func (m *money) inUse(now time.Time) []string {
 			if acct.used.Before(now) {
 				acct.used = now
 			}
+			acct.warning = warnings[key]
 			continue
 		}
 		if now.Sub(acct.used) > m.settings.Idle && len(acct.holds) == 0 && acct.reading == nil {
@@ -458,14 +466,15 @@ func (m *money) inUse(now time.Time) []string {
 	}
 	for key := range keys {
 		if m.accounts[key] == nil {
-			m.accounts[key] = &account{wanted: now, used: now}
+			m.accounts[key] = &account{wanted: now, used: now, warning: warnings[key]}
 		}
 	}
 	return slices.Sorted(mapsKeys(keys))
 }
 
 // pass reads the standing of every organization in use from the usage service, in calls of
-// standingsChunk, then lets go of the holds the reads now count.
+// standingsChunk, then lets go of the holds the reads now count, and warns each organization
+// whose balance went down to low or exhausted (notify).
 func (m *money) pass(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, passTimeout)
 	defer cancel()
@@ -475,10 +484,16 @@ func (m *money) pass(ctx context.Context) {
 	}
 	readFrom := time.Now()
 	standings, landed, unread := m.standings(ctx, keys)
+	m.notify(ctx, m.landed(keys, standings, landed, unread, readFrom))
+}
 
+// landed keeps the standings a pass read, lets go of the holds they count, and returns the
+// warnings now due.
+func (m *money) landed(keys []string, standings map[string]usage.Standing, landed map[string]time.Time, unread map[string]bool, readFrom time.Time) []notice {
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var due []notice
 	for _, key := range keys {
 		acct := m.accounts[key]
 		if acct == nil {
@@ -496,7 +511,11 @@ func (m *money) pass(ctx context.Context) {
 			acct.standingFrom = readFrom
 		}
 		m.release(key, acct, now)
+		if warning, ok := m.noticeDue(key, acct); ok && !unread[key] {
+			due = append(due, warning)
+		}
 	}
+	return due
 }
 
 // standings reads the organizations' standings, each with the tier its last request carried,
