@@ -42,6 +42,8 @@ module GetStream
         @agents = {}
         @hosted = []
         @threads = []
+        # The hosted calls running, by session and id, which is what tool_cancel names.
+        @hosted_calls = {}
         # The calls and messages being handled, which is what the router counts against
         # capacity. Hosted tool calls are not.
         @handling = 0
@@ -155,6 +157,11 @@ module GetStream
         when "call" then handle("call", frame["work_id"].to_s, InboundCall.from(frame))
         when "message" then handle("message", frame["work_id"].to_s, InboundMessage.from(frame))
         when "tool_call" then run_hosted(frame)
+        when "tool_held" then @lock.synchronize { @hosted_calls.values.find { |call| call.id == frame["id"].to_s }&.held! }
+        when "tool_cancel"
+          # A Ruby thread cannot be stopped safely from outside, so the tool is left to finish
+          # and its answer is dropped, unless it asked to be held.
+          @lock.synchronize { @hosted_calls[hosted_key(frame)]&.cancel! }
         when "hosting_refused"
           # A worker whose tools were refused is one nobody will call; saying so beats sitting
           # connected looking healthy.
@@ -176,19 +183,34 @@ module GetStream
         id = frame["id"].to_s
         name = frame["name"].to_s
         tools = @lock.synchronize { @hosted.map { |offer| offer[:tools] }.find { |set| set.include?(name) } }
-        return tell(type: "tool_result", id: id, error: "this worker does not run #{name}") unless tools
+        # id is tool_call_id under the name a router from before it reads.
+        return tell(type: "tool_result", tool_call_id: id, id: id, error: "this worker does not run #{name}") unless tools
 
+        key = hosted_key(frame)
+        call = ToolCall.from(frame, send: ->(sent) { tell(sent) })
+        # Held before the thread starts, so a tool quicker than this line is still found.
+        @lock.synchronize { @hosted_calls[key] = call }
         thread = Thread.new do
           result = begin
-            { output: tools.call(name, frame["arguments"]) }
+            { output: tools.call(name, frame["arguments"], call) }
           rescue StandardError => e
             { error: e.message }
           end
-          tell({ type: "tool_result", id: id }.merge(result))
+          # A call the router cancelled has no answer to give, since the router gave up on it;
+          # one out of time still says so.
+          tell({ type: "tool_result", tool_call_id: id, id: id }.merge(result)) unless call.cancelled? && result[:output]
         ensure
-          @lock.synchronize { @threads.delete(Thread.current) }
+          @lock.synchronize do
+            @threads.delete(Thread.current)
+            @hosted_calls.delete(key)
+          end
         end
         @lock.synchronize { @threads << thread }
+      end
+
+      # A hosted call's id within its session: two sessions' models can pick the same one.
+      def hosted_key(frame)
+        "#{frame['session_id']}/#{frame['id']}"
       end
 
       def tell(frame)
