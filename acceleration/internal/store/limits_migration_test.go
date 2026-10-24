@@ -167,10 +167,33 @@ func (s *LimitsMigrationSuite) TestARowFromBeforeTheGrantsColumnNamesNoGrant() {
 	s.Equal("{}", grants)
 	var valid bool
 	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx, `SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
-		WHERE c.relname = 'requests_limit_grants_idx'`).Scan(&valid))
+		WHERE c.relname = 'requests_limit_grants_started_idx'`).Scan(&valid))
 	s.True(valid)
 	s.Require().NoError(goose.DownToContext(s.ctx, s.db.DB().DB, ".", limitsTable))
 	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", limitGrantsColumn), "and it applies again")
+}
+
+func (s *LimitsMigrationSuite) TestTheGrantsMigrationDropsTheGINIndexOfItsEarlierRevision() {
+	indexes := func() []string {
+		var names []string
+		s.Require().NoError(s.db.DB().NewRaw("SELECT indexname FROM pg_indexes WHERE indexname LIKE 'requests_limit_grants%' ORDER BY indexname").
+			Scan(s.ctx, &names))
+		return names
+	}
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", limitsTable))
+	// The schema as the migration's earlier revision left it.
+	_, err := s.db.DB().ExecContext(s.ctx, "ALTER TABLE requests ADD COLUMN limit_grants BIGINT[] NOT NULL DEFAULT '{}'")
+	s.Require().NoError(err)
+	_, err = s.db.DB().ExecContext(s.ctx, "CREATE INDEX requests_limit_grants_idx ON requests USING GIN (limit_grants)")
+	s.Require().NoError(err)
+
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", limitGrantsColumn))
+	s.Equal([]string{"requests_limit_grants_started_idx"}, indexes())
+
+	_, err = s.db.DB().ExecContext(s.ctx, "CREATE INDEX requests_limit_grants_idx ON requests USING GIN (limit_grants)")
+	s.Require().NoError(err)
+	s.Require().NoError(goose.DownToContext(s.ctx, s.db.DB().DB, ".", limitsTable))
+	s.Empty(indexes(), "down drops both")
 }
 
 // trimmed is a limit without what the database chose for it.

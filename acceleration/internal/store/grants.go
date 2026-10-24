@@ -424,7 +424,7 @@ var ErrReconcileBusy = errors.New("store: another router is reconciling grant us
 // that are not counted yet: a row whose writer wrote it to its shard and dropped, or stopped
 // before, counting it in the shared database. Each shard is read on from where the last
 // reconcile of it got (limit_grant_reconciles), less GrantReconcileOverlap, in started_at
-// order (requests_limit_grants_idx). One router reconciles at a time, under an advisory lock
+// order (requests_limit_grants_started_idx). One router reconciles at a time, under an advisory lock
 // in the shared database: another finds ErrReconcileBusy. With one database the writer counts
 // every row as it writes it, so there is nothing to do. It says how many it counted.
 func (s *Store) ReconcileGrantUses(ctx context.Context) (int, error) {
@@ -462,6 +462,12 @@ func (s *Store) ReconcileGrantUses(ctx context.Context) (int, error) {
 	return total, nil
 }
 
+// reconcileGrantsQuery is one page of a shard's rows naming a grant, on from (started_at, id),
+// read by requests_limit_grants_started_idx.
+const reconcileGrantsQuery = "SELECT id, started_at, usage_id, cost_micros, limit_grants FROM requests " +
+	"WHERE limit_grants <> '{}' AND (started_at, id) > (?, ?) AND billable AND cost_micros > 0 AND usage_id IS NOT NULL " +
+	"ORDER BY started_at, id LIMIT ?"
+
 // reconcileShard is ReconcileGrantUses for one shard, read up to now.
 func (s *Store) reconcileShard(ctx context.Context, shard bun.IDB, name string, now time.Time) (int, error) {
 	var mark time.Time
@@ -483,9 +489,7 @@ func (s *Store) reconcileShard(ctx context.Context, shard bun.IDB, name string, 
 			CostMicros  int64     `bun:"cost_micros"`
 			LimitGrants []int64   `bun:"limit_grants,array"`
 		}
-		err := shard.NewRaw("SELECT id, started_at, usage_id, cost_micros, limit_grants FROM requests "+
-			"WHERE limit_grants <> '{}' AND (started_at, id) > (?, ?) AND billable AND cost_micros > 0 AND usage_id IS NOT NULL "+
-			"ORDER BY started_at, id LIMIT ?", after, afterID, grantReconcilePage).Scan(ctx, &rows)
+		err := shard.NewRaw(reconcileGrantsQuery, after, afterID, grantReconcilePage).Scan(ctx, &rows)
 		if err != nil {
 			return counted, fmt.Errorf("shard %s: %w", name, err)
 		}

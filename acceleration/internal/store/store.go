@@ -202,7 +202,7 @@ var usageIndexes = []struct{ name, create string }{
 	{"requests_category_spend_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_category_spend_idx ON requests (customer_id, started_at) " +
 		"INCLUDE (cost_micros, usage_categories) WHERE billable AND usage_categories <> '{}'"},
 	// The rows naming a grant, which a reconcile counts again (20261112121000_requests_limit_grants.sql).
-	{"requests_limit_grants_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_idx ON requests (started_at, id) " +
+	{"requests_limit_grants_started_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_started_idx ON requests (started_at, id) " +
 		"WHERE limit_grants <> '{}'"},
 }
 

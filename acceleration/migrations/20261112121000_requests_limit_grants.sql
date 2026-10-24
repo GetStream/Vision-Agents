@@ -38,10 +38,14 @@ END $$;
 
 -- Built without stopping writes, and only over the rows that name a grant, for the reconcile
 -- that counts a row the writer wrote and could not count, reading on from where it last got.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_idx ON requests (started_at, id)
+-- An earlier revision of this migration built a GIN index over limit_grants under the name
+-- requests_limit_grants_idx, which nothing reads.
+DROP INDEX CONCURRENTLY IF EXISTS requests_limit_grants_idx;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_started_idx ON requests (started_at, id)
     WHERE limit_grants <> '{}';
 
 -- +goose Down
+DROP INDEX CONCURRENTLY IF EXISTS requests_limit_grants_started_idx;
 DROP INDEX CONCURRENTLY IF EXISTS requests_limit_grants_idx;
 -- +goose StatementBegin
 DO $$
