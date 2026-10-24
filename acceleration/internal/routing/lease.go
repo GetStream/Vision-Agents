@@ -42,10 +42,11 @@ type Lease struct {
 // provider for its owner, and keeps renewing it until Stop. A recorder that holds nothing, or a
 // provider that bills nothing, leases nothing.
 func StartLease(recorder *Recorder, config ProviderConfig, owner Owner, kind, id string, minute pricing.Quantities) *Lease {
-	return startLease(recorder, config, owner, kind, id, minute, LeaseRenew, LeaseTTL)
+	return StartLeaseEvery(recorder, config, owner, kind, id, minute, LeaseRenew, LeaseTTL)
 }
 
-func startLease(recorder *Recorder, config ProviderConfig, owner Owner, kind, id string, minute pricing.Quantities, every, ttl time.Duration) *Lease {
+// StartLeaseEvery is StartLease renewing every every, for ttl each time.
+func StartLeaseEvery(recorder *Recorder, config ProviderConfig, owner Owner, kind, id string, minute pricing.Quantities, every, ttl time.Duration) *Lease {
 	if recorder == nil || !recorder.writer.records() || !recorder.Billable(config) {
 		return nil
 	}

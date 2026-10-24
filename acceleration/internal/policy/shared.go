@@ -25,7 +25,7 @@ import (
 var ErrSpendCheckUnavailable = errors.New("policy: could not share spend with the other routers; retry shortly")
 
 // errUnshared is the refusal of billable work while holds go unshared.
-var errUnshared = refusedWith(ErrSpendCheckUnavailable, "could not share spend with the other routers; retry shortly")
+var errUnshared = uncheckedWith(ErrSpendCheckUnavailable, "could not share spend with the other routers; retry shortly")
 
 // holdPrefix starts the key of a subject's shared holds, in the same cluster slot as its
 // counters: hold:{<organization>}:<subject>:<ids>.

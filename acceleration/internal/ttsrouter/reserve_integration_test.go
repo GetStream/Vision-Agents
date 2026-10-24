@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"testing"
 	"time"
 
@@ -42,6 +43,28 @@ func TestClosingASessionReleasesWhatItsUtterancesHeld(t *testing.T) {
 
 	require.Eventually(t, func() bool { return money.Spend(t, owner) == nil }, 2*time.Second, 10*time.Millisecond,
 		"an utterance that never completed holds nothing once the session is closed")
+}
+
+func TestClosingASessionNobodyReadsStillReleasesWhatItHeld(t *testing.T) {
+	money := policytest.Start(t, "ttsrouter_reserve")
+	session, provider, owner := reservingSession(t, money, 1_000_000)
+	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "a"}))
+	// The caller stopped reading: the provider's events fill every buffer between them.
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		for i := range 500 {
+			provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "other-" + strconv.Itoa(i)})
+		}
+	}()
+	require.Eventually(t, func() bool { return len(session.Events()) == cap(session.Events()) }, 2*time.Second, 5*time.Millisecond)
+	require.ErrorIs(t, money.Spend(t, owner), policy.ErrNoCredits)
+
+	require.NoError(t, session.Close())
+
+	require.Eventually(t, func() bool { return money.Spend(t, owner) == nil }, 2*time.Second, 10*time.Millisecond,
+		"what the unfinished utterance held is let go though nobody drains the events")
+	<-sent
 }
 
 func TestTextTheVoiceRefusedIsNoLongerHeld(t *testing.T) {

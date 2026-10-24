@@ -58,11 +58,13 @@ func Code(err error) string {
 }
 
 // refused is a refusal of one of the kinds above, which reads as its message alone. resets is
-// when a spent limit's window ends, zero for the rest.
+// when a spent limit's window ends, zero for the rest. unchecked says the money could not be
+// checked, rather than that it ran out.
 type refused struct {
-	kind    error
-	message string
-	resets  time.Time
+	kind      error
+	message   string
+	resets    time.Time
+	unchecked bool
 }
 
 func (r *refused) Error() string { return r.message }
@@ -72,9 +74,23 @@ func refusedWith(kind error, format string, args ...any) error {
 	return &refused{kind: kind, message: fmt.Sprintf(format, args...)}
 }
 
+// uncheckedWith is a refusal because the money could not be checked.
+func uncheckedWith(kind error, format string, args ...any) error {
+	return &refused{kind: kind, message: fmt.Sprintf(format, args...), unchecked: true}
+}
+
+// Transient reports whether err refuses billable work because the organization's money could
+// not be checked (its balance or limits unread for too long, or holds not shared), rather than
+// because it ran out: it passes again on its own once the check can be made, so whatever is
+// under way should wait for that rather than end.
+func Transient(err error) bool {
+	var refusal *refused
+	return errors.As(err, &refusal) && refusal.unchecked
+}
+
 // errUnreadable is the refusal of billable work for an organization whose tier fails closed
 // and whose balance has not been read for MaxStale.
-var errUnreadable = refusedWith(ErrNoCredits, "the organization's balance could not be read, so work that costs money "+
+var errUnreadable = uncheckedWith(ErrNoCredits, "the organization's balance could not be read, so work that costs money "+
 	"is refused until it can be; try again shortly")
 
 // errNoBalance is the refusal of billable work for an organization with no credit left.
@@ -696,7 +712,7 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 	// admitting, since a limit is written to the Postgres it cannot read; and with no usage
 	// service there is no tier, and every account admits.
 	if acct.limited && m.settings.Usage != nil && m.limitsStale(acct, refs, now) && m.failsClosed(acct, decided.organization) {
-		return nil, refusedWith(ErrBudgetSpent, "the %s's spend limits could not be read, so work that costs money "+
+		return nil, uncheckedWith(ErrBudgetSpent, "the %s's spend limits could not be read, so work that costs money "+
 			"is refused until they can be; try again shortly", noun(key)), reasonLimitsRead, nil
 	}
 	verdict := acct.overLimits(refs, clock)
