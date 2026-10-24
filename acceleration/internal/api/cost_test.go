@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // CostSuite runs the router as Stream's hosted one does about money, and reads what each
@@ -114,6 +115,47 @@ func (s *CostSuite) TestAnAcceptedTurnSaysNoCost() {
 	s.Empty(response.Header.Get(headerCostMicros), "it answers before its turn has cost anything")
 	s.Empty(response.Header.Get(headerCostEstimated))
 	s.NotEmpty(response.Header.Get(headerBalanceMicros), "its balance is said all the same")
+}
+
+// responded opens an LLM socket as the client, asks the model for one response and returns its
+// complete frame.
+func (s *RouterSuite) responded(client *testClient, model string) map[string]any {
+	answering := client.opens("/v1/llm/stream")
+	defer answering.Close() //nolint:errcheck // the test is done with it
+	s.Require().NoError(answering.WriteJSON(frame{"type": "start", "target": model}))
+	s.await(answering, "started")
+	s.Require().NoError(answering.WriteJSON(frame{"type": "respond", "id": "r1", "instructions": s.utils.uuid(),
+		"messages": []frame{{"role": "user", "content": "hello"}}}))
+	return s.await(answering, "complete")
+}
+
+func (s *CostSuite) TestAResponseCarriesItsCost() {
+	since := time.Now().UTC()
+
+	complete := s.responded(s.serverClient, "counted/counted-model")
+
+	rows := s.meteredRows(routing.LLM, since, 1)
+	s.Positive(rows[0].CostMicros)
+	s.EqualValues(rows[0].CostMicros, complete["cost_micros"], "what its row recorded")
+}
+
+func (s *CostSuite) TestATranscriptCarriesItsCost() {
+	since := time.Now().UTC()
+	listening := s.serverClient.opens("/v1/stt/stream")
+	defer listening.Close() //nolint:errcheck // the test is done with it
+	s.Require().NoError(listening.WriteJSON(frame{"type": "start", "target": "en-low-latency"}))
+	s.await(listening, "started")
+
+	s.ears.emitter.Send(stt.Transcript{Text: "not yet", Mode: stt.ModeReplacement, Provider: "stub", Model: "stub-stt"})
+	interim := s.await(listening, "transcript")
+	s.ears.emitter.Send(stt.Transcript{Text: "a call costs a penny", Mode: stt.ModeFinal, AudioDurationMs: 60_000,
+		Provider: "stub", Model: "stub-stt"})
+	settled := s.await(listening, "transcript")
+
+	rows := s.meteredRows(routing.STT, since, 1)
+	s.NotContains(interim, "cost_micros", "a revision is no turn")
+	s.Contains(settled, "cost_micros")
+	s.EqualValues(rows[0].CostMicros, settled["cost_micros"], "what the turn's row recorded")
 }
 
 // config is the id of an agent config of the suite's app answered by model.

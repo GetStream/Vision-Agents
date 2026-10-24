@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -107,6 +109,91 @@ func (c *costedResponse) stamp() {
 		if balance.State != policy.BalanceOK {
 			header.Set(headerBalanceWarning, string(balance.State))
 		}
+	}
+}
+
+// unitCost is what a backend's socket says each unit of its work cost, on the frame that ends
+// the unit: what was recorded since the unit before. A session records a unit's row before it
+// passes on the event that ends it. Nil, for an end user's device, says nothing.
+type unitCost struct {
+	spent *routing.Spent
+	mu    sync.Mutex
+	told  int64
+}
+
+// unitCostOf is the socket's unitCost, nil when its caller is told nothing of money.
+func unitCostOf(ctx context.Context) *unitCost {
+	if _, ok := ctx.Value(costedKey{}).(*costed); !ok {
+		return nil
+	}
+	return &unitCost{spent: routing.SpentFrom(ctx)}
+}
+
+// stamp puts on the frame what was recorded since the last frame stamped.
+func (u *unitCost) stamp(ended frame) {
+	if u == nil {
+		return
+	}
+	total, _, _ := u.spent.Total()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	ended["cost_micros"] = total - u.told
+	u.told = total
+}
+
+// stampSpent puts on the frame what one unit's own Spent recorded, for a socket whose units
+// overlap, as an LLM socket's responses do.
+func stampSpent(ended frame, spent *routing.Spent) {
+	if spent == nil {
+		return
+	}
+	micros, _, _ := spent.Total()
+	ended["cost_micros"] = micros
+}
+
+// balanceEvery is how often a backend's socket looks at its organization's balance, which is
+// read from memory.
+const balanceEvery = time.Second
+
+// watchBalance sends a backend's socket a balance frame, with what X-Stream-Balance-Micros and
+// X-Stream-Balance-Warning would say, each time its organization's balance goes down into low
+// or exhausted while the socket is open: once per crossing, and again after it has gone back
+// up and down. One already low when the socket opens is told at once. An end user's device is
+// told nothing. The returned func stops it and waits.
+func (s *Server) watchBalance(ctx context.Context, out *socket, appID, organizationID string) func() {
+	if unitCostOf(ctx) == nil {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Nothing is said before the socket has said what it is.
+		select {
+		case <-ctx.Done():
+			return
+		case <-out.started:
+		}
+		ticker := time.NewTicker(balanceEvery)
+		defer ticker.Stop()
+		told := policy.BalanceOK
+		for {
+			if balance, ok := s.policies.Balance(appID, organizationID); ok {
+				if balance.State.Below(told) {
+					out.frame(frame{"type": "balance", "balance_micros": balance.AvailableMicros, "warning": string(balance.State)})
+				}
+				told = balance.State
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
 	}
 }
 

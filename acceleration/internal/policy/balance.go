@@ -33,8 +33,8 @@ func stateOf(available int64, threshold *int64) BalanceState {
 	return BalanceOK
 }
 
-// lower reports whether a is further down than b.
-func (a BalanceState) lower(b BalanceState) bool { return a.rank() > b.rank() }
+// Below reports whether a is further down than b: low is below ok, exhausted below both.
+func (a BalanceState) Below(b BalanceState) bool { return a.rank() > b.rank() }
 
 func (a BalanceState) rank() int {
 	switch a {

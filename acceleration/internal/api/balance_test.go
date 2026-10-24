@@ -91,7 +91,11 @@ func (s *BalanceSuite) TestA402SaysExhausted() {
 		return response.StatusCode == http.StatusPaymentRequired
 	}, 10*time.Second, 50*time.Millisecond, "a search with no credit is refused")
 
-	s.Equal("0", response.Header.Get(headerBalanceMicros))
+	// The search that warmed the organization was admitted before its account was read, and
+	// what it holds may take the balance below nothing.
+	said, err := strconv.ParseInt(response.Header.Get(headerBalanceMicros), 10, 64)
+	s.Require().NoError(err)
+	s.LessOrEqual(said, int64(0))
 	s.Equal(balanceExhausted, response.Header.Get(headerBalanceWarning))
 	s.Empty(response.Header.Get(headerCostMicros), "refused, it recorded nothing")
 }
@@ -111,6 +115,27 @@ func (s *BalanceSuite) TestTheCustomersThresholdWins() {
 		_ = response.Body.Close()
 		return response.Header.Get(headerBalanceWarning) == balanceLow
 	}, 10*time.Second, 50*time.Millisecond, "under the customer's own threshold, once the policy is read again")
+}
+
+func (s *BalanceSuite) TestASocketIsToldOnceWhenItsBalanceRunsLow() {
+	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{LowBalanceMicros: pointerTo(int64(5_000_000))})
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.balanceSaid(10_000_000)
+	answering := s.serverClient.opens("/v1/llm/stream")
+	defer answering.Close() //nolint:errcheck // the test is done with it
+	s.Require().NoError(answering.WriteJSON(frame{"type": "start", "target": "echo/local-model"}))
+	s.await(answering, "started")
+
+	s.usage.Spend(s.T(), s.organization(), 6_000_000)
+
+	told := s.await(answering, "balance")
+	s.EqualValues(4_000_000, told["balance_micros"])
+	s.Equal(balanceLow, told["warning"])
+	s.Require().NoError(answering.SetReadDeadline(time.Now().Add(3 * balanceEvery)))
+	var again map[string]any
+	for answering.ReadJSON(&again) == nil {
+		s.NotEqual("balance", again["type"], "told once per crossing")
+	}
 }
 
 func (s *BalanceSuite) TestAnAppHasNoThresholdOfItsOwn() {
