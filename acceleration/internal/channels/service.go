@@ -224,7 +224,7 @@ func (s *Service) Notify(ctx context.Context, notice Notice) error {
 	if notice.Text == "" {
 		return stack.Wrap(errors.New("channels: there is nothing to send"))
 	}
-	line, thread, provider, err := s.reach(ctx, notice)
+	line, thread, address, provider, err := s.reach(ctx, notice)
 	if err != nil {
 		return err
 	}
@@ -239,60 +239,61 @@ func (s *Service) Notify(ctx context.Context, notice Notice) error {
 	if err := s.deliver(ctx, line, provider, to, thread, Reply{Text: notice.Text}, owner); err != nil {
 		return stack.Wrap(err)
 	}
-	s.gate.Sent(ctx, notice.CustomerID)
+	s.gate.Sent(ctx, notice.CustomerID, string(notice.Kind), address)
 	return nil
 }
 
 // Reachable says whether Notify would send to the notice's user now, its text aside. A
 // caller that pays for the text, such as a turn the agent runs to write it, asks first.
 func (s *Service) Reachable(ctx context.Context, notice Notice) error {
-	_, _, _, err := s.reach(ctx, notice)
+	_, _, _, _, err := s.reach(ctx, notice)
 	return err
 }
 
-// reach is the line, chat and provider a notice goes out on, or why it may not.
-func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, Provider, error) {
+// reach is the line, chat and provider a notice goes out on, and the person it reaches, or why
+// it may not.
+func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, string, Provider, error) {
 	if !notice.Kind.Valid() {
-		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: no channel called %s", notice.Kind))
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: no channel called %s", notice.Kind))
 	}
 	identity, err := s.store.ChannelIdentityByUser(ctx, notice.CustomerID, notice.ConfigID,
 		string(notice.Kind), notice.UserID)
 	if errors.Is(err, store.ErrUnknownChannelIdentity) {
-		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on %s", notice.UserID, notice.Kind))
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on %s", notice.UserID, notice.Kind))
 	}
 	if err != nil {
-		return Account{}, "", nil, stack.Wrap(err)
+		return Account{}, "", "", nil, stack.Wrap(err)
 	}
 	config, err := s.store.AgentConfig(ctx, notice.CustomerID, notice.ConfigID)
 	if err != nil {
-		return Account{}, "", nil, stack.Wrap(err)
+		return Account{}, "", "", nil, stack.Wrap(err)
 	}
 	number := config.Channels.Lines()[string(notice.Kind)]
 	if number == "" {
-		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: the agent answers on no %s line", notice.Kind))
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: the agent answers on no %s line", notice.Kind))
 	}
 	account, err := s.store.ChannelAccount(ctx, notice.CustomerID, string(notice.Kind), number)
 	if err != nil {
-		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: the %s line %s is not connected: %w", notice.Kind, number, err))
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: the %s line %s is not connected: %w", notice.Kind, number, err))
 	}
 	line, err := Open(s.secrets, account)
 	if err != nil {
-		return Account{}, "", nil, stack.Wrap(err)
+		return Account{}, "", "", nil, stack.Wrap(err)
 	}
 	if err := s.gate.Allow(ctx, notice.CustomerID, string(notice.Kind), identity.Address); err != nil {
-		return Account{}, "", nil, err
+		return Account{}, "", "", nil, err
 	}
 	if notice.Kind == WhatsApp {
 		last, err := s.store.LastChannelMessageAt(ctx, account.ID, identity.Address)
 		if err != nil {
-			return Account{}, "", nil, stack.Wrap(err)
+			return Account{}, "", "", nil, stack.Wrap(err)
 		}
 		switch {
 		case last.IsZero():
-			return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on WhatsApp, "+
+			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on WhatsApp, "+
 				"so there is no window to write first in", identity.Address))
 		case time.Since(last) > whatsappWindow:
-			return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: %s last wrote over a day ago, "+
+			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: %s last wrote over a day ago, "+
 				"outside WhatsApp's window for writing first", identity.Address))
 		}
 	}
@@ -300,14 +301,14 @@ func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, Pr
 	if notice.Kind == IMessage {
 		thread = identity.Thread
 		if thread == "" {
-			return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: there is no iMessage chat with %s to write to", identity.Address))
+			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: there is no iMessage chat with %s to write to", identity.Address))
 		}
 	}
 	provider, ok := For(notice.Kind, s.transport)
 	if !ok {
-		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: no channel called %s", notice.Kind))
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: no channel called %s", notice.Kind))
 	}
-	return line, thread, provider, nil
+	return line, thread, identity.Address, provider, nil
 }
 
 // Open reads back the credentials a line was stored with. The customer is bound into the
@@ -389,7 +390,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	spec.Greeting = ""
 	spec.PersistConversation = true
 	spec.ConversationID = identity.ConversationID
-	spec.Caller = routing.Caller{UserID: identity.UserID}
+	spec.Caller = routing.Caller{UserID: identity.UserID, Verified: true}
 	spec.CallerKind = auth.KindAuthenticated
 	// No key started it: the person texted one of the app's numbers.
 	spec.Attribution = routing.Attribution{APIKey: routing.OriginPhoneInbound,
@@ -535,8 +536,10 @@ func (s *Service) send(ctx context.Context, created *session.Session, owner rout
 			s.logger.Info("not writing back on a channel", "channel", line.Kind, "reason", err)
 			continue
 		}
-		s.say(ctx, line, provider, message, reply, owner)
-		s.gate.Sent(ctx, customerID)
+		// Only a reply the provider took counts against the day: an outage uses none of it.
+		if s.say(ctx, line, provider, message, reply, owner) {
+			s.gate.Sent(ctx, customerID, string(line.Kind), message.From)
+		}
 	}
 }
 
@@ -569,11 +572,15 @@ func answering(customerID, userID string) routing.Owner {
 		APIKey: routing.OriginPhoneInbound, UserID: userID, CallerKind: routing.CallerUser}}
 }
 
-func (s *Service) say(ctx context.Context, line Account, provider Provider, message Message, reply Reply, owner routing.Owner) {
+// say writes reply back to whoever sent message, and reports whether the provider took it; a
+// failure is logged.
+func (s *Service) say(ctx context.Context, line Account, provider Provider, message Message, reply Reply, owner routing.Owner) bool {
 	if err := s.deliver(ctx, line, provider, message.From, message.Thread, reply, owner); err != nil {
 		s.logger.Error("could not write back on a channel", "channel", line.Kind,
 			"number", line.E164, "error", err)
+		return false
 	}
+	return true
 }
 
 // hold serializes the turns for one person, so their second message carries on the

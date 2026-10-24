@@ -1,15 +1,18 @@
 package dlc
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"strconv"
 	"time"
 
 	"github.com/redis/rueidis"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -48,14 +51,21 @@ type Gate struct {
 	redis   rueidis.Client
 	sandbox Sandbox
 	money   Money
+	// limited has every organization kept to its tier's channel limits, as mode says.
+	limited bool
+	mode    config.LimitsMode
+	logs    *throttle
 	logger  *slog.Logger
 }
 
 // Money is what says whether a customer's organization may spend money now: the admission
 // every routed request asks (policy.Enforcer). Its error refuses everything, as a suspension
-// does; its Spend refuses work that costs money, which every text, call and number does.
+// does; its Spend refuses work that costs money, which every text, call and number does. Its
+// Limits are the channel limits the organization's tier sets. Attribute names the organization
+// a text or a minute already sent is counted against.
 type Money interface {
 	Admit(ctx context.Context, owner routing.Owner) (routing.Admission, error)
+	Attribute(ctx context.Context, customerID string) (routing.Admission, error)
 }
 
 // Charging has the gate refuse what money refuses too. It is set once, before the gate is used.
@@ -66,12 +76,29 @@ func (g *Gate) Charging(money Money) *Gate {
 	return g
 }
 
+// Limiting has the gate keep every organization to the channel limits its tier and overrides
+// set (usage.ChannelLimits), read from the admission Charging set: in enforce they refuse, in
+// shadow they log "would refuse" and allow, and off they are neither checked nor counted. Opt-
+// outs and the sandbox are kept in every mode. It is set once, before the gate is used.
+func (g *Gate) Limiting(mode config.LimitsMode) *Gate {
+	if g != nil {
+		g.limited, g.mode = true, cmp.Or(mode, config.LimitsEnforce)
+	}
+	return g
+}
+
 // Admit refuses a customer whose organization may not pay for telephony: suspended, out of
 // credit or past a spend limit. With no Money set it refuses nobody. Whatever a vendor charges
 // for is billed work, so a refusal of money refuses it, unlike a model that costs nothing.
 func (g *Gate) Admit(ctx context.Context, customerID string) error {
+	_, err := g.admit(ctx, customerID)
+	return err
+}
+
+// admit is Admit, with the admission it was answered from.
+func (g *Gate) admit(ctx context.Context, customerID string) (routing.Admission, error) {
 	if g == nil || g.money == nil {
-		return nil
+		return routing.Admission{}, nil
 	}
 	// The key, user and categories are the context's, when the work carries them.
 	admission, err := g.money.Admit(ctx, routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx)})
@@ -79,9 +106,9 @@ func (g *Gate) Admit(ctx context.Context, customerID string) error {
 		err = admission.Spend
 	}
 	if err == nil {
-		return nil
+		return admission, nil
 	}
-	return stack.Wrap(fmt.Errorf("%w: %w", ErrUnpaid, err))
+	return admission, stack.Wrap(fmt.Errorf("%w: %w", ErrUnpaid, err))
 }
 
 // NewGate returns a Gate. redis may be nil, which leaves the daily limits uncounted.
@@ -89,7 +116,7 @@ func NewGate(store *store.Store, redis rueidis.Client, sandbox Sandbox, logger *
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Gate{store: store, redis: redis, sandbox: sandbox, logger: logger}
+	return &Gate{store: store, redis: redis, sandbox: sandbox, logs: &throttle{}, logger: logger}
 }
 
 // Usage is where a sandboxed app stands today.
@@ -102,9 +129,26 @@ type Usage struct {
 }
 
 // Allow reports whether an app may text or call to on channel, as an error wrapping
-// ErrRefused when it may not, or the refusal of money Admit answers.
+// ErrRefused when it may not, or the refusal of money Admit answers. The order is money, the
+// opt-out, the sandbox, then the organization's channel limits (Limiting).
 func (g *Gate) Allow(ctx context.Context, customerID, channel, to string) error {
-	if err := g.Admit(ctx, customerID); err != nil {
+	return g.allow(ctx, customerID, channel, to, Call{})
+}
+
+// Call is a Stream call, by its type and id.
+type Call struct {
+	Type, ID string
+}
+
+// AllowTransfer is Allow for a transfer of the call into to: the leg being transferred is
+// already up and is not counted against the calls allowed at once, so the human's new leg is.
+func (g *Gate) AllowTransfer(ctx context.Context, customerID, to string, into Call) error {
+	return g.allow(ctx, customerID, Voice, to, into)
+}
+
+func (g *Gate) allow(ctx context.Context, customerID, channel, to string, into Call) error {
+	admission, err := g.admit(ctx, customerID)
+	if err != nil {
 		return err
 	}
 	if g == nil || g.store == nil {
@@ -117,7 +161,14 @@ func (g *Gate) Allow(ctx context.Context, customerID, channel, to string) error 
 	if optedOut {
 		return stack.Wrap(fmt.Errorf("%w: %s opted out of %s", ErrRefused, to, channel))
 	}
+	if err := g.inSandbox(ctx, customerID, channel, to); err != nil {
+		return err
+	}
+	return g.withinTier(ctx, admission, customerID, channel, to, into)
+}
 
+// inSandbox refuses what the sandbox does not allow an app none of whose use cases is approved.
+func (g *Gate) inSandbox(ctx context.Context, customerID, channel, to string) error {
 	sandboxed, err := g.sandboxed(ctx, customerID)
 	if err != nil || !sandboxed {
 		return err
@@ -142,14 +193,28 @@ func (g *Gate) Allow(ctx context.Context, customerID, channel, to string) error 
 	return nil
 }
 
-// Sent counts one message a sandboxed app sent.
-func (g *Gate) Sent(ctx context.Context, customerID string) {
+// Sent counts one message an app sent to on channel: against the sandbox while it holds the
+// app, and against its organization's channel limits whatever its use cases.
+func (g *Gate) Sent(ctx context.Context, customerID, channel, to string) {
 	g.count(ctx, customerID, messagesField, 1)
+	g.countChannel(ctx, customerID, "", channel, to, 1)
 }
 
-// Talked counts how long a sandboxed app's call lasted.
-func (g *Gate) Talked(ctx context.Context, customerID string, lasted time.Duration) {
+// Dialed counts the person a call or a transfer of an app's in organizationID rings as reached
+// today, against the organization's voice limit on recipients. What the call lasts is Talked's.
+func (g *Gate) Dialed(ctx context.Context, customerID, organizationID, to string) {
+	g.countChannel(ctx, customerID, organizationID, Voice, to, 0)
+}
+
+// Talked counts how long a leg of an app's call in organizationID lasted: its seconds against
+// the sandbox while it holds the app, and for an outbound leg its minutes, rounded up, against
+// the organization's voice limit a day. Calls people make to the app's numbers are not what
+// that limit holds back, so they never use it up.
+func (g *Gate) Talked(ctx context.Context, customerID, organizationID string, outbound bool, lasted time.Duration) {
 	g.count(ctx, customerID, secondsField, int64(lasted.Seconds()))
+	if minutes := int64(math.Ceil(lasted.Minutes())); outbound && minutes > 0 {
+		g.countChannel(ctx, customerID, organizationID, Voice, "", minutes)
+	}
 }
 
 // Usage reports where an app stands against the sandbox today.

@@ -93,6 +93,33 @@ func (s *TelephonyBillingSuite) TestAReplyOnSMSIsRecordedWithItsSegmentsAndCount
 	s.Equal("phone:"+person, out.UserID, "the reply is the end user's")
 }
 
+func (s *TelephonyBillingSuite) TestAReplyTheCarrierRefusedIsNotCountedAgainstTheDay() {
+	line, person := s.smsLine(), "+13125550009"
+	s.agentOnSMS(line)
+	s.carriers.refuse(person)
+
+	s.Require().Equal(http.StatusAccepted, s.textIn(line, person, "sms-"+s.utils.uuid(), "hello?"))
+	s.Require().Eventually(func() bool { return s.carriers.refusals(person) > 0 }, settleFor, 50*time.Millisecond)
+	s.Never(func() bool { return s.textsCounted() > 0 }, time.Second, 50*time.Millisecond, "a reply that never went out")
+
+	s.carriers.accept(person)
+	s.Require().Equal(http.StatusAccepted, s.textIn(line, person, "sms-"+s.utils.uuid(), "hello again"))
+	s.Require().Eventually(func() bool { return len(s.carriers.to(person)) > 0 }, settleFor, 50*time.Millisecond)
+	s.Eventually(func() bool { return s.textsCounted() == 1 }, settleFor, 50*time.Millisecond, "the reply that went out")
+}
+
+// textsCounted is how many texts the app's organization has sent today, as its channel
+// counters say.
+func (s *TelephonyBillingSuite) textsCounted() int64 {
+	redis := s.live.Redis()
+	key := "channel:" + time.Now().UTC().Format("20060102") + ":{" + s.app.organization.ID + "}"
+	count, err := redis.Do(context.Background(), redis.B().Hget().Key(key).Field("sms").Build()).AsInt64()
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
 func (s *TelephonyBillingSuite) TestATextDeliveredTwiceIsBilledOnce() {
 	line, person, id := s.smsLine(), "+13125550002", "sms-"+s.utils.uuid()
 	s.agentOnSMS(line)
@@ -562,6 +589,32 @@ func (c *suiteClock) advance(by time.Duration) {
 type carriers struct {
 	mu   sync.Mutex
 	sent map[string][]string
+	// refusing are the recipients a send to is answered 422, as a carrier that takes nothing;
+	// refused counts those sends.
+	refusing map[string]bool
+	refused  map[string]int
+}
+
+// refuse has every send to recipient refused until accept.
+func (c *carriers) refuse(recipient string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refusing == nil {
+		c.refusing, c.refused = map[string]bool{}, map[string]int{}
+	}
+	c.refusing[recipient] = true
+}
+
+func (c *carriers) accept(recipient string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.refusing, recipient)
+}
+
+func (c *carriers) refusals(recipient string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.refused[recipient]
 }
 
 func (c *carriers) serve(w http.ResponseWriter, r *http.Request) {
@@ -578,6 +631,12 @@ func (c *carriers) serve(w http.ResponseWriter, r *http.Request) {
 		words, _ = text["body"].(string)
 	}
 	c.mu.Lock()
+	if c.refusing[body.To] {
+		c.refused[body.To]++
+		c.mu.Unlock()
+		http.Error(w, `{"errors":[{"detail":"refused"}]}`, http.StatusUnprocessableEntity)
+		return
+	}
 	if c.sent == nil {
 		c.sent = map[string][]string{}
 	}

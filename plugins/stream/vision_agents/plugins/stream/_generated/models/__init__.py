@@ -198,6 +198,7 @@ from .detection_request_tags import DetectionRequestTags
 from .detection_result import DetectionResult
 from .detection_status import DetectionStatus
 from .dispatch_setting import DispatchSetting
+from .effective_quota import EffectiveQuota
 from .endpointing import Endpointing
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
@@ -318,6 +319,7 @@ from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_budget import PolicyBudget
+from .policy_scope import PolicyScope
 from .policy_tags import PolicyTags
 from .postal_address import PostalAddress
 from .prepare_voice_request import PrepareVoiceRequest
@@ -354,6 +356,7 @@ from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
 from .provider_price import ProviderPrice
 from .quota import Quota
+from .quota_level import QuotaLevel
 from .rcs_profile import RCSProfile
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
@@ -517,6 +520,10 @@ from .use_case_request import UseCaseRequest
 from .use_case_review import UseCaseReview
 from .use_case_review_vendor_payload import UseCaseReviewVendorPayload
 from .use_case_status import UseCaseStatus
+from .user_policy import UserPolicy
+from .user_policy_entry import UserPolicyEntry
+from .user_policy_input import UserPolicyInput
+from .user_policy_page import UserPolicyPage
 from .video_source import VideoSource
 from .voice import Voice
 from .voice_binding import VoiceBinding
@@ -725,6 +732,7 @@ __all__ = (
     "DetectionResult",
     "DetectionStatus",
     "DispatchSetting",
+    "EffectiveQuota",
     "Endpointing",
     "EqualsType1",
     "ErrorDetail",
@@ -843,6 +851,7 @@ __all__ = (
     "PluginWithOptions",
     "Policy",
     "PolicyBudget",
+    "PolicyScope",
     "PolicyTags",
     "PostalAddress",
     "PrepareVoiceRequest",
@@ -879,6 +888,7 @@ __all__ = (
     "ProviderHealth",
     "ProviderPrice",
     "Quota",
+    "QuotaLevel",
     "RCSProfile",
     "RecordingSource",
     "RecordingStatus",
@@ -1042,6 +1052,10 @@ __all__ = (
     "UseCaseReview",
     "UseCaseReviewVendorPayload",
     "UseCaseStatus",
+    "UserPolicy",
+    "UserPolicyEntry",
+    "UserPolicyInput",
+    "UserPolicyPage",
     "VideoSource",
     "Voice",
     "VoiceBinding",

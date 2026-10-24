@@ -34,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // Provider is the little a router needs from a model provider: it can be opened, closed
@@ -181,6 +182,12 @@ type Admission struct {
 	// Grants are the customer's one-time grants the work is admitted on, past limits of its
 	// subjects that are spent. The row its work records names them.
 	Grants []int64
+	// Limits are the settings in force for the organization, its tier's with its overrides laid
+	// over them, as its standing last said, for the checks admission leaves to the work's own
+	// path, such as a channel's. LimitsTier names that tier. Nil with no organization, before
+	// its standing is first read, and with money not enforced. Read only: it is shared.
+	Limits     *usage.Limits
+	LimitsTier string
 }
 
 // Labelled returns the tags with the policies' laid over them, leaving the ones passed in
@@ -246,8 +253,13 @@ type Caller struct {
 	// IP is where the request came from, as far as the trusted proxies can tell.
 	IP string
 	// ServerSide is a customer's own process, trusted with its spend even when it names a
-	// user, so no daily limit is counted against it.
+	// user, so it is held only to the daily quotas the customer set for that user, never to
+	// the deployment's default.
 	ServerSide bool
+	// Verified is a UserID something vouched for: a token the app signed, the proxy's word,
+	// or a delivery the app's channel or plugin signed. An anonymous caller's name is not,
+	// so it is never held to that user's own quota nor spends their day.
+	Verified bool
 }
 
 // IsZero says nobody was named: a turn that was heard, not typed.

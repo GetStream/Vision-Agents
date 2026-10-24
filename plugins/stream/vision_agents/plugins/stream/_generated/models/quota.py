@@ -14,16 +14,20 @@ T = TypeVar("T", bound="Quota")
 
 @_attrs_define
 class Quota:
-    """What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one:
-    an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own
-    are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries
-    X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+    """What one end user may spend in a UTC day. Each number is the first set of the user's own
+    (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts
+    everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An
+    app's quota counted devices only before; the router's default still does.) A device is counted by its address as
+    well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with
+    Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and
+    a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 
         Attributes:
             messages_per_user_per_day (int | Unset): How many responses one end user may ask for in a UTC day. 0 is no cap.
-                Left out, the router's default applies. Example: 20000.
+                Left out, the next level's applies: the app's, then the organization's, then the router's default. Example:
+                20000.
             tokens_per_user_per_day (int | Unset): How many tokens, input and output, one end user's responses may cost in a
-                UTC day. 0 is no cap. Left out, the router's default applies. Example: 50000000.
+                UTC day. 0 is no cap. Left out, the next level's applies, as for messages. Example: 50000000.
     """
 
     messages_per_user_per_day: int | Unset = UNSET

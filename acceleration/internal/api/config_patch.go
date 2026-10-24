@@ -129,6 +129,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	existing := agentConfigOf(config)
 	before := config.MCPServers
 	heard := config.STT
+	was := sandboxOfConfig(config)
 
 	patch := request.Body
 	if message, ok := configComplaint(AgentConfigRequest{
@@ -255,6 +256,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.liveSTTComplaint(config, heard); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, was); !ok {
 		return nil, invalidRequest(message)
 	}
 

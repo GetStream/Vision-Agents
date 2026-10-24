@@ -3494,6 +3494,62 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/policies/users": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the calling app's users with a policy of their own
+         * @description By user id, in byte order. A user with no policy of their own is held to the app's quota, the organization's, or the router's default, and is not listed.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listUserPolicies"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/policies/users/{user_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read one end user's quota
+         * @description The user's own quota, if they have one, the quota they are held to and who set each number of it, and what they spent today toward a quota the customer set. Any user id may be read, with a policy of their own or not.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getUserPolicy"];
+        /**
+         * Replace one end user's own quota
+         * @description The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["updateUserPolicy"];
+        readonly post?: never;
+        /**
+         * Remove one end user's own quota
+         * @description The user falls back to the app's quota, the organization's, or the router's default. A user with none of their own answers 204 too.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteUserPolicy"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/router/configs": {
         readonly parameters: {
             readonly query?: never;
@@ -6021,6 +6077,21 @@ export type components = {
          * @enum {string}
          */
         readonly DispatchSetting: "enabled" | "disabled";
+        /** @description The quota a user is held to: each number is the first set of the user's own, the app's, the organization's and the router's default. Both are 0 on a router that counts nothing. */
+        readonly EffectiveQuota: {
+            /**
+             * Format: int64
+             * @description Responses the user may ask for today. 0 is no cap.
+             */
+            readonly messages_per_user_per_day: number;
+            readonly messages_set_by: components["schemas"]["QuotaLevel"];
+            /**
+             * Format: int64
+             * @description Tokens the user's responses may cost today. 0 is no cap.
+             */
+            readonly tokens_per_user_per_day: number;
+            readonly tokens_set_by: components["schemas"]["QuotaLevel"];
+        };
         /**
          * @description What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
          * @enum {string}
@@ -7199,6 +7270,11 @@ export type components = {
                 readonly [key: string]: string;
             };
         };
+        /**
+         * @description Whose policy: an organization's, an app's, or one end user's.
+         * @enum {string}
+         */
+        readonly PolicyScope: "organization" | "app" | "user";
         readonly PostalAddress: {
             readonly city?: string;
             /** @description ISO 3166-1 alpha-2. */
@@ -7594,21 +7670,26 @@ export type components = {
              */
             readonly per_million_output_tokens?: number;
         };
-        /** @description What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset. */
+        /** @description What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset. */
         readonly Quota: {
             /**
              * Format: int64
-             * @description How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+             * @description How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level's applies: the app's, then the organization's, then the router's default.
              * @example 20000
              */
             readonly messages_per_user_per_day?: number;
             /**
              * Format: int64
-             * @description How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+             * @description How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the next level's applies, as for messages.
              * @example 50000000
              */
             readonly tokens_per_user_per_day?: number;
         };
+        /**
+         * @description Who set a number of a quota: the user's own policy, the app's, the organization's, or the router's default. The router's default counts the user's devices only; every other counts the app's backend acting for the user too.
+         * @enum {string}
+         */
+        readonly QuotaLevel: "user" | "app" | "organization" | "default";
         readonly RCSProfile: {
             readonly agent_overview?: string;
             /** @description Hex, such as #1A73E8, with at least 4.5:1 contrast against white. */
@@ -9575,6 +9656,44 @@ export type components = {
          * @enum {string}
          */
         readonly UseCaseStatus: "draft" | "submitted" | "changes_requested" | "rejected" | "vendor_pending" | "approved" | "vendor_rejected";
+        /** @description One end user of the calling app: their own quota, if any, the quota they are held to, and what they spent today. */
+        readonly UserPolicy: {
+            readonly effective: components["schemas"]["EffectiveQuota"];
+            /**
+             * Format: int64
+             * @description Responses counted today toward a quota the customer set, the app's backend acting for the user included. A day held only to the router's default counts the user's devices alone, which this leaves out.
+             */
+            readonly messages: number;
+            /** @description The user's own quota. Left out, the user has none of their own and is held to the defaults. */
+            readonly quota?: components["schemas"]["Quota"];
+            /**
+             * Format: date-time
+             * @description When the day ends and the count starts again: the next UTC midnight.
+             */
+            readonly resets_at: string;
+            /**
+             * Format: int64
+             * @description Tokens counted today toward a quota the customer set, counted as messages is.
+             */
+            readonly tokens: number;
+            readonly user_id: string;
+        };
+        readonly UserPolicyEntry: {
+            readonly quota?: components["schemas"]["Quota"];
+            /** Format: date-time */
+            readonly updated_at: string;
+            readonly user_id: string;
+        };
+        /** @description One end user's own policy, which holds a quota only. */
+        readonly UserPolicyInput: {
+            /** @description The user's own quota. Left out, null, or setting neither number, removes the user's own and the defaults apply. */
+            readonly quota?: components["schemas"]["Quota"];
+        };
+        readonly UserPolicyPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["UserPolicyEntry"][] | null;
+            readonly next_cursor?: string;
+        };
         readonly VideoSource: {
             /** @description How many frames to sample, evenly spaced across the clip. Default 8. */
             readonly max_frames?: number;
@@ -17831,6 +17950,142 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["Policy"];
                 };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly listUserPolicies: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. */
+                readonly cursor?: string;
+                /** @description Up to 100. Omitted is 100. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of users */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserPolicyPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly getUserPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The end user, by the id the app's tokens name them with. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The user's quota */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserPolicy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly updateUserPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The end user, by the id the app's tokens name them with. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UserPolicyInput"];
+            };
+        };
+        readonly responses: {
+            /** @description The user's quota as it now stands */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserPolicy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly deleteUserPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The end user, by the id the app's tokens name them with. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The user has no policy of their own */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];

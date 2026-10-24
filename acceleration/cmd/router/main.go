@@ -972,9 +972,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
 	}
-	// Every text, call and number a customer pays for asks the same admission as a model.
+	// Every text, call and number a customer pays for asks the same admission as a model, and
+	// is kept to the channel limits of its organization's tier, in the same mode as money.
 	if policies != nil {
-		dlcGate.Charging(policies)
+		dlcGate.Charging(policies).Limiting(settings.Limits.Mode)
 	}
 	telephony, err := buildPhone(settings, vendorConfig, pgStore, phoneRecorder, streamClients, dlcGate, secrets, logger)
 	if err != nil {
@@ -1024,7 +1025,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		sessionConnectors.Resolver = connectorResolver
 	}
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
-		sessionConnectors, prices, logger)
+		sessionConnectors, prices, policies, logger)
 	if err != nil {
 		return err
 	}
@@ -1724,6 +1725,7 @@ func buildSessions(
 	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
 	prices pricing.Pricer,
+	policies *policy.Enforcer,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1774,6 +1776,7 @@ func buildSessions(
 		return nil, err
 	}
 	options.Sandboxes = newSandboxes(settings, usageWriter, prices, logger)
+	options.SandboxLimits = policies
 	return session.NewManager(options)
 }
 

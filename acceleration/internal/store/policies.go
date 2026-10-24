@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -21,16 +22,33 @@ const (
 	ScopeOrganization PolicyScope = "organization"
 	// ScopeApp is one app.
 	ScopeApp PolicyScope = "app"
+	// ScopeUser is one end user of one app, by UserScopeID. Its document holds a quota only.
+	ScopeUser PolicyScope = "user"
 )
 
-// PolicyDocument is what an organization or an app has decided. Spend limits are not here:
-// they are rows of their own (Limit), at every level.
+// UserScopeID is the scope id of one app's end user. A user id is the app's own name for
+// somebody, so the same id in two apps is two users.
+func UserScopeID(appID, userID string) string { return appID + "/" + userID }
+
+// SplitUserScopeID is the app and the user a UserScopeID names. A user id holds no '/', so
+// the last one splits them.
+func SplitUserScopeID(id string) (appID, userID string, ok bool) {
+	slash := strings.LastIndexByte(id, '/')
+	if slash <= 0 || slash == len(id)-1 {
+		return "", "", false
+	}
+	return id[:slash], id[slash+1:], true
+}
+
+// PolicyDocument is what an organization, an app or one end user has decided. Spend limits
+// are not here: they are rows of their own (Limit), at every level.
 //
 // Every field is optional, and absent means "no opinion" rather than "off": an app that
 // says nothing about training inherits whatever its organization said.
 type PolicyDocument struct {
-	// Quota is what one end user of the app may spend in a UTC day, on an app's document
-	// only.
+	// Quota is what one end user may spend in a UTC day: on an organization's document the
+	// default for every user of its apps, on an app's the default for its users, and on a
+	// user's their own.
 	Quota *Quota `json:"quota,omitempty"`
 	// DataPolicy is the floor every routed request is held to, on top of whatever the
 	// request itself asked for.
@@ -51,8 +69,8 @@ type PolicyDocument struct {
 	BalanceWarningMicros *int64 `json:"balance_warning_micros,omitempty"`
 }
 
-// Quota is what one end user of an app may spend in a UTC day. A nil field is no
-// opinion, so the deployment's number shows through; zero is no cap.
+// Quota is what one end user may spend in a UTC day. A nil field is no opinion, so the
+// next level's number shows through, and the deployment's below them all; zero is no cap.
 type Quota struct {
 	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty"`
 	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty"`
@@ -166,6 +184,94 @@ func (s *Store) SavePolicy(ctx context.Context, scope PolicyScope, id string, do
 		return stack.Wrap(fmt.Errorf("store: save policy: %w", err))
 	}
 	return nil
+}
+
+// DeletePolicy removes a scope's document, and reports whether there was one.
+func (s *Store) DeletePolicy(ctx context.Context, scope PolicyScope, id string) (bool, error) {
+	if id == "" {
+		return false, stack.Wrap(errors.New("store: a policy needs a scope id"))
+	}
+	result, err := s.db.NewDelete().Model((*Policy)(nil)).
+		Where("scope = ?", scope).
+		Where("scope_id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: delete policy: %w", err))
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: delete policy: %w", err))
+	}
+	return deleted > 0, nil
+}
+
+// UserPolicyLimit is the default and the most users UserPolicies answers in one page.
+const UserPolicyLimit = 100
+
+// UserPolicies is a page of an app's users with a policy of their own, by user id in byte
+// order, after the user id after when it is not empty. It reads limit+1 rows, so a caller
+// can tell whether there is more.
+func (s *Store) UserPolicies(ctx context.Context, appID, after string, limit int) ([]Policy, error) {
+	if appID == "" {
+		return nil, stack.Wrap(errors.New("store: an app's users need an app"))
+	}
+	if limit <= 0 || limit > UserPolicyLimit {
+		limit = UserPolicyLimit
+	}
+	var policies []Policy
+	query := s.db.NewSelect().Model(&policies).
+		Where("scope = ?", ScopeUser).
+		Where(`(scope_id COLLATE "C") LIKE ? ESCAPE '\'`, likePrefix(UserScopeID(appID, ""))).
+		OrderExpr(`scope_id COLLATE "C"`).
+		Limit(limit + 1)
+	if after != "" {
+		query = query.Where(`(scope_id COLLATE "C") > ?`, UserScopeID(appID, after))
+	}
+	if err := query.Scan(ctx); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: user policies: %w", err))
+	}
+	return policies, nil
+}
+
+// HasUserPolicies reports whether any user of an app has a policy of their own.
+func (s *Store) HasUserPolicies(ctx context.Context, appID string) (bool, error) {
+	exists, err := s.db.NewSelect().Model((*Policy)(nil)).
+		Where("scope = ?", ScopeUser).
+		Where(`(scope_id COLLATE "C") LIKE ? ESCAPE '\'`, likePrefix(UserScopeID(appID, ""))).
+		Exists(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: has user policies: %w", err))
+	}
+	return exists, nil
+}
+
+// likePrefix is a LIKE pattern matching what starts with prefix, its own % and _ taken as
+// themselves.
+func likePrefix(prefix string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix) + "%"
+}
+
+// AppInOrganization reports whether an app is the organization's: registered under it, or
+// last seen under it by a request.
+func (s *Store) AppInOrganization(ctx context.Context, appID, organizationID string) (bool, error) {
+	if appID == "" || organizationID == "" {
+		return false, nil
+	}
+	seen, err := s.OrganizationOf(ctx, appID)
+	if err != nil {
+		return false, err
+	}
+	if seen != "" {
+		return seen == organizationID, nil
+	}
+	registered, err := s.db.NewSelect().Model((*App)(nil)).
+		Where("id = ?", appID).
+		Where("organization_id = ?", organizationID).
+		Exists(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: app in organization: %w", err))
+	}
+	return registered, nil
 }
 
 // JoinOrganization records that an app was seen under an organization.

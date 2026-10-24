@@ -153,17 +153,6 @@ func (s *PoliciesSuite) TestAPolicyThatLeavesTheDailyLimitOutClearsIt() {
 	s.Nil(read.Quota)
 }
 
-func (s *PoliciesSuite) TestAnOrganizationHasNoDailyLimitToSet() {
-	status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/organization",
-		map[string]any{"quota": map[string]any{"messages_per_user_per_day": 5_000}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "an organization has no daily limit per end user")
-	var read Policy
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &read))
-	s.Nil(read.Quota)
-}
-
 func (s *PoliciesSuite) TestADailyLimitOutsideItsBoundsIsRefused() {
 	for field, over := range map[string]int64{
 		"messages_per_user_per_day": 10_000_001,

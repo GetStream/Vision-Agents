@@ -110,6 +110,8 @@ type SandboxSpec struct {
 	// Grants are the connections code in it may call with, through Broker.
 	Grants []sandbox.Grant
 	Broker sandbox.CredentialBroker
+	// Slots bound how many of its organization's sandboxes run at once. Nil bounds nothing.
+	Slots sandbox.Slots
 }
 
 // Open is the sandbox owner's session runs code in, labelled with whose it is. Nothing is made
@@ -118,7 +120,7 @@ type SandboxSpec struct {
 func (s *Sandboxes) Open(owner routing.Owner, spec SandboxSpec) (sandbox.Sandbox, error) {
 	return daytona.New(daytona.Options{
 		APIKey: s.options.APIKey, APIURL: s.options.APIURL, Config: spec.Config, Grants: spec.Grants, Broker: spec.Broker,
-		Labels: s.Labels(owner), Lifecycle: s.options.Lifecycle, Logger: s.options.Logger,
+		Labels: s.Labels(owner), Lifecycle: s.options.Lifecycle, Logger: s.options.Logger, Slots: spec.Slots,
 		Meter: &sandboxMeter{recorder: s.options.Recorder, owner: owner, every: s.options.Every, deployment: s.options.Deployment},
 	})
 }
