@@ -124,6 +124,12 @@ type ToolCall struct {
 	Run bool
 }
 
+// ToolHeld says a call will outlive the caller talking over the agent from now on, because
+// whoever runs it asked (HoldTool).
+type ToolHeld struct {
+	ID string
+}
+
 // ToolUser is who a tool call was made for.
 type ToolUser struct {
 	ID   string
@@ -1245,6 +1251,27 @@ func (s *Session) Describe(ctx context.Context, labels Labels) {
 			s.logger.Warn("could not rename the conversation's channel",
 				"session", s.id, "conversation", s.spec.ConversationID, "error", err)
 		}
+	}
+}
+
+// HoldTool keeps a call running when the caller talks over the agent, which a call to an
+// interruptible tool would not, and tells every watcher which happened first: ToolHeld, or
+// the call's cancel when it is not running any more.
+func (s *Session) HoldTool(id string) bool {
+	name, waiting := s.tools.nameOf(id)
+	if waiting && s.current().HoldTool(id) {
+		s.broadcast(ToolHeld{ID: id})
+		return true
+	}
+	s.broadcast(ToolCall{ID: id, Name: name, Cancel: true})
+	return false
+}
+
+// ToolUpdate passes on what whoever runs a call says about it while it runs (agent
+// ToolUpdate). An update for a call this session is not waiting on is dropped.
+func (s *Session) ToolUpdate(id, text string, verbatim bool) {
+	if _, waiting := s.tools.nameOf(id); waiting {
+		s.current().ToolUpdate(id, text, verbatim)
 	}
 }
 

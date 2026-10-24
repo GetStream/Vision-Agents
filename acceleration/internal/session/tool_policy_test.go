@@ -66,7 +66,7 @@ func (s *ToolPolicySuite) TestAWorkersToolKeepsItsPolicies() {
 		{Name: "investigate_sdk", Description: "Read SDK source", Interruptible: true, Timeout: time.Second},
 	}}}
 
-	tools, _ := m.hostedTools(Spec{CustomerID: "acme", AgentID: "support"}, "session-1", nil, nil)
+	tools, _ := m.hostedTools(Spec{CustomerID: "acme", AgentID: "support"}, "session-1", nil, nil, nil)
 
 	s.Require().Len(tools, 1)
 	s.True(tools[0].Interruptible)

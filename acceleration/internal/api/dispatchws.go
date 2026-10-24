@@ -260,6 +260,10 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			ID         string          `json:"id"`
 			Output     json.RawMessage `json:"output"`
 			Error      string          `json:"error"`
+			// Text and Verbatim say how a running hosted call is going, as a session's
+			// tool_update does.
+			Text     string `json:"text"`
+			Verbatim bool   `json:"verbatim"`
 		}
 		_, payload, err := connection.ReadMessage()
 		if err != nil {
@@ -315,6 +319,23 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 				s.logger.Debug("a hosted tool answered a call nobody is waiting on",
 					"worker", worker.ID, "id", id)
 			}
+
+		case "tool_update":
+			worker.Update(report.ToolCallID, report.Text, report.Verbatim)
+
+		case "tool_hold":
+			// The conversation may be on another node, so the answer is a round trip that
+			// the worker's other frames are not held up behind.
+			go func(id string) {
+				reply := frame{"type": "tool_held", "id": id}
+				if !worker.Hold(id) {
+					reply = frame{"type": "tool_cancel", "id": id}
+				}
+				select {
+				case replies <- reply:
+				case <-writerDone:
+				}
+			}(report.ToolCallID)
 
 		case "done":
 			// What the worker is holding is what it has been handed and not yet reported,

@@ -53,7 +53,7 @@ func documentHandWritten(api huma.API) {
 			"`decision`, `delegated`, `task_settled` (files " +
 			"lists what the work's code handed back, each a name, mime_type, url and size, uploaded " +
 			"to a persistent conversation's channel and attached to the reply), " +
-			"`task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
+			"`task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
 			"`backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and " +
 			"message_end, the utterance being heard when it was cut, how many milliseconds of it had been, " +
 			"and where all it had been sent is in the reply's message, when any of it had), " +
@@ -159,6 +159,18 @@ func documentHandWritten(api huma.API) {
 			"the caller interrupted a call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and `turn_id`; " +
 			"their result must repeat both values so a result cannot be adopted by another command " +
 			"or turn.\n" +
+			"While it runs a call, the watcher running it may send `tool_hold` (`tool_call_id`) " +
+			"to keep the call going when the caller talks over the agent, which would otherwise " +
+			"cancel a call to an `interruptible` tool. Every watcher is sent `tool_held` (`id`) when it " +
+			"was held, or `tool_cancel` when the call had already stopped. " +
+			"An explicit `interrupt` still cancels a held call. It may also send `tool_update` " +
+			"(`tool_call_id`, `text`, `verbatim`) to say how the call is going: the agent tells a " +
+			"voice caller in its own words once nobody is talking, and a persistent conversation " +
+			"shows `text` as the summary of the call's step until it ends. With `verbatim` true, " +
+			"the agent says or posts `text` as written instead. A newer update replaces one not yet " +
+			"said, and a call's result replaces both. Every watcher is sent `tool_updated` (`id`, " +
+			"`turn_id`, `tool`, `text`, `verbatim`) for each update. An update or hold from a watcher " +
+			"that does not run the call is dropped.\n" +
 			"A call to a tool declared with an `approval` waits for a person. The client reports " +
 			"their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, " +
 			"and optionally a `summary` shown when they declined), before it answers the call with " +

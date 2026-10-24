@@ -475,8 +475,25 @@ func ran(m *Message, id, status, result, failure string, now time.Time) {
 		} else if part.Approval != nil && part.Approval.Decision == "" && failure != "" {
 			// A question nobody answered says why the call ended, as a device does.
 			part.Summary = capRunes(strings.TrimSpace(failure), maxToolSummary)
+		} else {
+			part.Summary = ""
 		}
 	}
+}
+
+// reported has the running call id on m show status, and reports whether it was running.
+func reported(m *Message, id, status string) bool {
+	status = capRunes(strings.TrimSpace(status), maxToolSummary)
+	changed := false
+	for i := range m.Tools {
+		if m.Tools[i].ID == id && m.Tools[i].FinishedAt == nil {
+			m.Tools[i].Summary, changed = status, true
+		}
+	}
+	if part := toolStep(m, id); part != nil && part.FinishedAt == nil {
+		part.Summary, changed = status, true
+	}
+	return changed
 }
 
 // stopParts ends every step still in progress when a reply finishes.

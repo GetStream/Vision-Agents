@@ -262,6 +262,12 @@ type Agent struct {
 	// the event loop and the floor until Cerebras answered.
 	generatingCancel map[string]context.CancelFunc
 	toolCancels      map[string]context.CancelFunc
+	// toolContexts is each running call's context, which says whether it was cancelled.
+	toolContexts map[string]context.Context
+	// toolTurns is the turn each running call belongs to.
+	toolTurns map[string]string
+	// toolUpdates is what whoever runs a call last said about it, waiting for the line.
+	toolUpdates map[string]toolUpdate
 	// toolsRunning names each tool still running, by call, so a caller left waiting can
 	// be told what on.
 	toolsRunning map[string]string
@@ -1609,6 +1615,7 @@ func (a *Agent) consumePresence(p *pipeline) {
 			// with no TTS complete to pick it up.
 			a.respondQueued()
 			a.followUp()
+			a.sayToolUpdate()
 		case <-p.ctx.Done():
 			return
 		}
@@ -2260,7 +2267,7 @@ func composedFor(purpose string) string {
 	switch purpose {
 	case idlePurpose:
 		return PurposeCheckIn
-	case updatePurpose:
+	case updatePurpose, statusPurpose, toolSaidPurpose:
 		return PurposeUpdate
 	}
 	return ""
@@ -2271,7 +2278,7 @@ func composedKind(purpose string) string {
 	switch purpose {
 	case holdPurpose:
 		return kindHold
-	case updatePurpose:
+	case updatePurpose, statusPurpose, toolSaidPurpose:
 		return kindUpdate
 	}
 	return kindCheckIn

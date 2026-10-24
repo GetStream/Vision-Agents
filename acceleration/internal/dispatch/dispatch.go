@@ -175,17 +175,18 @@ type Worker struct {
 	// other on the way to the socket. What a worker may hold at once is capacity, which
 	// counts both.
 	messages chan Message
-	// toolCalls is the hosted calls to deliver, and results the calls waiting on an
-	// answer, keyed by the id the model gave each.
+	// toolCalls is the hosted calls to deliver, results the calls waiting on an answer,
+	// and progress the conversations they were made in, keyed by the id the model gave each.
 	toolCalls chan ToolCall
 
 	mu sync.Mutex
 	// working is the work handed to this worker that it has not reported finished, and
 	// carried the work it brought with it through a reconnect, which has no id here.
-	working map[string]struct{}
-	carried int
-	load    Load
-	results map[string]chan ToolResult
+	working  map[string]struct{}
+	carried  int
+	load     Load
+	results  map[string]chan ToolResult
+	progress map[string]Progress
 }
 
 // Calls is what the worker's connection reads from. It is closed when the worker is
@@ -353,6 +354,7 @@ func (p *Pool) Register(customerID string, registration Registration) (*Worker, 
 		working:    map[string]struct{}{},
 		carried:    max(registration.Active, 0),
 		results:    map[string]chan ToolResult{},
+		progress:   map[string]Progress{},
 	}
 	p.workers[customerID] = append(p.workers[customerID], worker)
 	p.mu.Unlock()

@@ -46,7 +46,7 @@ func TestASessionNamingAHostedAgentIsOfferedTheWorkersTools(t *testing.T) {
 	declared := []harness.Tool{{Name: "search_docs", Description: "The browser's search"}}
 
 	// The shape a browser opens: an agent id, no stored config, and its own search.
-	tools, runner := m.hostedTools(Spec{CustomerID: "acme", AgentID: "stream-support"}, "session-1", declared, caller)
+	tools, runner := m.hostedTools(Spec{CustomerID: "acme", AgentID: "stream-support"}, "session-1", nil, declared, caller)
 
 	if len(tools) != 2 || tools[0].Description != "The browser's search" || tools[1].Name != "investigate_sdk" {
 		t.Fatalf("offered %+v", tools)
@@ -71,7 +71,7 @@ func TestASessionOpenedByAgentNameIsOfferedTheWorkersTools(t *testing.T) {
 
 	// The shape a server SDK opens: a stored config found by name, and an agent id of its own.
 	spec := Spec{CustomerID: "acme", AgentID: "01JC-generated", ConfigID: "cfg-1", AgentName: "stream-support"}
-	tools, runner := m.hostedTools(spec, "session-1", nil, &callerTools{})
+	tools, runner := m.hostedTools(spec, "session-1", nil, nil, &callerTools{})
 
 	if len(tools) != 2 || tools[0].Name != "investigate_sdk" {
 		t.Fatalf("offered %+v", tools)
@@ -88,12 +88,30 @@ func TestASessionNamingAnotherAgentIsOfferedNothingHosted(t *testing.T) {
 	m := &Manager{logger: slog.Default(), hosts: &fakeHosts{}}
 	caller := &callerTools{}
 
-	tools, runner := m.hostedTools(Spec{CustomerID: "acme", AgentID: "sales"}, "s", nil, caller)
+	tools, runner := m.hostedTools(Spec{CustomerID: "acme", AgentID: "sales"}, "s", nil, nil, caller)
 	if len(tools) != 0 || runner != caller {
 		t.Fatalf("offered %+v", tools)
 	}
-	tools, _ = m.hostedTools(Spec{CustomerID: "acme", ConfigID: "stream-support"}, "s", nil, caller)
+	tools, _ = m.hostedTools(Spec{CustomerID: "acme", ConfigID: "stream-support"}, "s", nil, nil, caller)
 	if len(tools) != 0 {
 		t.Fatalf("a session naming the agent only as a config was offered %+v", tools)
+	}
+}
+
+// hostedConversation is a session as the worker running one of its calls reaches it.
+type hostedConversation struct{ dispatch.Progress }
+
+func TestAHostedCallCarriesTheConversationItWasMadeIn(t *testing.T) {
+	hosts := &fakeHosts{}
+	m := &Manager{logger: slog.Default(), hosts: hosts}
+	conversation := hostedConversation{}
+
+	_, runner := m.hostedTools(Spec{CustomerID: "acme", AgentID: "stream-support"}, "session-1", conversation, nil, nil)
+	if _, err := runner.Run(context.Background(), llm.ToolCall{ID: "1", Name: "investigate_sdk"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(hosts.ran) != 1 || hosts.ran[0].Progress != conversation {
+		t.Errorf("the worker cannot reach the conversation: %+v", hosts.ran)
 	}
 }

@@ -51,10 +51,23 @@ type ToolCall struct {
 	Name         string
 	// Arguments is the JSON object the model wrote.
 	Arguments string
+	// Progress is the conversation the call was made in, which the worker may hold the call
+	// on or tell how it is going while it runs. Nil when nobody is listening.
+	Progress Progress `json:"-"`
 	// Cancel says the call with this id is no longer wanted: its deadline passed or the
 	// session gave up on it. It travels on the same queue as the call, so it cannot
 	// overtake it.
 	Cancel bool `json:",omitempty"`
+}
+
+// Progress is what a running hosted call may tell the conversation it was made in, as a
+// session's own tool may over the session socket.
+type Progress interface {
+	// HoldTool keeps the call running when the caller talks over the agent, reporting
+	// whether it still was.
+	HoldTool(id string) bool
+	// ToolUpdate says how the call is going, or with verbatim, words to say as written.
+	ToolUpdate(id, text string, verbatim bool)
 }
 
 // User is who a hosted call was made for.
@@ -116,12 +129,34 @@ func (w *Worker) Resolve(id string, result ToolResult) bool {
 	w.mu.Lock()
 	waiting, found := w.results[id]
 	delete(w.results, id)
+	delete(w.progress, id)
 	w.mu.Unlock()
 	if !found {
 		return false
 	}
 	waiting <- result
 	return true
+}
+
+// Hold keeps a hosted call the worker is running going when the caller talks over the
+// agent, reporting whether the call was still running to be held.
+func (w *Worker) Hold(id string) bool {
+	progress := w.progressOf(id)
+	return progress != nil && progress.HoldTool(id)
+}
+
+// Update tells the conversation a hosted call was made in how it is going. An update for
+// a call nobody is waiting on is dropped.
+func (w *Worker) Update(id, text string, verbatim bool) {
+	if progress := w.progressOf(id); progress != nil {
+		progress.ToolUpdate(id, text, verbatim)
+	}
+}
+
+func (w *Worker) progressOf(id string) Progress {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.progress[id]
 }
 
 // Host records that a worker runs these tools for sessions under an agent id, replacing
@@ -245,6 +280,9 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 		return nil, fmt.Errorf("dispatch: %s was already asked for", call.ID)
 	}
 	chosen.worker.results[call.ID] = answer
+	if call.Progress != nil {
+		chosen.worker.progress[call.ID] = call.Progress
+	}
 	chosen.worker.mu.Unlock()
 	// Cannot block: the queue was not full a moment ago and nothing else writes to it
 	// without this lock.
@@ -287,6 +325,7 @@ func (p *Pool) cancelHosted(worker *Worker, call ToolCall) {
 func (w *Worker) forget(id string) {
 	w.mu.Lock()
 	delete(w.results, id)
+	delete(w.progress, id)
 	w.mu.Unlock()
 }
 
@@ -332,6 +371,7 @@ func (p *Pool) unhost(worker *Worker) {
 	worker.mu.Lock()
 	waiting := worker.results
 	worker.results = map[string]chan ToolResult{}
+	worker.progress = map[string]Progress{}
 	worker.mu.Unlock()
 	for _, answer := range waiting {
 		answer <- ToolResult{Failure: "the worker running this tool disconnected"}

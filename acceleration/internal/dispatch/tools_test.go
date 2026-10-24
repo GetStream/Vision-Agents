@@ -119,3 +119,52 @@ func TestAHostedCallIsBoundedByTheWorkersTimeout(t *testing.T) {
 		t.Error("an answer after the timeout was taken")
 	}
 }
+
+// progressHeard is a conversation that records what a hosted call told it.
+type progressHeard struct {
+	held    []string
+	updates []string
+	holds   bool
+}
+
+func (p *progressHeard) HoldTool(id string) bool {
+	p.held = append(p.held, id)
+	return p.holds
+}
+
+func (p *progressHeard) ToolUpdate(id, text string, verbatim bool) {
+	p.updates = append(p.updates, id+": "+text)
+}
+
+func TestAWorkerRunningAHostedCallReachesItsConversation(t *testing.T) {
+	pool := NewPool()
+	worker, _ := pool.Register("acme", Registration{Capacity: 1})
+	if err := pool.Host(worker, "support", []Tool{investigate}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	heard := &progressHeard{holds: true}
+
+	go func() {
+		call := <-worker.ToolCalls()
+		worker.Update(call.ID, "reading the gradle files", false)
+		if !worker.Hold(call.ID) {
+			t.Error("a call its conversation holds was not held")
+		}
+		worker.Resolve(call.ID, ToolResult{Output: llm.TextParts("35")})
+	}()
+	if _, err := pool.RunHosted(context.Background(), "acme", "support",
+		ToolCall{ID: "call-1", Name: "investigate_sdk", Progress: heard}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(heard.updates) != 1 || heard.updates[0] != "call-1: reading the gradle files" || len(heard.held) != 1 {
+		t.Fatalf("the conversation heard %+v and held %+v", heard.updates, heard.held)
+	}
+	if worker.Hold("call-1") {
+		t.Error("an answered call was held")
+	}
+	worker.Update("call-1", "late", false)
+	if len(heard.updates) != 1 {
+		t.Errorf("an answered call's update reached the conversation: %+v", heard.updates)
+	}
+}

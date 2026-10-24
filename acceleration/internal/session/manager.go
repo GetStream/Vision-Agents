@@ -506,7 +506,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// drops whichever of them nothing on this call can carry out.
 	tools := append([]harness.Tool(nil), spec.Tools...)
 	var callers agent.ToolRunner = created.tools
-	tools, callers = m.hostedTools(spec, created.id, tools, callers)
+	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
 	tools, callers = moderationTools(spec, stream, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()

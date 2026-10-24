@@ -284,8 +284,10 @@ type watcherCommand struct {
 	// waited for them, and what a declined call shows.
 	Allowed *bool  `json:"allowed"`
 	Summary string `json:"summary"`
-	// Text carries say and respond.
+	// Text carries say, respond and tool_update.
 	Text string `json:"text"`
+	// Verbatim says a tool_update's text is to be said as written.
+	Verbatim bool `json:"verbatim"`
 	// Images attach to a respond command, and become image parts on that turn.
 	Images []wireImage `json:"images"`
 }
@@ -379,6 +381,22 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 			s.logger.Debug("a tool result answered nothing",
 				"session", found.ID(), "call", command.ToolCallID)
 		}
+
+	case "tool_hold":
+		if !found.Answers(seat, command.ToolCallID) {
+			s.logger.Debug("a hold from a watcher that does not run the call",
+				"session", found.ID(), "call", command.ToolCallID)
+			return true
+		}
+		found.HoldTool(command.ToolCallID)
+
+	case "tool_update":
+		if !found.Answers(seat, command.ToolCallID) {
+			s.logger.Debug("an update from a watcher that does not run the call",
+				"session", found.ID(), "call", command.ToolCallID)
+			return true
+		}
+		found.ToolUpdate(command.ToolCallID, command.Text, command.Verbatim)
 
 	case "tool_approval":
 		if command.Allowed == nil {
@@ -502,6 +520,15 @@ func frameOf(event session.Event) (frame, bool) {
 			call["conversation"] = toolConversationFrame(typed.Conversation.CID, typed.Conversation.Custom)
 		}
 		return call, true
+
+	case session.ToolHeld:
+		return frame{"type": "tool_held", "id": typed.ID}, true
+
+	case agent.ToolUpdated:
+		return frame{
+			"type": "tool_updated", "id": typed.ID, "turn_id": typed.TurnID, "tool": typed.Tool,
+			"text": typed.Text, "verbatim": typed.Verbatim,
+		}, true
 
 	case agent.Joined:
 		return frame{"type": "joined", "at": typed.At}, true
