@@ -355,7 +355,30 @@ type Transcript struct {
 	Provider string
 	Model    string
 	Error    string
-	Frame    Frame
+	// CostMicros is what the turn a final transcript ends cost, told to a backend only.
+	CostMicros int64
+	// Balance is set on the frame saying the organization's credit went down into low or
+	// exhausted, and nothing else is.
+	Balance *Balance
+	Frame   Frame
+}
+
+// Balance is a socket telling a backend that its organization's credit went down into low or
+// exhausted while the socket was open: once per crossing, and at once after the socket starts
+// when it already was.
+type Balance struct {
+	// Micros is the credit left, less what work under way holds, which may be below zero.
+	Micros int64
+	// Warning is low or exhausted.
+	Warning string
+}
+
+// balanceOf is the balance a frame tells of, nil for any other frame.
+func balanceOf(frame Frame) *Balance {
+	if frame.Type() != "balance" {
+		return nil
+	}
+	return &Balance{Micros: frame.Int64("balance_micros"), Warning: frame.String("warning")}
 }
 
 // Transcriber is one open transcription socket.
@@ -386,14 +409,16 @@ func (t *Transcriber) read(logger *slog.Logger) {
 			continue
 		}
 		t.transcripts <- Transcript{
-			Text:     frame.String("text"),
-			Final:    frame.Bool("final"),
-			Speaker:  frame.String("speaker"),
-			Language: frame.String("language"),
-			Provider: frame.String("provider"),
-			Model:    frame.String("model"),
-			Error:    frame.String("error"),
-			Frame:    frame,
+			Text:       frame.String("text"),
+			Final:      frame.Bool("final"),
+			Speaker:    frame.String("speaker"),
+			Language:   frame.String("language"),
+			Provider:   frame.String("provider"),
+			Model:      frame.String("model"),
+			Error:      frame.String("error"),
+			CostMicros: frame.Int64("cost_micros"),
+			Balance:    balanceOf(frame),
+			Frame:      frame,
 		}
 	}
 }
@@ -407,8 +432,13 @@ type Audio struct {
 	Channels   int
 	// Done says the utterance is finished, and carries no samples.
 	Done bool
+	// CostMicros is what the finished utterance cost, told to a backend only.
+	CostMicros int64
 	// Error is why nothing was spoken, when that is what happened.
 	Error string
+	// Balance is set, and nothing else is, when the organization's credit went down into low
+	// or exhausted.
+	Balance *Balance
 }
 
 // Voice is one open speech socket.
@@ -447,9 +477,11 @@ func (v *Voice) read(logger *slog.Logger) {
 		}
 		switch frame.Type() {
 		case "synthesis_complete":
-			v.audio <- Audio{Done: true}
+			v.audio <- Audio{Done: true, CostMicros: frame.Int64("cost_micros")}
 		case "error":
 			v.audio <- Audio{Error: frame.String("error")}
+		case "balance":
+			v.audio <- Audio{Balance: balanceOf(frame)}
 		}
 	}
 }
@@ -511,9 +543,14 @@ type Answer struct {
 	// Text is the whole answer, on the frame that finishes it.
 	Text string
 	Done bool
+	// CostMicros is what the finished answer cost, told to a backend only.
+	CostMicros int64
 	// Error is why there is no answer, when that is what happened.
 	Error string
-	Frame Frame
+	// Balance is set, and nothing else is, when the organization's credit went down into low
+	// or exhausted.
+	Balance *Balance
+	Frame   Frame
 }
 
 // Model is one open completions socket.
@@ -646,9 +683,11 @@ func (m *Model) read(logger *slog.Logger) {
 		case "delta":
 			m.answers <- Answer{Delta: frame.String("text"), Frame: frame}
 		case "complete":
-			m.answers <- Answer{Text: frame.String("text"), Done: true, Frame: frame}
+			m.answers <- Answer{Text: frame.String("text"), Done: true, CostMicros: frame.Int64("cost_micros"), Frame: frame}
 		case "error":
 			m.answers <- Answer{Error: frame.String("error"), Frame: frame}
+		case "balance":
+			m.answers <- Answer{Balance: balanceOf(frame), Frame: frame}
 		}
 	}
 }

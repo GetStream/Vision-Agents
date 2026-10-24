@@ -37,6 +37,8 @@ import (
 // Client is the backend held once: where the router is, and who is calling it.
 type Client struct {
 	backend stream.Backend
+	// watcher reads what every answer says about money (WithUsage, WithBalanceWarning).
+	watcher *watcher
 
 	// mu guards the Stream client, which is built on the first conversation that asks for
 	// chat or video and shared by every one after it.
@@ -49,12 +51,21 @@ type Client struct {
 // The zero Backend reads the environment, which is what a program deployed next to a router
 // wants. Resolved here rather than at the first call, so a missing credential is reported
 // where the backend was configured and not in the middle of a conversation.
-func New(backend stream.Backend) (*Client, error) {
+//
+// Every answer to a backend says what the request cost and what the organization has left;
+// the options say what to do with that (WithUsage, WithBalanceWarning). Without them a balance
+// running low is logged.
+func New(backend stream.Backend, options ...Option) (*Client, error) {
 	resolved, err := backend.Resolve()
 	if err != nil {
 		return nil, err
 	}
-	return &Client{backend: resolved}, nil
+	watching := &watcher{}
+	for _, apply := range options {
+		apply(watching)
+	}
+	resolved.HTTPClient = watching.transport(resolved.HTTPClient)
+	return &Client{backend: resolved, watcher: watching}, nil
 }
 
 // SetUser says who this client is acting for, and hands over the token that proves it.
@@ -78,7 +89,7 @@ func (c *Client) SetUser(userID, token string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{backend: resolved}, nil
+	return &Client{backend: resolved, watcher: c.watcher}, nil
 }
 
 // ServerSide says whether this client speaks for the app itself rather than for one user.
