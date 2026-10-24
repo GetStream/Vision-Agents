@@ -75,6 +75,9 @@ type Options struct {
 	// Meter is told what the sandbox reserves as that changes, which is what Daytona bills.
 	// Nil tells nobody.
 	Meter Meter
+	// Slots bound how many sandboxes run at once: one is taken before the sandbox is made or
+	// started again, and given back once it stops or is gone. Nil bounds nothing.
+	Slots sandbox.Slots
 }
 
 // Reserved is what a sandbox holds, which Daytona bills by the second: its vCPUs, memory and
@@ -137,7 +140,11 @@ type Sandbox struct {
 	labels    map[string]string
 	lifecycle sandbox.Lifecycle
 	meter     Meter
+	slots     sandbox.Slots
 	logger    *slog.Logger
+	// slot gives back the slot the sandbox holds while it runs, nil while it holds none. It is
+	// held under the gate.
+	slot func()
 	// What follows is held under the gate. generation counts the sandboxes made, and used is
 	// when work in this one last finished, from which it idles. stoppedAt is when it was
 	// taken to have stopped for idling, zero while it runs; confirmed says its state was read
@@ -191,7 +198,7 @@ func New(o Options) (*Sandbox, error) {
 	}
 	return &Sandbox{client: c, gate: make(chan struct{}, 1), timeout: o.Timeout, runTimeout: o.RunTimeout, config: o.Config,
 		grants: o.Grants, broker: o.Broker, labels: maps.Clone(o.Labels), lifecycle: o.Lifecycle, meter: o.Meter,
-		logger: o.Logger, grace: stopGrace}, nil
+		slots: o.Slots, logger: o.Logger, grace: stopGrace}, nil
 }
 func Configured() bool { return os.Getenv(apiKeyEnvVar) != "" }
 
@@ -365,20 +372,26 @@ func (s *Sandbox) started(ctx context.Context) error {
 func (s *Sandbox) create(ctx context.Context) error {
 	create, end := context.WithTimeout(ctx, s.timeout)
 	defer end()
+	if err := s.hold(create, false); err != nil {
+		return err
+	}
 	if s.broker != nil {
 		if s.generation > 0 {
 			if err := s.broker.Close(create); err != nil {
+				s.letGo()
 				return err
 			}
 		}
 		mount, err := s.broker.Prepare(create, s.grants)
 		if err != nil {
+			s.letGo()
 			return err
 		}
 		s.mount, s.files, s.setup = mount, mount.Files, mount.Setup
 	}
 	box, err := s.client.Create(create, s.params(), options.WithWaitForStart(false))
 	if err != nil {
+		s.letGo()
 		if s.broker != nil {
 			return errors.Join(err, s.broker.Close(ctx))
 		}
@@ -397,6 +410,29 @@ func reserved(box *sdk.Sandbox) Reserved {
 		class = string(*box.SandboxClass)
 	}
 	return Reserved{ID: box.ID, CPU: float64(box.Cpu), MemoryGB: float64(box.Memory), DiskGB: float64(box.Disk), Class: class}
+}
+
+// hold takes a slot for the sandbox to run in, unless it holds one or nothing bounds how many
+// run at once; running is one Daytona runs already. The caller holds the gate.
+func (s *Sandbox) hold(ctx context.Context, running bool) error {
+	if s.slots == nil || s.slot != nil {
+		return nil
+	}
+	release, err := s.slots.Take(ctx, running)
+	if err != nil {
+		return err
+	}
+	s.slot = release
+	return nil
+}
+
+// letGo gives back the slot the sandbox held while it ran, if it held one. The caller holds the
+// gate.
+func (s *Sandbox) letGo() {
+	if s.slot != nil {
+		s.slot()
+		s.slot = nil
+	}
 }
 
 // lapsed reports whether the sandbox may no longer be as it was left: idle for long enough that
@@ -422,27 +458,27 @@ func (s *Sandbox) revive(ctx context.Context) error {
 		return stack.Wrap(err)
 	}
 	switch s.box.State {
-	case "started":
 	case "destroyed", "destroying":
 		s.lost()
 		return nil
-	case "stopping":
-		if err := s.box.WaitForStop(read, s.timeout); err != nil {
-			return stack.Wrap(err)
-		}
-		fallthrough
-	case "stopped", "archiving", "archived":
-		if err := s.box.StartWithTimeout(read, s.timeout); err != nil {
-			return stack.Wrap(err)
-		}
-	case "creating", "starting", "restoring", "resuming", "pending_build", "building_snapshot", "pulling_snapshot",
-		"resizing", "snapshotting", "forking":
-		if err := s.box.WaitForStart(read, s.timeout); err != nil {
-			return stack.Wrap(err)
-		}
+	case "started", "stopping", "stopped", "archiving", "archived", "creating", "starting", "restoring", "resuming",
+		"pending_build", "building_snapshot", "pulling_snapshot", "resizing", "snapshotting", "forking":
 	default:
 		s.discard(read)
 		return nil
+	}
+	// A sandbox taken to have stopped runs again only in a slot of its own; refused one, it
+	// stays stopped, and is billed so. One Daytona had not stopped yet runs already, and is
+	// given a slot whatever the count.
+	waking := s.slot == nil
+	if err := s.hold(read, s.box.State == "started"); err != nil {
+		return err
+	}
+	if err := s.wake(read); err != nil {
+		if waking {
+			s.letGo()
+		}
+		return err
 	}
 	switch {
 	case s.gone:
@@ -452,6 +488,29 @@ func (s *Sandbox) revive(ctx context.Context) error {
 		s.meter.Started()
 	}
 	s.stoppedAt, s.confirmed, s.gone = time.Time{}, false, false
+	return nil
+}
+
+// wake has a sandbox in a state code can run in started: one stopping waited for and started,
+// one stopped or archived started, one Daytona is bringing up waited for. The caller holds
+// the gate.
+func (s *Sandbox) wake(ctx context.Context) error {
+	switch s.box.State {
+	case "started":
+	case "stopping":
+		if err := s.box.WaitForStop(ctx, s.timeout); err != nil {
+			return stack.Wrap(err)
+		}
+		fallthrough
+	case "stopped", "archiving", "archived":
+		if err := s.box.StartWithTimeout(ctx, s.timeout); err != nil {
+			return stack.Wrap(err)
+		}
+	default:
+		if err := s.box.WaitForStart(ctx, s.timeout); err != nil {
+			return stack.Wrap(err)
+		}
+	}
 	return nil
 }
 
@@ -476,6 +535,7 @@ func (s *Sandbox) lost() {
 	if !s.gone {
 		s.meter.Gone()
 	}
+	s.letGo()
 	s.box = nil
 	s.stoppedAt, s.confirmed, s.gone = time.Time{}, false, false
 }
@@ -542,9 +602,11 @@ func (s *Sandbox) lapse(epoch int) {
 		}
 		s.stoppedAt = now
 		s.meter.Stopped()
+		s.letGo()
 	case s.lifecycle.StoppedDelete > 0 && now.Sub(s.stoppedAt) >= s.lifecycle.StoppedDelete:
 		s.gone = true
 		s.meter.Gone()
+		s.letGo()
 		if s.closed.Load() {
 			s.box = nil
 			s.released(context.Background())
@@ -598,6 +660,7 @@ func (s *Sandbox) remove(ctx context.Context) error {
 	if !s.gone {
 		s.meter.Gone()
 	}
+	s.letGo()
 	s.box = nil
 	s.stoppedAt, s.confirmed, s.gone = time.Time{}, false, false
 	return nil
