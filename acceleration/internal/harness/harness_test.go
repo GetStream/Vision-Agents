@@ -1594,6 +1594,14 @@ func (s *HarnessSuite) TestAColdLargePrefixIsCompactedPrivately() {
 	s.False(s.harness.Delegating(), "the caller is not waiting for private maintenance")
 }
 
+func (s *HarnessSuite) TestASummaryDoesNotTurnAToolsNoticeIntoARule() {
+	// A tool answered "not available right now, do NOT call any more functions" for one
+	// reply, and 13 of 28 summaries in one Audio Arena run carried it on as "tools are
+	// unavailable; do not call more functions", so the agent stopped using its tools.
+	s.Contains(compactionSkill.Instructions, "Record what each tool call returned as the outcome of that call at that time")
+	s.Contains(compactionSkill.Instructions, "applied to that reply only: never carry them forward as rules")
+}
+
 func (s *HarnessSuite) TestTheCompactionPromptKeepsWhoSaidWhat() {
 	prompt := compactionPrompt([]llm.Message{
 		{Role: llm.User, Content: "hello"},

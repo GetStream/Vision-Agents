@@ -98,8 +98,36 @@ func (s *ToolsSuite) TestAReadBackThatWaitsForAgreementEndsTheTurn() {
 	// Voicebench operators say to read details back and wait for agreement before acting,
 	// and Gemma read them back and called the tool in the same breath.
 	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
-		s.Contains(prompt, "If your instructions say to wait for agreement after a read-back, "+
-			"end your turn after it, with no hold phrase and no call, until they agree.")
+		s.Contains(prompt, "Only if your instructions say to wait for the caller's agreement after a "+
+			"read-back, end your turn after it, with no hold phrase and no call, until they agree.")
+	}
+}
+
+func (s *ToolsSuite) TestAReadBackWithoutAWaitIsFollowedByTheCall() {
+	// Audio Arena's operators say to confirm details back and to call the tool once it has
+	// what it needs. Read as a wait for agreement, the agent asked "before I book it, could
+	// you confirm..." where a booking was expected, and the turn was lost.
+	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
+		s.Contains(prompt, "Instructions to confirm details or read them back are not that: read "+
+			"them back in the sentence before the call and make the call in the same reply.")
+	}
+}
+
+func (s *ToolsSuite) TestAFailedCallDoesNotMeanTheToolIsDown() {
+	// One failed or unavailable result was taken as the state of the whole call: for the rest
+	// of it the agent told callers it could not book, send or set anything, without calling
+	// the tools again.
+	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
+		s.Contains(prompt, "A failed or unavailable result answers that one call, not the rest of "+
+			"the conversation: when the caller later asks for something that needs the tool, call it again")
+	}
+}
+
+func (s *ToolsSuite) TestNoHoldPhraseIsGivenToCopy() {
+	// The models open every reply with whatever example they are shown: "One moment, let me
+	// check that" opened 23 of 85 Audio Arena turns, many of them calling a tool nobody asked for.
+	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
+		s.NotContains(prompt, "One moment")
 	}
 }
 
