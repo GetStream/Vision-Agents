@@ -160,18 +160,20 @@ func (s *QuotaSuite) TestADebitCountsBothMessagesAndTokens() {
 	limiter.Debit(s.ctx, s.customer, s.caller, 250)
 	limiter.Debit(s.ctx, s.customer, s.caller, 250)
 
-	spent, err := limiter.spent(s.ctx, limiter.keys(s.customer, s.caller, time.Now())[0])
+	spent, err := limiter.spent(s.ctx, deviceKeys(s.customer, s.caller, time.Now())[0])
 
 	s.Require().NoError(err)
-	s.EqualValues(2, spent.messages)
-	s.EqualValues(500, spent.tokens)
+	s.EqualValues(2, spent[0].messages)
+	s.EqualValues(500, spent[0].tokens)
 }
 
 func (s *QuotaSuite) TestADaysCountersExpireOnTheirOwn() {
-	limiter := s.limiter(10, 0)
+	limiter := s.limiterWith(Limits{MessagesPerDay: 10}, s.appQuota(Limits{MessagesPerDay: 10}))
 	limiter.Debit(s.ctx, s.customer, s.caller, 10)
 
-	for _, key := range limiter.keys(s.customer, s.caller, time.Now()) {
+	keys := append(deviceKeys(s.customer, s.caller, time.Now()), customerKey(s.customer, s.caller.UserID, time.Now()))
+	s.Len(keys, 3)
+	for _, key := range keys {
 		ttl, err := s.redis.Do(s.ctx, s.redis.B().Ttl().Key(key).Build()).AsInt64()
 		s.Require().NoError(err)
 		s.Positive(ttl, "a day's counters should not outlive their retention")
@@ -201,15 +203,25 @@ func (s *QuotaSuite) allow(limiter *Limiter, customerID string, caller routing.C
 	return err
 }
 
-// limitsByCustomer is a Source that knows a few customers' limits and has no opinion about
-// anybody else's.
+// limitsByCustomer is a Source that knows a few apps' quotas, and named users' by
+// "<app>/<user>", and has no opinion about anybody else's.
 type limitsByCustomer map[string]Limits
 
-func (l limitsByCustomer) Limits(_ context.Context, customerID string, defaults Limits) Limits {
-	if limits, ok := l[customerID]; ok {
-		return limits
+func (l limitsByCustomer) Quota(_ context.Context, customerID, userID string, defaults Limits) Quota {
+	if limits, ok := l[customerID+"/"+userID]; ok {
+		by := Setter{Level: LevelUser, ID: userID}
+		return Quota{Messages: Limit{PerDay: limits.MessagesPerDay, By: by}, Tokens: Limit{PerDay: limits.TokensPerDay, By: by}}
 	}
-	return defaults
+	if limits, ok := l[customerID]; ok {
+		by := Setter{Level: LevelApp, ID: customerID}
+		return Quota{Messages: Limit{PerDay: limits.MessagesPerDay, By: by}, Tokens: Limit{PerDay: limits.TokensPerDay, By: by}}
+	}
+	return Default(defaults)
+}
+
+// appQuota is a source in which the suite's app set limits for its users.
+func (s *QuotaSuite) appQuota(limits Limits) limitsByCustomer {
+	return limitsByCustomer{s.customer: limits}
 }
 
 func (s *QuotaSuite) limiterWith(defaults Limits, source Source) *Limiter {
@@ -312,7 +324,7 @@ func (s *QuotaSuite) TestACustomerHeldToNoLimitIsNotCounted() {
 
 	s.Require().NoError(err)
 	s.Zero(status, "an uncounted caller is told nothing")
-	for _, key := range limiter.keys(s.customer, s.caller, time.Now()) {
+	for _, key := range append(deviceKeys(s.customer, s.caller, time.Now()), customerKey(s.customer, s.caller.UserID, time.Now())) {
 		exists, err := s.redis.Do(s.ctx, s.redis.B().Exists().Key(key).Build()).AsInt64()
 		s.Require().NoError(err)
 		s.Zero(exists, "nothing is counted for %s", key)
@@ -331,12 +343,12 @@ func (s *QuotaSuite) TestAnAppsLimitHoldsWhereTheDeploymentHasNone() {
 // after a minute when nothing gives it up.
 type stalledSource struct{}
 
-func (stalledSource) Limits(ctx context.Context, _ string, _ Limits) Limits {
+func (stalledSource) Quota(ctx context.Context, _, _ string, _ Limits) Quota {
 	select {
 	case <-ctx.Done():
 	case <-time.After(time.Minute):
 	}
-	return Limits{MessagesPerDay: 1}
+	return Default(Limits{MessagesPerDay: 1})
 }
 
 func (s *QuotaSuite) TestADebitWaitsNoLongerThanItsTimeoutForTheLimits() {
@@ -348,4 +360,107 @@ func (s *QuotaSuite) TestADebitWaitsNoLongerThanItsTimeoutForTheLimits() {
 	limiter.Debit(context.Background(), s.customer, s.caller, 10)
 
 	s.Less(time.Since(started), writeTimeout+time.Second)
+}
+
+// backend is the app's own process acting for the suite's user.
+func (s *QuotaSuite) backend() routing.Caller {
+	return routing.Caller{UserID: s.caller.UserID, IP: s.caller.IP, ServerSide: true}
+}
+
+func (s *QuotaSuite) TestTheDeploymentsDefaultsStillSkipABackend() {
+	limiter := s.limiter(1, 1)
+	limiter.Debit(s.ctx, s.customer, s.backend(), 10_000)
+
+	for _, key := range append(deviceKeys(s.customer, s.caller, time.Now()), customerKey(s.customer, s.caller.UserID, time.Now())) {
+		exists, err := s.redis.Do(s.ctx, s.redis.B().Exists().Key(key).Build()).AsInt64()
+		s.Require().NoError(err)
+		s.Zero(exists, "a backend's work is in no bucket of the deployment's: %s", key)
+	}
+	s.NoError(s.allow(limiter, s.customer, s.caller))
+}
+
+func (s *QuotaSuite) TestACustomerQuotaCountsABackendForTheUser() {
+	limiter := s.limiterWith(Limits{MessagesPerDay: 100}, s.appQuota(Limits{MessagesPerDay: 2}))
+	s.Require().NoError(s.allow(limiter, s.customer, s.caller))
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+	s.Require().NoError(s.allow(limiter, s.customer, s.backend()))
+	limiter.Debit(s.ctx, s.customer, s.backend(), 10)
+
+	s.ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted, "from the user's device")
+	s.ErrorIs(s.allow(limiter, s.customer, s.backend()), ErrExhausted, "from the app's backend")
+	s.NoError(s.allow(limiter, s.customer, routing.Caller{UserID: s.caller.UserID + "-other"}),
+		"another user of the same app has a day of their own")
+}
+
+func (s *QuotaSuite) TestARefusalNamesWhoseQuotaItIs() {
+	limiter := s.limiterWith(Limits{}, limitsByCustomer{
+		s.customer:                         {MessagesPerDay: 1},
+		s.customer + "/" + s.caller.UserID: {MessagesPerDay: 1},
+	})
+	other := routing.Caller{UserID: s.caller.UserID + "-other"}
+	limiter.Debit(s.ctx, s.customer, s.backend(), 10)
+	limiter.Debit(s.ctx, s.customer, other, 10)
+
+	own := s.allow(limiter, s.customer, s.backend())
+	apps := s.allow(limiter, s.customer, other)
+
+	s.Require().ErrorIs(own, ErrExhausted)
+	s.Contains(own.Error(), "for user "+s.caller.UserID)
+	s.Require().ErrorIs(apps, ErrExhausted)
+	s.Contains(apps.Error(), "for every user of app "+s.customer)
+}
+
+func (s *QuotaSuite) TestTheDeploymentsTokensStillSkipABackendUnderACustomersMessages() {
+	// The app set the messages only, so the tokens stay the deployment's, and count devices only.
+	limiter := s.limiterWith(Limits{}, sourceFunc(func(context.Context, string, string, Limits) Quota {
+		return Quota{Messages: Limit{PerDay: 3, By: Setter{Level: LevelApp, ID: s.customer}}, Tokens: Limit{PerDay: 1_000}}
+	}))
+	limiter.Debit(s.ctx, s.customer, s.backend(), 5_000)
+
+	s.NoError(s.allow(limiter, s.customer, s.caller), "the backend's tokens are not the device's")
+	limiter.Debit(s.ctx, s.customer, s.backend(), 10)
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+	err := s.allow(limiter, s.customer, s.caller)
+	s.Require().ErrorIs(err, ErrExhausted, "three messages counted, two of them the backend's")
+	s.Contains(err.Error(), "3 messages a day")
+}
+
+func (s *QuotaSuite) TestAnAddressStillAnswersForACustomersQuota() {
+	limiter := s.limiterWith(Limits{}, s.appQuota(Limits{MessagesPerDay: 1}))
+	limiter.Debit(s.ctx, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP}, 10)
+
+	s.ErrorIs(s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP}), ErrExhausted)
+	s.NoError(s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP, ServerSide: true}),
+		"a backend has no address of its user's to answer for")
+}
+
+func (s *QuotaSuite) TestTodayIsWhatTheCustomersQuotaCounted() {
+	limiter := s.limiterWith(Limits{}, s.appQuota(Limits{MessagesPerDay: 10}))
+	limiter.Debit(s.ctx, s.customer, s.caller, 100)
+	limiter.Debit(s.ctx, s.customer, s.backend(), 50)
+
+	messages, tokens, reset, err := limiter.Today(s.ctx, s.customer, s.caller.UserID)
+
+	s.Require().NoError(err)
+	s.EqualValues(2, messages)
+	s.EqualValues(150, tokens)
+	s.Equal(nextMidnight(time.Now()), reset)
+}
+
+func (s *QuotaSuite) TestTheEffectiveQuotaIsTheSources() {
+	limiter := s.limiterWith(Limits{MessagesPerDay: 7}, s.appQuota(Limits{TokensPerDay: 9}))
+
+	held := limiter.Effective(s.ctx, s.customer, s.caller.UserID)
+
+	s.EqualValues(9, held.Tokens.PerDay)
+	s.Equal(Setter{Level: LevelApp, ID: s.customer}, held.Tokens.By)
+	var none *Limiter
+	s.Zero(none.Effective(s.ctx, s.customer, s.caller.UserID), "a deployment that counts nothing enforces nothing")
+}
+
+// sourceFunc is a Source written inline.
+type sourceFunc func(ctx context.Context, customerID, userID string, defaults Limits) Quota
+
+func (f sourceFunc) Quota(ctx context.Context, customerID, userID string, defaults Limits) Quota {
+	return f(ctx, customerID, userID, defaults)
 }

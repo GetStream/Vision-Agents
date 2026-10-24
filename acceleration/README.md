@@ -370,9 +370,14 @@ customer too, since each has its own limit. Both matter.
 A user id is the honest answer to who is asking, and the address is the answer that
 still holds when a backend mints a fresh user id per request.
 
-What a backend asks for is never counted, even when it names the user it acts for, and
-neither are the backend's own turns in a session it opened. Answers from `mock/*` models are not
-counted either. A counted HTTP answer carries `X-Quota-Limit`, `X-Quota-Remaining`
+Against the deployment's default, what a backend asks for is never counted, even when it
+names the user it acts for, and neither are the backend's own turns in a session it opened.
+A quota the customer set is the customer's own rule about its users, so it counts everything
+recorded with the user, a backend acting for them included, in a bucket of its own per user
+(and, for a device caller, against the address as well). An app's `quota` counted only device
+callers before; it now counts its backend's work for the user too. A refusal names the quota:
+`user <id>`, `every user of app <id>`, or the router's default. Answers from `mock/*` models
+are not counted either. A counted HTTP answer carries `X-Quota-Limit`, `X-Quota-Remaining`
 and `X-Quota-Reset` (the unix time of the next UTC midnight), for the limit nearest to
 refusing the caller.
 

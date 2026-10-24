@@ -53,10 +53,9 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 			(r.Method == http.MethodDelete && sessionID != "" && !strings.Contains(sessionID, "/") ||
 				r.Method == http.MethodPost && stopping && stopped != "" && !strings.Contains(stopped, "/"))
 		// A request nobody authenticated has no account to count against. A backend, and a
-		// caller with neither a name nor an address, are told apart by Allow itself: it
-		// counts nothing for a server-side caller even when it names a user, because
-		// counting that name would charge a person's day for work their customer chose to
-		// do for them.
+		// caller with neither a name nor an address, are told apart by Allow itself: a
+		// backend naming a user is held to the quotas the customer set for that user, and
+		// never to the deployment's default, which guards against devices alone.
 		customerID, known := CustomerFrom(r.Context())
 		if !known || endingSession {
 			next.ServeHTTP(w, r)

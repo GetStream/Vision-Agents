@@ -152,11 +152,11 @@ func (s *QuotaSuite) TestAUsersTurnsOverTheSocketOfAnUnrecordedSessionTheirBacke
 	s.awaitTheDaySpent()
 }
 
-func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCounted() {
+func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCountedByTheDefault() {
+	// The router's default of one a day guards against devices, so it never counts a backend.
 	s.useApp(s.data.createApp())
 	s.client = s.data.createUser()
 	s.backend = s.serverClient.actingFor(s.client)
-	s.putQuota(2)
 	opened := s.backendOpensACountedSession()
 
 	for turn := range 3 {
@@ -168,7 +168,31 @@ func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCoun
 
 	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 	s.Require().Equal(http.StatusCreated, response.StatusCode)
-	s.Equal("2", response.Header.Get("X-Quota-Remaining"), "none of the backend's turns was the user's")
+	s.Equal("1", response.Header.Get("X-Quota-Remaining"), "none of the backend's turns was the user's")
+}
+
+func (s *QuotaSuite) TestAnAppsQuotaCountsItsBackendsTurnsForTheUser() {
+	// A quota the app set is its rule about its user, so what its backend asks for in the
+	// user's name counts as much as what the user's device does.
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+	s.backend = s.serverClient.actingFor(s.client)
+	s.putQuota(2)
+	opened := s.backendOpensACountedSession()
+	status, failure := s.backend.failure(http.MethodPost, "/v1/agents/sessions/"+opened+"/respond",
+		RespondRequest{Text: "how much does a call cost", RequestId: pointerTo(s.utils.uuid())})
+	s.Require().Equal(http.StatusOK, status, failure)
+	s.awaitReplies(opened, 1)
+	s.spend(s.client)
+
+	status, refused := s.backend.failure(http.MethodPost, "/v1/agents/sessions/"+opened+"/respond",
+		RespondRequest{Text: "and a text", RequestId: pointerTo(s.utils.uuid())})
+	s.Equal(http.StatusTooManyRequests, status, "the backend's third turn for the user is refused")
+	s.Contains(refused, "every user of app "+s.customerID())
+	s.Equal(http.StatusTooManyRequests, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil),
+		"and so is the user's device")
+	s.NotEqual(http.StatusTooManyRequests, s.data.createUser().do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil),
+		"another user of the same app is not")
 }
 
 func (s *QuotaSuite) TestAUsersOwnSessionIsCountedOnTheirDayWhoeverSendsItsTurns() {
