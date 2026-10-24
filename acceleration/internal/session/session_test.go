@@ -1124,8 +1124,8 @@ func (r *recordedTurns) RewindResponses(_ context.Context, _, _, kept string, _ 
 
 func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
 	s.manages()
+	s.manager.records = &heldRecorder{}
 	created := s.writes(Spec{})
-	created.records = &heldRecorder{}
 	recorded := &recordedTurns{exchanges: []store.Exchange{
 		{ResponseID: "first", Said: "Is Stream better than Sendbird?", Answer: "Yes."},
 		{ResponseID: "second", Said: "And cheaper?", Answer: "Also yes."},
@@ -1155,8 +1155,8 @@ func (s *SessionSuite) TestARenamedSessionKeepsWhatItWasNotAskedToChange() {
 
 func (s *SessionSuite) TestRewindingToAResponseTheSessionNeverHadIsUnknown() {
 	s.manages()
+	s.manager.records = &heldRecorder{}
 	created := s.writes(Spec{})
-	created.records = &heldRecorder{}
 
 	err := created.Rewind(s.ctx, &recordedTurns{}, "somebody-elses")
 

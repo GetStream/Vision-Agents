@@ -234,7 +234,7 @@ func (s *RecordedCreateSuite) titler(m *Manager, title string) *titler {
 	router, err := llmrouter.New(llmrouter.Options{Config: config, Registry: naming, Logger: logger})
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
-	named := newTitler(router, m.records, logger)
+	named := newTitler(router, m.records.(*sessionRecorder), logger)
 	s.T().Cleanup(named.Close)
 	return named
 }

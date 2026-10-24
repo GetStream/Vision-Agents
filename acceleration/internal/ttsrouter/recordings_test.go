@@ -768,6 +768,7 @@ func (s *RecordingsSuite) TestARecordingOnTheQualityShortcutIsServedByElevenLabs
 
 func (s *RecordingsSuite) TestARecordingSaysItWasSpokenInTheDefaultVoiceWhenNoneWasAsked() {
 	// Probed on b1e563f98: the recorder was built for elevenlabs.DefaultVoiceID.
+	s.T().Setenv("ELEVENLABS_VOICE_ID", "")
 	recorded, _, err := s.newRecordings().Record(s.ctx, Recording{
 		CustomerID: "acme", Options: options.TTS{Target: "en-recorded"}, Text: "hello",
 	})
