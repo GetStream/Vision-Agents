@@ -17219,7 +17219,7 @@ paths:
         - Staff
     put:
       description: |-
-        Held to the customer's own rules: a user's policy holds a quota only, a budget is a 400 budget_moved (spend limits are /v1/manage/spend/limits), and an organization's require_own_stream_app is not changed here. The customer can change what staff wrote.
+        Held to the customer's own rules: a user's policy holds a quota only, a budget is a 400 budget_moved (spend limits are /v1/manage/spend/limits), and an organization's require_own_stream_app is not changed here. The customer can change what staff wrote. An app's or a user's change is audited under the app, so the app's own queryAudit lists it; an organization's is audited under the organization id, which no app's queryAudit lists, so only the management audit shows it.
 
         Stream staff only, for support: it needs the manage key, and a write is audited with source manage. An app or a user of an app that is not the organization's answers 404, as does an organization id that is not the one in the path.
       operationId: updateCustomerPolicy

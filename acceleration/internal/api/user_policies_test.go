@@ -185,7 +185,7 @@ func (s *PoliciesSuite) TestAUserIsToldWhatTheirBackendSpentForThemToday() {
 	s.put(messages(10))
 	backend := routing.Caller{UserID: "ann", ServerSide: true}
 	s.limiter.Debit(s.T().Context(), s.customerID(), backend, 40)
-	s.limiter.Debit(s.T().Context(), s.customerID(), routing.Caller{UserID: "ann"}, 2)
+	s.limiter.Debit(s.T().Context(), s.customerID(), routing.Caller{UserID: "ann", Verified: true}, 2)
 
 	read := s.getUser("ann")
 

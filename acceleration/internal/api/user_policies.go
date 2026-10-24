@@ -205,7 +205,10 @@ func (s *Server) registerUserPolicies(api huma.API) {
 		Summary:     "Replace a customer's policy",
 		Description: "Held to the customer's own rules: a user's policy holds a quota only, a budget is a 400 " +
 			"budget_moved (spend limits are /v1/manage/spend/limits), and an organization's " +
-			"require_own_stream_app is not changed here. The customer can change what staff wrote." + staff,
+			"require_own_stream_app is not changed here. The customer can change what staff wrote. An app's or a " +
+			"user's change is audited under the app, so the app's own queryAudit lists it; an organization's is " +
+			"audited under the organization id, which no app's queryAudit lists, so only the management audit " +
+			"shows it." + staff,
 		Tags:      []string{staffTag},
 		Security:  manageSecurity,
 		Responses: map[string]*huma.Response{"200": {Description: "The policy was stored"}},
