@@ -8,8 +8,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
 
@@ -55,8 +57,23 @@ type Session struct {
 	// whose audio is no longer wanted.
 	current    int
 	staleBelow int
+	// lease holds a minute of the conversation while it runs, so the other routers count it
+	// before its replies are recorded.
+	lease *routing.Lease
 
 	closeOnce sync.Once
+}
+
+// leaseRenew is how often a conversation's lease is renewed, for three times as long.
+var leaseRenew = routing.LeaseRenew
+
+// stsTokensPerMinute is what a minute of conversation is held at in tokens, half heard and
+// half spoken, beside its seconds and audio.
+const stsTokensPerMinute = 2_000
+
+var leaseMinute = pricing.Quantities{
+	pricing.SessionSeconds: 60, pricing.AudioMs: 60_000,
+	pricing.InputTokens: stsTokensPerMinute / 2, pricing.OutputTokens: stsTokensPerMinute / 2,
 }
 
 // reply is what the session remembers about one response until it completes.
@@ -87,6 +104,7 @@ func newSession(
 		settled:  map[string]struct{}{},
 		billed:   map[string]struct{}{},
 	}
+	session.lease = routing.StartLeaseEvery(recorder, config, owner, "sts", session.id, leaseMinute, leaseRenew, 3*leaseRenew)
 	go session.forward()
 	return session
 }
@@ -94,6 +112,9 @@ func newSession(
 // ProcessAudio streams the caller's speech to the selected provider. Only audio the provider
 // took is counted toward the next reply.
 func (s *Session) ProcessAudio(pcm sts.PcmData, participant sts.Participant) error {
+	if err := s.unpaid(); err != nil {
+		return err
+	}
 	if err := s.provider.ProcessAudio(pcm, participant); err != nil {
 		return err
 	}
@@ -106,6 +127,9 @@ func (s *Session) ProcessAudio(pcm sts.PcmData, participant sts.Participant) err
 // SendText injects a typed turn, which the next row carries as a message: some vendors bill
 // each one.
 func (s *Session) SendText(text string, participant sts.Participant) error {
+	if err := s.unpaid(); err != nil {
+		return err
+	}
 	if err := s.provider.SendText(text, participant); err != nil {
 		return err
 	}
@@ -126,11 +150,35 @@ func (s *Session) SetTools(tools []llm.Tool) error { return s.provider.SetTools(
 
 // Answer returns what a tool produced.
 func (s *Session) Answer(callID string, output string, err error) error {
+	if refused := s.unpaid(); refused != nil {
+		return refused
+	}
 	return s.provider.Answer(callID, output, err)
 }
 
 // Prompt asks the model to speak, guided by the text.
-func (s *Session) Prompt(text string) error { return s.provider.Prompt(text) }
+func (s *Session) Prompt(text string) error {
+	if err := s.unpaid(); err != nil {
+		return err
+	}
+	return s.provider.Prompt(text)
+}
+
+// unpaid is why the conversation may not take its next turn: its lease was refused, and a voice
+// model replies to every turn with nothing else to stop it. Money that ran out closes the
+// session, and every turn after answers the same refusal. Money that could not be checked (holds
+// not shared, a balance unread) refuses the turn and keeps the session, which takes turns again
+// once a renewal lands.
+func (s *Session) unpaid() error {
+	err := s.lease.Err()
+	if err == nil {
+		return nil
+	}
+	if !policy.Transient(err) {
+		_ = s.Close()
+	}
+	return stack.Wrap(err)
+}
 
 // Interrupt stops the reply in flight. Its audio stops being forwarded at once, before the
 // provider has heard about it, since the caller has already stopped listening.
@@ -183,7 +231,10 @@ func (s *Session) Quote(usage routing.Usage) pricing.Quote {
 // Close ends the session. The event channel closes once the provider's events are drained.
 func (s *Session) Close() error {
 	var err error
-	s.closeOnce.Do(func() { err = s.provider.Close() })
+	s.closeOnce.Do(func() {
+		err = s.provider.Close()
+		s.lease.Stop()
+	})
 	return err
 }
 

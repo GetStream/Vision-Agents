@@ -311,18 +311,61 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 
 // spent tells the gate what billable work cost the moment it is recorded, so the customer's
 // next admission counts it before its row is written, and answers the grants it is drawn from.
+// Work that cost nothing lets go of what was reserved for it.
 func (r *Recorder) spent(owner Owner, request store.Request) []int64 {
+	gate := r.moneyGate()
 	if !request.Billable || request.CostMicros <= 0 {
+		if reserver, ok := gate.(Reserver); ok {
+			reserver.Release(request.UsageID)
+		}
 		return nil
-	}
-	gate := r.gate
-	if gate == nil {
-		gate = r.writer.gate
 	}
 	if spender, ok := gate.(Spender); ok {
 		return spender.Settle(owner, request.UsageID, request.CostMicros)
 	}
 	return nil
+}
+
+// moneyGate is the gate told what work costs: the recorder's, else its writer's.
+func (r *Recorder) moneyGate() Gate {
+	if r.gate != nil {
+		return r.gate
+	}
+	return r.writer.gate
+}
+
+// Reserve sets aside what the estimate costs on the provider, for the owner's unit of work
+// under the usage id its row will carry, before the work starts: for at most ttl, unless the
+// row is recorded first (which settles it at its cost) or Release lets go of it. It answers at
+// once, from the gate's memory. A refusal is the money error to answer, and no vendor is to be
+// asked. Work the provider does not bill, an estimate that costs nothing, a recorder whose gate
+// holds nothing, and one whose writer records nothing (so no row would settle it) reserve
+// nothing.
+func (r *Recorder) Reserve(config ProviderConfig, owner Owner, usageID uuid.UUID, estimate pricing.Quantities, ttl time.Duration) error {
+	if r == nil || usageID == uuid.Nil || !r.writer.records() || !r.Billable(config) {
+		return nil
+	}
+	reserver, ok := r.moneyGate().(Reserver)
+	if !ok {
+		return nil
+	}
+	var entry Stat
+	entry.Use(estimate)
+	micros := r.QuoteStat(config, entry).CostMicros
+	if micros <= 0 {
+		return nil
+	}
+	return reserver.Reserve(owner, usageID, micros, ttl)
+}
+
+// Release lets go of a reservation whose work never reached a vendor.
+func (r *Recorder) Release(usageID uuid.UUID) {
+	if r == nil || usageID == uuid.Nil {
+		return
+	}
+	if reserver, ok := r.moneyGate().(Reserver); ok {
+		reserver.Release(usageID)
+	}
 }
 
 // Billable reports whether work on the provider counts toward spend, as its rows are priced: a

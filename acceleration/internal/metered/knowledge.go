@@ -82,6 +82,7 @@ func (k *Knowledge) meter(owner routing.Owner, model string) routing.Meter {
 		Config:   routing.ProviderConfig{Provider: k.backend.Provider(), Model: model},
 		Owner:    owner,
 		Code:     func(error) string { return knowledgeFailed },
+		Estimate: pricing.Quantities{pricing.Requests: 1},
 	}
 }
 

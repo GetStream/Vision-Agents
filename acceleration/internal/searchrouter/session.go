@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -48,7 +49,7 @@ func (s *Session) Search(ctx context.Context, query search.Query) (search.Result
 	s.mu.Unlock()
 
 	found, err := s.ask(ctx, provider, config, query)
-	if err == nil || s.fallback == nil || ctx.Err() != nil {
+	if err == nil || s.fallback == nil || ctx.Err() != nil || routing.ReservationRefused(err) {
 		return found, err
 	}
 	next, found, fallbackErr := s.fallback(ctx, query, config)
@@ -88,7 +89,8 @@ func (s *Session) Close() error {
 func (s *Session) ask(ctx context.Context, provider search.Provider, config routing.ProviderConfig, query search.Query) (search.Result, error) {
 	found, err := routing.Call(ctx, routing.Meter{
 		Recorder: s.recorder, Config: config, Owner: s.owner,
-		Code: func(error) string { return "search_failed" },
+		Code:     func(error) string { return "search_failed" },
+		Estimate: pricing.Quantities{pricing.Requests: 1},
 	}, func(ctx context.Context) (search.Result, error) {
 		return provider.Search(ctx, query)
 	})

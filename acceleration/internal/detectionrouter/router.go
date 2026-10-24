@@ -164,7 +164,7 @@ func (r *Router) Detect(ctx context.Context, request Request) (Found, error) {
 		if err == nil {
 			return found, nil
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || routing.ReservationRefused(err) {
 			return found, err
 		}
 		failures = append(failures, fmt.Errorf("%s: %w", config.Name(), err))
@@ -193,7 +193,8 @@ func (r *Router) look(
 
 	result, err := routing.Call(ctx, routing.Meter{
 		Recorder: r.Recorder(), Config: config, Owner: owner,
-		Code: func(err error) string { return string(detection.CodeOf(err)) },
+		Code:     func(err error) string { return string(detection.CodeOf(err)) },
+		Estimate: pricing.Quantities{pricing.Images: 1},
 	}, func(ctx context.Context) (detection.Result, error) {
 		return provider.Detect(ctx, request)
 	})

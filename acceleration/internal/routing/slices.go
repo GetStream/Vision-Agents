@@ -54,6 +54,9 @@ type Slices struct {
 	stop     chan struct{}
 	done     chan struct{}
 	stopOnce sync.Once
+	// lease holds a minute of the run while it goes, so the other routers count it before
+	// its slices are written.
+	lease *Lease
 }
 
 // SliceOptions is what runs, whose it is, and how it is billed.
@@ -105,6 +108,8 @@ func StartSlices(options SliceOptions) *Slices {
 		ticker:     time.NewTicker(options.Every),
 		stop:       make(chan struct{}),
 		done:       make(chan struct{}),
+		lease: StartLease(options.Recorder, options.Config, options.Owner, options.Kind, options.ID+"/"+start.UTC().Format(time.RFC3339Nano),
+			options.Quantities(options.Config.Model, int64(time.Minute/time.Second))),
 	}
 	go s.tick()
 	return s
@@ -194,6 +199,7 @@ func (s *Slices) end(record bool) {
 		s.ticker.Stop()
 		close(s.stop)
 		<-s.done
+		s.lease.Stop()
 	})
 }
 

@@ -148,6 +148,16 @@ type Spender interface {
 	Settle(owner Owner, usageID uuid.UUID, micros int64) []int64
 }
 
+// Reserver is a Gate that sets money aside for a unit of work before it starts, under the
+// usage id its row will carry, so a customer spending fast on several routers at once is
+// stopped before the work rather than after. A nil Reserve is the admission; a refusal is the
+// money error Admit would give, and nothing is held. Release lets go of a reservation whose
+// work never reached a vendor; the recorder settles the rest.
+type Reserver interface {
+	Reserve(owner Owner, usageID uuid.UUID, micros int64, ttl time.Duration) error
+	Release(usageID uuid.UUID)
+}
+
 // Admission is what a customer's policies hold every request of theirs to.
 type Admission struct {
 	// DataPolicy is the floor every request is held to, on top of whatever it asked for.
