@@ -261,7 +261,12 @@ func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Clien
 	}
 	r := &Recorder{modality: modality, pricer: pricer, logger: logger, gate: gate, writer: writer}
 	if writer == nil {
-		r.writer = NewWriter(WriterOptions{Store: pgStore, Live: liveClient, Logger: logger})
+		options := WriterOptions{Store: pgStore, Live: liveClient, Logger: logger}
+		// A gate that holds work against its grants hears when the rows count toward them.
+		if counter, ok := gate.(interface{ Counted([]Acked) }); ok {
+			options.Counted = counter.Counted
+		}
+		r.writer = NewWriter(options)
 		r.own = true
 	}
 	return r
@@ -300,23 +305,24 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 
 	r.watch(config, entry, request, priced)
 	// Before the row is queued, so an ack that comes back fast finds the hold it settles.
-	r.spent(entry.Owner, request)
+	request.LimitGrants = r.spent(entry.Owner, request)
 	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal, unmeasured: entry.Unmeasured})
 }
 
 // spent tells the gate what billable work cost the moment it is recorded, so the customer's
-// next admission counts it before its row is written.
-func (r *Recorder) spent(owner Owner, request store.Request) {
+// next admission counts it before its row is written, and answers the grants it is drawn from.
+func (r *Recorder) spent(owner Owner, request store.Request) []int64 {
 	if !request.Billable || request.CostMicros <= 0 {
-		return
+		return nil
 	}
 	gate := r.gate
 	if gate == nil {
 		gate = r.writer.gate
 	}
 	if spender, ok := gate.(Spender); ok {
-		spender.Spent(owner, request.UsageID, request.CostMicros)
+		return spender.Spent(owner, request.UsageID, request.CostMicros)
 	}
+	return nil
 }
 
 // Billable reports whether work on the provider counts toward spend, as its rows are priced: a

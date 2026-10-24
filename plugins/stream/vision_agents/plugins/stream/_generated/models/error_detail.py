@@ -38,22 +38,24 @@ class ErrorDetail:
             in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a
             limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit
             to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a
-            team), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model
-            that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a
-            429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503:
-            the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or
-            is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400:
-            the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-
-            Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a
-            team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign,
-            channel_account, command, connection, knowledge_document, knowledge_url, limit, plugin, router_config,
-            scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule
-            (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or
-            until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead),
-            invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one),
-            invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it
-            replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client
-            should expect one it does not know.
+            team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away),
+            too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the
+            organization is suspended, and every request is refused, one for a model that costs nothing included, until it
+            is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in
+            flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no
+            answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or
+            GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the
+            request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than
+            10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59
+            characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection,
+            grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation,
+            simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at
+            and in both or neither, a date, time or duration that does not parse, or until without repeat),
+            schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone,
+            timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat,
+            interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and
+            too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one
+            it does not know.
         doc_url (str): Where the code is explained.
         message (str): What went wrong, for a person to read. Its wording may change; branch on code.
         type_ (ErrorType): The kind of failure, which decides the status it is answered with: invalid_request 400,

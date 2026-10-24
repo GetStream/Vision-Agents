@@ -52,12 +52,15 @@ const Unattributed = "unattributed"
 // With a usage service, a row is written to be shipped, and the shard's requests table is the
 // outbox: the shipper sends each written batch at once, and the sweeper whatever it could not.
 type Writer struct {
-	store        *store.Store
-	live         *live.Client
-	logger       *slog.Logger
-	gate         Gate
-	shipper      *shipper
-	written      func([]Acked)
+	store   *store.Store
+	live    *live.Client
+	logger  *slog.Logger
+	gate    Gate
+	shipper *shipper
+	written func([]Acked)
+	counted func([]Acked)
+	// grants counts what a sharded write wrote toward its grants, off the write goroutine.
+	grants       *grantCounter
 	writeTimeout time.Duration
 	queueSize    int64
 
@@ -109,6 +112,10 @@ type WriterOptions struct {
 	// Written is told which rows the shard has as each batch commits, a row it already had
 	// included: the ledger a deployment with no usage service reads its spend from. Optional.
 	Written func(written []Acked)
+	// Counted is told which rows naming a grant count toward it in the shared database: as
+	// the batch commits with one database, and once the grant counter lands them with shards.
+	// Optional.
+	Counted func(counted []Acked)
 	// Settle is how long a written batch may wait for the shipper before it is left to the
 	// sweeper, which sends what started that long ago; defaults to 30 s, the sweeper's.
 	Settle time.Duration
@@ -139,6 +146,7 @@ func NewWriter(options WriterOptions) *Writer {
 		logger:       logger,
 		gate:         options.Gate,
 		written:      options.Written,
+		counted:      options.Counted,
 		writeTimeout: timeout,
 		queueSize:    int64(size),
 		queue:        make(chan queued, size),
@@ -155,6 +163,9 @@ func NewWriter(options WriterOptions) *Writer {
 		w.shipper = newShipper(&shipping{
 			store: options.Store, usage: options.Usage, source: options.Source, shipped: options.Shipped, logger: logger,
 		}, settle)
+	}
+	if options.Store != nil && options.Store.Sharded() {
+		w.grants = newGrantCounter(options.Store, options.Counted, timeout, logger)
 	}
 	writers.Store(w, struct{}{})
 	go w.count()
@@ -180,6 +191,9 @@ func (w *Writer) Close(ctx context.Context) {
 			<-w.done
 		}
 		w.cancel()
+		if w.grants != nil {
+			w.grants.close(ctx)
+		}
 		if w.shipper != nil {
 			w.shipper.close(ctx)
 		}
@@ -493,6 +507,7 @@ func (w *Writer) writeRows(rows []pending) {
 			if err != nil {
 				w.logger.Warn("usage rows written without some of their agent log rows", "error", err)
 			}
+			w.countGrants(requests, written)
 			if unknown > 0 {
 				usageUnresolved.Add(float64(unknown))
 				if w.throttled(&w.unresolvedLogged, errorLogEvery) {
@@ -538,6 +553,41 @@ func (w *Writer) writeRows(rows []pending) {
 		}
 		delay = min(delay*2, retryMost)
 		taken = 0
+	}
+}
+
+// countGrants sees to the written rows naming a grant counting toward it. With one database
+// RecordRequests counted them in the transaction that wrote them, so Counted is told at once;
+// with shards they are handed to the grant counter, which never holds up the next batch. A row
+// with nothing to count (not billable, or free) is counted as it is. A row the shard already
+// had is left to the reconcile, which counts it if its first write did not, and the policies
+// let go of it once they find it counted.
+func (w *Writer) countGrants(requests []store.Request, written []uuid.UUID) {
+	if w.grants == nil && w.counted == nil {
+		return
+	}
+	wrote := make(map[uuid.UUID]bool, len(written))
+	for _, id := range written {
+		wrote[id] = true
+	}
+	var counted, counting []Acked
+	for _, request := range requests {
+		if len(request.LimitGrants) == 0 {
+			continue
+		}
+		row := Acked{UsageID: request.UsageID, OrganizationID: request.OrganizationID, CostMicros: request.CostMicros}
+		switch {
+		case w.grants == nil || !request.Billable || request.CostMicros <= 0:
+			counted = append(counted, row)
+		case wrote[request.UsageID]:
+			counting = append(counting, row)
+		}
+	}
+	if len(counted) > 0 && w.counted != nil {
+		w.counted(counted)
+	}
+	if w.grants != nil {
+		w.grants.offer(store.GrantUsesOf(requests, written), counting)
 	}
 }
 

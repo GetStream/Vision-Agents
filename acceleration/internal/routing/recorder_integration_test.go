@@ -378,11 +378,15 @@ type spending struct {
 	mu    sync.Mutex
 	spent map[uuid.UUID]int64
 	owner Owner
+	// grants are what it answers every unit of work is drawn from.
+	grants []int64
 }
+
+var _ Spender = (*spending)(nil)
 
 func (g *spending) Admit(context.Context, Owner) (Admission, error) { return Admission{}, nil }
 
-func (g *spending) Spent(owner Owner, usageID uuid.UUID, micros int64) {
+func (g *spending) Spent(owner Owner, usageID uuid.UUID, micros int64) []int64 {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.spent == nil {
@@ -390,6 +394,7 @@ func (g *spending) Spent(owner Owner, usageID uuid.UUID, micros int64) {
 	}
 	g.spent[usageID] += micros
 	g.owner = owner
+	return g.grants
 }
 
 func (g *spending) total() int64 {
@@ -415,6 +420,21 @@ func (s *RecorderSuite) TestRecordTellsASpenderWhatItCost() {
 	s.EqualValues(3_200, gate.total(), "told as Record returns, before the writer has written anything")
 	s.Contains(gate.spent, usageID, "under the row's usage id")
 	s.Equal("key-a", gate.owner.APIKey)
+}
+
+func (s *RecorderSuite) TestARowNamesTheGrantsItsWorkIsDrawnFrom() {
+	gate := &spending{grants: []int64{7, 9}}
+	writer := NewWriter(WriterOptions{Store: s.store, Logger: slog.New(slog.DiscardHandler)})
+	recorder := newRecorder(LLM, nil, nil, gate, writer, s.prices, slog.New(slog.DiscardHandler))
+	customer := uuid.NewString()
+
+	recorder.Record(priced, Stat{Owner: Owner{CustomerID: customer, Attribution: Attribution{APIKey: "key-a"}},
+		Usage: Usage{InputTokens: 1_000}, Success: true})
+	writer.Close(s.ctx)
+
+	var row store.Request
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&row).Where("customer_id = ?", customer).Scan(s.ctx))
+	s.Equal([]int64{7, 9}, row.LimitGrants)
 }
 
 func (s *RecorderSuite) TestWorkThatCostsNothingHoldsNothing() {

@@ -6,6 +6,10 @@
 
 `/v1/spend/limits` creates, lists, reads, changes and deletes the organization's spend limits, on the organization, an app, a key, an end user of an app, a usage category or a team, across the organization or within one app, over daily, weekly, biweekly or monthly UTC windows; a key's or a user's limit at organization or app level is a default for each one. `GET /v1/spend/limits/usage` answers what one subject spent in its current windows against its limits, with the operator's spend hard limit beside them, and `POST /v1/spend/limits/usage/reset` lets a subject spend its limits again until the windows end, leaving the usage records as they were. A limit above a parent's is a 400 `limit_above_parent`, a second on the same subject, level and interval a 409 `limit_exists`, a category starting `team:` a 400 `use_team`, a reset of a subject with no limit a 404 `no_limit`. Every operation is server-side only, and one server-side credential manages the whole organization. Stream staff reach the same operations under `/v1/manage/spend/limits` (AI-1918).
 
+### One-time grants past a spent limit
+
+`POST /v1/spend/limits/grants` gives one subject (the organization, an app, a key, a user, a team or a category) a one-time amount it may spend once one of its own limits is spent, until it is used up, expires or is revoked (`POST /v1/spend/limits/grants/{grant_id}/revoke`); `GET /v1/spend/limits/grants` lists them with what each paid for and its state (`live`, `used`, `expired`, `revoked`). A grant lifts only its subject's limits: a parent's limit, credit and the operator's spend hard limit still refuse. Rows of work admitted on a grant name it in `requests.limit_grants` (migration `20261112121000_requests_limit_grants`, which builds its index concurrently). New codes `invalid_expiry`, `too_many_grants` and `grant_not_found` (AI-1918).
+
 ## Breaking Changes
 
 ### Budgets moved out of policies into spend limits

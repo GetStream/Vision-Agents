@@ -42,10 +42,13 @@ const maxConns = 40
 type Store struct {
 	// db is the database every shard shares, and shard this one's, which is db for a
 	// deployment of one shard. peers are the other shards' (see shards.go).
-	db       *bun.DB
-	shard    *bun.DB
-	peers    []*bun.DB
-	LogDrops atomic.Int64
+	db    *bun.DB
+	shard *bun.DB
+	peers []*bun.DB
+	// shardNames names each of shards(), as Options.Shards does, for what is kept per shard
+	// in the shared database.
+	shardNames []string
+	LogDrops   atomic.Int64
 	// shapes is what each table an export carries looks like, read from the catalogue
 	// once rather than kept in a list here that a migration could leave behind.
 	shapes tableShapes
@@ -198,6 +201,9 @@ var usageIndexes = []struct{ name, create string }{
 		"INCLUDE (cost_micros) WHERE billable AND user_id <> ''"},
 	{"requests_category_spend_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_category_spend_idx ON requests (customer_id, started_at) " +
 		"INCLUDE (cost_micros, usage_categories) WHERE billable AND usage_categories <> '{}'"},
+	// The rows naming a grant, which a reconcile counts again (20261112121000_requests_limit_grants.sql).
+	{"requests_limit_grants_started_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_started_idx ON requests (started_at, id) " +
+		"WHERE limit_grants <> '{}'"},
 }
 
 // ensureUsageIndexes builds each usage index that is missing, dropping one a failed build left
@@ -322,7 +328,9 @@ func (s *Store) RecordRequest(ctx context.Context, request *Request) error {
 // RecordRequests writes rows that are not written yet, in one transaction in this shard's
 // database, and returns the usage ids it wrote. A row whose usage id is already there is
 // skipped, so writing a batch again after a failure whose commit did land writes nothing twice.
-// A row RecordRequests wrote has its ID set.
+// A row RecordRequests wrote has its ID set. With one database each row it wrote counts toward
+// the grants it names in the same transaction (AddGrantUses); with shards that is the caller's
+// to do, apart, since the grants are in the shared database.
 func (s *Store) RecordRequests(ctx context.Context, requests []Request) ([]uuid.UUID, error) {
 	for i := range requests {
 		if err := prepareRequest(&requests[i]); err != nil {
@@ -351,6 +359,11 @@ func (s *Store) RecordRequests(ctx context.Context, requests []Request) ([]uuid.
 			On("CONFLICT (usage_id) DO NOTHING").
 			Returning("id, usage_id").
 			Exec(ctx, &written)
+		if err != nil || s.Sharded() {
+			return err
+		}
+		// One database: the rows count toward their grants in the transaction that writes them.
+		_, err = addGrantUses(ctx, tx, GrantUsesOf(sorted, usageIDsOf(written)))
 		return err
 	})
 	if err != nil {
@@ -362,12 +375,12 @@ func (s *Store) RecordRequests(ctx context.Context, requests []Request) ([]uuid.
 		return nil, stack.Wrap(fmt.Errorf("store: record requests: %w", err))
 	}
 
-	ids := make([]uuid.UUID, 0, len(written))
+	ids := usageIDsOf(written)
 	byUsage := make(map[uuid.UUID]int64, len(written))
 	for _, row := range written {
-		ids = append(ids, row.UsageID)
 		byUsage[row.UsageID] = row.ID
 	}
+	var missing error
 	var logged []*Request
 	for i := range requests {
 		id, ok := byUsage[requests[i].UsageID]
@@ -382,9 +395,20 @@ func (s *Store) RecordRequests(ctx context.Context, requests []Request) ([]uuid.
 		}
 	}
 	if err := s.logShardRequests(ctx, logged); err != nil {
-		return ids, stack.Wrap(fmt.Errorf("%w: %w", ErrRequestLogsMissing, err))
+		missing = errors.Join(missing, fmt.Errorf("%w: %w", ErrRequestLogsMissing, err))
+	}
+	if missing != nil {
+		return ids, stack.Wrap(missing)
 	}
 	return ids, nil
+}
+
+func usageIDsOf(written []writtenRequest) []uuid.UUID {
+	ids := make([]uuid.UUID, len(written))
+	for i, row := range written {
+		ids[i] = row.UsageID
+	}
+	return ids
 }
 
 // advanceRequestIDs moves the requests id sequence past the highest id written: a row carried

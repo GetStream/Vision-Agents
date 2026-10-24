@@ -632,10 +632,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	defer closeCounters()
 	var gate routing.Gate
-	var shipped, written func([]routing.Acked)
+	var shipped, written, counted func([]routing.Acked)
 	if policies != nil {
 		defer policies.Close()
-		gate, shipped, written = policies, policies.Acked, policies.Written
+		gate, shipped, written, counted = policies, policies.Acked, policies.Written, policies.Counted
 	}
 
 	// Every recorder of the process writes through this one writer, so there is one queue to
@@ -645,7 +645,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// ledger has, which lets go of what they held for them.
 	usageWriter := routing.NewWriter(routing.WriterOptions{
 		Store: pgStore, Live: liveClient, Logger: logger, Gate: gate, Usage: usageClient, Source: source,
-		Shipped: shipped, Written: written,
+		Shipped: shipped, Written: written, Counted: counted,
 	})
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), usageDrainTimeout)
@@ -1590,8 +1590,8 @@ func shutdown(ctx context.Context, server *http.Server, listener string, grace t
 	return err
 }
 
-// pruneDataChanges drops the recorded changes nobody can resume from any more, hourly
-// until the process stops.
+// pruneDataChanges drops the recorded changes nobody can resume from any more, and which rows
+// counted toward grants long ended, hourly until the process stops.
 func pruneDataChanges(ctx context.Context, pgStore *store.Store, retention time.Duration, logger *slog.Logger) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
@@ -1601,6 +1601,11 @@ func pruneDataChanges(ctx context.Context, pgStore *store.Store, retention time.
 			logger.Error("could not prune recorded changes", "error", err)
 		} else if removed > 0 {
 			logger.Debug("pruned recorded changes", "rows", removed)
+		}
+		if removed, err := pgStore.PruneGrantUses(ctx); err != nil {
+			logger.Error("could not prune the uses of ended grants", "error", err)
+		} else if removed > 0 {
+			logger.Debug("pruned the uses of ended grants", "rows", removed)
 		}
 		select {
 		case <-ctx.Done():

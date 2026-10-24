@@ -90,8 +90,14 @@ const (
 	// firstBatches how many batches are read at once.
 	firstWindow  = 15 * time.Millisecond
 	firstBatches = 4
-	// passTimeout bounds one pass of either loop.
+	// passTimeout bounds one pass of any loop.
 	passTimeout = time.Minute
+	// grantsTimeout bounds one read of the grants, on their own loop.
+	grantsTimeout = 2 * time.Second
+	// reconcileEvery is how often the rows the shards took since the last reconcile are
+	// counted toward their grants, on a loop of its own, each pass within reconcileTimeout.
+	reconcileEvery   = 10 * time.Minute
+	reconcileTimeout = 2 * time.Minute
 	// sumReads is how many subjects' spend is summed from Postgres at once, with no usage
 	// service. Each is a sum over the request rows of every shard since its window began, so a
 	// few at a time keep a slow Postgres from being asked for all of them together.
@@ -160,7 +166,7 @@ type money struct {
 	// shippedAt is when the limits loop last asked the shard which held rows it shipped.
 	shippedAt time.Time
 
-	kick, kickLimits chan struct{}
+	kick, kickLimits, kickGrants chan struct{}
 	// ctx is the loops', which the first reads an admission waits on run under too (reads);
 	// stopping says stop has begun, after which no first read starts.
 	ctx      context.Context
@@ -195,6 +201,16 @@ type account struct {
 	resets     []store.UsageReset
 	limitsRead time.Time
 	limited    bool
+	// grants are its live grants, read every Fresh apart from the limits once it has one, each
+	// with what it had paid for; grantsFrom is when that read was asked for, which counts every
+	// row counted toward them by then. grantHeld is what the holds count against each grant,
+	// by id.
+	grants     []grantState
+	grantsFrom time.Time
+	grantHeld  map[int64]int64
+	// drawn is the grants the latest admission of each owner chose, by its subjects' keys,
+	// which its rows name; dropped once unused for Idle.
+	drawn map[string]drawn
 	// subjects is every subject the work admitted here counted for, by its counter's key, with
 	// what it spent at the last read of it.
 	subjects map[string]*subjectSpend
@@ -278,14 +294,24 @@ func (m *money) start(e *Enforcer) {
 	if m.settings.Mode == config.LimitsOff {
 		return
 	}
-	m.kick, m.kickLimits = make(chan struct{}, 1), make(chan struct{}, 1)
+	m.kick, m.kickLimits, m.kickGrants = make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.ctx, m.cancel = ctx, cancel
 	m.firstSlots = make(chan struct{}, firstBatches)
 	enforcers.Store(e, struct{}{})
-	m.loops.Add(2)
+	m.loops.Add(4)
 	go m.every(ctx, m.settings.Fresh, m.kick, m.pass)
 	go m.every(ctx, m.settings.SpendEvery, m.kickLimits, m.limitsPass)
+	// Grants have a loop of their own, so a slow read of them never holds up the limits', and
+	// so does their reconcile, so a long one never holds up reading them. It runs once at
+	// start too, rather than a whole reconcileEvery on.
+	go m.every(ctx, m.settings.Fresh, m.kickGrants, m.grantsPass)
+	db := e.config.DB()
+	reconcile := func(ctx context.Context) { m.reconcilePass(ctx, db) }
+	go func() {
+		reconcile(ctx)
+		m.every(ctx, reconcileEvery, nil, reconcile)
+	}()
 }
 
 // stop ends the loops and waits for their passes to finish.
@@ -510,9 +536,10 @@ func (m *money) oldest() time.Duration {
 // worked out.
 //
 // The order is suspension, then the balance, then the spend hard limit, then the customer's
-// limits. Nothing a customer writes lifts the spend hard limit. An account or a limited subject
-// this process never read is read first, for at most FirstRead (firstRead).
-func (e *Enforcer) spendable(ctx context.Context, owner routing.Owner, decided decision) (refusal, spend error) {
+// limits. Nothing a customer writes lifts the spend hard limit. grants are those the work is
+// drawn from past the limits it has spent. An account or a limited subject this process never
+// read is read first, for at most FirstRead (firstRead).
+func (e *Enforcer) spendable(ctx context.Context, owner routing.Owner, decided decision) (refusal, spend error, grants []int64) {
 	m := &e.money
 	appID := owner.CustomerID
 	organization := decided.organization
@@ -525,7 +552,7 @@ func (e *Enforcer) spendable(ctx context.Context, owner routing.Owner, decided d
 		}
 	}
 	if m.off() {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if organization == "" {
 		// An app in no organization bills nobody, and has only its own limits to keep to.
@@ -538,16 +565,16 @@ func (e *Enforcer) spendable(ctx context.Context, owner routing.Owner, decided d
 	if acct == nil {
 		m.mu.Unlock()
 		m.want(organization)
-		return nil, nil
+		return nil, nil, nil
 	}
 	acct.used = now
-	refusal, spend, reason, named := m.refusal(acct, organization, owner, decided, now)
+	refusal, spend, reason, named := m.refusal(acct, organization, owner, decided, now, &grants)
 	why, balance, held, read := acct.standing.StatusReason, acct.standing.BalanceMicros, acct.held, acct.read
 	m.mu.Unlock()
 
 	shadow := m.settings.Mode == config.LimitsShadow
 	if reason == "" {
-		return refusal, spend
+		return refusal, spend, grants
 	}
 	args := who(organization)
 	if billed(organization) {
@@ -557,7 +584,7 @@ func (e *Enforcer) spendable(ctx context.Context, owner routing.Owner, decided d
 		if reason == reasonSuspended && why != "" && m.refusals.due(organization+"\x00suspended_reason", logEvery) {
 			e.logger.Info("refused a suspended organization", append(args, "status_reason", why)...)
 		}
-		return refusal, spend
+		return refusal, spend, grants
 	}
 	wouldRefuse.WithLabelValues(reason).Inc()
 	if m.refusals.due(organization+"\x00"+reason, logEvery) {
@@ -571,13 +598,14 @@ func (e *Enforcer) spendable(ctx context.Context, owner routing.Owner, decided d
 		}
 		e.logger.Info("would refuse", append(args, named...)...)
 	}
-	return nil, nil
+	return nil, nil, grants
 }
 
 // refusal works spendable's answer out of the account, under m.mu, and names the reason, and
-// for a spent limit the subject and the level it was spent at. An account that is not billed is
-// an app's in no organization, which keeps to its limits alone.
-func (m *money) refusal(acct *account, key string, owner routing.Owner, decided decision, now time.Time) (refusal, spend error, reason string, named []any) {
+// for a spent limit the subject and the level it was spent at; grants is set to the grants the
+// work is drawn from past spent limits. An account that is not billed is an app's in no
+// organization, which keeps to its limits alone.
+func (m *money) refusal(acct *account, key string, owner routing.Owner, decided decision, now time.Time, grants *[]int64) (refusal, spend error, reason string, named []any) {
 	isBilled := billed(key)
 	billing := isBilled && m.settings.Usage != nil
 	clock := m.settings.Now()
@@ -624,6 +652,10 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 			"is refused until they can be; try again shortly", noun(key)), reasonLimitsRead, nil
 	}
 	verdict := acct.overLimits(refs, clock)
+	*grants = verdict.grants
+	if refs != nil {
+		acct.noteDrawn(refs, verdict.grants, now)
+	}
 	if verdict.refusal != nil {
 		reason := reasonLimit
 		if verdict.ref.Subject == usage.SubjectUser {
@@ -636,16 +668,21 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 }
 
 // limitsVerdict is what the customer's limits say of one owner's work: the refusal of the first
-// subject with no room left under one of its limits, with that subject and limit.
+// subject with no room left under one of its limits and no grant to draw on, with that subject
+// and limit; and the grants it is drawn from past the limits it has spent.
 type limitsVerdict struct {
 	refusal error
 	ref     usage.SubjectRef
 	limit   store.Limit
+	grants  []int64
 }
 
 // overLimits is what the limits say of the subjects, checked in the order subjectsOf gives. A
-// subject with no room under any of its limits is refused, naming of those spent the one whose
-// window ends last, which is when it may spend again (Retry-After for an end user).
+// subject with no room under one of its limits is admitted on its grant, when it has one with
+// something left, which lifts every interval of that subject and nothing else; with none, it is
+// refused, naming of the limits spent the one whose window ends last, which is when it may spend
+// again (Retry-After for an end user). The first refusal is the answer; the later subjects are
+// still looked at, so work let through anyway, as shadow lets it, is drawn from their grants.
 func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdict {
 	var verdict limitsVerdict
 	if len(a.limits) == 0 {
@@ -671,12 +708,55 @@ func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdi
 				spent, resets = limit, end
 			}
 		}
-		if !resets.IsZero() {
+		if resets.IsZero() {
+			continue
+		}
+		if grant, ok := grantFor(a.grants, a.grantHeld, ref, now); ok {
+			verdict.grants = append(verdict.grants, grant.grant.ID)
+			continue
+		}
+		if verdict.refusal == nil {
 			verdict.refusal, verdict.ref, verdict.limit = limitRefusal(spent, ref, resets), ref, spent
-			return verdict
 		}
 	}
 	return verdict
+}
+
+// drawn is the grants an owner's latest admission chose, and when.
+type drawn struct {
+	grants []int64
+	at     time.Time
+}
+
+// noteDrawn keeps, under m.mu, the grants an admission of work counting for refs chose, so the
+// work's row names those (Spent) rather than what the limits say once it is done. Only an
+// account with grants keeps any.
+func (a *account) noteDrawn(refs []usage.SubjectRef, grants []int64, now time.Time) {
+	if len(a.grants) == 0 && len(a.drawn) == 0 {
+		return
+	}
+	if a.drawn == nil {
+		a.drawn = map[string]drawn{}
+	}
+	a.drawn[subjectsKeyOf(refs)] = drawn{grants: grants, at: now}
+}
+
+// drawnFor is the grants the latest admission of work counting for refs chose; with none made
+// here, what admission would choose now.
+func (a *account) drawnFor(refs []usage.SubjectRef, now time.Time) []int64 {
+	if chosen, ok := a.drawn[subjectsKeyOf(refs)]; ok {
+		return slices.Clone(chosen.grants)
+	}
+	return a.overLimits(refs, now).grants
+}
+
+// subjectsKeyOf is the subjects' counter keys joined, as a hold's subjectsKey.
+func subjectsKeyOf(refs []usage.SubjectRef) string {
+	keys := make([]string, len(refs))
+	for i, ref := range refs {
+		keys[i] = ref.Key(usage.CounterPrefix)
+	}
+	return strings.Join(keys, subjectsSeparator)
 }
 
 // see notes, under m.mu, that work counted for the subjects, and asks the limits loop to read

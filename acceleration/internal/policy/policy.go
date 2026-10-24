@@ -245,10 +245,10 @@ func (e *Enforcer) Admit(ctx context.Context, owner routing.Owner) (routing.Admi
 	ctx, span := tracer.Start(ctx, "policy.admit")
 	defer span.End()
 	decided := e.decide(ctx, customerID)
-	refusal, spend := e.spendable(ctx, owner, decided)
+	refusal, spend, grants := e.spendable(ctx, owner, decided)
 	return routing.Admission{
 		DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags, OrganizationID: decided.organization,
-		Spend: spend,
+		Spend: spend, Grants: grants,
 	}, stack.Wrap(refusal)
 }
 

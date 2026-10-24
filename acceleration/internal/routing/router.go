@@ -142,8 +142,9 @@ type Gate interface {
 
 // Spender is a Gate that is told what a unit of work cost as soon as it is recorded, before
 // its row is written, so a customer spending fast is measured without waiting for the writer.
+// It answers the grants the work is drawn from, past a spent limit, which its row names.
 type Spender interface {
-	Spent(owner Owner, usageID uuid.UUID, micros int64)
+	Spent(owner Owner, usageID uuid.UUID, micros int64) []int64
 }
 
 // Admission is what a customer's policies hold every request of theirs to.
@@ -166,6 +167,9 @@ type Admission struct {
 	// Spend is why the customer may not spend money now: no credit, or a spend limit reached.
 	// Nil when they may. Work that costs nothing is still admitted.
 	Spend error
+	// Grants are the customer's one-time grants the work is admitted on, past limits of its
+	// subjects that are spent. The row its work records names them.
+	Grants []int64
 }
 
 // Labelled returns the tags with the policies' laid over them, leaving the ones passed in

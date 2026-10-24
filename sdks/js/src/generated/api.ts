@@ -3647,6 +3647,56 @@ export type paths = {
         readonly patch: operations["updateLimit"];
         readonly trace?: never;
     };
+    readonly "/v1/spend/limits/grants": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the organization's grants
+         * @description Newest first, revoked, expired and used ones included, each with what it paid for and what it has left.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly get: operations["listLimitGrants"];
+        readonly put?: never;
+        /**
+         * Grant a subject a one-time amount past its limits
+         * @description Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly post: operations["createLimitGrant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/grants/{grant_id}/revoke": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Revoke a grant
+         * @description The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly post: operations["revokeLimitGrant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/spend/limits/usage": {
         readonly parameters: {
             readonly query?: never;
@@ -4406,7 +4456,7 @@ export type components = {
             readonly limit?: number;
         };
         /**
-         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization's id.
+         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
          * @enum {string}
          */
         readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy" | "price_list" | "end_user" | "limit";
@@ -5973,7 +6023,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -6459,6 +6509,78 @@ export type components = {
             readonly limit_micros?: number;
             readonly note?: string;
         };
+        /** @description A one-time amount one subject may spend past its own limits once one of them is spent, until it is used up, expires or is revoked. It is not credit: the organization's balance still pays, and credit, the operator's spend hard limit and the limits of every subject that contains this one still refuse. Work admitted on it draws its whole cost from it, so the last request can take it a little past its amount. */
+        readonly LimitGrant: {
+            /** Format: int64 */
+            readonly amount_micros: number;
+            readonly api_key?: string;
+            readonly app_id?: string;
+            readonly category?: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description Who made it, as the audit log names them. */
+            readonly created_by: string;
+            /** Format: date-time */
+            readonly expires_at?: string;
+            /** Format: int64 */
+            readonly id: number;
+            readonly reason: string;
+            /**
+             * Format: int64
+             * @description amount_micros less used_micros, never below 0.
+             */
+            readonly remaining_micros: number;
+            /** Format: date-time */
+            readonly revoked_at?: string;
+            readonly revoked_by?: string;
+            readonly state: components["schemas"]["LimitGrantState"];
+            readonly subject: components["schemas"]["LimitSubject"];
+            readonly team?: string;
+            /**
+             * Format: int64
+             * @description What the work admitted on it has cost: the whole billable cost of every row drawn from it, as the usage records have them.
+             */
+            readonly used_micros: number;
+            readonly user_id?: string;
+        };
+        /** @description A one-time grant to one subject, which names the subject's own ids, never a default's. */
+        readonly LimitGrantInput: {
+            /** Format: int64 */
+            readonly amount_micros: number;
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /**
+             * Format: date-time
+             * @description When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+             */
+            readonly expires_at?: string;
+            /** @description Why it is made; more than spaces. */
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        readonly LimitGrantPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["LimitGrant"][] | null;
+            readonly next_cursor?: string;
+        };
+        /** @description Why a grant ends now. */
+        readonly LimitGrantRevocation: {
+            /** @description Why it ends; more than spaces. */
+            readonly reason: string;
+        };
+        /**
+         * @description Where a grant stands: live (it is drawn once a limit of its subject is spent), used (it paid for its amount), expired (past expires_at) or revoked.
+         * @enum {string}
+         */
+        readonly LimitGrantState: "live" | "used" | "expired" | "revoked";
         readonly LimitInForce: {
             /** Format: int64 */
             readonly effective_limit_micros: number;
@@ -6537,6 +6659,8 @@ export type components = {
             readonly interval: components["schemas"]["LimitInterval"];
             /** @description The limit in force, absent when the subject has none in this interval. */
             readonly limit?: components["schemas"]["LimitInForce"];
+            /** @description The limit is spent and the subject's work is admitted on one of its grants. */
+            readonly on_grant: boolean;
             /**
              * Format: int64
              * @description What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit.
@@ -6592,6 +6716,30 @@ export type components = {
             readonly tool_choice?: string;
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
+        };
+        /** @description A one-time grant staff make for an organization, for support. It is the customer's like any other. */
+        readonly ManageLimitGrantInput: {
+            /** Format: int64 */
+            readonly amount_micros: number;
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /**
+             * Format: date-time
+             * @description When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+             */
+            readonly expires_at?: string;
+            readonly organization_id: string;
+            /** @description Why it is made; more than spaces. */
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
         };
         /** @description A spend limit staff create for an organization, for support. It is the customer's like any other. */
         readonly ManageLimitInput: {
@@ -8624,6 +8772,8 @@ export type components = {
             readonly api_key?: string;
             readonly app_id?: string;
             readonly category?: string;
+            /** @description The subject's live grants, which its work is admitted on once one of its limits is spent. */
+            readonly grants: readonly components["schemas"]["LimitGrant"][] | null;
             readonly spend_hard_limit?: components["schemas"]["SpendHardLimitUsage"];
             readonly subject: components["schemas"]["LimitSubject"];
             readonly team?: string;
@@ -17131,6 +17281,116 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["Limit"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listLimitGrants: {
+        readonly parameters: {
+            readonly query?: {
+                readonly api_key?: string;
+                readonly app_id?: string;
+                readonly category?: string;
+                /** @description The next_cursor of the previous page, sent with the same filters. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+                /** @description Only grants in this state. Omitted is every one. */
+                readonly state?: components["schemas"]["LimitGrantState"];
+                readonly subject?: components["schemas"]["LimitSubject"];
+                readonly team?: string;
+                readonly user_id?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrantPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createLimitGrant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitGrantInput"];
+            };
+        };
+        readonly responses: {
+            /** @description The grant was made */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrant"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly revokeLimitGrant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitGrantRevocation"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrant"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

@@ -254,6 +254,11 @@ from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
 from .limit import Limit
 from .limit_change import LimitChange
+from .limit_grant import LimitGrant
+from .limit_grant_input import LimitGrantInput
+from .limit_grant_page import LimitGrantPage
+from .limit_grant_revocation import LimitGrantRevocation
+from .limit_grant_state import LimitGrantState
 from .limit_in_force import LimitInForce
 from .limit_input import LimitInput
 from .limit_interval import LimitInterval
@@ -271,6 +276,7 @@ from .llm_options_format import LlmOptionsFormat
 from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
+from .manage_limit_grant_input import ManageLimitGrantInput
 from .manage_limit_input import ManageLimitInput
 from .manage_limit_reset_input import ManageLimitResetInput
 from .manage_status import ManageStatus
@@ -773,6 +779,11 @@ __all__ = (
     "LibraryVoices",
     "Limit",
     "LimitChange",
+    "LimitGrant",
+    "LimitGrantInput",
+    "LimitGrantPage",
+    "LimitGrantRevocation",
+    "LimitGrantState",
     "LimitInForce",
     "LimitInput",
     "LimitInterval",
@@ -790,6 +801,7 @@ __all__ = (
     "LlmOptionsMetadata",
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
+    "ManageLimitGrantInput",
     "ManageLimitInput",
     "ManageLimitResetInput",
     "ManageStatus",

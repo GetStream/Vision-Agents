@@ -214,6 +214,7 @@ type LimitWindow struct {
 	Limit          *LimitInForce `json:"limit,omitempty" doc:"The limit in force, absent when the subject has none in this interval."`
 	BaselineMicros int64         `json:"baseline_micros" doc:"What the subject had spent in the window when it was last reset; its limit counts spend past this."`
 	RoomMicros     *int64        `json:"room_micros,omitempty" doc:"What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit."`
+	OnGrant        bool          `json:"on_grant" doc:"The limit is spent and the subject's work is admitted on one of its grants."`
 }
 
 // SpendHardLimitWindow is the operator's limit on the organization in one window.
@@ -246,6 +247,7 @@ type SubjectUsage struct {
 	Team           string               `json:"team,omitempty"`
 	Category       string               `json:"category,omitempty"`
 	Windows        []LimitWindow        `json:"windows" doc:"The current window of every interval, daily first."`
+	Grants         []LimitGrant         `json:"grants" doc:"The subject's live grants, which its work is admitted on once one of its limits is spent."`
 	SpendHardLimit *SpendHardLimitUsage `json:"spend_hard_limit,omitempty"`
 }
 
@@ -909,8 +911,13 @@ func (s *Server) subjectUsage(ctx context.Context, ref usage.SubjectRef, billed 
 	if err != nil {
 		return SubjectUsage{}, stack.Wrap(err)
 	}
+	grants, err := s.subjectGrants(ctx, ref, now)
+	if err != nil {
+		return SubjectUsage{}, err
+	}
+	drawable := slices.ContainsFunc(grants, func(grant LimitGrant) bool { return grant.State == GrantLive })
 	subject, team, category := apiSubject(ref.Subject, ref.Category)
-	answer := SubjectUsage{Subject: subject, AppId: ref.AppID, ApiKey: ref.APIKey, UserId: ref.UserID, Team: team, Category: category}
+	answer := SubjectUsage{Subject: subject, AppId: ref.AppID, ApiKey: ref.APIKey, UserId: ref.UserID, Team: team, Category: category, Grants: grants}
 	for _, interval := range usage.Intervals {
 		start, end := usage.Window(interval, now)
 		window := LimitWindow{Interval: LimitInterval(interval), WindowStart: start, WindowEnd: end}
@@ -922,6 +929,7 @@ func (s *Server) subjectUsage(ctx context.Context, ref usage.SubjectRef, billed 
 			window.Limit = &LimitInForce{Id: limit.ID, Level: LimitLevel(limit.Level), LimitMicros: limit.LimitMicros, EffectiveLimitMicros: effective(limits, limit)}
 			room := policy.Room(limit, window.BaselineMicros, window.SpentMicros)
 			window.RoomMicros = &room
+			window.OnGrant = room <= 0 && drawable
 		}
 		answer.Windows = append(answer.Windows, window)
 	}

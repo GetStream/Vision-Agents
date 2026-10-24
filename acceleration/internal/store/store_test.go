@@ -133,7 +133,7 @@ func (s *StoreSuite) SetupTest() {
 				" connection_event_subscriptions, connection_event_deliveries,"+
 				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases,"+
 				" scheduled_tasks, scheduled_task_runs, price_entries, price_changes,"+
-				" limits, usage_resets, limit_grants CASCADE",
+				" limits, usage_resets, limit_grants, limit_grant_reconciles CASCADE",
 		)
 		s.Require().NoError(err)
 	}
@@ -1288,6 +1288,38 @@ func (s *StoreSuite) TestMigrateRebuildsAUsageIndexThatDidNotBuild() {
 	valid, found = s.usageIndex()
 	s.True(found)
 	s.True(valid, "the invalid index is dropped and built again")
+}
+
+func (s *StoreSuite) TestMigrateRebuildsAGrantsIndexLeftInvalid() {
+	// As a CONCURRENTLY build that failed leaves it.
+	s.onShard("UPDATE pg_index SET indisvalid = false WHERE indexrelid = to_regclass('requests_limit_grants_started_idx')")
+	var valid bool
+	read := func() {
+		s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
+			"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('requests_limit_grants_started_idx')").Scan(&valid))
+	}
+	read()
+	s.Require().False(valid)
+
+	s.Require().NoError(s.store.Migrate(s.ctx))
+
+	read()
+	s.True(valid, "dropped and built again")
+}
+
+// The reconcile reads every shard every few minutes, so it reads only the rows naming a grant,
+// by the partial index, rather than every request.
+func (s *StoreSuite) TestTheGrantReconcileReadsByTheGrantsIndex() {
+	var plan []string
+	err := s.store.ShardDB().RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+			return err
+		}
+		return tx.NewRaw("EXPLAIN "+reconcileGrantsQuery, time.Now(), 0, grantReconcilePage).Scan(ctx, &plan)
+	})
+
+	s.Require().NoError(err)
+	s.Contains(strings.Join(plan, "\n"), "requests_limit_grants_started_idx")
 }
 
 func (s *StoreSuite) TestARouterWaitingToMigrateDoesNotHoldUpTheOneMigrating() {
