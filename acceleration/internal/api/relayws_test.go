@@ -111,6 +111,71 @@ func (s *RelayedSessionSuite) TestTheOtherNodeWaitsForTheAnswerToItsClose() {
 	s.heldUntilAnswered(held)
 }
 
+// A frame the socket cannot read ends it on either node, whichever is running the session.
+func (s *RelayedSessionSuite) TestAFrameThatIsNotJSONIsRefusedWithPolicyViolation() {
+	watching := s.watchFromTheOtherNode(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("not json")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+func (s *RelayedSessionSuite) TestJSONThatIsNotACommandIsRefusedWithPolicyViolation() {
+	watching := s.watchFromTheOtherNode(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("[1]")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+func (s *RelayedSessionSuite) TestABinaryFrameThatIsNotJSONIsRefusedWithPolicyViolation() {
+	watching := s.watchFromTheOtherNode(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.BinaryMessage, []byte("not json")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+// The control: a command of a type the router does not know is reported and the socket
+// stays open, as on base 8705bbaf9.
+func (s *RelayedSessionSuite) TestACommandOfAnUnknownTypeIsReportedAndTheSocketStaysOpen() {
+	watching := s.watchFromTheOtherNode(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.TextMessage, `{"type":"nope"}`, `unknown command "nope"`)
+}
+
+// A command in a binary frame is read as one in a text frame.
+func (s *RelayedSessionSuite) TestACommandInABinaryFrameIsReportedAndTheSocketStaysOpen() {
+	watching := s.watchFromTheOtherNode(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.BinaryMessage, `{"type":"nope"}`, `unknown command "nope"`)
+}
+
+// An object with no type is a command of no type: reported, not refused.
+func (s *RelayedSessionSuite) TestAnObjectWithNoTypeIsReportedAndTheSocketStaysOpen() {
+	watching := s.watchFromTheOtherNode(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.TextMessage, `{}`, `unknown command ""`)
+}
+
+// An object whose type is not a string cannot be read as a command and is refused.
+func (s *RelayedSessionSuite) TestACommandWhoseTypeIsNotAStringIsRefusedWithPolicyViolation() {
+	watching := s.watchFromTheOtherNode(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte(`{"type":1}`)))
+
+	s.refusedAsUnreadable(watching)
+}
+
+// The control: a caller that closes first is answered with its own close, as on base
+// 8705bbaf9.
+func (s *RelayedSessionSuite) TestACallerThatClosesTheSocketIsAnsweredWithItsOwnClose() {
+	watching := s.watchFromTheOtherNode(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseGoingAway, "")))
+
+	read, ended := s.socketEnd(watching)
+
+	s.Empty(read)
+	s.closedWith(ended, websocket.CloseGoingAway)
+}
+
 func (s *RelayedSessionSuite) TestASessionNoNodeIsRunningIsNotFound() {
 	_, status := s.serverClient.on(s.other).watch(
 		"/v1/agents/sessions/" + s.utils.uuid() + "/events")
