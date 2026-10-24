@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -139,6 +140,9 @@ type ManagerOptions struct {
 	// Nil makes them unlabelled, on Daytona's default lifecycle, billed through a recorder of
 	// the manager's own on Writer, as runtime is.
 	Sandboxes *metered.Sandboxes
+	// SandboxLimits says what sandbox each session's organization may have, and bounds how many
+	// of them run at once. Nil bounds nothing.
+	SandboxLimits *policy.Enforcer
 	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
 	// code in a sandbox, metered.SandboxSecretsBroker or egress.BrokerName.
 	SandboxBroker string
@@ -557,7 +561,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
-	box, err := m.box(spec, connectors)
+	box, err := m.box(ctx, spec, connectors)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -1517,15 +1521,25 @@ func (m *Manager) Shutdown() error {
 // caller asked for a sandbox. Nothing is created here: the provider opens one the first
 // time code is actually run, so a session that never delegates never pays for it. Neither
 // is a credential handed to the broker before then.
-func (m *Manager) box(spec Spec, connectors *dispatcher) (sandbox.Sandbox, error) {
+//
+// A sandbox bigger or more open than the organization's sandbox limits allow is not made: the
+// session runs without one, as a session configured with none does.
+func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (sandbox.Sandbox, error) {
 	if spec.Sandbox == "" {
 		return nil, nil
 	}
 	if spec.Sandbox != daytonaProvider {
 		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox))
 	}
-	asked := metered.SandboxSpec{Config: spec.SandboxOptions}
-	if connectors != nil && len(connectors.grants) > 0 {
+	granted := connectors != nil && len(connectors.grants) > 0
+	slots, err := m.options.SandboxLimits.Sandbox(ctx, owner(spec), policy.SandboxAsk{Config: spec.SandboxOptions, Granted: granted})
+	if err != nil {
+		m.logger.Warn("the session runs without its sandbox, which its organization's sandbox limits do not allow",
+			"code", policy.SandboxLimitCode, "customer", spec.CustomerID, "session", spec.ID, "error", err)
+		return nil, nil
+	}
+	asked := metered.SandboxSpec{Config: spec.SandboxOptions, Slots: slots}
+	if granted {
 		broker, err := m.broker(spec, connectors)
 		if err != nil {
 			return nil, err
