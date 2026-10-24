@@ -5,13 +5,15 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // sandboxed is an agent config of the suite's app that runs code in a sandbox configured so.
-func (s *AdmissionSuite) sandboxed(options SandboxOptions) AgentConfigRequest {
+func (s *RouterSuite) sandboxed(options SandboxOptions) AgentConfigRequest {
 	model, daytona := "echo/echo-model", Daytona
 	return AgentConfigRequest{Name: "agent-" + s.utils.uuid(), Llm: &model, Instructions: pointerTo("be brief"),
 		Sandbox: &daytona, SandboxOptions: &options}
@@ -62,4 +64,19 @@ func (s *AdmissionSuite) TestAConfigStoredBeforeItsSandboxLimitsStaysEditable() 
 	status, _ = s.serverClient.call(http.MethodPatch, "/v1/agents/configs/"+stored.Id,
 		AgentConfigPatch{SandboxOptions: &SandboxOptions{Network: pointerTo(true), Cpu: pointerTo(2)}})
 	s.Equal(http.StatusBadRequest, status, "one that changes it")
+}
+
+func (s *ShadowAdmissionSuite) TestAConfigBeyondItsSandboxLimitsIsSavedAndLoggedAsWouldRefuse() {
+	none := usage.NetworkNone
+	s.usage.SetLimits(s.T(), s.app.organization.ID, usage.Limits{Sandbox: &usage.SandboxLimits{Network: &none}})
+	var statuses []int
+	s.Require().Eventually(func() bool {
+		statuses = append(statuses, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+			s.sandboxed(SandboxOptions{Network: pointerTo(true)}), nil))
+		return strings.Contains(s.logged.String(), "reason="+policy.SandboxLimitCode)
+	}, 10*time.Second, 50*time.Millisecond, "the refusal is worked out and logged")
+
+	for _, status := range statuses {
+		s.Equal(http.StatusCreated, status, "the config is saved all the same")
+	}
 }
