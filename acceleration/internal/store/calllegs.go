@@ -480,6 +480,27 @@ func (s *Store) endLegs(ctx context.Context, where func(*bun.UpdateQuery) *bun.U
 	return slices.Concat(lists...), nil
 }
 
+// OpenCallLegs is how many legs of an organization's calls are up now, in every shard: open,
+// with their phone joined. One still ringing is not counted, nor is one with no organization.
+func (s *Store) OpenCallLegs(ctx context.Context, organizationID string) (int, error) {
+	if organizationID == "" {
+		return 0, nil
+	}
+	counts, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (int, error) {
+		return db.NewSelect().Model((*CallLeg)(nil)).
+			Where("organization_id = ?", organizationID).Where("ended_at IS NULL").Where("started_at IS NOT NULL").
+			Count(ctx)
+	})
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: open call legs: %w", err))
+	}
+	total := 0
+	for _, count := range counts {
+		total += count
+	}
+	return total, nil
+}
+
 // SweepCallLegs ends the legs of this shard open longer than longest at now: one whose phone
 // joined before now less longest is ended at its start plus longest, as swept, and one that has
 // rung since before then as unanswered. At most limit of each are ended at once.

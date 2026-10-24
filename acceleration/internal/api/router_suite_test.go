@@ -515,7 +515,7 @@ func (s *RouterSuite) SetupSuite() {
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
 	// Every text, call and number asks the same admission as a model, as in cmd/router.
-	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies)
+	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies).Limiting(s.limitsMode)
 	s.phoneRecorder = s.telephonyRecorder(logger)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()

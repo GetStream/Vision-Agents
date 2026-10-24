@@ -274,9 +274,10 @@ func (e *Enforcer) Admit(ctx context.Context, owner routing.Owner) (routing.Admi
 	defer span.End()
 	decided := e.decide(ctx, customerID)
 	refusal, spend, grants := e.spendable(ctx, owner, decided)
+	limits, tier := e.money.inForce(decided.organization)
 	return routing.Admission{
 		DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags, OrganizationID: decided.organization,
-		Spend: spend, Grants: grants,
+		Spend: spend, Grants: grants, Limits: limits, LimitsTier: tier,
 	}, stack.Wrap(refusal)
 }
 
