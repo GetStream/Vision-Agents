@@ -419,6 +419,57 @@ def test_telnyx_example_cleanup_installs_and_restores_sigterm_handler():
     assert signal.getsignal(signal.SIGTERM) is original_handler
 
 
+def test_sigterm_during_normal_cleanup_waits_for_it_instead_of_nesting(monkeypatch):
+    if threading.current_thread() is not threading.main_thread():
+        pytest.skip("signal handlers can only be installed on the main thread")
+
+    events: list[str] = []
+    monkeypatch.setattr(signal, "raise_signal", lambda signum: events.append("exit"))
+
+    class SigtermDuringCleanupClient(FakeTelnyxClient):
+        delivered = False
+
+        def update_phone_number_connection(self, phone_number_id, connection_id):
+            if not self.delivered:
+                # A SIGTERM arriving while the restore request is in flight runs
+                # the installed handler on this thread, before the call returns.
+                self.delivered = True
+                handler = signal.getsignal(signal.SIGTERM)
+                assert callable(handler)
+                handler(signal.SIGTERM, None)
+            events.append("restore-routing")
+            super().update_phone_number_connection(phone_number_id, connection_id)
+
+        def delete_call_control_app(self, app_id):
+            events.append("delete-app")
+            super().delete_call_control_app(app_id)
+
+    client = SigtermDuringCleanupClient(
+        phone_number={
+            "id": "phone-id",
+            "phone_number": "+15551234567",
+            "connection_id": "created-app-id",
+        },
+    )
+    resources = TelnyxExampleResources(
+        phone_number_id="phone-id",
+        created_call_control_app_id="created-app-id",
+        original_connection_id="original-app-id",
+    )
+    original_handler = signal.getsignal(signal.SIGTERM)
+    try:
+        with telnyx_example_cleanup(client, resources):
+            pass
+    finally:
+        signal.signal(signal.SIGTERM, original_handler)
+
+    # One cleanup, run to the end, and only then the SIGTERM exit. A nested
+    # cleanup would repeat the restore and exit before the first one returned.
+    assert events == ["restore-routing", "delete-app", "exit"]
+    assert client.connection_updates == [("phone-id", "original-app-id")]
+    assert client.deleted_app_ids == ["created-app-id"]
+
+
 def test_prepare_telnyx_example_setup_tracks_resources_while_creating_them():
     resources = TelnyxExampleResources()
     tracked_at_reroute: list[tuple[str | None, str | None]] = []

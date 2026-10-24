@@ -459,7 +459,8 @@ def telnyx_example_cleanup(
     a normal cleanup followed by the conventional ``128 + SIGTERM`` exit status.
     Further SIGTERMs are ignored until that cleanup finishes, so a second
     ``kill`` cannot cut it short. The handler stays installed while the normal
-    exit path cleans up too, so a SIGTERM arriving then also lets cleanup finish.
+    exit path cleans up too: a SIGTERM arriving then is held until that cleanup
+    finishes, and the process then exits with the same status.
 
     Pass a :class:`TelnyxExampleResources` tracker rather than a finished
     :class:`TelnyxExampleSetup` to enter this guard *before*
@@ -477,17 +478,38 @@ def telnyx_example_cleanup(
         else _resources_from_setup(setup)
     )
     cleanup_done = False
+    cleanup_running = False
+    deferred_sigterm: int | None = None
 
     def cleanup_once() -> None:
-        nonlocal cleanup_done
-        if cleanup_done:
+        nonlocal cleanup_done, cleanup_running
+        if cleanup_done or cleanup_running:
             return
-        # Only marked done once cleanup actually finished, so a partial cleanup
-        # that raised is retried instead of being treated as complete.
-        _cleanup_telnyx_resources(client, resources)
-        cleanup_done = True
+        # Claimed before the first remote call, so a SIGTERM that arrives while
+        # it runs cannot start a second, nested cleanup. Only marked done once
+        # cleanup actually finished, so a partial cleanup that raised is retried
+        # instead of being treated as complete.
+        cleanup_running = True
+        try:
+            _cleanup_telnyx_resources(client, resources)
+            cleanup_done = True
+        finally:
+            cleanup_running = False
+
+    def exit_on_sigterm(signal_number: int) -> None:
+        # Exit the way an unhandled SIGTERM would, so callers still see 143.
+        with contextlib.suppress(ValueError):
+            signal.signal(signal_number, signal.SIG_DFL)
+        signal.raise_signal(signal_number)
 
     def handle_sigterm(signal_number: int, _frame: FrameType | None) -> None:
+        nonlocal deferred_sigterm
+        if cleanup_running:
+            # The normal exit path is part-way through cleanup. Let it finish,
+            # then exit with the SIGTERM status (see the finally below).
+            logger.info("Received SIGTERM during cleanup, exiting once it finishes")
+            deferred_sigterm = signal_number
+            return
         logger.info("Received SIGTERM, cleaning up Telnyx example resources")
         # Ignore further SIGTERMs so a second `kill` cannot re-enter this
         # handler and kill the process mid-cleanup. Same guard that
@@ -499,10 +521,7 @@ def telnyx_example_cleanup(
         except Exception:
             logger.exception("Cleaning up Telnyx example resources failed")
         finally:
-            # Exit the way an unhandled SIGTERM would, so callers still see 143.
-            with contextlib.suppress(ValueError):
-                signal.signal(signal_number, signal.SIG_DFL)
-            signal.raise_signal(signal_number)
+            exit_on_sigterm(signal_number)
 
     handler_installed = False
     previous_handler = None
@@ -519,10 +538,16 @@ def telnyx_example_cleanup(
         # SIGTERM during cleanup would otherwise kill the process mid-cleanup.
         try:
             cleanup_once()
+        except Exception:
+            if deferred_sigterm is None:
+                raise
+            logger.exception("Cleaning up Telnyx example resources failed")
         finally:
             if handler_installed:
                 with contextlib.suppress(ValueError):
                     signal.signal(signal.SIGTERM, previous_handler)
+            if deferred_sigterm is not None:
+                exit_on_sigterm(deferred_sigterm)
 
 
 def validate_call_control_app(
