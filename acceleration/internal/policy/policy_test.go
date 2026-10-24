@@ -314,7 +314,7 @@ func (s *PolicySuite) TestAGrantAdmitsPastASpentLimitUntilItIsUsed() {
 	s.Equal([]int64{grant.ID}, admitted.Grants)
 
 	usageID := uuid.Must(uuid.NewV7())
-	drawn := s.enforcer.Spent(routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{OrganizationID: s.org}}, usageID, 2_000_000)
+	drawn := s.enforcer.Settle(routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{OrganizationID: s.org}}, usageID, 2_000_000)
 	s.Equal([]int64{grant.ID}, drawn, "the row names the grant its work is drawn from")
 	_, refused := s.enforcer.Admit(s.ctx, ownerOf(s.app))
 	s.NoError(refused)
@@ -391,7 +391,7 @@ func (s *PolicySuite) TestWithShardsAGrantHoldStaysUntilItsRowCountsTowardTheGra
 
 	used := row(2_000_000, nil)
 	owner := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{OrganizationID: s.org}}
-	used.LimitGrants = enforcer.Spent(owner, used.UsageID, used.CostMicros)
+	used.LimitGrants = enforcer.Settle(owner, used.UsageID, used.CostMicros)
 	s.Equal([]int64{grant.ID}, used.LimitGrants)
 	// The shard has the row and nothing counted it: its count was dropped.
 	_, err = db.RecordRequests(s.ctx, []store.Request{used})

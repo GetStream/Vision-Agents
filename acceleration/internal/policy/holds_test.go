@@ -37,7 +37,7 @@ func spend(e *Enforcer, micros int64) uuid.UUID {
 }
 
 func spendAs(e *Enforcer, id uuid.UUID, micros int64) {
-	e.Spent(routing.Owner{CustomerID: "app-1", Attribution: routing.Attribution{OrganizationID: heldOrg}}, id, micros)
+	e.Settle(routing.Owner{CustomerID: "app-1", Attribution: routing.Attribution{OrganizationID: heldOrg}}, id, micros)
 }
 
 func ack(e *Enforcer, ids ...uuid.UUID) {

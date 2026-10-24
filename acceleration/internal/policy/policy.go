@@ -92,6 +92,17 @@ type Settings struct {
 	// PendingTTL is how long a hold waits for its row to reach the ledger before it is
 	// dropped; 10 minutes.
 	PendingTTL time.Duration
+	// Holds is the Redis every router shares its holds through, so one organization spending
+	// on several routers is counted on each. Nil: holds stay in this process.
+	Holds rueidis.Client
+	// FlushEvery is how often new and changed holds are written to Holds; 50 ms.
+	FlushEvery time.Duration
+	// HoldRefresh is how often the other routers' holds are read for subjects this process has
+	// nothing to write for; 1 s.
+	HoldRefresh time.Duration
+	// FlushMaxLag is how long a change to a hold may wait to be written to Holds before
+	// billable work is refused (ErrSpendCheckUnavailable); 10 s.
+	FlushMaxLag time.Duration
 	// Now says which UTC day and month the spend hard limit and budgets are counted in;
 	// time.Now.
 	Now func() time.Time
@@ -99,13 +110,16 @@ type Settings struct {
 
 // Defaults of Settings.
 const (
-	defaultFresh      = 5 * time.Second
-	defaultSpendEvery = time.Second
-	defaultSumEvery   = 10 * time.Second
-	defaultMaxStale   = time.Minute
-	defaultFirstRead  = 250 * time.Millisecond
-	defaultIdle       = 10 * time.Minute
-	defaultPendingTTL = 10 * time.Minute
+	defaultFresh       = 5 * time.Second
+	defaultSpendEvery  = time.Second
+	defaultSumEvery    = 10 * time.Second
+	defaultMaxStale    = time.Minute
+	defaultFirstRead   = 250 * time.Millisecond
+	defaultIdle        = 10 * time.Minute
+	defaultPendingTTL  = 10 * time.Minute
+	defaultFlushEvery  = 50 * time.Millisecond
+	defaultHoldRefresh = time.Second
+	defaultFlushMaxLag = 10 * time.Second
 )
 
 func (s Settings) withDefaults() Settings {
@@ -132,6 +146,15 @@ func (s Settings) withDefaults() Settings {
 	}
 	if s.PendingTTL <= 0 {
 		s.PendingTTL = defaultPendingTTL
+	}
+	if s.FlushEvery <= 0 {
+		s.FlushEvery = defaultFlushEvery
+	}
+	if s.HoldRefresh <= 0 {
+		s.HoldRefresh = defaultHoldRefresh
+	}
+	if s.FlushMaxLag <= 0 {
+		s.FlushMaxLag = defaultFlushMaxLag
 	}
 	if s.Now == nil {
 		s.Now = time.Now

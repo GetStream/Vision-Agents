@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
@@ -47,6 +49,10 @@ const (
 	uncountable = store.GrantReconcileOverlap + 2*reconcileEvery
 )
 
+// ReserveTTL is how long a reservation of request-and-answer work is kept unless its work is
+// recorded or released first, and what a reservation with no ttl of its own is kept for.
+const ReserveTTL = 2 * time.Minute
+
 var _ routing.Spender = (*Enforcer)(nil)
 
 // foldedInProcess is how many folded ids every account of every Enforcer remembers.
@@ -58,9 +64,12 @@ var forgottenFolded = promauto.NewCounter(prometheus.CounterOpts{
 	Help:      "Usage ids folded past what an account or the process remembers, which are then held until their fold's timer rather than their ack",
 })
 
-// hold is what one row this router recorded spent, kept until the ledgers count it. Keyed by
-// the row's usage id, so recording or acking it twice changes nothing. A hold made before the
-// work starts, or one another router shares, would take the same shape.
+// hold is money set aside for one unit of work, from before the work starts until the ledgers
+// have counted what it cost. Keyed by the unit's usage id, so reserving, recording or acking it
+// twice changes nothing. Reserved before the work starts (Reserve), it is unsettled: it holds
+// the estimate, and expires at expires unless the work is recorded first. Recorded (Settle),
+// it holds the cost, and the rules below let go of it. Every router shares its holds through
+// Redis (shared.go), so each counts the others' as it counts its own.
 //
 // It counts twice over, and each is let go by its own ledger: the balance and the spend hard
 // limit are the usage service's, read with the standings, and are let go once a standing read
@@ -84,6 +93,10 @@ type hold struct {
 	// Settings.Now, which places it in the UTC windows a limit counts over.
 	made time.Time
 	at   time.Time
+	// settled says the work was recorded and micros is its cost; until then micros is the
+	// estimate it was reserved at, let go at expires if the work is never recorded.
+	settled bool
+	expires time.Time
 	// balance and limits say whether it still counts against the balance and the spend hard
 	// limit, and against the customer's limits; granted whether it still counts against the
 	// grants it was drawn from, which is until a read of what they paid for, asked after the
@@ -223,25 +236,178 @@ func (a *account) heldAgainst(ref usage.SubjectRef, interval usage.Interval, now
 	return a.windows[window{subject: ref.Key(usage.CounterPrefix), interval: string(interval), start: start.Unix()}]
 }
 
-// Spent holds what a unit of work recorded here cost against its owner's organization and
-// every subject it counts for, under the row's usage id, until the ledgers count the row.
-// Holding it again replaces the amount, restarts its timer and leaves what the ledgers were
-// known to have as it was; holding one carried in a fold again changes nothing. It never waits.
-//
-// It answers the grants the work is drawn from, past limits of its subjects that are spent, as
-// its admission was: the row names them, and they hold it until a read of what they paid for
-// counts the row. Held again, it answers the grants it was first held on.
-func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) []int64 {
-	if e == nil || owner.CustomerID == "" || usageID == uuid.Nil || micros <= 0 || e.money.off() {
-		return nil
-	}
+// accountOf is the key of the account an owner's work is held against: its organization, or
+// for an app in none, the app's own.
+func (e *Enforcer) accountOf(owner routing.Owner) string {
 	organization := owner.OrganizationID
 	if decided, ok := e.decided(owner.CustomerID); ok && decided.organization != "" {
 		organization = decided.organization
 	}
 	if organization == "" {
+		if pending, ok := e.members.Load(owner.CustomerID); ok {
+			organization, _ = pending.(string)
+		}
+	}
+	if organization == "" {
 		organization = appAccount(owner.CustomerID)
 	}
+	return organization
+}
+
+// Reserve sets micros aside for one unit of work before it starts, under the usage id its row
+// will carry, for at most ttl unless the work is recorded first (Settle) or never reaches a
+// vendor (Release). It answers from memory: the hold counts at once in this process and
+// reaches the other routers with the next flush, and nothing waits on Redis. A nil answer is
+// the admission.
+//
+// It checks what Admit checks for billable work, in the same order, counting every hold, the
+// other routers' included: suspension, then whether holds could be shared, then credit, the
+// spend hard limit, and the customer's limits on every subject the work counts for, a spent
+// one passing on a live grant with room, which holds the work too. A refusal is the error Admit
+// would give and holds nothing. An estimate larger than the room left is admitted while there
+// is any room: the last unit may take the balance below zero by its estimate.
+//
+// Reserving again under the same id replaces the first reservation, which is how a lease is
+// renewed, and its own amount is no reason to refuse it; one refused keeps the first until it
+// expires. An id already recorded keeps its hold, and is only checked. In shadow a refusal is
+// logged as would refuse and the work held anyway; off, nothing is checked or held.
+func (e *Enforcer) Reserve(owner routing.Owner, usageID uuid.UUID, micros int64, ttl time.Duration) error {
+	if e == nil || owner.CustomerID == "" || e.money.off() {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = ReserveTTL
+	}
+	organization := e.accountOf(owner)
+	decided, _ := e.decided(owner.CustomerID)
+	m := &e.money
+	now, at := time.Now(), m.settings.Now()
+	m.mu.Lock()
+	acct, known := m.accounts[organization]
+	if !known {
+		acct = &account{wanted: now}
+		m.accounts[organization] = acct
+	}
+	acct.used = now
+	if acct.holds == nil {
+		acct.holds = map[uuid.UUID]*hold{}
+	}
+	refs := subjectsOf(owner, limitsOrganization(organization))
+	m.see(acct, refs, now)
+
+	// A reservation made again stops counting while it is checked, so a lease is never refused
+	// for its own last minute; one already recorded, or folded, is only checked.
+	holding := usageID != uuid.Nil && micros > 0
+	var previous *hold
+	var previousIn *account
+	previousKey := ""
+	if key, ok := m.holdOf[usageID]; ok && holding {
+		if other := m.accounts[key]; other != nil {
+			held := other.holds[usageID]
+			_, folded := other.folded[usageID]
+			switch {
+			case folded || (held != nil && held.settled):
+				holding = false
+			case held != nil:
+				previous, previousIn, previousKey = held, other, key
+				other.count(held, -1)
+				delete(other.holds, usageID)
+			}
+		}
+	}
+	var grants []int64
+	refusal, spend, reason, named := m.refusal(acct, organization, owner, decided, now, &grants)
+	seen := seenOf(acct)
+	refused := refusal != nil || spend != nil
+	shadow := m.settings.Mode == config.LimitsShadow
+	if refused && !shadow || !holding {
+		if previous != nil {
+			previousIn.holds[usageID] = previous
+			previousIn.count(previous, 1)
+		}
+		m.mu.Unlock()
+		if !known {
+			m.wake()
+		}
+		if refused {
+			holdsRefused.WithLabelValues(reason).Inc()
+		}
+		refusal, spend = e.answer(organization, owner.CustomerID, refusal, spend, reason, named, seen, now)
+		return errors.Join(refusal, spend)
+	}
+	held := &hold{
+		app: owner.CustomerID, micros: micros, made: now, at: at, expires: now.Add(ttl),
+		balance: m.billing(organization), limits: true, grants: grants, granted: len(grants) > 0,
+	}
+	held.subjects = make([]string, len(refs))
+	for i, ref := range refs {
+		held.subjects[i] = ref.Key(usage.CounterPrefix)
+	}
+	held.subjectsKey = strings.Join(held.subjects, subjectsSeparator)
+	if previous != nil && previousKey != organization {
+		m.touch(previousKey, usageID, now)
+	}
+	acct.holds[usageID] = held
+	acct.count(held, 1)
+	m.holdOf[usageID] = organization
+	m.touch(organization, usageID, now)
+	m.mu.Unlock()
+	if !known {
+		m.wake()
+	}
+	if refused {
+		e.answer(organization, owner.CustomerID, refusal, spend, reason, named, seen, now)
+	}
+	return nil
+}
+
+// Release lets go of a reservation whose work never reached a vendor, so it bills nothing. A
+// hold the work was recorded under is kept: its row is on its way to the ledger.
+func (e *Enforcer) Release(usageID uuid.UUID) {
+	if e == nil || usageID == uuid.Nil || e.money.off() {
+		return
+	}
+	m := &e.money
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, ok := m.holdOf[usageID]
+	if !ok {
+		return
+	}
+	acct := m.accounts[key]
+	if acct == nil {
+		return
+	}
+	held := acct.holds[usageID]
+	if held == nil || held.settled {
+		return
+	}
+	acct.count(held, -1)
+	delete(acct.holds, usageID)
+	delete(m.holdOf, usageID)
+	m.touch(key, usageID, time.Now())
+}
+
+// Settle sets the hold of a unit of work recorded here to what it cost, against its owner's
+// organization and every subject it counts for, under the row's usage id, and keeps it until
+// the ledgers count the row. A unit reserved before it started keeps the grants it was
+// admitted on; one never reserved is held now, so nothing recorded goes uncounted. Settling it
+// again replaces the amount, restarts its timer and leaves what the ledgers were known to have
+// as it was; settling one carried in a fold again changes nothing. Settling at nothing lets go
+// of a reservation, as free work holds nothing. It never waits.
+//
+// It answers the grants the work is drawn from, past limits of its subjects that are spent, as
+// its admission was: the row names them, and they hold it until a read of what they paid for
+// counts the row. Settled again, it answers the grants it was first held on.
+func (e *Enforcer) Settle(owner routing.Owner, usageID uuid.UUID, micros int64) []int64 {
+	if e == nil || owner.CustomerID == "" || usageID == uuid.Nil || e.money.off() {
+		return nil
+	}
+	if micros <= 0 {
+		e.Release(usageID)
+		return nil
+	}
+	organization := e.accountOf(owner)
 	m := &e.money
 	now, at := time.Now(), m.settings.Now()
 	m.mu.Lock()
@@ -258,6 +424,9 @@ func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) [
 			if held = other.holds[usageID]; held != nil {
 				other.count(held, -1)
 				delete(other.holds, usageID)
+				if previous != organization {
+					m.touch(previous, usageID, now)
+				}
 			}
 		}
 	}
@@ -287,9 +456,11 @@ func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) [
 	}
 	held.subjectsKey = strings.Join(held.subjects, subjectsSeparator)
 	held.app, held.micros, held.made = owner.CustomerID, micros, now
+	held.settled, held.expires = true, time.Time{}
 	acct.holds[usageID] = held
 	acct.count(held, 1)
 	m.holdOf[usageID] = organization
+	m.touch(organization, usageID, now)
 	return slices.Clone(held.grants)
 }
 
@@ -353,6 +524,7 @@ func (m *money) settled(rows []routing.Acked, acks bool, when func(*hold) *time.
 				if acks {
 					held.mirrored = row.Mirrored
 				}
+				m.touch(key, row.UsageID, now)
 			}
 			continue
 		}
@@ -386,6 +558,8 @@ func (m *money) settled(rows []routing.Acked, acks bool, when func(*hold) *time.
 		if from.micros == 0 {
 			acct.drop(carried.into, from)
 		}
+		m.touch(key, carried.into, now)
+		m.touch(key, intoID, now)
 	}
 }
 
@@ -414,6 +588,19 @@ func (m *money) release(key string, acct *account, now time.Time) {
 	var emptied []uuid.UUID
 	var strandedGrants []int64
 	for id, held := range acct.holds {
+		if !held.settled {
+			// Reserved and never recorded: it goes at its expiry, and with it the work's claim.
+			if now.Before(held.expires) {
+				continue
+			}
+			acct.count(held, -1)
+			held.balance, held.limits, held.granted = false, false, false
+			delete(acct.holds, id)
+			delete(m.holdOf, id)
+			m.touch(key, id, now)
+			continue
+		}
+		was := [3]bool{held.balance, held.limits, held.granted}
 		if held.balance {
 			switch {
 			case !held.ackedAt.IsZero() && held.ackedAt.Before(acct.standingFrom):
@@ -467,9 +654,15 @@ func (m *money) release(key string, acct *account, now time.Time) {
 				acct.letGoGrants(held)
 			}
 		}
-		if held.balance || held.limits || held.granted {
+		if was != [3]bool{held.balance, held.limits, held.granted} {
+			m.touch(key, id, now)
+		}
+		// One let go of here still counts on the other routers until their reads have its row,
+		// so it is kept, counting nothing here, for as long as it is shared.
+		if held.balance || held.limits || held.granted || m.sharing(held, now) {
 			continue
 		}
+		m.touch(key, id, now)
 		delete(acct.holds, id)
 		if held.group == nil {
 			delete(m.holdOf, id)
@@ -525,7 +718,7 @@ func (m *money) release(key string, acct *account, now time.Time) {
 // failed read of the limits, as long as it lasts, and their holds do not expire through it.
 func (a *account) ackless(now time.Time, fresh time.Duration) bool {
 	for _, held := range a.holds {
-		if held.limits && held.ackedAt.IsZero() && now.Sub(held.made) >= fresh && !a.lastAck.After(held.made) {
+		if held.settled && held.limits && held.ackedAt.IsZero() && now.Sub(held.made) >= fresh && !a.lastAck.After(held.made) {
 			return true
 		}
 	}
@@ -593,7 +786,7 @@ func (a *account) foldInto(state fold) (*hold, uuid.UUID) {
 	id := uuid.New()
 	group := state
 	into := &hold{
-		app: state.app, subjectsKey: state.subjects, at: time.Unix(state.hour, 0).UTC(),
+		app: state.app, subjectsKey: state.subjects, at: time.Unix(state.hour, 0).UTC(), settled: true,
 		balance: state.balance, limits: state.limits, granted: state.granted, grants: grantsOfKey(state.grants),
 		mirrored: state.mirrored, group: &group,
 	}
@@ -612,7 +805,8 @@ func (a *account) foldInto(state fold) (*hold, uuid.UUID) {
 func (m *money) carry(key string, acct *account) {
 	own := make([]uuid.UUID, 0, len(acct.holds))
 	for id, held := range acct.holds {
-		if held.group == nil {
+		// A reservation expires on its own, which a fold could not keep.
+		if held.group == nil && held.settled {
 			own = append(own, id)
 		}
 	}
@@ -641,6 +835,11 @@ func (m *money) fold(acct *account, id uuid.UUID) bool {
 	}
 	held := acct.holds[id]
 	into, intoID := acct.foldInto(held.state())
+	if key, ok := m.holdOf[id]; ok {
+		now := time.Now()
+		m.touch(key, id, now)
+		m.touch(key, intoID, now)
+	}
 	into.micros += held.micros
 	into.made = later(into.made, held.made)
 	into.ackedAt, into.writtenAt = later(into.ackedAt, held.ackedAt), later(into.writtenAt, held.writtenAt)
@@ -691,7 +890,7 @@ func (m *money) shipped(ctx context.Context) {
 	m.mu.Lock()
 	for key, acct := range m.accounts {
 		for id, held := range acct.holds {
-			if held.group == nil && held.balance && held.ackedAt.IsZero() && now.Sub(held.made) > m.settings.Fresh {
+			if held.group == nil && held.settled && held.balance && held.ackedAt.IsZero() && now.Sub(held.made) > m.settings.Fresh {
 				asked = append(asked, candidate{id: id, key: key, made: held.made})
 			}
 		}

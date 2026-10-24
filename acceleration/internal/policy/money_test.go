@@ -344,7 +344,7 @@ func (s *PolicySuite) TestAHoldCountsAgainstTheSpendHardLimit() {
 	s.read(enforcer.Enforcer, s.org)
 	s.Require().NoError(s.admit(enforcer.Enforcer, s.app).Spend)
 
-	enforcer.Spent(s.owner(), uuid.Must(uuid.NewV7()), 1_000_000)
+	enforcer.Settle(s.owner(), uuid.Must(uuid.NewV7()), 1_000_000)
 
 	s.ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrSystemLimit, "with no write and no read")
 }
@@ -535,7 +535,7 @@ func (s *PolicySuite) TestSpendRecordedHereCountsAtOnce() {
 	s.read(enforcer.Enforcer, s.org)
 	s.Require().NoError(s.admit(enforcer.Enforcer, s.app).Spend)
 
-	enforcer.Spent(s.owner(), uuid.Must(uuid.NewV7()), 1_000_000)
+	enforcer.Settle(s.owner(), uuid.Must(uuid.NewV7()), 1_000_000)
 
 	s.ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrNoCredits, "with no write and no read")
 }
@@ -561,7 +561,7 @@ func (s *PolicySuite) TestAHoldIsKeptUntilAReadAfterItsAck() {
 	}()
 	usageID := uuid.Must(uuid.NewV7())
 
-	enforcer.Spent(s.owner(), usageID, 1_000_000)
+	enforcer.Settle(s.owner(), usageID, 1_000_000)
 	event := s.usage().Spend(s.T(), s.org, 1_000_000, func(event *usage.Event) { event.UsageID = usageID })
 	s.read(enforcer.Enforcer, s.org)
 	s.EqualValues(1_000_000, pending(enforcer.Enforcer, s.org), "the ledger has the row, and nobody said so")
@@ -579,8 +579,8 @@ func (s *PolicySuite) TestSpentTwiceUnderOneUsageIDHoldsOnce() {
 	enforcer := s.billed()
 	usageID := uuid.Must(uuid.NewV7())
 
-	enforcer.Spent(s.owner(), usageID, 1_000_000)
-	enforcer.Spent(s.owner(), usageID, 1_000_000)
+	enforcer.Settle(s.owner(), usageID, 1_000_000)
+	enforcer.Settle(s.owner(), usageID, 1_000_000)
 
 	s.EqualValues(1_000_000, pending(enforcer.Enforcer, s.org))
 }
@@ -589,7 +589,7 @@ func (s *PolicySuite) TestAnUnackedHoldExpires() {
 	enforcer := s.billed()
 	enforcer.Join(s.app, s.org, openTier)
 
-	enforcer.Spent(s.owner(), uuid.Must(uuid.NewV7()), 1_250_000)
+	enforcer.Settle(s.owner(), uuid.Must(uuid.NewV7()), 1_250_000)
 
 	s.eventually(func() bool { return pending(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond)
 	s.eventually(func() bool {
@@ -607,7 +607,7 @@ func (s *PolicySuite) TestAHoldOutlivesAnOutageOfTheUsageService() {
 			enforcer.Join(s.app, s.org, openTier)
 			s.read(enforcer.Enforcer, s.org)
 			usageID := uuid.Must(uuid.NewV7())
-			enforcer.Spent(s.owner(), usageID, 1_000_000)
+			enforcer.Settle(s.owner(), usageID, 1_000_000)
 			s.Require().ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrNoCredits)
 			enforcer.front.down.Store(true)
 			if acked {
@@ -648,7 +648,7 @@ func (s *PolicySuite) TestAnUnackedHoldGoesOnceTheShardSaysItShipped() {
 	enforcer.Join(s.app, s.org, openTier)
 	s.read(enforcer.Enforcer, s.org)
 	usageID := uuid.Must(uuid.NewV7())
-	enforcer.Spent(s.owner(), usageID, 1_000_000)
+	enforcer.Settle(s.owner(), usageID, 1_000_000)
 	s.Require().ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrNoCredits)
 
 	// Another router's sweeper ships the row, so no ack of it reaches this one.
@@ -672,7 +672,7 @@ func (s *PolicySuite) TestAShardThatDoesNotAnswerKeepsUnackedHolds() {
 	s.usage().Credit(s.T(), s.org, 1_000_000)
 	enforcer.Join(s.app, s.org, openTier)
 	s.read(enforcer.Enforcer, s.org)
-	enforcer.Spent(s.owner(), uuid.Must(uuid.NewV7()), 400_000)
+	enforcer.Settle(s.owner(), uuid.Must(uuid.NewV7()), 400_000)
 
 	// Postgres is gone while the usage service answers: the writer could not have written
 	// the row, nor a sweeper shipped it.
@@ -693,7 +693,7 @@ func (s *PolicySuite) TestBalanceHoldsGoOnTheStandingsWhileLimitsCannotBeRead() 
 	enforcer.front.windowsDown.Store(true)
 
 	usageID := uuid.Must(uuid.NewV7())
-	enforcer.Spent(s.owner(), usageID, 400_000)
+	enforcer.Settle(s.owner(), usageID, 400_000)
 	enforcer.Acked([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 400_000}})
 
 	s.eventually(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
@@ -860,7 +860,7 @@ func (s *PolicySuite) TestAMirroredAckLetsTheLimitsHoldGoOnTheNextCounterRead() 
 	enforcer.Join(s.app, s.org, openTier)
 	s.admit(enforcer, s.app)
 	usageID := uuid.Must(uuid.NewV7())
-	enforcer.Spent(s.owner(), usageID, 400_000)
+	enforcer.Settle(s.owner(), usageID, 400_000)
 	s.EqualValues(400_000, limitsHeld(enforcer, s.org))
 
 	service.Spend(s.T(), s.org, 400_000, func(event *usage.Event) { event.UsageID, event.AppID = usageID, s.app })
@@ -905,7 +905,7 @@ func (s *PolicySuite) TestAHoldMadeBeforeMidnightCountsAgainstTheBalanceButNotTh
 	enforcer.Join(s.app, s.org, openTier)
 	s.read(enforcer.Enforcer, s.org)
 	enforcer.front.down.Store(true)
-	enforcer.Spent(s.owner(), uuid.Must(uuid.NewV7()), 1_000_000)
+	enforcer.Settle(s.owner(), uuid.Must(uuid.NewV7()), 1_000_000)
 	s.ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrSystemLimit, "today's limit counts today's hold")
 
 	_, midnight := usage.Window(usage.Daily, time.Now())
@@ -935,7 +935,7 @@ func (s *PolicySuite) TestAnAccountKeepsAtMostSoManyHoldsApart() {
 	s.consistent(enforcer.Enforcer, s.org)
 	s.Contains(enforcer.logs.String(), "so the oldest is folded")
 
-	enforcer.Spent(s.owner(), ids[0], 3)
+	enforcer.Settle(s.owner(), ids[0], 3)
 	s.EqualValues(3*len(ids), pending(enforcer.Enforcer, s.org), "a folded row recorded again is held once")
 	s.consistent(enforcer.Enforcer, s.org)
 }
@@ -1000,7 +1000,7 @@ func (s *PolicySuite) hold(enforcer *reading, n int) []uuid.UUID {
 	ids := make([]uuid.UUID, n)
 	for i := range ids {
 		ids[i] = uuid.Must(uuid.NewV7())
-		enforcer.Spent(s.owner(), ids[i], 3)
+		enforcer.Settle(s.owner(), ids[i], 3)
 	}
 	return ids
 }
@@ -1233,7 +1233,7 @@ func (s *PolicySuite) TestAnAppInNoOrganizationLetsGoOfItsHoldOnceWritten() {
 	enforcer := s.billed()
 	alone := routing.Owner{CustomerID: s.app + "-alone", Attribution: routing.Attribution{APIKey: "key-a"}}
 	usageID := uuid.Must(uuid.NewV7())
-	enforcer.Spent(alone, usageID, 1_000_000)
+	enforcer.Settle(alone, usageID, 1_000_000)
 	s.Require().EqualValues(1_000_000, pending(enforcer.Enforcer, appAccount(alone.CustomerID)))
 
 	enforcer.Written([]routing.Acked{{UsageID: usageID, CostMicros: 1_000_000}})
@@ -1246,7 +1246,7 @@ func (s *PolicySuite) TestAnOrganizationsHoldWaitsForTheUsageServiceNotTheShard(
 	enforcer := s.billed()
 	enforcer.Join(s.app, s.org, openTier)
 	usageID := uuid.Must(uuid.NewV7())
-	enforcer.Spent(s.owner(), usageID, 1_000_000)
+	enforcer.Settle(s.owner(), usageID, 1_000_000)
 
 	enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 1_000_000}})
 
@@ -1295,7 +1295,7 @@ func (s *PolicySuite) TestAnAppsOwnAccountIsNamedAsTheApp() {
 func (s *PolicySuite) TestAnAckForAnotherReplicasRowIsIgnored() {
 	enforcer := s.billed()
 	usageID := uuid.Must(uuid.NewV7())
-	enforcer.Spent(s.owner(), usageID, 1_000_000)
+	enforcer.Settle(s.owner(), usageID, 1_000_000)
 
 	enforcer.Acked([]routing.Acked{{UsageID: uuid.Must(uuid.NewV7()), OrganizationID: s.org, CostMicros: 7}})
 	enforcer.Acked([]routing.Acked{{UsageID: uuid.Must(uuid.NewV7()), OrganizationID: "org-elsewhere", CostMicros: 7}})
@@ -1363,7 +1363,7 @@ func (s *PolicySuite) TestWithNoUsageServiceAWrittenRowLetsItsHoldGo() {
 	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 2_000_000})
 	s.admit(s.enforcer, s.app)
 	usageID := uuid.Must(uuid.NewV7())
-	s.enforcer.Spent(s.owner(), usageID, 1_500_000)
+	s.enforcer.Settle(s.owner(), usageID, 1_500_000)
 	s.Require().NoError(s.admit(s.enforcer, s.app).Spend)
 	s.spendAs(store.Request{UsageID: usageID, CustomerID: s.app, CostMicros: 1_500_000})
 
