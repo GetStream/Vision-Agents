@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -630,7 +631,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if liveClient != nil {
 		holds = liveClient.Redis()
 	}
-	policies, closeCounters, err := newPolicies(settings, configs, usageClient, holds, logger)
+	// The forwarder that sends the policies' warnings is made after them, once connectors are.
+	var warned atomic.Pointer[eventforward.Forwarder]
+	notified := func() {
+		if forwarder := warned.Load(); forwarder != nil {
+			forwarder.Wake()
+		}
+	}
+	policies, closeCounters, err := newPolicies(settings, configs, usageClient, holds, notified, logger)
 	if err != nil {
 		return err
 	}
@@ -1283,6 +1291,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		forwarder.Start()
 		defer forwarder.Close()
 		options.EventForwarder = forwarder
+		warned.Store(forwarder)
 	}
 	// A connection's MCP events are subscribed to on its server, signed with secrets sealed
 	// under the connector keyring, and each opens a conversation, so they need connectors on,

@@ -107,6 +107,10 @@ type Settings struct {
 	// Now says which UTC day and month the spend hard limit and budgets are counted in;
 	// time.Now.
 	Now func() time.Time
+	// Notified is called once a warning that an organization's credit is running out has been
+	// queued for its stream destinations, so whatever sends them looks at once. Nil leaves them
+	// to its next look.
+	Notified func()
 }
 
 // Defaults of Settings.

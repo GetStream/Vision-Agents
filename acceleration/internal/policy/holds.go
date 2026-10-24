@@ -201,6 +201,9 @@ func (a *account) count(h *hold, sign int64) {
 
 func (a *account) countBalance(h *hold, sign int64) {
 	a.held += sign * h.micros
+	if !h.settled {
+		a.reserved += sign * h.micros
+	}
 	for _, interval := range []usage.Interval{usage.Daily, usage.Monthly} {
 		start, _ := usage.Window(interval, h.at)
 		a.add(window{interval: string(interval), start: start.Unix()}, sign*h.micros)
