@@ -386,7 +386,7 @@ var _ Spender = (*spending)(nil)
 
 func (g *spending) Admit(context.Context, Owner) (Admission, error) { return Admission{}, nil }
 
-func (g *spending) Spent(owner Owner, usageID uuid.UUID, micros int64) []int64 {
+func (g *spending) Settle(owner Owner, usageID uuid.UUID, micros int64) []int64 {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.spent == nil {

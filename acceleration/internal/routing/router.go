@@ -141,10 +141,11 @@ type Gate interface {
 }
 
 // Spender is a Gate that is told what a unit of work cost as soon as it is recorded, before
-// its row is written, so a customer spending fast is measured without waiting for the writer.
-// It answers the grants the work is drawn from, past a spent limit, which its row names.
+// its row is written, so a customer spending fast is measured without waiting for the writer:
+// Settle sets the unit's hold, reserved before it started or not, to its cost. It answers the
+// grants the work is drawn from, past a spent limit, which its row names.
 type Spender interface {
-	Spent(owner Owner, usageID uuid.UUID, micros int64) []int64
+	Settle(owner Owner, usageID uuid.UUID, micros int64) []int64
 }
 
 // Admission is what a customer's policies hold every request of theirs to.

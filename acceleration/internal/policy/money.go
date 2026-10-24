@@ -51,6 +51,8 @@ func Code(err error) string {
 		return "spend_limit_reached"
 	case errors.Is(err, ErrUserLimit):
 		return "user_limit_reached"
+	case errors.Is(err, ErrSpendCheckUnavailable):
+		return "spend_check_unavailable"
 	}
 	return ""
 }
@@ -185,6 +187,18 @@ type money struct {
 	refusals    throttle
 	// waiting spaces the warning about holds that wait on a read, per account.
 	waiting throttle
+
+	// instance names this process's holds in the shared Redis (shared.go). dirty is every hold
+	// changed since it was last written there, version numbers the changes, unflushedSince is
+	// when the oldest unwritten one was made, and shared the keys each hold was last written
+	// under. refreshedAt is when the keys in use were last read.
+	instance       string
+	dirty          map[uuid.UUID]dirtyHold
+	version        uint64
+	unflushedSince time.Time
+	shared         map[uuid.UUID][]string
+	refreshedAt    time.Time
+	flushLogged    once
 }
 
 // account is what an organization may do with money, read from the usage service (or from
@@ -256,6 +270,11 @@ type account struct {
 	// reads a sum.
 	held    int64
 	windows map[window]int64
+	// remote is what the other routers hold against each subject, by its counter's key, and
+	// remoteGrants against each grant, as the shared Redis last answered; every figure counts
+	// them as it counts this router's holds.
+	remote       map[string]int64
+	remoteGrants map[int64]int64
 }
 
 // subjectSpend is one subject's spend in the current window of each interval, as last read.
@@ -291,6 +310,7 @@ func (s *subjectSpend) spentIn(interval usage.Interval, start time.Time) int64 {
 func (m *money) start(e *Enforcer) {
 	m.enforcer, m.settings = e, e.settings
 	m.accounts, m.holdOf, m.failModes = map[string]*account{}, map[uuid.UUID]string{}, map[string]usage.FailMode{}
+	m.instance = uuid.NewString()
 	if m.settings.Mode == config.LimitsOff {
 		return
 	}
@@ -306,6 +326,10 @@ func (m *money) start(e *Enforcer) {
 	// so does their reconcile, so a long one never holds up reading them. It runs once at
 	// start too, rather than a whole reconcileEvery on.
 	go m.every(ctx, m.settings.Fresh, m.kickGrants, m.grantsPass)
+	if m.settings.Holds != nil {
+		m.loops.Add(1)
+		go m.every(ctx, m.settings.FlushEvery, nil, m.flushPass)
+	}
 	db := e.config.DB()
 	reconcile := func(ctx context.Context) { m.reconcilePass(ctx, db) }
 	go func() {
@@ -569,36 +593,54 @@ func (e *Enforcer) spendable(ctx context.Context, owner routing.Owner, decided d
 	}
 	acct.used = now
 	refusal, spend, reason, named := m.refusal(acct, organization, owner, decided, now, &grants)
-	why, balance, held, read := acct.standing.StatusReason, acct.standing.BalanceMicros, acct.held, acct.read
+	seen := seenOf(acct)
 	m.mu.Unlock()
+	refusal, spend = e.answer(organization, appID, refusal, spend, reason, named, seen, now)
+	return refusal, spend, grants
+}
 
-	shadow := m.settings.Mode == config.LimitsShadow
+// seen is what a refusal's log line says of the account, taken under m.mu.
+type seen struct {
+	why           string
+	balance, held int64
+	read          time.Time
+}
+
+func seenOf(acct *account) seen {
+	return seen{why: acct.standing.StatusReason, balance: acct.standing.BalanceMicros, held: acct.held, read: acct.read}
+}
+
+// answer is what an admission returns of a refusal worked out for the account: the refusal
+// itself, logging why a suspended organization was refused; in shadow nothing, counted and
+// logged as would refuse.
+func (e *Enforcer) answer(organization, appID string, refusal, spend error, reason string, named []any, seen seen, now time.Time) (error, error) {
+	m := &e.money
 	if reason == "" {
-		return refusal, spend, grants
+		return refusal, spend
 	}
 	args := who(organization)
 	if billed(organization) {
 		args = append(args, "app", appID)
 	}
-	if !shadow {
-		if reason == reasonSuspended && why != "" && m.refusals.due(organization+"\x00suspended_reason", logEvery) {
-			e.logger.Info("refused a suspended organization", append(args, "status_reason", why)...)
+	if m.settings.Mode != config.LimitsShadow {
+		if reason == reasonSuspended && seen.why != "" && m.refusals.due(organization+"\x00suspended_reason", logEvery) {
+			e.logger.Info("refused a suspended organization", append(args, "status_reason", seen.why)...)
 		}
-		return refusal, spend, grants
+		return refusal, spend
 	}
 	wouldRefuse.WithLabelValues(reason).Inc()
 	if m.refusals.due(organization+"\x00"+reason, logEvery) {
 		args = append(args, "reason", reason, "refusal", errors.Join(refusal, spend),
-			"balance_micros", balance, "held_micros", held)
-		if !read.IsZero() {
-			args = append(args, "read_age", now.Sub(read).Round(time.Millisecond))
+			"balance_micros", seen.balance, "held_micros", seen.held)
+		if !seen.read.IsZero() {
+			args = append(args, "read_age", now.Sub(seen.read).Round(time.Millisecond))
 		}
 		if reason == reasonSuspended {
-			args = append(args, "status_reason", why)
+			args = append(args, "status_reason", seen.why)
 		}
 		e.logger.Info("would refuse", append(args, named...)...)
 	}
-	return nil, nil, grants
+	return nil, nil
 }
 
 // refusal works spendable's answer out of the account, under m.mu, and names the reason, and
@@ -616,6 +658,12 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 		refs = subjectsOf(owner, limitsOrganization(key))
 		m.see(acct, refs, now)
 	}
+	if !acct.read.IsZero() && acct.standing.Status == usage.AccountSuspended {
+		return ErrSuspended, nil, reasonSuspended, nil
+	}
+	if m.unshared(now) {
+		return nil, errUnshared, reasonUnshared, nil
+	}
 	if acct.read.IsZero() {
 		// No standing read yet: the balance and the spend hard limit admit, unless it has gone
 		// unread for MaxStale and the tier it was last seen on, or failing that the default,
@@ -626,18 +674,18 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 		}
 	} else {
 		standing := acct.standing
-		if standing.Status == usage.AccountSuspended {
-			return ErrSuspended, nil, reasonSuspended, nil
-		}
 		if billing && now.Sub(acct.read) > m.settings.MaxStale && standing.Tier.FailMode != usage.FailOpen {
 			return nil, errUnreadable, reasonUnreadable, nil
 		}
-		// The balance counts every hold; a limit only those made in the window it is in now.
-		if billing && standing.BalanceMicros-acct.held <= 0 {
+		// The balance counts every hold, the other routers' included; a limit only those made
+		// in the window it is in now, and every one of the other routers' (they are short-lived,
+		// so near a window's start this errs towards refusing).
+		remote := acct.remoteOrganization(key)
+		if billing && standing.BalanceMicros-acct.held-remote <= 0 {
 			return nil, errNoBalance, reasonNoCredit, nil
 		}
 		for _, interval := range []usage.Interval{usage.Daily, usage.Monthly} {
-			if err := overHardLimit(standing, interval, acct.heldAgainstLimit(interval, clock), clock); err != nil {
+			if err := overHardLimit(standing, interval, acct.heldAgainstLimit(interval, clock)+remote, clock); err != nil {
 				return nil, err, string(interval) + "_spend_hard_limit", nil
 			}
 		}
@@ -688,6 +736,7 @@ func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdi
 	if len(a.limits) == 0 {
 		return verdict
 	}
+	grantsHeld := a.grantsHeld()
 	for _, ref := range refs {
 		key := ref.Key(usage.CounterPrefix)
 		spend := a.subjects[key]
@@ -700,7 +749,7 @@ func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdi
 			}
 			start, end := usage.Window(interval, now)
 			baseline := baselineOf(a.resets, ref, interval, start)
-			held := a.windows[window{subject: key, interval: string(interval), start: start.Unix()}]
+			held := a.windows[window{subject: key, interval: string(interval), start: start.Unix()}] + a.remote[key]
 			if room(limit, baseline, spend.spentIn(interval, start), held) > 0 {
 				continue
 			}
@@ -711,7 +760,7 @@ func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdi
 		if resets.IsZero() {
 			continue
 		}
-		if grant, ok := grantFor(a.grants, a.grantHeld, ref, now); ok {
+		if grant, ok := grantFor(a.grants, grantsHeld, ref, now); ok {
 			verdict.grants = append(verdict.grants, grant.grant.ID)
 			continue
 		}

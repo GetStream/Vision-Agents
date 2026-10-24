@@ -320,7 +320,7 @@ func (r *Recorder) spent(owner Owner, request store.Request) []int64 {
 		gate = r.writer.gate
 	}
 	if spender, ok := gate.(Spender); ok {
-		return spender.Spent(owner, request.UsageID, request.CostMicros)
+		return spender.Settle(owner, request.UsageID, request.CostMicros)
 	}
 	return nil
 }

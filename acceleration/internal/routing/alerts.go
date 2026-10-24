@@ -2,6 +2,7 @@ package routing
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
@@ -22,7 +23,25 @@ const (
 	unownedFor = 15 * time.Minute
 	// pendingSlowSeconds is how long a row may wait to be written before Postgres is too slow.
 	pendingSlowSeconds = 60
+	// holdsUnflushedSeconds is how long a change to a hold may wait to be shared with the other
+	// routers before the router refuses billable work, which customers then see.
+	holdsUnflushedSeconds = 10
 )
+
+// unflushedHolds reads how long the oldest change to a hold has waited to be shared, in seconds:
+// the admission package's, which reports it here (ReportUnflushedHolds). Nil reads 0.
+var unflushedHolds atomic.Pointer[func() float64]
+
+// ReportUnflushedHolds gives the alerts how long the oldest change to a hold has waited to be
+// shared with the other routers, in seconds.
+func ReportUnflushedHolds(read func() float64) { unflushedHolds.Store(&read) }
+
+func unflushedHoldsSeconds() float64 {
+	if read := unflushedHolds.Load(); read != nil {
+		return (*read)()
+	}
+	return 0
+}
 
 // Alerts are the router's usage conditions, for the one alerts loop of a process, which sends
 // one event of a condition at most every limit. A row lost or refused while the limit holds the
@@ -35,6 +54,8 @@ func Alerts(limit time.Duration) []alerts.Condition {
 		// A producer bug the service refuses.
 		{Name: "rejected", Level: alerts.Page, Check: alerts.IncreasedSinceAlert(func() float64 { return alerts.Total(usageRejected) }, limit)},
 		{Name: "write_failing", Level: alerts.Page, Check: writeFailing(writeFailingFor)},
+		// Past this, billable work is answered 503 spend_check_unavailable.
+		{Name: "holds_flush_failing", Level: alerts.Page, Check: aboveFor(unflushedHoldsSeconds, holdsUnflushedSeconds, 0, "unflushed_oldest_seconds")},
 		{Name: "ship_stale", Level: alerts.Page, Check: aboveFor(unshippedOldest, shipStaleSeconds, shipStaleFor, "oldest_unshipped_started_seconds_ago")},
 		{Name: "unowned", Level: alerts.Warn, Check: alerts.IncreasingFor(func() float64 { return alerts.Total(usageUnowned) }, unownedFor)},
 		{Name: "pending_slow", Level: alerts.Warn, Check: aboveFor(oldestPending, pendingSlowSeconds, 0, "oldest_pending_seconds")},

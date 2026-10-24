@@ -37,7 +37,7 @@ func spend(e *Enforcer, micros int64) uuid.UUID {
 }
 
 func spendAs(e *Enforcer, id uuid.UUID, micros int64) {
-	e.Spent(routing.Owner{CustomerID: "app-1", Attribution: routing.Attribution{OrganizationID: heldOrg}}, id, micros)
+	e.Settle(routing.Owner{CustomerID: "app-1", Attribution: routing.Attribution{OrganizationID: heldOrg}}, id, micros)
 }
 
 func ack(e *Enforcer, ids ...uuid.UUID) {
@@ -151,6 +151,25 @@ func TestAGrantHoldWrittenAndNeverCountedIsLetGoWithAnError(t *testing.T) {
 	require.EqualValues(t, 10, grantHeldOf(), "written uncountable ago and never counted, it is let go")
 	require.Contains(t, logs.String(), `"level":"ERROR"`)
 	require.Contains(t, logs.String(), `"grants":[42]`)
+}
+
+func TestAKeyPlannedFirstForADropStillKeepsItsAnswer(t *testing.T) {
+	e, acct := holding(t)
+	m := &e.money
+	m.settings.HoldRefresh, m.settings.Idle = time.Second, time.Hour
+	acct.used = time.Now()
+	org := usage.SubjectRef{OrganizationID: heldOrg, Subject: usage.SubjectOrganization}.Key(usage.CounterPrefix)
+	// A hold gone from another account, last shared under this organization's key.
+	gone := uuid.Must(uuid.NewV7())
+	m.shared = map[uuid.UUID][]string{gone: {holdKey(org)}}
+	m.dirty = map[uuid.UUID]dirtyHold{gone: {key: "another-org", since: time.Now(), version: 1}}
+
+	plans, _ := m.planFlush(time.Now())
+
+	plan := plans[holdKey(org)]
+	require.NotNil(t, plan)
+	require.Equal(t, remoteSlot{account: heldOrg, counter: org}, plan.slot, "the refresh of the key fills in whose answer it is")
+	require.Equal(t, []string{gone.String(), ""}, plan.args, "and the drop is still sent")
 }
 
 func TestAnIdleAccountGivesItsFoldedIDsBackToTheProcess(t *testing.T) {
