@@ -162,14 +162,31 @@ func (s *SessionEventsSuite) TestAFrameThatIsNotJSONIsRefusedWithPolicyViolation
 	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
 	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("not json")))
 
-	read, ended := s.socketEnd(watching)
+	s.refusedAsUnreadable(watching)
+}
 
-	s.Require().Len(read, 1)
-	s.Equal(frame{
-		"type": "error", "error": errUnreadableFrame.Message,
-		"code": errUnreadableFrame.Code, "error_type": string(errUnreadableFrame.Type),
-	}, read[0])
-	s.Equal(errUnreadableFrame.Message, s.closedWith(ended, websocket.ClosePolicyViolation).Text)
+// JSON that is not an object is no command either, and is refused as a frame that is not
+// JSON is.
+func (s *SessionEventsSuite) TestJSONThatIsNotACommandIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("[1]")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+func (s *SessionEventsSuite) TestABinaryFrameThatIsNotJSONIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.BinaryMessage, []byte("not json")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+// The control: a command of a type the router does not know is reported and the socket
+// stays open, as on base 8705bbaf9.
+func (s *SessionEventsSuite) TestACommandOfAnUnknownTypeIsReportedAndTheSocketStaysOpen() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching)
 }
 
 // The control: a caller that closes first is answered with its own close, as on base

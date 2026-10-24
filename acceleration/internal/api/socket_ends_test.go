@@ -31,6 +31,32 @@ func (s *RouterSuite) socketEnd(connection *websocket.Conn) ([]frame, error) {
 	}
 }
 
+// refusedAsUnreadable checks a socket answered a frame it could not read with one error
+// frame and then a close with 1008.
+func (s *RouterSuite) refusedAsUnreadable(connection *websocket.Conn) {
+	read, ended := s.socketEnd(connection)
+
+	s.Require().Len(read, 1)
+	s.Equal(frame{
+		"type": "error", "error": errUnreadableFrame.Message,
+		"code": errUnreadableFrame.Code, "error_type": string(errUnreadableFrame.Type),
+	}, read[0])
+	s.Equal(errUnreadableFrame.Message, s.closedWith(ended, websocket.ClosePolicyViolation).Text)
+}
+
+// unknownCommandLeavesTheSocketOpen sends a command of a type nothing knows and checks it is
+// reported, and that the socket still carries the close sent after it.
+func (s *RouterSuite) unknownCommandLeavesTheSocketOpen(connection *websocket.Conn) {
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "nope"}))
+
+	reported := s.await(connection, "error")
+	s.Equal(`unknown command "nope"`, reported["error"])
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "close"}))
+	_, ended := s.socketEnd(connection)
+	s.Equal("the session ended", s.closedWith(ended, websocket.CloseNormalClosure).Text)
+}
+
 // closedWith checks a socket ended with a close frame of the code given.
 func (s *RouterSuite) closedWith(ended error, code int) *websocket.CloseError {
 	var closed *websocket.CloseError
