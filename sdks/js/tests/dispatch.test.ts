@@ -344,6 +344,7 @@ describe("Dispatch", () => {
     });
     assert.deepEqual(await connection.next(), {
       type: "tool_result",
+      tool_call_id: "call_1",
       id: "call_1",
       output: "read android",
     });
@@ -418,6 +419,7 @@ describe("Dispatch", () => {
     connection.send({ type: "tool_call", id: "call_1", name: "investigate_sdk", arguments: "{}" });
     assert.deepEqual(await connection.next(), {
       type: "tool_result",
+      tool_call_id: "call_1",
       id: "call_1",
       error: "the checkout is missing",
     });
@@ -425,10 +427,107 @@ describe("Dispatch", () => {
     connection.send({ type: "tool_call", id: "call_2", name: "deploy", arguments: "{}" });
     assert.deepEqual(await connection.next(), {
       type: "tool_result",
+      tool_call_id: "call_2",
       id: "call_2",
       error: "this worker does not run deploy",
     });
 
+    dispatch.stop();
+    await running;
+  });
+
+  it("declares a hosted tool's policies", async () => {
+    const agent = api.agent("travel");
+    agent.tools.register({
+      name: "book_flight",
+      description: "Book a flight",
+      parameters: { type: "object", properties: { flight_id: { type: "string" } } },
+      approval: { title: "Book flight {flight_id}?" },
+      interruptible: true,
+      timeoutMs: 90_000,
+      run: () => "booked",
+    });
+    const dispatch = new Dispatch({ client: api }).host(agent);
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({ type: "ready", worker_id: "worker_1" });
+    const declared = await connection.next();
+    const [tool] = declared["tools"] as Record<string, unknown>[];
+
+    assert.equal(tool?.["interruptible"], true);
+    assert.equal(tool?.["timeout_ms"], 90_000);
+    assert.deepEqual(tool?.["approval"], { title: "Book flight {flight_id}?" });
+    dispatch.stop();
+    await running;
+  });
+
+  it("stops a hosted call the router cancels, and answers nothing for it", async () => {
+    const agent = api.agent("support");
+    let stopped = false;
+    agent.tools.register({
+      name: "investigate",
+      description: "Investigate for a long time",
+      run: (_input, signal) =>
+        new Promise((resolve) => {
+          signal.addEventListener("abort", () => {
+            stopped = true;
+            resolve("abandoned");
+          });
+        }),
+    });
+    agent.tools.register({ name: "ping", description: "Answer at once", run: () => "pong" });
+    const dispatch = new Dispatch({ client: api }).host(agent);
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({ type: "tool_call", id: "call_1", session_id: "s1", name: "investigate" });
+    connection.send({ type: "tool_cancel", id: "call_1", session_id: "s2" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(stopped, false, "another session's call of the same id");
+    connection.send({ type: "tool_cancel", id: "call_1", session_id: "s1" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(stopped, true);
+
+    connection.send({ type: "tool_call", id: "call_2", session_id: "s1", name: "ping" });
+    assert.equal((await connection.next())["tool_call_id"], "call_2", "the cancelled call was not answered");
+    dispatch.stop();
+    await running;
+  });
+
+  it("hands a hosted function its call, and sends how it is going", async () => {
+    const agent = api.agent("support");
+    let seen: { id: string; sessionId: string; turnId: string; user: string } | undefined;
+    agent.tools.register({
+      name: "investigate",
+      description: "Investigate",
+      run: (_input, _signal, call) => {
+        seen = { id: call.id, sessionId: call.sessionId, turnId: call.turnId, user: call.user.id };
+        call.update("reading the logs");
+        return "found it";
+      },
+    });
+    const dispatch = new Dispatch({ client: api }).host(agent);
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({
+      type: "tool_call",
+      id: "call_1",
+      session_id: "s1",
+      turn_id: "turn_3",
+      name: "investigate",
+      user: { id: "sam" },
+    });
+
+    assert.deepEqual(await connection.next(), {
+      type: "tool_update",
+      tool_call_id: "call_1",
+      text: "reading the logs",
+      verbatim: false,
+    });
+    assert.equal((await connection.next())["output"], "found it");
+    assert.deepEqual(seen, { id: "call_1", sessionId: "s1", turnId: "turn_3", user: "sam" });
     dispatch.stop();
     await running;
   });

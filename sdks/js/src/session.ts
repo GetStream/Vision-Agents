@@ -4,6 +4,7 @@ import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
 import { Speech } from "./speech.js";
 import type { ChatClient, VideoClient } from "./stream.js";
+import { Holds, socketLine, toolCallOf } from "./tool_line.js";
 import type { ToolApproval, Tools } from "./tools.js";
 
 /**
@@ -156,6 +157,9 @@ export class Session {
   private readonly buffered: SessionEvent[] = [];
   private readonly waiting: ((next: IteratorResult<SessionEvent>) => void)[] = [];
   private readonly running = new Map<string, AbortController>();
+  private readonly holds = new Holds();
+  /** Aborts when the socket ends, which stops even a call that asked to be held. */
+  private readonly ending = new AbortController();
   private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
   private readonly finished: Promise<void>;
   private ended = false;
@@ -495,9 +499,10 @@ export class Session {
         this.speech.observe(message);
 
         if (message.type === "tool_call") {
-          // Every watcher is sent every call and the first answer wins: answering a tool held
-          // elsewhere would beat whoever runs it, with an error.
-          if (!this.tools?.has(text(message, "name"))) {
+          // Every watcher is sent every call, and the router says which are to run it. One
+          // from before it said holds the same rule: answering a tool held elsewhere would
+          // beat whoever runs it, with an error.
+          if (message["run"] === false || !this.tools?.has(text(message, "name"))) {
             continue;
           }
           // A caller who already said yes on a voice call is not asked again.
@@ -511,9 +516,16 @@ export class Session {
           continue;
         }
         if (message.type === "tool_cancel") {
-          this.running.get(text(message, "id"))?.abort();
-          this.asking.delete(text(message, "id"));
+          const id = text(message, "id");
+          this.holds.answer(id, false);
+          if (!this.holds.held(id)) {
+            this.running.get(id)?.abort();
+          }
+          this.asking.delete(id);
           continue;
+        }
+        if (message.type === "tool_held") {
+          this.holds.answer(text(message, "id"), true);
         }
         this.deliver(eventOf(message));
       }
@@ -521,6 +533,7 @@ export class Session {
       this.ended = true;
       this.speech.close();
       this.asking.clear();
+      this.ending.abort();
       for (const cancel of this.running.values()) {
         cancel.abort();
       }
@@ -572,11 +585,14 @@ export class Session {
       if (!this.tools) {
         throw new Error(`${name} was asked for, and no tools are registered`);
       }
-      result["output"] = await this.tools.call(name, text(frame, "arguments"), cancel.signal);
+      const line = socketLine((sent) => this.socket?.open && this.socket.send(sent), this.holds);
+      const call = toolCallOf(frame, this.id, line, this.ending.signal);
+      result["output"] = await this.tools.call(name, text(frame, "arguments"), cancel.signal, call);
     } catch (cause) {
       result["error"] = cause instanceof Error ? cause.message : String(cause);
     } finally {
       this.running.delete(id);
+      this.holds.forget(id);
     }
 
     if (this.socket?.open) {

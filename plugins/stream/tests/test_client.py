@@ -412,6 +412,18 @@ class TestSessions:
             "turn-1",
         )
 
+    async def test_a_held_call_is_still_reported_to_whoever_reads_events(
+        self, api: stream.Client, router: Router
+    ):
+        router.frames = [{"type": "tool_held", "id": "call-1"}]
+        session = await api.agent("docs").sessions.create(stream.SessionOptions())
+        try:
+            event = await asyncio.wait_for(anext(session.events()), 2)
+        finally:
+            await session.close()
+
+        assert event.kind == "tool_held"
+
     async def test_a_session_asked_to_start_voice_is_on_its_call(
         self, api: stream.Client, router: Router
     ):

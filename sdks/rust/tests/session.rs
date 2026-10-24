@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::http::Method;
 use serde_json::json;
 use support::{Server, item, response, session};
-use vision_agents::{Session, Tools, WatchOptions, types};
+use vision_agents::{Error, Session, ToolCall, Tools, WatchOptions, types};
 
 fn weather() -> Tools {
     let tools = Tools::new();
@@ -708,4 +708,248 @@ async fn a_conversation_is_resumed_by_the_id_of_its_session() {
             .requests(Method::POST, "/v1/agents/sessions")
             .is_empty()
     );
+}
+
+fn tool(name: &str) -> types::SessionTool {
+    types::SessionTool {
+        name: name.into(),
+        description: format!("{name} for the test"),
+        ..Default::default()
+    }
+}
+
+/// Registers a function that is handed its call, as a tool the person cannot interrupt.
+fn holding() -> Tools {
+    let tools = Tools::new();
+    tools
+        .register_call(tool("pay"), |_, call: ToolCall| async move {
+            call.disallow_interruptions().await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok::<_, Error>("paid")
+        })
+        .unwrap();
+    tools.register("fast", "Does not take long", json!({}), |_| async {
+        Ok::<_, String>("done")
+    });
+    tools
+}
+
+#[tokio::test]
+async fn a_function_is_told_who_its_call_answers_and_can_say_how_it_is_going() {
+    let server = Server::start().await;
+    let tools = Tools::new();
+    tools
+        .register_call(tool("book"), |_, call: ToolCall| async move {
+            call.update("Looking at flights")
+                .await
+                .map_err(|error| error.to_string())?;
+            call.say("One moment.")
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>(json!({
+                "id": call.id, "session": call.session_id, "turn": call.turn_id,
+                "user": [call.user.id, call.user.name], "tier": call.user.custom["tier"],
+                "cid": call.conversation.cid, "approved": call.approved,
+            }))
+        })
+        .unwrap();
+    let (_session, mut socket) = open(&server, tools).await;
+
+    socket
+        .send(
+            json!({"type": "tool_call", "id": "t1", "name": "book", "arguments": "{}",
+                     "turn_id": "turn-1", "approved": true,
+                     "user": {"id": "u1", "name": "Ada", "custom": {"tier": "gold"}},
+                     "conversation": {"cid": "messaging:c1", "custom": {}}}),
+        )
+        .await;
+
+    assert_eq!(
+        socket.next().await.unwrap(),
+        json!({"type": "tool_update", "tool_call_id": "t1", "text": "Looking at flights", "verbatim": false})
+    );
+    assert_eq!(
+        socket.next().await.unwrap(),
+        json!({"type": "tool_update", "tool_call_id": "t1", "text": "One moment.", "verbatim": true})
+    );
+    let output: serde_json::Value = serde_json::from_str(
+        socket.expect("tool_result").await["output"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        output,
+        json!({"id": "t1", "session": "s1", "turn": "turn-1", "user": ["u1", "Ada"],
+               "tier": "gold", "cid": "messaging:c1", "approved": true})
+    );
+}
+
+#[tokio::test]
+async fn a_call_the_router_runs_elsewhere_is_left_alone() {
+    let server = Server::start().await;
+    let (_session, mut socket) = open(&server, holding()).await;
+
+    socket
+        .send(json!({"type": "tool_call", "id": "f1", "name": "fast", "arguments": "{}", "run": false}))
+        .await;
+    socket
+        .send(json!({"type": "tool_call", "id": "f2", "name": "fast", "arguments": "{}"}))
+        .await;
+
+    assert_eq!(socket.expect("tool_result").await["tool_call_id"], "f2");
+}
+
+#[tokio::test]
+async fn a_held_call_is_not_cancelled_by_the_person_talking_over_the_agent() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, holding()).await;
+
+    socket
+        .send(json!({"type": "tool_call", "id": "p1", "name": "pay", "arguments": "{}"}))
+        .await;
+    assert_eq!(
+        socket.next().await.unwrap(),
+        json!({"type": "tool_hold", "tool_call_id": "p1"})
+    );
+    socket.send(json!({"type": "tool_held", "id": "p1"})).await;
+    socket
+        .send(json!({"type": "tool_cancel", "id": "p1"}))
+        .await;
+
+    assert_eq!(
+        socket.expect("tool_result").await,
+        json!({"type": "tool_result", "tool_call_id": "p1", "output": "paid"})
+    );
+    assert_eq!(session.next_event().await.unwrap().kind, "tool_held");
+}
+
+#[tokio::test]
+async fn a_hold_asked_for_too_late_is_cancelled_with_the_call() {
+    let server = Server::start().await;
+    let (_session, mut socket) = open(&server, holding()).await;
+
+    socket
+        .send(json!({"type": "tool_call", "id": "p1", "name": "pay", "arguments": "{}"}))
+        .await;
+    socket.expect("tool_hold").await;
+    socket
+        .send(json!({"type": "tool_cancel", "id": "p1"}))
+        .await;
+    socket
+        .send(json!({"type": "tool_call", "id": "f1", "name": "fast", "arguments": "{}"}))
+        .await;
+
+    assert_eq!(socket.expect("tool_result").await["tool_call_id"], "f1");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(400), socket.expect("tool_result"))
+            .await
+            .is_err(),
+        "a cancelled call was answered"
+    );
+}
+
+#[tokio::test]
+async fn a_call_that_outlasts_its_timeout_is_stopped_and_fails() {
+    let server = Server::start().await;
+    let tools = Tools::new();
+    tools
+        .register_call(
+            types::SessionTool {
+                timeout_ms: Some(50),
+                ..tool("slow")
+            },
+            |_, _| async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok::<_, String>("done")
+            },
+        )
+        .unwrap();
+    let (_session, mut socket) = open(&server, tools).await;
+
+    socket
+        .send(json!({"type": "tool_call", "id": "s1", "name": "slow", "arguments": "{}"}))
+        .await;
+
+    assert_eq!(
+        socket.expect("tool_result").await,
+        json!({"type": "tool_result", "tool_call_id": "s1", "error": "slow took longer than 50 ms"})
+    );
+}
+
+#[tokio::test]
+async fn a_tool_is_declared_with_only_the_policies_it_sets() {
+    let server = Server::start().await;
+    let tools = Tools::new();
+    tools
+        .register_call(
+            types::SessionTool {
+                interruptible: Some(true),
+                timeout_ms: Some(5000),
+                approval: Some(types::SessionToolApproval {
+                    title: "Refund {amount}?".into(),
+                    ..Default::default()
+                }),
+                parameters: json!({"type": "object", "properties": {"amount": {"type": "number"}}})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..tool("refund")
+            },
+            |_, _| async { Ok::<_, String>("refunded") },
+        )
+        .unwrap();
+    let (_session, _socket) = open(&server, tools).await;
+
+    let sent = server.request(Method::POST, "/v1/agents/sessions").body;
+    assert_eq!(sent["tools"][0]["interruptible"], true);
+    assert_eq!(sent["tools"][0]["timeout_ms"], 5000);
+    assert_eq!(
+        sent["tools"][0]["approval"],
+        json!({"title": "Refund {amount}?"})
+    );
+}
+
+#[test]
+fn a_policy_that_cannot_work_is_refused_when_it_is_registered() {
+    let tools = Tools::new();
+    let refused = |declaration: types::SessionTool| {
+        tools
+            .register_call(declaration, |_, _| async { Ok::<_, String>("") })
+            .err()
+            .map(|error| error.to_string())
+    };
+    let asking = |title: &str| types::SessionTool {
+        approval: Some(types::SessionToolApproval {
+            title: title.into(),
+            ..Default::default()
+        }),
+        parameters: json!({"type": "object", "properties": {"amount": {}}})
+            .as_object()
+            .unwrap()
+            .clone(),
+        ..tool("refund")
+    };
+
+    assert_eq!(
+        refused(asking("Refund {amount} to {card}?")).as_deref(),
+        Some("refund's approval names {card}, which is not one of its parameters")
+    );
+    assert_eq!(
+        refused(asking("  ")).as_deref(),
+        Some("refund's approval question cannot be blank")
+    );
+    assert_eq!(
+        refused(types::SessionTool {
+            timeout_ms: Some(-1),
+            ..tool("refund")
+        })
+        .as_deref(),
+        Some("refund has a negative timeout_ms")
+    );
+    assert_eq!(
+        refused(asking("Refund {amount}? {not a placeholder}")),
+        None
+    );
+    assert!(tools.has("refund"));
 }
