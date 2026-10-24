@@ -106,14 +106,13 @@ func (s *Session) UpdatesCalls() bool {
 	return ok && updater.UpdatesCalls()
 }
 
-// UpdateCall has the model speak about the open call callID, guided by prompt, where it
-// can (UpdatesCalls).
-func (s *Session) UpdateCall(callID, status, prompt string) error {
+// UpdateCall has the model speak about an open call, where it can (UpdatesCalls).
+func (s *Session) UpdateCall(update sts.CallUpdate) error {
 	updater, ok := s.provider.(sts.CallUpdater)
 	if !ok {
 		return sts.ErrNoCallUpdates
 	}
-	return updater.UpdateCall(callID, status, prompt)
+	return updater.UpdateCall(update)
 }
 
 // Interrupt stops the reply in flight. Its audio stops being forwarded at once, before the

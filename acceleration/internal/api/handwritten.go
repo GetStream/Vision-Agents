@@ -166,8 +166,9 @@ func documentHandWritten(api huma.API) {
 			"An explicit `interrupt` still cancels a held call. It may also send `tool_update` " +
 			"(`tool_call_id`, `text`, `verbatim`) to say how the call is going: the agent tells a " +
 			"voice caller in its own words once nobody is talking, and a persistent conversation " +
-			"shows `text` as the summary of the call's step until it ends. On speech-to-speech, only " +
-			"OpenAI Realtime is told while the call is open; other models only report it. With `verbatim` true, " +
+			"shows `text` as the summary of the call's step until it ends. On speech-to-speech, " +
+			"OpenAI Realtime, Gemini 3.1 Flash Live and Gemini 3.8 Live are told while the call is open; " +
+			"other models only report it. With `verbatim` true, " +
 			"the agent says or posts `text` as written instead. A newer update replaces one not yet " +
 			"said, and a call's result replaces both. Every watcher is sent `tool_updated` (`id`, " +
 			"`turn_id`, `tool`, `text`, `verbatim`) for each update. An update or hold from a watcher " +

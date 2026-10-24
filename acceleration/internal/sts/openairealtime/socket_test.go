@@ -710,12 +710,14 @@ func (s *RealtimeSocketSuite) TestAnOpenCallIsTalkedAboutWithoutCallingAnything(
 	defer func() { _ = provider.Close() }()
 	s.Require().True(provider.UpdatesCalls())
 
-	s.Require().NoError(provider.UpdateCall("call_1", "searching 3 airlines", "Tell the caller where it has got to."))
+	s.Require().NoError(provider.UpdateCall(sts.CallUpdate{
+		CallID: "call_1", Status: "searching 3 airlines", Guidance: "Tell the caller where it has got to.", Instructions: "Be brief.",
+	}))
 
 	update := s.nextFrame(conn)
 	s.Equal(eventResponseCreate, update.Type)
 	s.Require().NotNil(update.Response)
-	s.Equal("Tell the caller where it has got to.", update.Response.Instructions)
+	s.Equal("Be brief.\n\nTell the caller where it has got to.", update.Response.Instructions)
 	s.Equal("none", update.Response.ToolChoice, "a reply about an open call must not call it again")
 }
 
@@ -726,5 +728,5 @@ func (s *RealtimeSocketSuite) TestOnlyOpenAIsRealtimeIsToldAboutAnOpenCall() {
 	defer func() { _ = provider.Close() }()
 
 	s.False(provider.UpdatesCalls())
-	s.ErrorIs(provider.UpdateCall("call_1", "searching", "Tell them."), sts.ErrNoCallUpdates)
+	s.ErrorIs(provider.UpdateCall(sts.CallUpdate{CallID: "call_1", Status: "searching"}), sts.ErrNoCallUpdates)
 }
