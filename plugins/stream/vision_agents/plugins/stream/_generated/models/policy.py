@@ -29,6 +29,10 @@ class Policy:
             allowed_models (list[str] | Unset): The only models requests may be routed to, as provider/model names, in every
                 modality. Left out allows every model, and an empty list allows none. A request that could only go to models not
                 on the list is refused, and a failover never reaches one. Example: ['deepseek/DeepSeek-V4-Flash-0731'].
+            balance_warning_micros (int | Unset): The organization's own warning threshold, in millionths of a dollar: at or
+                below it, every answer to a backend says X-Stream-Balance-Warning: low, and the organization's stream event
+                destinations get one account.balance_low. It wins over the tier's. Left out, the tier's applies. Only an
+                organization's policy has one: an app's that sets it is refused. Example: 20000000.
             budget (PolicyBudget | Unset): Removed: spend limits are /v1/spend/limits, at every level. A policy that sends
                 budget is refused with 400 budget_moved, and none is read back.
             data_policy (DataPolicy | Unset): What a caller requires of what happens to what they send: the audio they had
@@ -53,6 +57,7 @@ class Policy:
     """
 
     allowed_models: list[str] | Unset = UNSET
+    balance_warning_micros: int | Unset = UNSET
     budget: PolicyBudget | Unset = UNSET
     data_policy: DataPolicy | Unset = UNSET
     prompt_injection: bool | Unset = UNSET
@@ -65,6 +70,8 @@ class Policy:
         allowed_models: list[str] | Unset = UNSET
         if not isinstance(self.allowed_models, Unset):
             allowed_models = self.allowed_models
+
+        balance_warning_micros = self.balance_warning_micros
 
         budget: dict[str, Any] | Unset = UNSET
         if not isinstance(self.budget, Unset):
@@ -91,6 +98,8 @@ class Policy:
         field_dict.update({})
         if allowed_models is not UNSET:
             field_dict["allowed_models"] = allowed_models
+        if balance_warning_micros is not UNSET:
+            field_dict["balance_warning_micros"] = balance_warning_micros
         if budget is not UNSET:
             field_dict["budget"] = budget
         if data_policy is not UNSET:
@@ -115,6 +124,8 @@ class Policy:
 
         d = dict(src_dict)
         allowed_models = cast(list[str], d.pop("allowed_models", UNSET))
+
+        balance_warning_micros = d.pop("balance_warning_micros", UNSET)
 
         _budget = d.pop("budget", UNSET)
         budget: PolicyBudget | Unset
@@ -150,6 +161,7 @@ class Policy:
 
         policy = cls(
             allowed_models=allowed_models,
+            balance_warning_micros=balance_warning_micros,
             budget=budget,
             data_policy=data_policy,
             prompt_injection=prompt_injection,

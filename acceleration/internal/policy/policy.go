@@ -219,6 +219,9 @@ type decision struct {
 	// where it sets none.
 	messages *int64
 	tokens   *int64
+	// balanceWarning is the balance its organization's policy warns at, over its tier's; nil
+	// where it sets none.
+	balanceWarning *int64
 	// unread is a decision made without the policies, which could not be read.
 	unread error
 	// read is when the policies were read, used when Admit last answered with it, and
@@ -626,8 +629,9 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 		tags:   labelled(organization, app),
 		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
-		ownApp:       enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
-		organization: organizationID,
+		ownApp:         enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
+		organization:   organizationID,
+		balanceWarning: organization.BalanceWarningMicros,
 	}
 	if app.Quota != nil {
 		decided.messages = app.Quota.MessagesPerUserPerDay

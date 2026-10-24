@@ -957,7 +957,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.T().Cleanup(judging.Close)
 
 	imaging, err := imagerouter.New(imagerouter.Options{
-		Config: imageConfig(), Registry: painterRegistry(), Gate: gate, Logger: logger,
+		Config: imageConfig(), Registry: painterRegistry(), Store: s.store, Live: s.live, Gate: gate, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(imaging.Close)

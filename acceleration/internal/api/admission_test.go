@@ -71,16 +71,6 @@ func (s *AdmissionSuite) SetupTest() {
 
 func (s *AdmissionSuite) organization() string { return s.app.organization.ID }
 
-// config is the id of an agent config of the suite's app answered by model.
-func (s *AdmissionSuite) config(model string) string {
-	var created AgentConfig
-	s.Require().Equal(http.StatusCreated, s.serverClient.do(
-		http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
-			Name: "agent-" + s.utils.uuid(), Llm: &model, Instructions: pointerTo("be brief"),
-		}, &created))
-	return created.Id
-}
-
 // refused waits for the request to be refused once the organization's money has been read,
 // and returns the status and the failure it was refused with. The request that warms an
 // organization may be admitted, as a router that has read nothing yet admits.

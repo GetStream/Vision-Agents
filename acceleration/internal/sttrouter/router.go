@@ -99,6 +99,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	core := routing.Request{
 		CustomerID:    request.CustomerID,
 		Attribution:   routing.AttributionFrom(ctx),
+		Spent:         routing.SpentFrom(ctx),
 		AgentID:       request.AgentID,
 		CallID:        request.CallID,
 		Tags:          request.Tags,

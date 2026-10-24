@@ -300,6 +300,9 @@ type Request struct {
 	CallID string
 	// Tags are the customer's own cost labels, recorded on every row the session writes.
 	Tags Tags
+	// Spent adds up what the session's rows cost for the request or socket that opened it. A
+	// router takes it from the context it is opened with (SpentFrom).
+	Spent *Spent
 	// Target is a "provider/model" name or a capability shortcut.
 	Target string
 	// Providers is a priority list of where to try, in the order given, and it wins over
@@ -359,6 +362,7 @@ func (r Request) Owner() Owner {
 		AgentID:     r.AgentID,
 		CallID:      r.CallID,
 		Tags:        r.Tags,
+		Spent:       r.Spent,
 	}
 }
 

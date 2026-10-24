@@ -202,6 +202,7 @@ func (r *Recordings) Record(
 	}
 	request := recording.request()
 	request.Attribution = routing.AttributionFrom(ctx)
+	request.Spent = routing.SpentFrom(ctx)
 
 	var recorded tts.Recorded
 	// failed is the vendor's own answer, whole, for a walk that asked only one candidate.

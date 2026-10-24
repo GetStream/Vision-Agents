@@ -80,6 +80,7 @@ func (s *Server) classify(ctx context.Context, request *classifyRequest) (*class
 		Usage: ClassifyUsage{
 			InputTokens:  result.Usage.InputTokens,
 			OutputTokens: result.Usage.OutputTokens,
+			CostMicros:   spentMicros(ctx),
 		}}}, nil
 }
 
@@ -217,8 +218,9 @@ type ClassifyResult struct {
 
 // ClassifyUsage What the request read and wrote. The state's tokens are counted once however many questions shared them.
 type ClassifyUsage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+	CostMicros   *int64 `json:"cost_micros,omitempty" doc:"What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says. Only a server-side caller is told."`
 }
 
 func (*ClassifyUsage) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
