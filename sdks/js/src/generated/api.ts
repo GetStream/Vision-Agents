@@ -3585,6 +3585,112 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/spend/limits": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the organization's spend limits
+         * @description Every limit of the caller's organization, by id, with what each can spend once its parents are counted.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly get: operations["listLimits"];
+        readonly put?: never;
+        /**
+         * Create a spend limit
+         * @description A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly post: operations["createLimit"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/{limit_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a spend limit
+         * @description One limit of the caller's organization.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly get: operations["getLimit"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a spend limit
+         * @description The subject is no longer held to it; a default at a level above takes over where there is one.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly delete: operations["deleteLimit"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a spend limit's amount or note
+         * @description Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly patch: operations["updateLimit"];
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/usage": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read what a subject spent against its limits
+         * @description The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly get: operations["getLimitUsage"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/usage/reset": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Reset a subject's spend for its limits
+         * @description From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly post: operations["resetLimitUsage"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/stats/activity": {
         readonly parameters: {
             readonly query?: never;
@@ -4300,10 +4406,10 @@ export type components = {
             readonly limit?: number;
         };
         /**
-         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it.
+         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization's id.
          * @enum {string}
          */
-        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy" | "price_list" | "end_user";
+        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy" | "price_list" | "end_user" | "limit";
         /**
          * @description Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
          * @enum {string}
@@ -5867,7 +5973,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -6312,6 +6418,140 @@ export type components = {
             readonly unavailable?: readonly string[];
             readonly voices: readonly components["schemas"]["LibraryVoice"][];
         };
+        /** @description A spend limit: what one subject may spend in each window of its interval. Billable work for a subject with no room left under any of its limits is refused, 402 spend_limit_reached, or 429 user_limit_reached with Retry-After for an end user's. A subject is also held to every subject that contains it, so an app's work is refused once its organization's limit is spent. */
+        readonly Limit: {
+            /** @description The key, for a limit at api_key level. */
+            readonly api_key?: string;
+            /** @description The app, for a limit at app, api_key or user level, or on an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for a category's limit. */
+            readonly category?: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /**
+             * Format: int64
+             * @description The lowest of limit_micros and the limits, in the same interval, of every subject that contains this one: what the subject can spend before something refuses it.
+             */
+            readonly effective_limit_micros: number;
+            /** Format: int64 */
+            readonly id: number;
+            readonly interval: components["schemas"]["LimitInterval"];
+            readonly level: components["schemas"]["LimitLevel"];
+            /**
+             * Format: int64
+             * @description What the subject may spend in each window, in millionths of a dollar.
+             */
+            readonly limit_micros: number;
+            readonly note?: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for a team's limit. */
+            readonly team?: string;
+            /** Format: date-time */
+            readonly updated_at: string;
+            /** @description Who last wrote it, as the audit log names them. */
+            readonly updated_by: string;
+            /** @description The end user, for a limit at user level. */
+            readonly user_id?: string;
+        };
+        /** @description What changes about a spend limit: its amount and its note. A field left out keeps what is stored. */
+        readonly LimitChange: {
+            /** Format: int64 */
+            readonly limit_micros?: number;
+            readonly note?: string;
+        };
+        readonly LimitInForce: {
+            /** Format: int64 */
+            readonly effective_limit_micros: number;
+            /** Format: int64 */
+            readonly id: number;
+            readonly level: components["schemas"]["LimitLevel"];
+            /** Format: int64 */
+            readonly limit_micros: number;
+        };
+        /** @description A spend limit to create. Every limit is the customer's; an unknown field is refused. */
+        readonly LimitInput: {
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            readonly interval: components["schemas"]["LimitInterval"];
+            /** @description Left out, the level of the most specific id given: api_key or user when it is named, else app when app_id is, else organization. */
+            readonly level?: components["schemas"]["LimitLevel"];
+            /**
+             * Format: int64
+             * @description What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+             */
+            readonly limit_micros: number;
+            readonly note?: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        /**
+         * @description The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
+         * @enum {string}
+         */
+        readonly LimitInterval: "daily" | "weekly" | "biweekly" | "monthly";
+        /**
+         * @description Whose ids a limit names. A key's or a user's limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.
+         * @enum {string}
+         */
+        readonly LimitLevel: "organization" | "app" | "api_key" | "user";
+        readonly LimitPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Limit"][] | null;
+            readonly next_cursor?: string;
+        };
+        /** @description A reset of one subject's spend for its limits, in the current windows of the intervals named. */
+        readonly LimitResetInput: {
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /** @description The windows to reset. Left out, every one. */
+            readonly intervals?: readonly components["schemas"]["LimitInterval"][] | null;
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        /**
+         * @description Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+         * @enum {string}
+         */
+        readonly LimitSubject: "organization" | "app" | "api_key" | "user" | "category" | "app_category" | "team" | "app_team";
+        readonly LimitWindow: {
+            /**
+             * Format: int64
+             * @description What the subject had spent in the window when it was last reset; its limit counts spend past this.
+             */
+            readonly baseline_micros: number;
+            readonly interval: components["schemas"]["LimitInterval"];
+            /** @description The limit in force, absent when the subject has none in this interval. */
+            readonly limit?: components["schemas"]["LimitInForce"];
+            /**
+             * Format: int64
+             * @description What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit.
+             */
+            readonly room_micros?: number;
+            /**
+             * Format: int64
+             * @description What the subject spent in the window, as the usage records count it.
+             */
+            readonly spent_micros: number;
+            /** Format: date-time */
+            readonly window_end: string;
+            /** Format: date-time */
+            readonly window_start: string;
+        };
         readonly LinkChannelRequest: {
             /** @description The agent whose channels the number is being claimed on. */
             readonly config_id: string;
@@ -6352,6 +6592,49 @@ export type components = {
             readonly tool_choice?: string;
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
+        };
+        /** @description A spend limit staff create for an organization, for support. It is the customer's like any other. */
+        readonly ManageLimitInput: {
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            readonly interval: components["schemas"]["LimitInterval"];
+            /** @description Left out, the level of the most specific id given: api_key or user when it is named, else app when app_id is, else organization. */
+            readonly level?: components["schemas"]["LimitLevel"];
+            /**
+             * Format: int64
+             * @description What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+             */
+            readonly limit_micros: number;
+            readonly note?: string;
+            /** @description The organization the limit is for. */
+            readonly organization_id: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        /** @description A reset staff make of one subject's spend for its limits, for support. */
+        readonly ManageLimitResetInput: {
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /** @description The windows to reset. Left out, every one. */
+            readonly intervals?: readonly components["schemas"]["LimitInterval"][] | null;
+            readonly organization_id: string;
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
         };
         /** @description Who a management call is recorded as made by: the actor and the name the call named, as the audit log keeps them. */
         readonly ManageStatus: {
@@ -8089,6 +8372,21 @@ export type components = {
              */
             readonly value: string;
         };
+        /** @description The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit. */
+        readonly SpendHardLimitUsage: {
+            readonly daily?: components["schemas"]["SpendHardLimitWindow"];
+            readonly monthly?: components["schemas"]["SpendHardLimitWindow"];
+        };
+        readonly SpendHardLimitWindow: {
+            /** Format: int64 */
+            readonly limit_micros: number;
+            /** Format: int64 */
+            readonly room_micros: number;
+            /** Format: int64 */
+            readonly spent_micros: number;
+            /** Format: date-time */
+            readonly window_end: string;
+        };
         readonly StartSessionVoiceRequest: {
             /** @description An existing Stream call for the agent to join, such as the default call the people are already on. Left out, the agent goes back to the call voice was last on, else joins agent:<session id>, which joining creates. Naming a call other than the one voice is on while it is started is refused with a 409: stop voice first to move. The session has to act in the customer's own Stream app: in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) a call is refused with a 403. The call has to be in the Stream app the session acts in, and the router does not ask Stream whether it exists. A phone or socket session takes no call. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Server-side only: a device sending it is refused with a 403. */
             readonly call?: components["schemas"]["SessionCall"];
@@ -8321,6 +8619,17 @@ export type components = {
             readonly utterance_end_ms?: number;
             /** @description Word-level timestamps. Recording only. */
             readonly words?: boolean;
+        };
+        readonly SubjectUsage: {
+            readonly api_key?: string;
+            readonly app_id?: string;
+            readonly category?: string;
+            readonly spend_hard_limit?: components["schemas"]["SpendHardLimitUsage"];
+            readonly subject: components["schemas"]["LimitSubject"];
+            readonly team?: string;
+            readonly user_id?: string;
+            /** @description The current window of every interval, daily first. */
+            readonly windows: readonly components["schemas"]["LimitWindow"][] | null;
         };
         readonly SuspendTelephonyRequest: {
             /** @description Why the app is suspended. The app is never shown it. */
@@ -16665,6 +16974,234 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+        };
+    };
+    readonly listLimits: {
+        readonly parameters: {
+            readonly query?: {
+                readonly api_key?: string;
+                readonly app_id?: string;
+                readonly category?: string;
+                /** @description The next_cursor of the previous page, sent with the same filters. */
+                readonly cursor?: string;
+                readonly interval?: components["schemas"]["LimitInterval"];
+                readonly level?: components["schemas"]["LimitLevel"];
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+                /** @description Only limits on this subject. team lists the teams' limits, category every other category's. */
+                readonly subject?: components["schemas"]["LimitSubject"];
+                readonly team?: string;
+                readonly user_id?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createLimit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitInput"];
+            };
+        };
+        readonly responses: {
+            /** @description The limit was created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Limit"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getLimit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly limit_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Limit"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteLimit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly limit_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The limit was deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly updateLimit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly limit_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitChange"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Limit"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getLimitUsage: {
+        readonly parameters: {
+            readonly query: {
+                readonly api_key?: string;
+                readonly app_id?: string;
+                readonly category?: string;
+                readonly subject: components["schemas"]["LimitSubject"];
+                readonly team?: string;
+                readonly user_id?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SubjectUsage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly resetLimitUsage: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitResetInput"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SubjectUsage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getActivity: {

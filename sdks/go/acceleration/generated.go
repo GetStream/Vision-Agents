@@ -219,6 +219,7 @@ const (
 	AuditResourceTypeEndUser      AuditResourceType = "end_user"
 	AuditResourceTypeKnowledge    AuditResourceType = "knowledge"
 	AuditResourceTypeKnowledgeUrl AuditResourceType = "knowledge_url"
+	AuditResourceTypeLimit        AuditResourceType = "limit"
 	AuditResourceTypePlugin       AuditResourceType = "plugin"
 	AuditResourceTypePolicy       AuditResourceType = "policy"
 	AuditResourceTypePriceList    AuditResourceType = "price_list"
@@ -236,6 +237,8 @@ func (e AuditResourceType) Valid() bool {
 	case AuditResourceTypeKnowledge:
 		return true
 	case AuditResourceTypeKnowledgeUrl:
+		return true
+	case AuditResourceTypeLimit:
 		return true
 	case AuditResourceTypePlugin:
 		return true
@@ -1299,6 +1302,90 @@ func (e KnowledgeUrlState) Valid() bool {
 	case KnowledgeUrlStateIndexed:
 		return true
 	case KnowledgeUrlStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LimitInterval.
+const (
+	LimitIntervalBiweekly LimitInterval = "biweekly"
+	LimitIntervalDaily    LimitInterval = "daily"
+	LimitIntervalMonthly  LimitInterval = "monthly"
+	LimitIntervalWeekly   LimitInterval = "weekly"
+)
+
+// Valid indicates whether the value is a known member of the LimitInterval enum.
+func (e LimitInterval) Valid() bool {
+	switch e {
+	case LimitIntervalBiweekly:
+		return true
+	case LimitIntervalDaily:
+		return true
+	case LimitIntervalMonthly:
+		return true
+	case LimitIntervalWeekly:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LimitLevel.
+const (
+	LimitLevelApiKey       LimitLevel = "api_key"
+	LimitLevelApp          LimitLevel = "app"
+	LimitLevelOrganization LimitLevel = "organization"
+	LimitLevelUser         LimitLevel = "user"
+)
+
+// Valid indicates whether the value is a known member of the LimitLevel enum.
+func (e LimitLevel) Valid() bool {
+	switch e {
+	case LimitLevelApiKey:
+		return true
+	case LimitLevelApp:
+		return true
+	case LimitLevelOrganization:
+		return true
+	case LimitLevelUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LimitSubject.
+const (
+	LimitSubjectApiKey       LimitSubject = "api_key"
+	LimitSubjectApp          LimitSubject = "app"
+	LimitSubjectAppCategory  LimitSubject = "app_category"
+	LimitSubjectAppTeam      LimitSubject = "app_team"
+	LimitSubjectCategory     LimitSubject = "category"
+	LimitSubjectOrganization LimitSubject = "organization"
+	LimitSubjectTeam         LimitSubject = "team"
+	LimitSubjectUser         LimitSubject = "user"
+)
+
+// Valid indicates whether the value is a known member of the LimitSubject enum.
+func (e LimitSubject) Valid() bool {
+	switch e {
+	case LimitSubjectApiKey:
+		return true
+	case LimitSubjectApp:
+		return true
+	case LimitSubjectAppCategory:
+		return true
+	case LimitSubjectAppTeam:
+		return true
+	case LimitSubjectCategory:
+		return true
+	case LimitSubjectOrganization:
+		return true
+	case LimitSubjectTeam:
+		return true
+	case LimitSubjectUser:
 		return true
 	default:
 		return false
@@ -3165,7 +3252,7 @@ type AuditEntry struct {
 	// ResourceName What it was called when it changed, for a resource that has a name.
 	ResourceName *string `json:"resource_name,omitempty"`
 
-	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it.
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization's id.
 	ResourceType AuditResourceType `json:"resource_type"`
 
 	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
@@ -3183,7 +3270,7 @@ type AuditFilter struct {
 	// ResourceId One resource's own history.
 	ResourceId *string `json:"resource_id,omitempty"`
 
-	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it.
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization's id.
 	ResourceType *AuditResourceType `json:"resource_type,omitempty"`
 
 	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
@@ -3211,7 +3298,7 @@ type AuditQuery struct {
 	Limit *int64 `json:"limit,omitempty"`
 }
 
-// AuditResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it.
+// AuditResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization's id.
 type AuditResourceType string
 
 // AuditSource Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
@@ -4979,7 +5066,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -5448,6 +5535,152 @@ type LibraryVoices struct {
 	Voices      []LibraryVoice `json:"voices"`
 }
 
+// Limit A spend limit: what one subject may spend in each window of its interval. Billable work for a subject with no room left under any of its limits is refused, 402 spend_limit_reached, or 429 user_limit_reached with Retry-After for an end user's. A subject is also held to every subject that contains it, so an app's work is refused once its organization's limit is spent.
+type Limit struct {
+	// ApiKey The key, for a limit at api_key level.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// AppId The app, for a limit at app, api_key or user level, or on an app's category or team.
+	AppId *string `json:"app_id,omitempty"`
+
+	// Category The usage category, for a category's limit.
+	Category  *string   `json:"category,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// EffectiveLimitMicros The lowest of limit_micros and the limits, in the same interval, of every subject that contains this one: what the subject can spend before something refuses it.
+	EffectiveLimitMicros int64 `json:"effective_limit_micros"`
+	Id                   int64 `json:"id"`
+
+	// Interval The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
+	Interval LimitInterval `json:"interval"`
+
+	// Level Whose ids a limit names. A key's or a user's limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.
+	Level LimitLevel `json:"level"`
+
+	// LimitMicros What the subject may spend in each window, in millionths of a dollar.
+	LimitMicros int64   `json:"limit_micros"`
+	Note        *string `json:"note,omitempty"`
+
+	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+	Subject LimitSubject `json:"subject"`
+
+	// Team The team, for a team's limit.
+	Team      *string   `json:"team,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// UpdatedBy Who last wrote it, as the audit log names them.
+	UpdatedBy string `json:"updated_by"`
+
+	// UserId The end user, for a limit at user level.
+	UserId *string `json:"user_id,omitempty"`
+}
+
+// LimitChange What changes about a spend limit: its amount and its note. A field left out keeps what is stored.
+type LimitChange struct {
+	LimitMicros *int64  `json:"limit_micros,omitempty"`
+	Note        *string `json:"note,omitempty"`
+}
+
+// LimitInForce defines model for LimitInForce.
+type LimitInForce struct {
+	EffectiveLimitMicros int64 `json:"effective_limit_micros"`
+	Id                   int64 `json:"id"`
+
+	// Level Whose ids a limit names. A key's or a user's limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.
+	Level       LimitLevel `json:"level"`
+	LimitMicros int64      `json:"limit_micros"`
+}
+
+// LimitInput A spend limit to create. Every limit is the customer's; an unknown field is refused.
+type LimitInput struct {
+	// ApiKey The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// AppId The app. Required at app, api_key and user level, and for an app's category or team.
+	AppId *string `json:"app_id,omitempty"`
+
+	// Category The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+	Category *string `json:"category,omitempty"`
+
+	// Interval The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
+	Interval LimitInterval `json:"interval"`
+
+	// Level Whose ids a limit names. A key's or a user's limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.
+	Level *LimitLevel `json:"level,omitempty"`
+
+	// LimitMicros What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+	LimitMicros int64   `json:"limit_micros"`
+	Note        *string `json:"note,omitempty"`
+
+	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+	Subject LimitSubject `json:"subject"`
+
+	// Team The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+	Team *string `json:"team,omitempty"`
+
+	// UserId The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+	UserId *string `json:"user_id,omitempty"`
+}
+
+// LimitInterval The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
+type LimitInterval string
+
+// LimitLevel Whose ids a limit names. A key's or a user's limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.
+type LimitLevel string
+
+// LimitPage defines model for LimitPage.
+type LimitPage struct {
+	HasMore    bool     `json:"has_more"`
+	Items      *[]Limit `json:"items"`
+	NextCursor *string  `json:"next_cursor,omitempty"`
+}
+
+// LimitResetInput A reset of one subject's spend for its limits, in the current windows of the intervals named.
+type LimitResetInput struct {
+	// ApiKey The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// AppId The app. Required at app, api_key and user level, and for an app's category or team.
+	AppId *string `json:"app_id,omitempty"`
+
+	// Category The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+	Category *string `json:"category,omitempty"`
+
+	// Intervals The windows to reset. Left out, every one.
+	Intervals *[]LimitInterval `json:"intervals,omitempty"`
+	Reason    string           `json:"reason"`
+
+	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+	Subject LimitSubject `json:"subject"`
+
+	// Team The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+	Team *string `json:"team,omitempty"`
+
+	// UserId The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+	UserId *string `json:"user_id,omitempty"`
+}
+
+// LimitSubject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+type LimitSubject string
+
+// LimitWindow defines model for LimitWindow.
+type LimitWindow struct {
+	// BaselineMicros What the subject had spent in the window when it was last reset; its limit counts spend past this.
+	BaselineMicros int64 `json:"baseline_micros"`
+
+	// Interval The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
+	Interval LimitInterval `json:"interval"`
+	Limit    *LimitInForce `json:"limit,omitempty"`
+
+	// RoomMicros What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit.
+	RoomMicros *int64 `json:"room_micros,omitempty"`
+
+	// SpentMicros What the subject spent in the window, as the usage records count it.
+	SpentMicros int64     `json:"spent_micros"`
+	WindowEnd   time.Time `json:"window_end"`
+	WindowStart time.Time `json:"window_start"`
+}
+
 // LinkChannelRequest defines model for LinkChannelRequest.
 type LinkChannelRequest struct {
 	// ConfigId The agent whose channels the number is being claimed on.
@@ -5497,6 +5730,66 @@ type LlmOptionsReasoningEffort string
 
 // LlmOptionsVerbosity defines model for LlmOptions.Verbosity.
 type LlmOptionsVerbosity string
+
+// ManageLimitInput A spend limit staff create for an organization, for support. It is the customer's like any other.
+type ManageLimitInput struct {
+	// ApiKey The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// AppId The app. Required at app, api_key and user level, and for an app's category or team.
+	AppId *string `json:"app_id,omitempty"`
+
+	// Category The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+	Category *string `json:"category,omitempty"`
+
+	// Interval The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
+	Interval LimitInterval `json:"interval"`
+
+	// Level Whose ids a limit names. A key's or a user's limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.
+	Level *LimitLevel `json:"level,omitempty"`
+
+	// LimitMicros What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+	LimitMicros int64   `json:"limit_micros"`
+	Note        *string `json:"note,omitempty"`
+
+	// OrganizationId The organization the limit is for.
+	OrganizationId string `json:"organization_id"`
+
+	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+	Subject LimitSubject `json:"subject"`
+
+	// Team The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+	Team *string `json:"team,omitempty"`
+
+	// UserId The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+	UserId *string `json:"user_id,omitempty"`
+}
+
+// ManageLimitResetInput A reset staff make of one subject's spend for its limits, for support.
+type ManageLimitResetInput struct {
+	// ApiKey The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// AppId The app. Required at app, api_key and user level, and for an app's category or team.
+	AppId *string `json:"app_id,omitempty"`
+
+	// Category The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+	Category *string `json:"category,omitempty"`
+
+	// Intervals The windows to reset. Left out, every one.
+	Intervals      *[]LimitInterval `json:"intervals,omitempty"`
+	OrganizationId string           `json:"organization_id"`
+	Reason         string           `json:"reason"`
+
+	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+	Subject LimitSubject `json:"subject"`
+
+	// Team The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+	Team *string `json:"team,omitempty"`
+
+	// UserId The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+	UserId *string `json:"user_id,omitempty"`
+}
 
 // ManageStatus Who a management call is recorded as made by: the actor and the name the call named, as the audit log keeps them.
 type ManageStatus struct {
@@ -7455,6 +7748,20 @@ type SpendBucket struct {
 	Value string `json:"value"`
 }
 
+// SpendHardLimitUsage The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
+type SpendHardLimitUsage struct {
+	Daily   *SpendHardLimitWindow `json:"daily,omitempty"`
+	Monthly *SpendHardLimitWindow `json:"monthly,omitempty"`
+}
+
+// SpendHardLimitWindow defines model for SpendHardLimitWindow.
+type SpendHardLimitWindow struct {
+	LimitMicros int64     `json:"limit_micros"`
+	RoomMicros  int64     `json:"room_micros"`
+	SpentMicros int64     `json:"spent_micros"`
+	WindowEnd   time.Time `json:"window_end"`
+}
+
 // StartSessionVoiceRequest defines model for StartSessionVoiceRequest.
 type StartSessionVoiceRequest struct {
 	// Call An existing Stream call for the agent to join, by its type and id.
@@ -7693,6 +8000,24 @@ type SttOptions struct {
 
 	// Words Word-level timestamps. Recording only.
 	Words *bool `json:"words,omitempty"`
+}
+
+// SubjectUsage defines model for SubjectUsage.
+type SubjectUsage struct {
+	ApiKey   *string `json:"api_key,omitempty"`
+	AppId    *string `json:"app_id,omitempty"`
+	Category *string `json:"category,omitempty"`
+
+	// SpendHardLimit The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
+	SpendHardLimit *SpendHardLimitUsage `json:"spend_hard_limit,omitempty"`
+
+	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+	Subject LimitSubject `json:"subject"`
+	Team    *string      `json:"team,omitempty"`
+	UserId  *string      `json:"user_id,omitempty"`
+
+	// Windows The current window of every interval, daily first.
+	Windows *[]LimitWindow `json:"windows"`
 }
 
 // SuspendTelephonyRequest defines model for SuspendTelephonyRequest.
@@ -9027,6 +9352,35 @@ type ListUseCaseReviewsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// ListLimitsParams defines parameters for ListLimits.
+type ListLimitsParams struct {
+	// Subject Only limits on this subject. team lists the teams' limits, category every other category's.
+	Subject  *LimitSubject  `form:"subject,omitempty" json:"subject,omitempty"`
+	Level    *LimitLevel    `form:"level,omitempty" json:"level,omitempty"`
+	AppId    *string        `form:"app_id,omitempty" json:"app_id,omitempty"`
+	ApiKey   *string        `form:"api_key,omitempty" json:"api_key,omitempty"`
+	UserId   *string        `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Team     *string        `form:"team,omitempty" json:"team,omitempty"`
+	Category *string        `form:"category,omitempty" json:"category,omitempty"`
+	Interval *LimitInterval `form:"interval,omitempty" json:"interval,omitempty"`
+
+	// Limit Up to 200. Omitted is 50.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page, sent with the same filters.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// GetLimitUsageParams defines parameters for GetLimitUsage.
+type GetLimitUsageParams struct {
+	Subject  LimitSubject `form:"subject" json:"subject"`
+	AppId    *string      `form:"app_id,omitempty" json:"app_id,omitempty"`
+	ApiKey   *string      `form:"api_key,omitempty" json:"api_key,omitempty"`
+	UserId   *string      `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Team     *string      `form:"team,omitempty" json:"team,omitempty"`
+	Category *string      `form:"category,omitempty" json:"category,omitempty"`
+}
+
 // GetActivityParams defines parameters for GetActivity.
 type GetActivityParams struct {
 	Granularity *ActivityGranularity `form:"granularity,omitempty" json:"granularity,omitempty"`
@@ -9355,6 +9709,15 @@ type UpdateRouterConfigJSONRequestBody = RouterConfigRequest
 
 // SearchJSONRequestBody defines body for Search for application/json ContentType.
 type SearchJSONRequestBody = SearchRequest
+
+// CreateLimitJSONRequestBody defines body for CreateLimit for application/json ContentType.
+type CreateLimitJSONRequestBody = LimitInput
+
+// ResetLimitUsageJSONRequestBody defines body for ResetLimitUsage for application/json ContentType.
+type ResetLimitUsageJSONRequestBody = LimitResetInput
+
+// UpdateLimitJSONRequestBody defines body for UpdateLimit for application/json ContentType.
+type UpdateLimitJSONRequestBody = LimitChange
 
 // RunRollupJSONRequestBody defines body for RunRollup for application/json ContentType.
 type RunRollupJSONRequestBody = RollupRequest
@@ -12255,6 +12618,108 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
 	GetAppSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListLimits List the organization's spend limits
+	//
+	// Every limit of the caller's organization, by id, with what each can spend once its parents are counted.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Corresponds with GET /v1/spend/limits (the `ListLimits` operationId).
+	ListLimits(ctx context.Context, params *ListLimitsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateLimitWithBody Create a spend limit
+	//
+	// A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
+	CreateLimitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateLimit Create a spend limit
+	//
+	// A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
+	CreateLimit(ctx context.Context, body CreateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetLimitUsage Read what a subject spent against its limits
+	//
+	// The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Corresponds with GET /v1/spend/limits/usage (the `GetLimitUsage` operationId).
+	GetLimitUsage(ctx context.Context, params *GetLimitUsageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResetLimitUsageWithBody Reset a subject's spend for its limits
+	//
+	// From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/spend/limits/usage/reset (the `ResetLimitUsage` operationId).
+	ResetLimitUsageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResetLimitUsage Reset a subject's spend for its limits
+	//
+	// From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/spend/limits/usage/reset (the `ResetLimitUsage` operationId).
+	ResetLimitUsage(ctx context.Context, body ResetLimitUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteLimit Delete a spend limit
+	//
+	// The subject is no longer held to it; a default at a level above takes over where there is one.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Corresponds with DELETE /v1/spend/limits/{limit_id} (the `DeleteLimit` operationId).
+	DeleteLimit(ctx context.Context, limitId int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetLimit Read a spend limit
+	//
+	// One limit of the caller's organization.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Corresponds with GET /v1/spend/limits/{limit_id} (the `GetLimit` operationId).
+	GetLimit(ctx context.Context, limitId int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateLimitWithBody Change a spend limit's amount or note
+	//
+	// Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/spend/limits/{limit_id} (the `UpdateLimit` operationId).
+	UpdateLimitWithBody(ctx context.Context, limitId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateLimit Change a spend limit's amount or note
+	//
+	// Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/spend/limits/{limit_id} (the `UpdateLimit` operationId).
+	UpdateLimit(ctx context.Context, limitId int64, body UpdateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetActivity Who used the calling customer's agents, and how much
 	//
@@ -17740,6 +18205,208 @@ func (c *Client) Search(ctx context.Context, body SearchJSONRequestBody, reqEdit
 // Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
 func (c *Client) GetAppSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAppSettingsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListLimits List the organization's spend limits
+//
+// Every limit of the caller's organization, by id, with what each can spend once its parents are counted.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Corresponds with GET /v1/spend/limits (the `ListLimits` operationId).
+func (c *Client) ListLimits(ctx context.Context, params *ListLimitsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListLimitsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateLimitWithBody Create a spend limit
+//
+// A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
+func (c *Client) CreateLimitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateLimitRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateLimit Create a spend limit
+//
+// A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
+func (c *Client) CreateLimit(ctx context.Context, body CreateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateLimitRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetLimitUsage Read what a subject spent against its limits
+//
+// The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Corresponds with GET /v1/spend/limits/usage (the `GetLimitUsage` operationId).
+func (c *Client) GetLimitUsage(ctx context.Context, params *GetLimitUsageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetLimitUsageRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResetLimitUsageWithBody Reset a subject's spend for its limits
+//
+// From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/spend/limits/usage/reset (the `ResetLimitUsage` operationId).
+func (c *Client) ResetLimitUsageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResetLimitUsageRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResetLimitUsage Reset a subject's spend for its limits
+//
+// From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/spend/limits/usage/reset (the `ResetLimitUsage` operationId).
+func (c *Client) ResetLimitUsage(ctx context.Context, body ResetLimitUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResetLimitUsageRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteLimit Delete a spend limit
+//
+// The subject is no longer held to it; a default at a level above takes over where there is one.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Corresponds with DELETE /v1/spend/limits/{limit_id} (the `DeleteLimit` operationId).
+func (c *Client) DeleteLimit(ctx context.Context, limitId int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteLimitRequest(c.Server, limitId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetLimit Read a spend limit
+//
+// One limit of the caller's organization.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Corresponds with GET /v1/spend/limits/{limit_id} (the `GetLimit` operationId).
+func (c *Client) GetLimit(ctx context.Context, limitId int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetLimitRequest(c.Server, limitId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateLimitWithBody Change a spend limit's amount or note
+//
+// Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/spend/limits/{limit_id} (the `UpdateLimit` operationId).
+func (c *Client) UpdateLimitWithBody(ctx context.Context, limitId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateLimitRequestWithBody(c.Server, limitId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateLimit Change a spend limit's amount or note
+//
+// Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/spend/limits/{limit_id} (the `UpdateLimit` operationId).
+func (c *Client) UpdateLimit(ctx context.Context, limitId int64, body UpdateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateLimitRequest(c.Server, limitId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -27421,6 +28088,473 @@ func NewGetAppSettingsRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListLimitsRequest constructs an http.Request for the ListLimits method
+func NewListLimitsRequest(server string, params *ListLimitsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Subject != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "subject", *params.Subject, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Level != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "level", *params.Level, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AppId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "app_id", *params.AppId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ApiKey != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UserId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Team != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "team", *params.Team, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Category != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "category", *params.Category, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Interval != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "interval", *params.Interval, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateLimitRequest calls the generic CreateLimit builder with application/json body
+func NewCreateLimitRequest(server string, body CreateLimitJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateLimitRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateLimitRequestWithBody constructs an http.Request for the CreateLimit method, with any body, and a specified content type
+func NewCreateLimitRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetLimitUsageRequest constructs an http.Request for the GetLimitUsage method
+func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits/usage")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "subject", params.Subject, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.AppId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "app_id", *params.AppId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ApiKey != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UserId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Team != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "team", *params.Team, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Category != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "category", *params.Category, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResetLimitUsageRequest calls the generic ResetLimitUsage builder with application/json body
+func NewResetLimitUsageRequest(server string, body ResetLimitUsageJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResetLimitUsageRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewResetLimitUsageRequestWithBody constructs an http.Request for the ResetLimitUsage method, with any body, and a specified content type
+func NewResetLimitUsageRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits/usage/reset")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteLimitRequest constructs an http.Request for the DeleteLimit method
+func NewDeleteLimitRequest(server string, limitId int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "limit_id", limitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetLimitRequest constructs an http.Request for the GetLimit method
+func NewGetLimitRequest(server string, limitId int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "limit_id", limitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateLimitRequest calls the generic UpdateLimit builder with application/json body
+func NewUpdateLimitRequest(server string, limitId int64, body UpdateLimitJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateLimitRequestWithBody(server, limitId, "application/json", bodyReader)
+}
+
+// NewUpdateLimitRequestWithBody constructs an http.Request for the UpdateLimit method, with any body, and a specified content type
+func NewUpdateLimitRequestWithBody(server string, limitId int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "limit_id", limitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetActivityRequest constructs an http.Request for the GetActivity method
 func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Request, error) {
 	var err error
@@ -31229,6 +32363,116 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
 	GetAppSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAppSettingsResponse, error)
+
+	// ListLimitsWithResponse List the organization's spend limits
+	//
+	// Every limit of the caller's organization, by id, with what each can spend once its parents are counted.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/spend/limits (the `ListLimits` operationId).
+	ListLimitsWithResponse(ctx context.Context, params *ListLimitsParams, reqEditors ...RequestEditorFn) (*ListLimitsResponse, error)
+
+	// CreateLimitWithBodyWithResponse Create a spend limit
+	//
+	// A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
+	CreateLimitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateLimitResponse, error)
+
+	// CreateLimitWithResponse Create a spend limit
+	//
+	// A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
+	CreateLimitWithResponse(ctx context.Context, body CreateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateLimitResponse, error)
+
+	// GetLimitUsageWithResponse Read what a subject spent against its limits
+	//
+	// The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/spend/limits/usage (the `GetLimitUsage` operationId).
+	GetLimitUsageWithResponse(ctx context.Context, params *GetLimitUsageParams, reqEditors ...RequestEditorFn) (*GetLimitUsageResponse, error)
+
+	// ResetLimitUsageWithBodyWithResponse Reset a subject's spend for its limits
+	//
+	// From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits/usage/reset (the `ResetLimitUsage` operationId).
+	ResetLimitUsageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResetLimitUsageResponse, error)
+
+	// ResetLimitUsageWithResponse Reset a subject's spend for its limits
+	//
+	// From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits/usage/reset (the `ResetLimitUsage` operationId).
+	ResetLimitUsageWithResponse(ctx context.Context, body ResetLimitUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*ResetLimitUsageResponse, error)
+
+	// DeleteLimitWithResponse Delete a spend limit
+	//
+	// The subject is no longer held to it; a default at a level above takes over where there is one.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/spend/limits/{limit_id} (the `DeleteLimit` operationId).
+	DeleteLimitWithResponse(ctx context.Context, limitId int64, reqEditors ...RequestEditorFn) (*DeleteLimitResponse, error)
+
+	// GetLimitWithResponse Read a spend limit
+	//
+	// One limit of the caller's organization.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/spend/limits/{limit_id} (the `GetLimit` operationId).
+	GetLimitWithResponse(ctx context.Context, limitId int64, reqEditors ...RequestEditorFn) (*GetLimitResponse, error)
+
+	// UpdateLimitWithBodyWithResponse Change a spend limit's amount or note
+	//
+	// Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/spend/limits/{limit_id} (the `UpdateLimit` operationId).
+	UpdateLimitWithBodyWithResponse(ctx context.Context, limitId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateLimitResponse, error)
+
+	// UpdateLimitWithResponse Change a spend limit's amount or note
+	//
+	// Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+	//
+	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/spend/limits/{limit_id} (the `UpdateLimit` operationId).
+	UpdateLimitWithResponse(ctx context.Context, limitId int64, body UpdateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateLimitResponse, error)
 
 	// GetActivityWithResponse Who used the calling customer's agents, and how much
 	//
@@ -47891,6 +49135,587 @@ func (r GetAppSettingsResponse) ContentType() string {
 	return ""
 }
 
+type ListLimitsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LimitPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListLimitsResponse) GetJSON200() *LimitPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListLimitsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListLimitsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListLimitsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListLimitsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListLimitsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListLimitsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListLimitsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListLimitsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListLimitsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListLimitsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateLimitResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Limit
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateLimitResponse) GetJSON201() *Limit {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateLimitResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateLimitResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateLimitResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateLimitResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateLimitResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateLimitResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateLimitResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateLimitResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateLimitResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateLimitResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateLimitResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetLimitUsageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SubjectUsage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetLimitUsageResponse) GetJSON200() *SubjectUsage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetLimitUsageResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetLimitUsageResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetLimitUsageResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetLimitUsageResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetLimitUsageResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetLimitUsageResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetLimitUsageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetLimitUsageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetLimitUsageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetLimitUsageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResetLimitUsageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SubjectUsage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResetLimitUsageResponse) GetJSON200() *SubjectUsage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ResetLimitUsageResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ResetLimitUsageResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ResetLimitUsageResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ResetLimitUsageResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ResetLimitUsageResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ResetLimitUsageResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ResetLimitUsageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResetLimitUsageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResetLimitUsageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResetLimitUsageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteLimitResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteLimitResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteLimitResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteLimitResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteLimitResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteLimitResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteLimitResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteLimitResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteLimitResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteLimitResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteLimitResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetLimitResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Limit
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetLimitResponse) GetJSON200() *Limit {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetLimitResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetLimitResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetLimitResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetLimitResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetLimitResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetLimitResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetLimitResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetLimitResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetLimitResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetLimitResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateLimitResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Limit
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateLimitResponse) GetJSON200() *Limit {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateLimitResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateLimitResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateLimitResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateLimitResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateLimitResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateLimitResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateLimitResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateLimitResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateLimitResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateLimitResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetActivityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -53603,6 +55428,176 @@ func (c *ClientWithResponses) GetAppSettingsWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseGetAppSettingsResponse(rsp)
+}
+
+// ListLimitsWithResponse List the organization's spend limits
+//
+// Every limit of the caller's organization, by id, with what each can spend once its parents are counted.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/spend/limits (the `ListLimits` operationId).
+func (c *ClientWithResponses) ListLimitsWithResponse(ctx context.Context, params *ListLimitsParams, reqEditors ...RequestEditorFn) (*ListLimitsResponse, error) {
+	rsp, err := c.ListLimits(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListLimitsResponse(rsp)
+}
+
+// CreateLimitWithBodyWithResponse Create a spend limit
+//
+// A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
+func (c *ClientWithResponses) CreateLimitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateLimitResponse, error) {
+	rsp, err := c.CreateLimitWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateLimitResponse(rsp)
+}
+
+// CreateLimitWithResponse Create a spend limit
+//
+// A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits (the `CreateLimit` operationId).
+func (c *ClientWithResponses) CreateLimitWithResponse(ctx context.Context, body CreateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateLimitResponse, error) {
+	rsp, err := c.CreateLimit(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateLimitResponse(rsp)
+}
+
+// GetLimitUsageWithResponse Read what a subject spent against its limits
+//
+// The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/spend/limits/usage (the `GetLimitUsage` operationId).
+func (c *ClientWithResponses) GetLimitUsageWithResponse(ctx context.Context, params *GetLimitUsageParams, reqEditors ...RequestEditorFn) (*GetLimitUsageResponse, error) {
+	rsp, err := c.GetLimitUsage(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetLimitUsageResponse(rsp)
+}
+
+// ResetLimitUsageWithBodyWithResponse Reset a subject's spend for its limits
+//
+// From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits/usage/reset (the `ResetLimitUsage` operationId).
+func (c *ClientWithResponses) ResetLimitUsageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResetLimitUsageResponse, error) {
+	rsp, err := c.ResetLimitUsageWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResetLimitUsageResponse(rsp)
+}
+
+// ResetLimitUsageWithResponse Reset a subject's spend for its limits
+//
+// From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits/usage/reset (the `ResetLimitUsage` operationId).
+func (c *ClientWithResponses) ResetLimitUsageWithResponse(ctx context.Context, body ResetLimitUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*ResetLimitUsageResponse, error) {
+	rsp, err := c.ResetLimitUsage(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResetLimitUsageResponse(rsp)
+}
+
+// DeleteLimitWithResponse Delete a spend limit
+//
+// The subject is no longer held to it; a default at a level above takes over where there is one.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/spend/limits/{limit_id} (the `DeleteLimit` operationId).
+func (c *ClientWithResponses) DeleteLimitWithResponse(ctx context.Context, limitId int64, reqEditors ...RequestEditorFn) (*DeleteLimitResponse, error) {
+	rsp, err := c.DeleteLimit(ctx, limitId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteLimitResponse(rsp)
+}
+
+// GetLimitWithResponse Read a spend limit
+//
+// One limit of the caller's organization.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/spend/limits/{limit_id} (the `GetLimit` operationId).
+func (c *ClientWithResponses) GetLimitWithResponse(ctx context.Context, limitId int64, reqEditors ...RequestEditorFn) (*GetLimitResponse, error) {
+	rsp, err := c.GetLimit(ctx, limitId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetLimitResponse(rsp)
+}
+
+// UpdateLimitWithBodyWithResponse Change a spend limit's amount or note
+//
+// Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/spend/limits/{limit_id} (the `UpdateLimit` operationId).
+func (c *ClientWithResponses) UpdateLimitWithBodyWithResponse(ctx context.Context, limitId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateLimitResponse, error) {
+	rsp, err := c.UpdateLimitWithBody(ctx, limitId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateLimitResponse(rsp)
+}
+
+// UpdateLimitWithResponse Change a spend limit's amount or note
+//
+// Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+//
+// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/spend/limits/{limit_id} (the `UpdateLimit` operationId).
+func (c *ClientWithResponses) UpdateLimitWithResponse(ctx context.Context, limitId int64, body UpdateLimitJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateLimitResponse, error) {
+	rsp, err := c.UpdateLimit(ctx, limitId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateLimitResponse(rsp)
 }
 
 // GetActivityWithResponse Who used the calling customer's agents, and how much
@@ -67475,6 +69470,485 @@ func ParseGetAppSettingsResponse(rsp *http.Response) (*GetAppSettingsResponse, e
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListLimitsResponse parses an HTTP response from a ListLimitsWithResponse call
+func ParseListLimitsResponse(rsp *http.Response) (*ListLimitsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListLimitsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LimitPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateLimitResponse parses an HTTP response from a CreateLimitWithResponse call
+func ParseCreateLimitResponse(rsp *http.Response) (*CreateLimitResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateLimitResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Limit
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetLimitUsageResponse parses an HTTP response from a GetLimitUsageWithResponse call
+func ParseGetLimitUsageResponse(rsp *http.Response) (*GetLimitUsageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetLimitUsageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SubjectUsage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResetLimitUsageResponse parses an HTTP response from a ResetLimitUsageWithResponse call
+func ParseResetLimitUsageResponse(rsp *http.Response) (*ResetLimitUsageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResetLimitUsageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SubjectUsage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteLimitResponse parses an HTTP response from a DeleteLimitWithResponse call
+func ParseDeleteLimitResponse(rsp *http.Response) (*DeleteLimitResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteLimitResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetLimitResponse parses an HTTP response from a GetLimitWithResponse call
+func ParseGetLimitResponse(rsp *http.Response) (*GetLimitResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetLimitResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Limit
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateLimitResponse parses an HTTP response from a UpdateLimitWithResponse call
+func ParseUpdateLimitResponse(rsp *http.Response) (*UpdateLimitResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateLimitResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Limit
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

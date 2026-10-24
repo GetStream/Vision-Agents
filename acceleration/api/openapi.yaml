@@ -968,7 +968,7 @@ components:
           type: integer
       type: object
     AuditResourceType:
-      description: 'What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment''s own, changed through the management API, and is never listed for an app. end_user is one of the app''s end users whose id was forgotten in the usage records, named by the id that replaced it.'
+      description: 'What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment''s own, changed through the management API, and is never listed for an app. end_user is one of the app''s end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization''s spend limits, named by its id, or a reset of one, named reset:<id>; a change staff made through the management API is kept under the organization''s id.'
       enum:
         - agent_config
         - skill
@@ -979,6 +979,7 @@ components:
         - policy
         - price_list
         - end_user
+        - limit
       type: string
     AuditSource:
       description: 'Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.'
@@ -3755,7 +3756,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -4447,6 +4448,275 @@ components:
         - providers
         - voices
       type: object
+    Limit:
+      description: 'A spend limit: what one subject may spend in each window of its interval. Billable work for a subject with no room left under any of its limits is refused, 402 spend_limit_reached, or 429 user_limit_reached with Retry-After for an end user''s. A subject is also held to every subject that contains it, so an app''s work is refused once its organization''s limit is spent.'
+      properties:
+        api_key:
+          description: The key, for a limit at api_key level.
+          type: string
+        app_id:
+          description: The app, for a limit at app, api_key or user level, or on an app's category or team.
+          type: string
+        category:
+          description: The usage category, for a category's limit.
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        effective_limit_micros:
+          description: 'The lowest of limit_micros and the limits, in the same interval, of every subject that contains this one: what the subject can spend before something refuses it.'
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        interval:
+          $ref: '#/components/schemas/LimitInterval'
+        level:
+          $ref: '#/components/schemas/LimitLevel'
+        limit_micros:
+          description: What the subject may spend in each window, in millionths of a dollar.
+          format: int64
+          type: integer
+        note:
+          type: string
+        subject:
+          $ref: '#/components/schemas/LimitSubject'
+        team:
+          description: The team, for a team's limit.
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        updated_by:
+          description: Who last wrote it, as the audit log names them.
+          type: string
+        user_id:
+          description: The end user, for a limit at user level.
+          type: string
+      required:
+        - id
+        - subject
+        - level
+        - interval
+        - limit_micros
+        - effective_limit_micros
+        - updated_by
+        - created_at
+        - updated_at
+      type: object
+    LimitChange:
+      additionalProperties: false
+      description: 'What changes about a spend limit: its amount and its note. A field left out keeps what is stored.'
+      properties:
+        limit_micros:
+          format: int64
+          maximum: 1000000000000000
+          minimum: 0
+          type: integer
+        note:
+          maxLength: 500
+          type: string
+      type: object
+    LimitInForce:
+      properties:
+        effective_limit_micros:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        level:
+          $ref: '#/components/schemas/LimitLevel'
+        limit_micros:
+          format: int64
+          type: integer
+      required:
+        - id
+        - level
+        - limit_micros
+        - effective_limit_micros
+      type: object
+    LimitInput:
+      additionalProperties: false
+      description: A spend limit to create. Every limit is the customer's; an unknown field is refused.
+      properties:
+        api_key:
+          description: 'The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.'
+          maxLength: 128
+          type: string
+        app_id:
+          description: The app. Required at app, api_key and user level, and for an app's category or team.
+          maxLength: 255
+          type: string
+        category:
+          description: 'The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.'
+          maxLength: 64
+          type: string
+        interval:
+          $ref: '#/components/schemas/LimitInterval'
+        level:
+          $ref: '#/components/schemas/LimitLevel'
+          description: 'Left out, the level of the most specific id given: api_key or user when it is named, else app when app_id is, else organization.'
+        limit_micros:
+          description: What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+          format: int64
+          maximum: 1000000000000000
+          minimum: 0
+          type: integer
+        note:
+          maxLength: 500
+          type: string
+        subject:
+          $ref: '#/components/schemas/LimitSubject'
+        team:
+          description: 'The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.'
+          maxLength: 59
+          type: string
+        user_id:
+          description: 'The end user, as the app''s tokens name them, with Stream Chat''s rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.'
+          maxLength: 255
+          type: string
+      required:
+        - interval
+        - limit_micros
+        - subject
+      type: object
+    LimitInterval:
+      description: 'The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.'
+      enum:
+        - daily
+        - weekly
+        - biweekly
+        - monthly
+      type: string
+      x-enum-varnames:
+        - LimitIntervalDaily
+        - LimitIntervalWeekly
+        - LimitIntervalBiweekly
+        - LimitIntervalMonthly
+    LimitLevel:
+      description: 'Whose ids a limit names. A key''s or a user''s limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.'
+      enum:
+        - organization
+        - app
+        - api_key
+        - user
+      type: string
+      x-enum-varnames:
+        - LimitLevelOrganization
+        - LimitLevelApp
+        - LimitLevelApiKey
+        - LimitLevelUser
+    LimitPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/Limit'
+          nullable: true
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    LimitResetInput:
+      additionalProperties: false
+      description: A reset of one subject's spend for its limits, in the current windows of the intervals named.
+      properties:
+        api_key:
+          description: 'The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.'
+          maxLength: 128
+          type: string
+        app_id:
+          description: The app. Required at app, api_key and user level, and for an app's category or team.
+          maxLength: 255
+          type: string
+        category:
+          description: 'The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.'
+          maxLength: 64
+          type: string
+        intervals:
+          description: The windows to reset. Left out, every one.
+          items:
+            $ref: '#/components/schemas/LimitInterval'
+          maxItems: 4
+          nullable: true
+          type: array
+        reason:
+          maxLength: 500
+          minLength: 1
+          type: string
+        subject:
+          $ref: '#/components/schemas/LimitSubject'
+        team:
+          description: 'The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.'
+          maxLength: 59
+          type: string
+        user_id:
+          description: 'The end user, as the app''s tokens name them, with Stream Chat''s rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.'
+          maxLength: 255
+          type: string
+      required:
+        - reason
+        - subject
+      type: object
+    LimitSubject:
+      description: 'Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user''s team, as its token names it.'
+      enum:
+        - organization
+        - app
+        - api_key
+        - user
+        - category
+        - app_category
+        - team
+        - app_team
+      type: string
+      x-enum-varnames:
+        - LimitSubjectOrganization
+        - LimitSubjectApp
+        - LimitSubjectApiKey
+        - LimitSubjectUser
+        - LimitSubjectCategory
+        - LimitSubjectAppCategory
+        - LimitSubjectTeam
+        - LimitSubjectAppTeam
+    LimitWindow:
+      properties:
+        baseline_micros:
+          description: What the subject had spent in the window when it was last reset; its limit counts spend past this.
+          format: int64
+          type: integer
+        interval:
+          $ref: '#/components/schemas/LimitInterval'
+        limit:
+          $ref: '#/components/schemas/LimitInForce'
+          description: The limit in force, absent when the subject has none in this interval.
+        room_micros:
+          description: 'What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit.'
+          format: int64
+          type: integer
+        spent_micros:
+          description: What the subject spent in the window, as the usage records count it.
+          format: int64
+          type: integer
+        window_end:
+          format: date-time
+          type: string
+        window_start:
+          format: date-time
+          type: string
+      required:
+        - interval
+        - window_start
+        - window_end
+        - spent_micros
+        - baseline_micros
+      type: object
     LinkChannelRequest:
       properties:
         config_id:
@@ -4512,6 +4782,103 @@ components:
             - medium
             - high
           type: string
+      type: object
+    ManageLimitInput:
+      additionalProperties: false
+      description: A spend limit staff create for an organization, for support. It is the customer's like any other.
+      properties:
+        api_key:
+          description: 'The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.'
+          maxLength: 128
+          type: string
+        app_id:
+          description: The app. Required at app, api_key and user level, and for an app's category or team.
+          maxLength: 255
+          type: string
+        category:
+          description: 'The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.'
+          maxLength: 64
+          type: string
+        interval:
+          $ref: '#/components/schemas/LimitInterval'
+        level:
+          $ref: '#/components/schemas/LimitLevel'
+          description: 'Left out, the level of the most specific id given: api_key or user when it is named, else app when app_id is, else organization.'
+        limit_micros:
+          description: What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+          format: int64
+          maximum: 1000000000000000
+          minimum: 0
+          type: integer
+        note:
+          maxLength: 500
+          type: string
+        organization_id:
+          description: The organization the limit is for.
+          maxLength: 255
+          minLength: 1
+          type: string
+        subject:
+          $ref: '#/components/schemas/LimitSubject'
+        team:
+          description: 'The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.'
+          maxLength: 59
+          type: string
+        user_id:
+          description: 'The end user, as the app''s tokens name them, with Stream Chat''s rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.'
+          maxLength: 255
+          type: string
+      required:
+        - organization_id
+        - interval
+        - limit_micros
+        - subject
+      type: object
+    ManageLimitResetInput:
+      additionalProperties: false
+      description: A reset staff make of one subject's spend for its limits, for support.
+      properties:
+        api_key:
+          description: 'The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.'
+          maxLength: 128
+          type: string
+        app_id:
+          description: The app. Required at app, api_key and user level, and for an app's category or team.
+          maxLength: 255
+          type: string
+        category:
+          description: 'The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.'
+          maxLength: 64
+          type: string
+        intervals:
+          description: The windows to reset. Left out, every one.
+          items:
+            $ref: '#/components/schemas/LimitInterval'
+          maxItems: 4
+          nullable: true
+          type: array
+        organization_id:
+          maxLength: 255
+          minLength: 1
+          type: string
+        reason:
+          maxLength: 500
+          minLength: 1
+          type: string
+        subject:
+          $ref: '#/components/schemas/LimitSubject'
+        team:
+          description: 'The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.'
+          maxLength: 59
+          type: string
+        user_id:
+          description: 'The end user, as the app''s tokens name them, with Stream Chat''s rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.'
+          maxLength: 255
+          type: string
+      required:
+        - organization_id
+        - reason
+        - subject
       type: object
     ManageStatus:
       description: 'Who a management call is recorded as made by: the actor and the name the call named, as the audit log keeps them.'
@@ -7540,6 +7907,34 @@ components:
         - request_count
         - value
       type: object
+    SpendHardLimitUsage:
+      description: The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
+      properties:
+        daily:
+          $ref: '#/components/schemas/SpendHardLimitWindow'
+        monthly:
+          $ref: '#/components/schemas/SpendHardLimitWindow'
+      type: object
+    SpendHardLimitWindow:
+      properties:
+        limit_micros:
+          format: int64
+          type: integer
+        room_micros:
+          format: int64
+          type: integer
+        spent_micros:
+          format: int64
+          type: integer
+        window_end:
+          format: date-time
+          type: string
+      required:
+        - limit_micros
+        - spent_micros
+        - room_micros
+        - window_end
+      type: object
     StartSessionVoiceRequest:
       properties:
         call:
@@ -7857,6 +8252,32 @@ components:
         words:
           description: Word-level timestamps. Recording only.
           type: boolean
+      type: object
+    SubjectUsage:
+      properties:
+        api_key:
+          type: string
+        app_id:
+          type: string
+        category:
+          type: string
+        spend_hard_limit:
+          $ref: '#/components/schemas/SpendHardLimitUsage'
+        subject:
+          $ref: '#/components/schemas/LimitSubject'
+        team:
+          type: string
+        user_id:
+          type: string
+        windows:
+          description: The current window of every interval, daily first.
+          items:
+            $ref: '#/components/schemas/LimitWindow'
+          nullable: true
+          type: array
+      required:
+        - subject
+        - windows
       type: object
     SuspendTelephonyRequest:
       properties:
@@ -16448,6 +16869,355 @@ paths:
       summary: Preview a price change
       tags:
         - Staff
+  /v1/manage/spend/limits:
+    get:
+      description: |-
+        Every limit of the organization named, or any organization's by id, by id, with what each can spend once its parents are counted.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
+      operationId: manageListLimits
+      parameters:
+        - description: Only limits on this subject. team lists the teams' limits, category every other category's.
+          explode: false
+          in: query
+          name: subject
+          schema:
+            $ref: '#/components/schemas/LimitSubject'
+            description: Only limits on this subject. team lists the teams' limits, category every other category's.
+        - explode: false
+          in: query
+          name: level
+          schema:
+            $ref: '#/components/schemas/LimitLevel'
+        - explode: false
+          in: query
+          name: app_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: api_key
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: user_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: team
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: category
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: interval
+          schema:
+            $ref: '#/components/schemas/LimitInterval'
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page, sent with the same filters.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page, sent with the same filters.
+            type: string
+        - explode: false
+          in: query
+          name: organization_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitPage'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: List the organization's spend limits
+      tags:
+        - Staff
+    post:
+      description: |-
+        A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
+      operationId: manageCreateLimit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManageLimitInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Limit'
+          description: The limit was created
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Create a spend limit
+      tags:
+        - Staff
+  /v1/manage/spend/limits/{limit_id}:
+    delete:
+      description: |-
+        The subject is no longer held to it; a default at a level above takes over where there is one.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
+      operationId: manageDeleteLimit
+      parameters:
+        - in: path
+          name: limit_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "204":
+          description: The limit was deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Delete a spend limit
+      tags:
+        - Staff
+    get:
+      description: |-
+        One limit of the organization named, or any organization's by id.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
+      operationId: manageGetLimit
+      parameters:
+        - in: path
+          name: limit_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Limit'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Read a spend limit
+      tags:
+        - Staff
+    patch:
+      description: |-
+        Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
+      operationId: manageUpdateLimit
+      parameters:
+        - in: path
+          name: limit_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitChange'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Limit'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Change a spend limit's amount or note
+      tags:
+        - Staff
+  /v1/manage/spend/limits/usage:
+    get:
+      description: |-
+        The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
+      operationId: manageGetLimitUsage
+      parameters:
+        - explode: false
+          in: query
+          name: subject
+          required: true
+          schema:
+            $ref: '#/components/schemas/LimitSubject'
+        - explode: false
+          in: query
+          name: app_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: api_key
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: user_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: team
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: category
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: organization_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubjectUsage'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Read what a subject spent against its limits
+      tags:
+        - Staff
+  /v1/manage/spend/limits/usage/reset:
+    post:
+      description: |-
+        From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
+      operationId: manageResetLimitUsage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManageLimitResetInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubjectUsage'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Reset a subject's spend for its limits
+      tags:
+        - Staff
   /v1/manage/status:
     get:
       description: |-
@@ -18209,6 +18979,325 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Service Unavailable
       summary: What the router does for the calling app
+  /v1/spend/limits:
+    get:
+      description: |-
+        Every limit of the caller's organization, by id, with what each can spend once its parents are counted.
+
+        Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+      operationId: listLimits
+      parameters:
+        - description: Only limits on this subject. team lists the teams' limits, category every other category's.
+          explode: false
+          in: query
+          name: subject
+          schema:
+            $ref: '#/components/schemas/LimitSubject'
+            description: Only limits on this subject. team lists the teams' limits, category every other category's.
+        - explode: false
+          in: query
+          name: level
+          schema:
+            $ref: '#/components/schemas/LimitLevel'
+        - explode: false
+          in: query
+          name: app_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: api_key
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: user_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: team
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: category
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: interval
+          schema:
+            $ref: '#/components/schemas/LimitInterval'
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page, sent with the same filters.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page, sent with the same filters.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitPage'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List the organization's spend limits
+    post:
+      description: |-
+        A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+
+        Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+      operationId: createLimit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Limit'
+          description: The limit was created
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Create a spend limit
+  /v1/spend/limits/{limit_id}:
+    delete:
+      description: |-
+        The subject is no longer held to it; a default at a level above takes over where there is one.
+
+        Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+      operationId: deleteLimit
+      parameters:
+        - in: path
+          name: limit_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "204":
+          description: The limit was deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Delete a spend limit
+    get:
+      description: |-
+        One limit of the caller's organization.
+
+        Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+      operationId: getLimit
+      parameters:
+        - in: path
+          name: limit_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Limit'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Read a spend limit
+    patch:
+      description: |-
+        Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+
+        Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+      operationId: updateLimit
+      parameters:
+        - in: path
+          name: limit_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitChange'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Limit'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Change a spend limit's amount or note
+  /v1/spend/limits/usage:
+    get:
+      description: |-
+        The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+
+        Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+      operationId: getLimitUsage
+      parameters:
+        - explode: false
+          in: query
+          name: subject
+          required: true
+          schema:
+            $ref: '#/components/schemas/LimitSubject'
+        - explode: false
+          in: query
+          name: app_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: api_key
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: user_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: team
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: category
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubjectUsage'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Read what a subject spent against its limits
+  /v1/spend/limits/usage/reset:
+    post:
+      description: |-
+        From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+
+        Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+      operationId: resetLimitUsage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitResetInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubjectUsage'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Reset a subject's spend for its limits
   /v1/stats/activity:
     get:
       description: |-

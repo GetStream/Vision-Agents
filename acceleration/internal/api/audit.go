@@ -62,10 +62,12 @@ func (AuditResourceType) Schema(registry huma.Registry) *huma.Schema {
 			"it runs is traffic, and is read from the sessions and the logs instead. price_list "+
 			"is the deployment's own, changed through the management API, and is never listed "+
 			"for an app. end_user is one of the app's end users whose id was forgotten in the "+
-			"usage records, named by the id that replaced it.",
+			"usage records, named by the id that replaced it. limit is one of the organization's "+
+			"spend limits, named by its id, or a reset of one, named reset:<id>; a change staff "+
+			"made through the management API is kept under the organization's id.",
 		store.AuditAgentConfig, store.AuditSkill, store.AuditKnowledge, store.AuditKnowledgeURL,
 		store.AuditRouterConfig, store.AuditPlugin, store.AuditPolicy, store.AuditResourcePriceList,
-		store.AuditEndUser)
+		store.AuditEndUser, store.AuditSpendLimit)
 }
 
 // AuditAction is what happened to it.

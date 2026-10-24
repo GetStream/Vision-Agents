@@ -432,6 +432,28 @@ an app whose own has room: 402 `spend_limit_reached`, or 429 `user_limit_reached
 window ends; the usage records are untouched. An origin (`hook:chat` and the rest) is no key a
 limit counts, and a user id the usage records leave off is no user.
 
+They are written through `/v1/spend/limits`, server-side only: one server-side credential of
+any app manages every limit of its organization (an app seen in no organization is its own).
+
+| Operation | Path | What it does |
+| --------- | ---- | ------------ |
+| `listLimits`, `createLimit` | `GET`, `POST /v1/spend/limits` | The organization's limits by id, filtered by subject, level, ids, team, category or interval; a new one, 201 |
+| `getLimit`, `updateLimit`, `deleteLimit` | `GET`, `PATCH`, `DELETE /v1/spend/limits/{limit_id}` | One limit; its amount and note only; 204 |
+| `getLimitUsage` | `GET /v1/spend/limits/usage` | One subject's current window in every interval: spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
+| `resetLimitUsage` | `POST /v1/spend/limits/usage/reset` | Resets the subject's spend for its limits in the windows named, with a reason |
+
+A team is `subject: team` (or `app_team` with an `app_id`) and `team: finance`, kept as the
+category `team:finance`; a category starting `team:` is a 400 `use_team`. A level left out is
+the most specific the ids name. A limit above the one, in the same interval, of a subject that
+contains it is a 400 `limit_above_parent` naming it (the organization contains its apps and
+categories, an app its keys, users and categories, and an organization's category the same
+category in an app); lowering a parent is allowed, and every read shows
+`effective_limit_micros`, the lowest of the row's and its parents'. A second limit on the same
+subject, level and interval is a 409 `limit_exists` naming the first. Writes are audited as
+`limit`. The router that wrote a limit holds to it at once, the others within 5 s. Staff reach
+the same operations for support under `/v1/manage/spend/limits`, with the manage key and an
+`organization_id`; what they write is the customer's.
+
 The organization and app budgets that policies held moved into this table with the migration
 `20261112120000_limits`: each became the organization's or the app's own limit on its interval,
 an app's under the organization it was last seen in, or under itself when it was seen in none.
