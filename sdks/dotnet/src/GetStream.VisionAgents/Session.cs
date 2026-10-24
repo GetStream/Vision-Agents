@@ -355,7 +355,12 @@ public sealed class Session : IAsyncDisposable
                 switch (frame.Type)
                 {
                     case "tool_call":
-                        RunTool(frame);
+                        // Every watcher is sent every call and the first answer wins: answering a
+                        // tool held elsewhere would beat whoever runs it, with an error.
+                        if (_tools?.Runs(frame.Text("name")) == true)
+                        {
+                            RunTool(frame);
+                        }
                         continue;
                     case "tool_cancel":
                         if (_running.TryRemove(frame.Text("id"), out var cancelled))

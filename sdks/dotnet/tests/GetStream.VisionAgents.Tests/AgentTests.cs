@@ -269,7 +269,10 @@ public sealed class AgentTests : IDisposable
             results.Add(await peer.ReceiveAsync("tool_result"));
             await peer.SendAsync(new { type = "tool_call", id = "t2", name = "broken", arguments = "{}", request_id = "c2", turn_id = "u1" });
             results.Add(await peer.ReceiveAsync("tool_result"));
+            // Every watcher is sent every call and the first answer wins, so a call for a tool
+            // held elsewhere is left for whoever holds it: the next answer is t4's.
             await peer.SendAsync(new { type = "tool_call", id = "t3", name = "missing", arguments = "", request_id = "c3", turn_id = "u1" });
+            await peer.SendAsync(new { type = "tool_call", id = "t4", name = "weather", arguments = """{"name":"Oslo"}""", request_id = "c4", turn_id = "u1" });
             results.Add(await peer.ReceiveAsync("tool_result"));
             await peer.SendAsync(new { type = "responded", text = "Sunny.", turn_id = "u1", pending_work = false });
             await peer.ReceiveAsync("close");
@@ -289,7 +292,7 @@ public sealed class AgentTests : IDisposable
         Assert.Equal(("t1", "c1", "u1"), (results[0].Text("tool_call_id"), results[0].Text("request_id"), results[0].Text("turn_id")));
         Assert.Equal("""{"summary":"sunny in Paris"}""", results[0].Text("output"));
         Assert.Equal("the forecast is down", results[1].Text("error"));
-        Assert.Contains("missing", results[2].Text("error"));
+        Assert.Equal("t4", results[2].Text("tool_call_id"));
         var declared = router.Only("POST", "/v1/agents/sessions").Body!["tools"]!.AsArray();
         Assert.Equal(["weather", "broken"], declared.Select(tool => tool.Text("name")));
         Assert.Equal("string", declared[0]!["parameters"]!["properties"]!["name"]!.Text("type"));
