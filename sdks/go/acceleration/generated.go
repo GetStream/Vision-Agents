@@ -5090,7 +5090,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -9120,6 +9120,9 @@ type PaymentRequired = ErrorResponse
 
 // Unauthorized The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more.
 type Unauthorized = ErrorResponse
+
+// Unavailable The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more.
+type Unavailable = ErrorResponse
 
 // ListCallsParams defines parameters for ListCalls.
 type ListCallsParams struct {
@@ -33368,6 +33371,8 @@ type ListCallsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33398,6 +33403,11 @@ func (r ListCallsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListCallsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListCallsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -33445,7 +33455,7 @@ type AnalyzeReviewsResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ErrorResponse
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33479,7 +33489,7 @@ func (r AnalyzeReviewsResponse) GetJSON500() *InternalError {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r AnalyzeReviewsResponse) GetJSON503() *ErrorResponse {
+func (r AnalyzeReviewsResponse) GetJSON503() *Unavailable {
 	return r.JSON503
 }
 
@@ -33529,6 +33539,8 @@ type GetCallResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33564,6 +33576,11 @@ func (r GetCallResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetCallResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCallResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -33612,6 +33629,8 @@ type GetCallEventsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33647,6 +33666,11 @@ func (r GetCallEventsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetCallEventsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCallEventsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -33695,6 +33719,8 @@ type GetCallTimelineResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33730,6 +33756,11 @@ func (r GetCallTimelineResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetCallTimelineResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCallTimelineResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -33778,6 +33809,8 @@ type CreateCallTokenResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33813,6 +33846,11 @@ func (r CreateCallTokenResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateCallTokenResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateCallTokenResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -33861,6 +33899,8 @@ type GetCallTokensResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33896,6 +33936,11 @@ func (r GetCallTokensResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetCallTokensResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCallTokensResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -33944,6 +33989,8 @@ type GetCallTranscriptResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33979,6 +34026,11 @@ func (r GetCallTranscriptResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetCallTranscriptResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCallTranscriptResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34025,6 +34077,8 @@ type ListCampaignsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34055,6 +34109,11 @@ func (r ListCampaignsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListCampaignsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListCampaignsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34103,6 +34162,8 @@ type CreateCampaignResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -34138,6 +34199,11 @@ func (r CreateCampaignResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateCampaignResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateCampaignResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34186,6 +34252,8 @@ type GetCampaignResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34221,6 +34289,11 @@ func (r GetCampaignResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetCampaignResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCampaignResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34269,6 +34342,8 @@ type ListCampaignContactsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34304,6 +34379,11 @@ func (r ListCampaignContactsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListCampaignContactsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListCampaignContactsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34352,6 +34432,8 @@ type AddCampaignContactsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -34387,6 +34469,11 @@ func (r AddCampaignContactsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AddCampaignContactsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AddCampaignContactsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34435,6 +34522,8 @@ type PauseCampaignResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34470,6 +34559,11 @@ func (r PauseCampaignResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PauseCampaignResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PauseCampaignResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34518,6 +34612,8 @@ type StartCampaignResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -34553,6 +34649,11 @@ func (r StartCampaignResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r StartCampaignResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r StartCampaignResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34599,6 +34700,8 @@ type ListChannelAccountsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34629,6 +34732,11 @@ func (r ListChannelAccountsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListChannelAccountsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListChannelAccountsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34675,6 +34783,8 @@ type ConnectChannelResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34705,6 +34815,11 @@ func (r ConnectChannelResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ConnectChannelResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ConnectChannelResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34835,6 +34950,8 @@ type LinkChannelNumberResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34870,6 +34987,11 @@ func (r LinkChannelNumberResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r LinkChannelNumberResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r LinkChannelNumberResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34916,6 +35038,8 @@ type DisconnectChannelResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -34946,6 +35070,11 @@ func (r DisconnectChannelResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DisconnectChannelResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DisconnectChannelResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34992,6 +35121,8 @@ type CreateChatTokenResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35022,6 +35153,11 @@ func (r CreateChatTokenResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateChatTokenResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateChatTokenResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35068,6 +35204,8 @@ type ListAgentConfigsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35098,6 +35236,11 @@ func (r ListAgentConfigsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListAgentConfigsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListAgentConfigsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35146,6 +35289,8 @@ type CreateAgentConfigResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -35181,6 +35326,11 @@ func (r CreateAgentConfigResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateAgentConfigResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateAgentConfigResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35227,6 +35377,8 @@ type DeleteAgentConfigResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -35257,6 +35409,11 @@ func (r DeleteAgentConfigResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteAgentConfigResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteAgentConfigResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35305,6 +35462,8 @@ type GetAgentConfigResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35340,6 +35499,11 @@ func (r GetAgentConfigResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetAgentConfigResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAgentConfigResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35390,6 +35554,8 @@ type PatchAgentConfigResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35430,6 +35596,11 @@ func (r PatchAgentConfigResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PatchAgentConfigResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35480,6 +35651,8 @@ type UpdateAgentConfigResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35520,6 +35693,11 @@ func (r UpdateAgentConfigResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateAgentConfigResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateAgentConfigResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35568,6 +35746,8 @@ type GetAgentChangesResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35603,6 +35783,11 @@ func (r GetAgentChangesResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetAgentChangesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAgentChangesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35651,6 +35836,8 @@ type ListConfigPluginsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35686,6 +35873,11 @@ func (r ListConfigPluginsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListConfigPluginsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListConfigPluginsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35732,6 +35924,8 @@ type DisconnectPluginResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -35762,6 +35956,11 @@ func (r DisconnectPluginResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DisconnectPluginResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DisconnectPluginResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35810,6 +36009,8 @@ type AuthorizePluginResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35845,6 +36046,11 @@ func (r AuthorizePluginResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AuthorizePluginResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AuthorizePluginResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35891,6 +36097,8 @@ type DeletePluginClientResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -35921,6 +36129,11 @@ func (r DeletePluginClientResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeletePluginClientResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeletePluginClientResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35969,6 +36182,8 @@ type SetPluginClientResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36004,6 +36219,11 @@ func (r SetPluginClientResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SetPluginClientResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetPluginClientResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -36050,6 +36270,8 @@ type ListConnectionsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36080,6 +36302,11 @@ func (r ListConnectionsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListConnectionsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListConnectionsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -36126,6 +36353,8 @@ type CreateConnectionResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -36156,6 +36385,11 @@ func (r CreateConnectionResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateConnectionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateConnectionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -36204,6 +36438,8 @@ type DeleteConnectionResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -36239,6 +36475,11 @@ func (r DeleteConnectionResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteConnectionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteConnectionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -36287,6 +36528,8 @@ type GetConnectionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36322,6 +36565,11 @@ func (r GetConnectionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetConnectionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetConnectionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -36370,6 +36618,8 @@ type CreateAuthorizationResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -36405,6 +36655,11 @@ func (r CreateAuthorizationResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateAuthorizationResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -36455,6 +36710,8 @@ type PutConnectionCredentialsResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36495,6 +36752,11 @@ func (r PutConnectionCredentialsResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PutConnectionCredentialsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PutConnectionCredentialsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -36543,6 +36805,8 @@ type ListConnectionInvocationsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36578,6 +36842,11 @@ func (r ListConnectionInvocationsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListConnectionInvocationsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -37154,7 +37423,7 @@ type ExportConnectionTokenResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ErrorResponse
+	JSON503 *Unavailable
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *ExportConnectionTokenResponse200Headers
 }
@@ -37200,7 +37469,7 @@ func (r ExportConnectionTokenResponse) GetJSON500() *InternalError {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ExportConnectionTokenResponse) GetJSON503() *ErrorResponse {
+func (r ExportConnectionTokenResponse) GetJSON503() *Unavailable {
 	return r.JSON503
 }
 
@@ -37250,6 +37519,8 @@ type ListConnectionToolsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37285,6 +37556,11 @@ func (r ListConnectionToolsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListConnectionToolsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListConnectionToolsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -37335,6 +37611,8 @@ type ApproveConnectionToolsResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37375,6 +37653,11 @@ func (r ApproveConnectionToolsResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ApproveConnectionToolsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ApproveConnectionToolsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -37423,6 +37706,8 @@ type ValidateConnectionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37458,6 +37743,11 @@ func (r ValidateConnectionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ValidateConnectionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ValidateConnectionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -37504,6 +37794,8 @@ type ListConnectorAuditResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37534,6 +37826,11 @@ func (r ListConnectorAuditResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListConnectorAuditResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -37580,6 +37877,8 @@ type ListConnectorsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37610,6 +37909,11 @@ func (r ListConnectorsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListConnectorsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListConnectorsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -37656,6 +37960,8 @@ type CreateConnectorResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37686,6 +37992,11 @@ func (r CreateConnectorResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateConnectorResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateConnectorResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -37912,6 +38223,8 @@ type DeleteConnectorResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -37947,6 +38260,11 @@ func (r DeleteConnectorResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteConnectorResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteConnectorResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -37995,6 +38313,8 @@ type GetConnectorResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38030,6 +38350,11 @@ func (r GetConnectorResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetConnectorResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetConnectorResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -38076,6 +38401,8 @@ type ListConnectorEventDestinationsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38106,6 +38433,11 @@ func (r ListConnectorEventDestinationsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListConnectorEventDestinationsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -38156,6 +38488,8 @@ type CreateConnectorEventDestinationResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -38196,6 +38530,11 @@ func (r CreateConnectorEventDestinationResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateConnectorEventDestinationResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -38242,6 +38581,8 @@ type DeleteConnectorEventDestinationResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -38272,6 +38613,11 @@ func (r DeleteConnectorEventDestinationResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteConnectorEventDestinationResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -38320,6 +38666,8 @@ type RotateConnectorEventDestinationSecretResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38355,6 +38703,11 @@ func (r RotateConnectorEventDestinationSecretResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r RotateConnectorEventDestinationSecretResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -38401,6 +38754,8 @@ type DeleteConnectorOAuthClientResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -38431,6 +38786,11 @@ func (r DeleteConnectorOAuthClientResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteConnectorOAuthClientResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteConnectorOAuthClientResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -38479,6 +38839,8 @@ type GetConnectorOAuthClientResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38514,6 +38876,11 @@ func (r GetConnectorOAuthClientResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetConnectorOAuthClientResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -38567,7 +38934,7 @@ type SetConnectorOAuthClientResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ErrorResponse
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38616,7 +38983,7 @@ func (r SetConnectorOAuthClientResponse) GetJSON500() *InternalError {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r SetConnectorOAuthClientResponse) GetJSON503() *ErrorResponse {
+func (r SetConnectorOAuthClientResponse) GetJSON503() *Unavailable {
 	return r.JSON503
 }
 
@@ -38669,7 +39036,7 @@ type DeleteConnectorProviderAppResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ErrorResponse
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -38713,7 +39080,7 @@ func (r DeleteConnectorProviderAppResponse) GetJSON500() *InternalError {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r DeleteConnectorProviderAppResponse) GetJSON503() *ErrorResponse {
+func (r DeleteConnectorProviderAppResponse) GetJSON503() *Unavailable {
 	return r.JSON503
 }
 
@@ -38770,7 +39137,7 @@ type SetConnectorProviderAppResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ErrorResponse
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38824,7 +39191,7 @@ func (r SetConnectorProviderAppResponse) GetJSON500() *InternalError {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r SetConnectorProviderAppResponse) GetJSON503() *ErrorResponse {
+func (r SetConnectorProviderAppResponse) GetJSON503() *Unavailable {
 	return r.JSON503
 }
 
@@ -38872,6 +39239,8 @@ type GetConversationCommandResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38902,6 +39271,11 @@ func (r GetConversationCommandResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetConversationCommandResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetConversationCommandResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -38948,6 +39322,8 @@ type GetConversationMessagesResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38978,6 +39354,11 @@ func (r GetConversationMessagesResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetConversationMessagesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetConversationMessagesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39024,6 +39405,8 @@ type CreateGuestUserResponse struct {
 	JSON403 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -39054,6 +39437,11 @@ func (r CreateGuestUserResponse) GetJSON403() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateGuestUserResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateGuestUserResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39104,6 +39492,8 @@ type ClaimGuestUserResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39144,6 +39534,11 @@ func (r ClaimGuestUserResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ClaimGuestUserResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ClaimGuestUserResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39190,6 +39585,8 @@ type IngestKnowledgeResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39220,6 +39617,11 @@ func (r IngestKnowledgeResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r IngestKnowledgeResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r IngestKnowledgeResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39266,6 +39668,8 @@ type ListKnowledgeDocumentsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39296,6 +39700,11 @@ func (r ListKnowledgeDocumentsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListKnowledgeDocumentsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListKnowledgeDocumentsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39342,6 +39751,8 @@ type DeleteKnowledgeDocumentResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -39372,6 +39783,11 @@ func (r DeleteKnowledgeDocumentResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteKnowledgeDocumentResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteKnowledgeDocumentResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39420,6 +39836,8 @@ type GetKnowledgeDocumentResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39455,6 +39873,11 @@ func (r GetKnowledgeDocumentResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetKnowledgeDocumentResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetKnowledgeDocumentResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39503,6 +39926,8 @@ type ListKnowledgeDocumentPassagesResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39538,6 +39963,11 @@ func (r ListKnowledgeDocumentPassagesResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListKnowledgeDocumentPassagesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListKnowledgeDocumentPassagesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39584,6 +40014,8 @@ type ListKnowledgeUrlsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39614,6 +40046,11 @@ func (r ListKnowledgeUrlsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListKnowledgeUrlsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListKnowledgeUrlsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39660,6 +40097,8 @@ type AddKnowledgeUrlResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -39690,6 +40129,11 @@ func (r AddKnowledgeUrlResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AddKnowledgeUrlResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AddKnowledgeUrlResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39736,6 +40180,8 @@ type DeleteKnowledgeUrlResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -39766,6 +40212,11 @@ func (r DeleteKnowledgeUrlResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteKnowledgeUrlResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteKnowledgeUrlResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39814,6 +40265,8 @@ type GetKnowledgeUrlResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39849,6 +40302,11 @@ func (r GetKnowledgeUrlResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetKnowledgeUrlResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetKnowledgeUrlResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39897,6 +40355,8 @@ type IndexKnowledgeUrlResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39932,6 +40392,11 @@ func (r IndexKnowledgeUrlResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r IndexKnowledgeUrlResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r IndexKnowledgeUrlResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -39980,6 +40445,8 @@ type ListKnowledgeUrlPassagesResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40015,6 +40482,11 @@ func (r ListKnowledgeUrlPassagesResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListKnowledgeUrlPassagesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListKnowledgeUrlPassagesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -40303,6 +40775,8 @@ type ListCustomModelsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40333,6 +40807,11 @@ func (r ListCustomModelsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListCustomModelsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListCustomModelsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -40383,6 +40862,8 @@ type CreateCustomModelResponse struct {
 	JSON500 *InternalError
 	// JSON501 the response for an HTTP 501 `application/json` response
 	JSON501 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -40423,6 +40904,11 @@ func (r CreateCustomModelResponse) GetJSON500() *InternalError {
 // GetJSON501 returns the response for an HTTP 501 `application/json` response
 func (r CreateCustomModelResponse) GetJSON501() *ErrorResponse {
 	return r.JSON501
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateCustomModelResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -40469,6 +40955,8 @@ type DeleteCustomModelResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -40499,6 +40987,11 @@ func (r DeleteCustomModelResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteCustomModelResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -40547,6 +41040,8 @@ type GetCustomModelResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40582,6 +41077,11 @@ func (r GetCustomModelResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetCustomModelResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCustomModelResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -40634,6 +41134,8 @@ type UpdateCustomModelResponse struct {
 	JSON500 *InternalError
 	// JSON501 the response for an HTTP 501 `application/json` response
 	JSON501 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40681,6 +41183,11 @@ func (r UpdateCustomModelResponse) GetJSON501() *ErrorResponse {
 	return r.JSON501
 }
 
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
 // GetBody returns the raw response body bytes
 func (r UpdateCustomModelResponse) GetBody() []byte {
 	return r.Body
@@ -40725,6 +41232,8 @@ type ListPluginsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40755,6 +41264,11 @@ func (r ListPluginsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListPluginsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListPluginsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41037,6 +41551,8 @@ type ListScheduledTasksResponse struct {
 	JSON500 *InternalError
 	// JSON501 the response for an HTTP 501 `application/json` response
 	JSON501 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41072,6 +41588,11 @@ func (r ListScheduledTasksResponse) GetJSON500() *InternalError {
 // GetJSON501 returns the response for an HTTP 501 `application/json` response
 func (r ListScheduledTasksResponse) GetJSON501() *ErrorResponse {
 	return r.JSON501
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListScheduledTasksResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41124,6 +41645,8 @@ type CreateScheduledTaskResponse struct {
 	JSON500 *InternalError
 	// JSON501 the response for an HTTP 501 `application/json` response
 	JSON501 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -41171,6 +41694,11 @@ func (r CreateScheduledTaskResponse) GetJSON501() *ErrorResponse {
 	return r.JSON501
 }
 
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
 // GetBody returns the raw response body bytes
 func (r CreateScheduledTaskResponse) GetBody() []byte {
 	return r.Body
@@ -41215,6 +41743,8 @@ type DeleteScheduledTaskResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -41245,6 +41775,11 @@ func (r DeleteScheduledTaskResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteScheduledTaskResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteScheduledTaskResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41293,6 +41828,8 @@ type GetScheduledTaskResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41328,6 +41865,11 @@ func (r GetScheduledTaskResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetScheduledTaskResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetScheduledTaskResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41376,6 +41918,8 @@ type UpdateScheduledTaskResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41411,6 +41955,11 @@ func (r UpdateScheduledTaskResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateScheduledTaskResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateScheduledTaskResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41459,6 +42008,8 @@ type PauseScheduledTaskResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41494,6 +42045,11 @@ func (r PauseScheduledTaskResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PauseScheduledTaskResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PauseScheduledTaskResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41544,6 +42100,8 @@ type ResumeScheduledTaskResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41584,6 +42142,11 @@ func (r ResumeScheduledTaskResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ResumeScheduledTaskResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ResumeScheduledTaskResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41634,6 +42197,8 @@ type RunScheduledTaskResponse struct {
 	JSON500 *InternalError
 	// JSON501 the response for an HTTP 501 `application/json` response
 	JSON501 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -41674,6 +42239,11 @@ func (r RunScheduledTaskResponse) GetJSON500() *InternalError {
 // GetJSON501 returns the response for an HTTP 501 `application/json` response
 func (r RunScheduledTaskResponse) GetJSON501() *ErrorResponse {
 	return r.JSON501
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RunScheduledTaskResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41722,6 +42292,8 @@ type ListScheduledTaskRunsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41757,6 +42329,11 @@ func (r ListScheduledTaskRunsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListScheduledTaskRunsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListScheduledTaskRunsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41807,6 +42384,8 @@ type CreateSessionResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -41847,6 +42426,11 @@ func (r CreateSessionResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateSessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41891,6 +42475,8 @@ type QuerySessionsResponse struct {
 	JSON402 *PaymentRequired
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41916,6 +42502,11 @@ func (r QuerySessionsResponse) GetJSON402() *PaymentRequired {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r QuerySessionsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r QuerySessionsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -41960,6 +42551,8 @@ type DeleteSessionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -41985,6 +42578,11 @@ func (r DeleteSessionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteSessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42033,6 +42631,8 @@ type GetSessionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42068,6 +42668,11 @@ func (r GetSessionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetSessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42116,6 +42721,8 @@ type UpdateSessionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42151,6 +42758,11 @@ func (r UpdateSessionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateSessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42197,6 +42809,8 @@ type GetSessionCommandResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42227,6 +42841,11 @@ func (r GetSessionCommandResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetSessionCommandResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSessionCommandResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42358,6 +42977,8 @@ type ForkSessionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -42393,6 +43014,11 @@ func (r ForkSessionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ForkSessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ForkSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42439,6 +43065,8 @@ type InterruptSessionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -42469,6 +43097,11 @@ func (r InterruptSessionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r InterruptSessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r InterruptSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42515,6 +43148,8 @@ type DeleteSessionMemoriesResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -42545,6 +43180,11 @@ func (r DeleteSessionMemoriesResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteSessionMemoriesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteSessionMemoriesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42595,6 +43235,8 @@ type RespondSessionResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42635,6 +43277,11 @@ func (r RespondSessionResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r RespondSessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RespondSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42683,6 +43330,8 @@ type ListResponsesResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42718,6 +43367,11 @@ func (r ListResponsesResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListResponsesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListResponsesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42768,6 +43422,8 @@ type CreateResponseResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -42808,6 +43464,11 @@ func (r CreateResponseResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateResponseResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateResponseResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42856,6 +43517,8 @@ type ListResponseItemsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42891,6 +43554,11 @@ func (r ListResponseItemsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListResponseItemsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListResponseItemsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -42937,6 +43605,8 @@ type RewindSessionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -42967,6 +43637,11 @@ func (r RewindSessionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r RewindSessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RewindSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43013,6 +43688,8 @@ type SaySessionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -43043,6 +43720,11 @@ func (r SaySessionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SaySessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SaySessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43091,6 +43773,8 @@ type SetSessionSettingsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -43126,6 +43810,11 @@ func (r SetSessionSettingsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SetSessionSettingsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetSessionSettingsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43170,6 +43859,8 @@ type StopSessionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -43195,6 +43886,11 @@ func (r StopSessionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r StopSessionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r StopSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43241,6 +43937,8 @@ type ListSessionToolsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -43271,6 +43969,11 @@ func (r ListSessionToolsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListSessionToolsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListSessionToolsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43317,6 +44020,8 @@ type StopSessionVoiceResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -43347,6 +44052,11 @@ func (r StopSessionVoiceResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r StopSessionVoiceResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43397,6 +44107,8 @@ type StartSessionVoiceResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -43437,6 +44149,11 @@ func (r StartSessionVoiceResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r StartSessionVoiceResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43483,6 +44200,8 @@ type ListSimulationRunsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -43513,6 +44232,11 @@ func (r ListSimulationRunsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListSimulationRunsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListSimulationRunsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43561,6 +44285,8 @@ type GetSimulationRunResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -43596,6 +44322,11 @@ func (r GetSimulationRunResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetSimulationRunResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSimulationRunResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43644,6 +44375,8 @@ type CancelSimulationRunResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -43679,6 +44412,11 @@ func (r CancelSimulationRunResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CancelSimulationRunResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CancelSimulationRunResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43725,6 +44463,8 @@ type ListSimulationsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -43755,6 +44495,11 @@ func (r ListSimulationsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListSimulationsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListSimulationsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43803,6 +44548,8 @@ type CreateSimulationResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -43838,6 +44585,11 @@ func (r CreateSimulationResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateSimulationResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateSimulationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43884,6 +44636,8 @@ type DeleteSimulationResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -43914,6 +44668,11 @@ func (r DeleteSimulationResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteSimulationResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteSimulationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -43962,6 +44721,8 @@ type GetSimulationResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -43997,6 +44758,11 @@ func (r GetSimulationResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetSimulationResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSimulationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44045,6 +44811,8 @@ type UpdateSimulationResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -44080,6 +44848,11 @@ func (r UpdateSimulationResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateSimulationResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateSimulationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44128,6 +44901,8 @@ type RunSimulationResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -44163,6 +44938,11 @@ func (r RunSimulationResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r RunSimulationResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RunSimulationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44209,6 +44989,8 @@ type ListSkillsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -44239,6 +45021,11 @@ func (r ListSkillsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListSkillsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListSkillsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44289,6 +45076,8 @@ type CreateSkillResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -44329,6 +45118,11 @@ func (r CreateSkillResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateSkillResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateSkillResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44375,6 +45169,8 @@ type DeleteSkillResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -44405,6 +45201,11 @@ func (r DeleteSkillResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteSkillResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteSkillResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44453,6 +45254,8 @@ type GetSkillResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -44488,6 +45291,11 @@ func (r GetSkillResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetSkillResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSkillResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44538,6 +45346,8 @@ type UpdateSkillResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -44578,6 +45388,11 @@ func (r UpdateSkillResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateSkillResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateSkillResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44626,6 +45441,8 @@ type SyncAgentResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -44661,6 +45478,11 @@ func (r SyncAgentResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SyncAgentResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SyncAgentResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44705,6 +45527,8 @@ type DeleteUserConnectionsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -44730,6 +45554,11 @@ func (r DeleteUserConnectionsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteUserConnectionsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44774,6 +45603,8 @@ type TruncateMemoriesResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -44799,6 +45630,11 @@ func (r TruncateMemoriesResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r TruncateMemoriesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r TruncateMemoriesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44845,6 +45681,8 @@ type ListVoicesResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -44875,6 +45713,11 @@ func (r ListVoicesResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListVoicesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListVoicesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -44923,6 +45766,8 @@ type CreateVoiceResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -44958,6 +45803,11 @@ func (r CreateVoiceResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateVoiceResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateVoiceResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45004,6 +45854,8 @@ type ListLibraryVoicesResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -45034,6 +45886,11 @@ func (r ListLibraryVoicesResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListLibraryVoicesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListLibraryVoicesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45082,6 +45939,8 @@ type PreviewLibraryVoiceResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -45117,6 +45976,11 @@ func (r PreviewLibraryVoiceResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PreviewLibraryVoiceResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PreviewLibraryVoiceResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45163,6 +46027,8 @@ type ListVoiceProvidersResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -45193,6 +46059,11 @@ func (r ListVoiceProvidersResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListVoiceProvidersResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListVoiceProvidersResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45239,6 +46110,8 @@ type DeleteVoiceResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -45269,6 +46142,11 @@ func (r DeleteVoiceResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteVoiceResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteVoiceResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45317,6 +46195,8 @@ type GetVoiceResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -45352,6 +46232,11 @@ func (r GetVoiceResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetVoiceResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetVoiceResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45402,6 +46287,8 @@ type UpdateVoiceResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -45442,6 +46329,11 @@ func (r UpdateVoiceResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateVoiceResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateVoiceResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45490,6 +46382,8 @@ type PrepareVoiceResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -45525,6 +46419,11 @@ func (r PrepareVoiceResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PrepareVoiceResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PrepareVoiceResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45573,6 +46472,8 @@ type PreviewVoiceResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -45608,6 +46509,11 @@ func (r PreviewVoiceResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PreviewVoiceResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PreviewVoiceResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45656,6 +46562,8 @@ type AddVoiceSampleResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -45691,6 +46599,11 @@ func (r AddVoiceSampleResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AddVoiceSampleResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AddVoiceSampleResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -45737,6 +46650,8 @@ type QueryAuditResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -45767,6 +46682,11 @@ func (r QueryAuditResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r QueryAuditResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r QueryAuditResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -46277,6 +47197,8 @@ type DetectResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -46312,6 +47234,11 @@ func (r DetectResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DetectResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DetectResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -46360,6 +47287,8 @@ type GenerateImageResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -46395,6 +47324,11 @@ func (r GenerateImageResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GenerateImageResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GenerateImageResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -46443,6 +47377,8 @@ type GetBusinessProfileResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -46478,6 +47414,11 @@ func (r GetBusinessProfileResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetBusinessProfileResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetBusinessProfileResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -46524,6 +47465,8 @@ type SaveBusinessProfileResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -46554,6 +47497,11 @@ func (r SaveBusinessProfileResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SaveBusinessProfileResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SaveBusinessProfileResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -46602,6 +47550,8 @@ type PlacePhoneCallResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -46637,6 +47587,11 @@ func (r PlacePhoneCallResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PlacePhoneCallResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PlacePhoneCallResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -46685,6 +47640,8 @@ type TransferPhoneCallResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -46720,6 +47677,11 @@ func (r TransferPhoneCallResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r TransferPhoneCallResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r TransferPhoneCallResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -46766,6 +47728,8 @@ type PressPhoneDigitsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -46796,6 +47760,11 @@ func (r PressPhoneDigitsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PressPhoneDigitsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PressPhoneDigitsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -46931,6 +47900,8 @@ type ListPhoneNumbersResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -46961,6 +47932,11 @@ func (r ListPhoneNumbersResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListPhoneNumbersResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListPhoneNumbersResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47009,6 +47985,8 @@ type BuyPhoneNumberResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -47044,6 +48022,11 @@ func (r BuyPhoneNumberResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r BuyPhoneNumberResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r BuyPhoneNumberResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47092,6 +48075,8 @@ type SearchPhoneNumbersResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -47127,6 +48112,11 @@ func (r SearchPhoneNumbersResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SearchPhoneNumbersResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SearchPhoneNumbersResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47173,6 +48163,8 @@ type ReleasePhoneNumberResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -47203,6 +48195,11 @@ func (r ReleasePhoneNumberResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ReleasePhoneNumberResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ReleasePhoneNumberResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47251,6 +48248,8 @@ type AttachPhoneNumberResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -47286,6 +48285,11 @@ func (r AttachPhoneNumberResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AttachPhoneNumberResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AttachPhoneNumberResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47332,6 +48336,8 @@ type ListOptOutsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -47362,6 +48368,11 @@ func (r ListOptOutsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListOptOutsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListOptOutsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47408,6 +48419,8 @@ type CreateOptOutResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -47438,6 +48451,11 @@ func (r CreateOptOutResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateOptOutResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateOptOutResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47484,6 +48502,8 @@ type RevokeOptOutResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -47514,6 +48534,11 @@ func (r RevokeOptOutResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r RevokeOptOutResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RevokeOptOutResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47560,6 +48585,8 @@ type GetPhoneSandboxResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -47590,6 +48617,11 @@ func (r GetPhoneSandboxResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetPhoneSandboxResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetPhoneSandboxResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47636,6 +48668,8 @@ type SetSandboxRecipientsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -47666,6 +48700,11 @@ func (r SetSandboxRecipientsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SetSandboxRecipientsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetSandboxRecipientsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47716,6 +48755,8 @@ type ListSipTrunksResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -47756,6 +48797,11 @@ func (r ListSipTrunksResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListSipTrunksResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListSipTrunksResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47806,6 +48852,8 @@ type CreateSipTrunkResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -47846,6 +48894,11 @@ func (r CreateSipTrunkResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateSipTrunkResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47894,6 +48947,8 @@ type DeleteSipTrunkResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -47929,6 +48984,11 @@ func (r DeleteSipTrunkResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteSipTrunkResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -47979,6 +49039,8 @@ type GetSipTrunkResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -48019,6 +49081,11 @@ func (r GetSipTrunkResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetSipTrunkResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSipTrunkResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48069,6 +49136,8 @@ type UpdateSipTrunkResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -48109,6 +49178,11 @@ func (r UpdateSipTrunkResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateSipTrunkResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48159,6 +49233,8 @@ type AddTrunkNumberResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -48199,6 +49275,11 @@ func (r AddTrunkNumberResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AddTrunkNumberResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48245,6 +49326,8 @@ type ListUseCasesResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -48275,6 +49358,11 @@ func (r ListUseCasesResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListUseCasesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListUseCasesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48321,6 +49409,8 @@ type CreateUseCaseResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -48351,6 +49441,11 @@ func (r CreateUseCaseResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateUseCaseResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateUseCaseResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48399,6 +49494,8 @@ type DeleteUseCaseResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -48434,6 +49531,11 @@ func (r DeleteUseCaseResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteUseCaseResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteUseCaseResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48482,6 +49584,8 @@ type GetUseCaseResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -48517,6 +49621,11 @@ func (r GetUseCaseResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetUseCaseResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetUseCaseResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48567,6 +49676,8 @@ type UpdateUseCaseResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -48607,6 +49718,11 @@ func (r UpdateUseCaseResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateUseCaseResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateUseCaseResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48655,6 +49771,8 @@ type ListUseCaseReviewsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -48690,6 +49808,11 @@ func (r ListUseCaseReviewsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListUseCaseReviewsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListUseCaseReviewsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48740,6 +49863,8 @@ type SubmitUseCaseResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -48780,6 +49905,11 @@ func (r SubmitUseCaseResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SubmitUseCaseResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SubmitUseCaseResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48824,6 +49954,8 @@ type ListPhoneVendorsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -48849,6 +49981,11 @@ func (r ListPhoneVendorsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListPhoneVendorsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListPhoneVendorsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48895,6 +50032,8 @@ type GetAppPolicyResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -48925,6 +50064,11 @@ func (r GetAppPolicyResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetAppPolicyResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAppPolicyResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -48971,6 +50115,8 @@ type UpdateAppPolicyResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49001,6 +50147,11 @@ func (r UpdateAppPolicyResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateAppPolicyResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateAppPolicyResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49047,6 +50198,8 @@ type GetOrganizationPolicyResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49077,6 +50230,11 @@ func (r GetOrganizationPolicyResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetOrganizationPolicyResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetOrganizationPolicyResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49123,6 +50281,8 @@ type UpdateOrganizationPolicyResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49153,6 +50313,11 @@ func (r UpdateOrganizationPolicyResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateOrganizationPolicyResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateOrganizationPolicyResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49199,6 +50364,8 @@ type ListRouterConfigsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49229,6 +50396,11 @@ func (r ListRouterConfigsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListRouterConfigsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListRouterConfigsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49277,6 +50449,8 @@ type CreateRouterConfigResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -49312,6 +50486,11 @@ func (r CreateRouterConfigResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateRouterConfigResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateRouterConfigResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49358,6 +50537,8 @@ type DeleteRouterConfigResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -49388,6 +50569,11 @@ func (r DeleteRouterConfigResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteRouterConfigResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteRouterConfigResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49436,6 +50622,8 @@ type GetRouterConfigResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49471,6 +50659,11 @@ func (r GetRouterConfigResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetRouterConfigResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetRouterConfigResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49521,6 +50714,8 @@ type UpdateRouterConfigResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49561,6 +50756,11 @@ func (r UpdateRouterConfigResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateRouterConfigResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateRouterConfigResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49607,6 +50807,8 @@ type SearchResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49637,6 +50839,11 @@ func (r SearchResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SearchResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SearchResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49682,7 +50889,7 @@ type GetAppSettingsResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ErrorResponse
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49711,7 +50918,7 @@ func (r GetAppSettingsResponse) GetJSON500() *InternalError {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r GetAppSettingsResponse) GetJSON503() *ErrorResponse {
+func (r GetAppSettingsResponse) GetJSON503() *Unavailable {
 	return r.JSON503
 }
 
@@ -49761,6 +50968,8 @@ type ListLimitsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49796,6 +51005,11 @@ func (r ListLimitsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListLimitsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListLimitsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49846,6 +51060,8 @@ type CreateLimitResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -49886,6 +51102,11 @@ func (r CreateLimitResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateLimitResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateLimitResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -49934,6 +51155,8 @@ type ListLimitGrantsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -49969,6 +51192,11 @@ func (r ListLimitGrantsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListLimitGrantsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListLimitGrantsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50019,6 +51247,8 @@ type CreateLimitGrantResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -50059,6 +51289,11 @@ func (r CreateLimitGrantResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r CreateLimitGrantResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateLimitGrantResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50107,6 +51342,8 @@ type RevokeLimitGrantResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50142,6 +51379,11 @@ func (r RevokeLimitGrantResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r RevokeLimitGrantResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RevokeLimitGrantResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50190,6 +51432,8 @@ type GetLimitUsageResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50225,6 +51469,11 @@ func (r GetLimitUsageResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetLimitUsageResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetLimitUsageResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50273,6 +51522,8 @@ type ResetLimitUsageResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50308,6 +51559,11 @@ func (r ResetLimitUsageResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ResetLimitUsageResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ResetLimitUsageResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50354,6 +51610,8 @@ type DeleteLimitResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -50384,6 +51642,11 @@ func (r DeleteLimitResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteLimitResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteLimitResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50432,6 +51695,8 @@ type GetLimitResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50467,6 +51732,11 @@ func (r GetLimitResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetLimitResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetLimitResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50515,6 +51785,8 @@ type UpdateLimitResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50550,6 +51822,11 @@ func (r UpdateLimitResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpdateLimitResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateLimitResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50596,6 +51873,8 @@ type GetActivityResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50626,6 +51905,11 @@ func (r GetActivityResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetActivityResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetActivityResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50672,6 +51956,8 @@ type GetAgentStatsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50702,6 +51988,11 @@ func (r GetAgentStatsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetAgentStatsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAgentStatsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50748,6 +52039,8 @@ type RunRollupResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50778,6 +52071,11 @@ func (r RunRollupResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r RunRollupResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RunRollupResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50824,6 +52122,8 @@ type GetSpendResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50854,6 +52154,11 @@ func (r GetSpendResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetSpendResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSpendResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50900,6 +52205,8 @@ type GetTagKeysResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -50930,6 +52237,11 @@ func (r GetTagKeysResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetTagKeysResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetTagKeysResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -50978,6 +52290,8 @@ type TranscribeRecordingResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -51013,6 +52327,11 @@ func (r TranscribeRecordingResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r TranscribeRecordingResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r TranscribeRecordingResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -51061,6 +52380,8 @@ type GetTranscriptionResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -51096,6 +52417,11 @@ func (r GetTranscriptionResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetTranscriptionResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetTranscriptionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -51144,6 +52470,8 @@ type RecordSpeechResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -51179,6 +52507,11 @@ func (r RecordSpeechResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r RecordSpeechResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RecordSpeechResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -51227,6 +52560,8 @@ type GetSpeechResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -51262,6 +52597,11 @@ func (r GetSpeechResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetSpeechResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSpeechResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -51308,6 +52648,8 @@ type GetTurnStatsResponse struct {
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -51338,6 +52680,11 @@ func (r GetTurnStatsResponse) GetJSON403() *Forbidden {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetTurnStatsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetTurnStatsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -51386,6 +52733,8 @@ type ListProvidersResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -51421,6 +52770,11 @@ func (r ListProvidersResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListProvidersResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListProvidersResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -51469,6 +52823,8 @@ type ListRoutesResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -51504,6 +52860,11 @@ func (r ListRoutesResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ListRoutesResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListRoutesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -51552,6 +52913,8 @@ type ResolveTargetResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -51587,6 +52950,11 @@ func (r ResolveTargetResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ResolveTargetResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ResolveTargetResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -51635,6 +53003,8 @@ type GetStatsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -51670,6 +53040,11 @@ func (r GetStatsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetStatsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetStatsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -51718,6 +53093,8 @@ type GetTagStatsResponse struct {
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -51753,6 +53130,11 @@ func (r GetTagStatsResponse) GetJSON404() *NotFound {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetTagStatsResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetTagStatsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -56953,6 +58335,13 @@ func ParseListCallsResponse(rsp *http.Response) (*ListCallsResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -57015,7 +58404,7 @@ func ParseAnalyzeReviewsResponse(rsp *http.Response) (*AnalyzeReviewsResponse, e
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
+		var dest Unavailable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -57089,6 +58478,13 @@ func ParseGetCallResponse(rsp *http.Response) (*GetCallResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -57156,6 +58552,13 @@ func ParseGetCallEventsResponse(rsp *http.Response) (*GetCallEventsResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -57225,6 +58628,13 @@ func ParseGetCallTimelineResponse(rsp *http.Response) (*GetCallTimelineResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -57292,6 +58702,13 @@ func ParseCreateCallTokenResponse(rsp *http.Response) (*CreateCallTokenResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -57361,6 +58778,13 @@ func ParseGetCallTokensResponse(rsp *http.Response) (*GetCallTokensResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -57429,6 +58853,13 @@ func ParseGetCallTranscriptResponse(rsp *http.Response) (*GetCallTranscriptRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -57489,6 +58920,13 @@ func ParseListCampaignsResponse(rsp *http.Response) (*ListCampaignsResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -57558,6 +58996,13 @@ func ParseCreateCampaignResponse(rsp *http.Response) (*CreateCampaignResponse, e
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -57625,6 +59070,13 @@ func ParseGetCampaignResponse(rsp *http.Response) (*GetCampaignResponse, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -57694,6 +59146,13 @@ func ParseListCampaignContactsResponse(rsp *http.Response) (*ListCampaignContact
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -57761,6 +59220,13 @@ func ParseAddCampaignContactsResponse(rsp *http.Response) (*AddCampaignContactsR
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -57830,6 +59296,13 @@ func ParsePauseCampaignResponse(rsp *http.Response) (*PauseCampaignResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -57898,6 +59371,13 @@ func ParseStartCampaignResponse(rsp *http.Response) (*StartCampaignResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -57959,6 +59439,13 @@ func ParseListChannelAccountsResponse(rsp *http.Response) (*ListChannelAccountsR
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -58019,6 +59506,13 @@ func ParseConnectChannelResponse(rsp *http.Response) (*ConnectChannelResponse, e
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -58161,6 +59655,13 @@ func ParseLinkChannelNumberResponse(rsp *http.Response) (*LinkChannelNumberRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -58225,6 +59726,13 @@ func ParseDisconnectChannelResponse(rsp *http.Response) (*DisconnectChannelRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -58286,6 +59794,13 @@ func ParseCreateChatTokenResponse(rsp *http.Response) (*CreateChatTokenResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -58346,6 +59861,13 @@ func ParseListAgentConfigsResponse(rsp *http.Response) (*ListAgentConfigsRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -58415,6 +59937,13 @@ func ParseCreateAgentConfigResponse(rsp *http.Response) (*CreateAgentConfigRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -58478,6 +60007,13 @@ func ParseDeleteAgentConfigResponse(rsp *http.Response) (*DeleteAgentConfigRespo
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -58546,6 +60082,13 @@ func ParseGetAgentConfigResponse(rsp *http.Response) (*GetAgentConfigResponse, e
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -58622,6 +60165,13 @@ func ParsePatchAgentConfigResponse(rsp *http.Response) (*PatchAgentConfigRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -58697,6 +60247,13 @@ func ParseUpdateAgentConfigResponse(rsp *http.Response) (*UpdateAgentConfigRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -58764,6 +60321,13 @@ func ParseGetAgentChangesResponse(rsp *http.Response) (*GetAgentChangesResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -58833,6 +60397,13 @@ func ParseListConfigPluginsResponse(rsp *http.Response) (*ListConfigPluginsRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -58896,6 +60467,13 @@ func ParseDisconnectPluginResponse(rsp *http.Response) (*DisconnectPluginRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -58965,6 +60543,13 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -59028,6 +60613,13 @@ func ParseDeletePluginClientResponse(rsp *http.Response) (*DeletePluginClientRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -59097,6 +60689,13 @@ func ParseSetPluginClientResponse(rsp *http.Response) (*SetPluginClientResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -59158,6 +60757,13 @@ func ParseListConnectionsResponse(rsp *http.Response) (*ListConnectionsResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -59218,6 +60824,13 @@ func ParseCreateConnectionResponse(rsp *http.Response) (*CreateConnectionRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -59290,6 +60903,13 @@ func ParseDeleteConnectionResponse(rsp *http.Response) (*DeleteConnectionRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -59358,6 +60978,13 @@ func ParseGetConnectionResponse(rsp *http.Response) (*GetConnectionResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -59425,6 +61052,13 @@ func ParseCreateAuthorizationResponse(rsp *http.Response) (*CreateAuthorizationR
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -59501,6 +61135,13 @@ func ParsePutConnectionCredentialsResponse(rsp *http.Response) (*PutConnectionCr
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -59568,6 +61209,13 @@ func ParseListConnectionInvocationsResponse(rsp *http.Response) (*ListConnection
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -60105,7 +61753,7 @@ func ParseExportConnectionTokenResponse(rsp *http.Response) (*ExportConnectionTo
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
+		var dest Unavailable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -60192,6 +61840,13 @@ func ParseListConnectionToolsResponse(rsp *http.Response) (*ListConnectionToolsR
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -60267,6 +61922,13 @@ func ParseApproveConnectionToolsResponse(rsp *http.Response) (*ApproveConnection
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -60335,6 +61997,13 @@ func ParseValidateConnectionResponse(rsp *http.Response) (*ValidateConnectionRes
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -60395,6 +62064,13 @@ func ParseListConnectorAuditResponse(rsp *http.Response) (*ListConnectorAuditRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -60457,6 +62133,13 @@ func ParseListConnectorsResponse(rsp *http.Response) (*ListConnectorsResponse, e
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -60517,6 +62200,13 @@ func ParseCreateConnectorResponse(rsp *http.Response) (*CreateConnectorResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -60728,6 +62418,13 @@ func ParseDeleteConnectorResponse(rsp *http.Response) (*DeleteConnectorResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -60796,6 +62493,13 @@ func ParseGetConnectorResponse(rsp *http.Response) (*GetConnectorResponse, error
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -60856,6 +62560,13 @@ func ParseListConnectorEventDestinationsResponse(rsp *http.Response) (*ListConne
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -60932,6 +62643,13 @@ func ParseCreateConnectorEventDestinationResponse(rsp *http.Response) (*CreateCo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -60995,6 +62713,13 @@ func ParseDeleteConnectorEventDestinationResponse(rsp *http.Response) (*DeleteCo
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -61064,6 +62789,13 @@ func ParseRotateConnectorEventDestinationSecretResponse(rsp *http.Response) (*Ro
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -61127,6 +62859,13 @@ func ParseDeleteConnectorOAuthClientResponse(rsp *http.Response) (*DeleteConnect
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -61195,6 +62934,13 @@ func ParseGetConnectorOAuthClientResponse(rsp *http.Response) (*GetConnectorOAut
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -61279,7 +63025,7 @@ func ParseSetConnectorOAuthClientResponse(rsp *http.Response) (*SetConnectorOAut
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
+		var dest Unavailable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -61364,7 +63110,7 @@ func ParseDeleteConnectorProviderAppResponse(rsp *http.Response) (*DeleteConnect
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
+		var dest Unavailable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -61460,7 +63206,7 @@ func ParseSetConnectorProviderAppResponse(rsp *http.Response) (*SetConnectorProv
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
+		var dest Unavailable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -61527,6 +63273,13 @@ func ParseGetConversationCommandResponse(rsp *http.Response) (*GetConversationCo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -61588,6 +63341,13 @@ func ParseGetConversationMessagesResponse(rsp *http.Response) (*GetConversationM
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -61648,6 +63408,13 @@ func ParseCreateGuestUserResponse(rsp *http.Response) (*CreateGuestUserResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -61724,6 +63491,13 @@ func ParseClaimGuestUserResponse(rsp *http.Response) (*ClaimGuestUserResponse, e
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -61785,6 +63559,13 @@ func ParseIngestKnowledgeResponse(rsp *http.Response) (*IngestKnowledgeResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -61845,6 +63626,13 @@ func ParseListKnowledgeDocumentsResponse(rsp *http.Response) (*ListKnowledgeDocu
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -61909,6 +63697,13 @@ func ParseDeleteKnowledgeDocumentResponse(rsp *http.Response) (*DeleteKnowledgeD
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -61978,6 +63773,13 @@ func ParseGetKnowledgeDocumentResponse(rsp *http.Response) (*GetKnowledgeDocumen
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -62046,6 +63848,13 @@ func ParseListKnowledgeDocumentPassagesResponse(rsp *http.Response) (*ListKnowle
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -62107,6 +63916,13 @@ func ParseListKnowledgeUrlsResponse(rsp *http.Response) (*ListKnowledgeUrlsRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -62167,6 +63983,13 @@ func ParseAddKnowledgeUrlResponse(rsp *http.Response) (*AddKnowledgeUrlResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -62231,6 +64054,13 @@ func ParseDeleteKnowledgeUrlResponse(rsp *http.Response) (*DeleteKnowledgeUrlRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -62300,6 +64130,13 @@ func ParseGetKnowledgeUrlResponse(rsp *http.Response) (*GetKnowledgeUrlResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -62368,6 +64205,13 @@ func ParseIndexKnowledgeUrlResponse(rsp *http.Response) (*IndexKnowledgeUrlRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -62435,6 +64279,13 @@ func ParseListKnowledgeUrlPassagesResponse(rsp *http.Response) (*ListKnowledgeUr
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -62694,6 +64545,13 @@ func ParseListCustomModelsResponse(rsp *http.Response) (*ListCustomModelsRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -62769,6 +64627,13 @@ func ParseCreateCustomModelResponse(rsp *http.Response) (*CreateCustomModelRespo
 		}
 		response.JSON501 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -62832,6 +64697,13 @@ func ParseDeleteCustomModelResponse(rsp *http.Response) (*DeleteCustomModelRespo
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -62900,6 +64772,13 @@ func ParseGetCustomModelResponse(rsp *http.Response) (*GetCustomModelResponse, e
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -62983,6 +64862,13 @@ func ParseUpdateCustomModelResponse(rsp *http.Response) (*UpdateCustomModelRespo
 		}
 		response.JSON501 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -63043,6 +64929,13 @@ func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -63304,6 +65197,13 @@ func ParseListScheduledTasksResponse(rsp *http.Response) (*ListScheduledTasksRes
 		}
 		response.JSON501 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -63386,6 +65286,13 @@ func ParseCreateScheduledTaskResponse(rsp *http.Response) (*CreateScheduledTaskR
 		}
 		response.JSON501 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -63449,6 +65356,13 @@ func ParseDeleteScheduledTaskResponse(rsp *http.Response) (*DeleteScheduledTaskR
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -63518,6 +65432,13 @@ func ParseGetScheduledTaskResponse(rsp *http.Response) (*GetScheduledTaskRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -63586,6 +65507,13 @@ func ParseUpdateScheduledTaskResponse(rsp *http.Response) (*UpdateScheduledTaskR
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -63653,6 +65581,13 @@ func ParsePauseScheduledTaskResponse(rsp *http.Response) (*PauseScheduledTaskRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -63729,6 +65664,13 @@ func ParseResumeScheduledTaskResponse(rsp *http.Response) (*ResumeScheduledTaskR
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -63804,6 +65746,13 @@ func ParseRunScheduledTaskResponse(rsp *http.Response) (*RunScheduledTaskRespons
 		}
 		response.JSON501 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -63871,6 +65820,13 @@ func ParseListScheduledTaskRunsResponse(rsp *http.Response) (*ListScheduledTaskR
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -63947,6 +65903,13 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -64000,6 +65963,13 @@ func ParseQuerySessionsResponse(rsp *http.Response) (*QuerySessionsResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -64057,6 +66027,13 @@ func ParseDeleteSessionResponse(rsp *http.Response) (*DeleteSessionResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -64126,6 +66103,13 @@ func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -64194,6 +66178,13 @@ func ParseUpdateSessionResponse(rsp *http.Response) (*UpdateSessionResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -64254,6 +66245,13 @@ func ParseGetSessionCommandResponse(rsp *http.Response) (*GetSessionCommandRespo
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -64391,6 +66389,13 @@ func ParseForkSessionResponse(rsp *http.Response) (*ForkSessionResponse, error) 
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -64455,6 +66460,13 @@ func ParseInterruptSessionResponse(rsp *http.Response) (*InterruptSessionRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -64518,6 +66530,13 @@ func ParseDeleteSessionMemoriesResponse(rsp *http.Response) (*DeleteSessionMemor
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -64597,6 +66616,13 @@ func ParseRespondSessionResponse(rsp *http.Response) (*RespondSessionResponse, e
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -64664,6 +66690,13 @@ func ParseListResponsesResponse(rsp *http.Response) (*ListResponsesResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -64740,6 +66773,13 @@ func ParseCreateResponseResponse(rsp *http.Response) (*CreateResponseResponse, e
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -64808,6 +66848,13 @@ func ParseListResponseItemsResponse(rsp *http.Response) (*ListResponseItemsRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -64872,6 +66919,13 @@ func ParseRewindSessionResponse(rsp *http.Response) (*RewindSessionResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -64935,6 +66989,13 @@ func ParseSaySessionResponse(rsp *http.Response) (*SaySessionResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -65004,6 +67065,13 @@ func ParseSetSessionSettingsResponse(rsp *http.Response) (*SetSessionSettingsRes
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -65060,6 +67128,13 @@ func ParseStopSessionResponse(rsp *http.Response) (*StopSessionResponse, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -65122,6 +67197,13 @@ func ParseListSessionToolsResponse(rsp *http.Response) (*ListSessionToolsRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -65182,6 +67264,13 @@ func ParseStopSessionVoiceResponse(rsp *http.Response) (*StopSessionVoiceRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -65258,6 +67347,13 @@ func ParseStartSessionVoiceResponse(rsp *http.Response) (*StartSessionVoiceRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -65318,6 +67414,13 @@ func ParseListSimulationRunsResponse(rsp *http.Response) (*ListSimulationRunsRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -65387,6 +67490,13 @@ func ParseGetSimulationRunResponse(rsp *http.Response) (*GetSimulationRunRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -65455,6 +67565,13 @@ func ParseCancelSimulationRunResponse(rsp *http.Response) (*CancelSimulationRunR
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -65515,6 +67632,13 @@ func ParseListSimulationsResponse(rsp *http.Response) (*ListSimulationsResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -65584,6 +67708,13 @@ func ParseCreateSimulationResponse(rsp *http.Response) (*CreateSimulationRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -65647,6 +67778,13 @@ func ParseDeleteSimulationResponse(rsp *http.Response) (*DeleteSimulationRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -65716,6 +67854,13 @@ func ParseGetSimulationResponse(rsp *http.Response) (*GetSimulationResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -65783,6 +67928,13 @@ func ParseUpdateSimulationResponse(rsp *http.Response) (*UpdateSimulationRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -65852,6 +68004,13 @@ func ParseRunSimulationResponse(rsp *http.Response) (*RunSimulationResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -65912,6 +68071,13 @@ func ParseListSkillsResponse(rsp *http.Response) (*ListSkillsResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -65988,6 +68154,13 @@ func ParseCreateSkillResponse(rsp *http.Response) (*CreateSkillResponse, error) 
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -66051,6 +68224,13 @@ func ParseDeleteSkillResponse(rsp *http.Response) (*DeleteSkillResponse, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -66119,6 +68299,13 @@ func ParseGetSkillResponse(rsp *http.Response) (*GetSkillResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -66195,6 +68382,13 @@ func ParseUpdateSkillResponse(rsp *http.Response) (*UpdateSkillResponse, error) 
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -66263,6 +68457,13 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -66320,6 +68521,13 @@ func ParseDeleteUserConnectionsResponse(rsp *http.Response) (*DeleteUserConnecti
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -66376,6 +68584,13 @@ func ParseTruncateMemoriesResponse(rsp *http.Response) (*TruncateMemoriesRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -66437,6 +68652,13 @@ func ParseListVoicesResponse(rsp *http.Response) (*ListVoicesResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -66506,6 +68728,13 @@ func ParseCreateVoiceResponse(rsp *http.Response) (*CreateVoiceResponse, error) 
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -66566,6 +68795,13 @@ func ParseListLibraryVoicesResponse(rsp *http.Response) (*ListLibraryVoicesRespo
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -66635,6 +68871,13 @@ func ParsePreviewLibraryVoiceResponse(rsp *http.Response) (*PreviewLibraryVoiceR
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -66695,6 +68938,13 @@ func ParseListVoiceProvidersResponse(rsp *http.Response) (*ListVoiceProvidersRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -66759,6 +69009,13 @@ func ParseDeleteVoiceResponse(rsp *http.Response) (*DeleteVoiceResponse, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -66827,6 +69084,13 @@ func ParseGetVoiceResponse(rsp *http.Response) (*GetVoiceResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -66903,6 +69167,13 @@ func ParseUpdateVoiceResponse(rsp *http.Response) (*UpdateVoiceResponse, error) 
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -66970,6 +69241,13 @@ func ParsePrepareVoiceResponse(rsp *http.Response) (*PrepareVoiceResponse, error
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -67039,6 +69317,13 @@ func ParsePreviewVoiceResponse(rsp *http.Response) (*PreviewVoiceResponse, error
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -67107,6 +69392,13 @@ func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, e
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -67167,6 +69459,13 @@ func ParseQueryAuditResponse(rsp *http.Response) (*QueryAuditResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -67626,6 +69925,13 @@ func ParseDetectResponse(rsp *http.Response) (*DetectResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -67693,6 +69999,13 @@ func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -67762,6 +70075,13 @@ func ParseGetBusinessProfileResponse(rsp *http.Response) (*GetBusinessProfileRes
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -67822,6 +70142,13 @@ func ParseSaveBusinessProfileResponse(rsp *http.Response) (*SaveBusinessProfileR
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -67891,6 +70218,13 @@ func ParsePlacePhoneCallResponse(rsp *http.Response) (*PlacePhoneCallResponse, e
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -67959,6 +70293,13 @@ func ParseTransferPhoneCallResponse(rsp *http.Response) (*TransferPhoneCallRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -68022,6 +70363,13 @@ func ParsePressPhoneDigitsResponse(rsp *http.Response) (*PressPhoneDigitsRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -68164,6 +70512,13 @@ func ParseListPhoneNumbersResponse(rsp *http.Response) (*ListPhoneNumbersRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -68231,6 +70586,13 @@ func ParseBuyPhoneNumberResponse(rsp *http.Response) (*BuyPhoneNumberResponse, e
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -68300,6 +70662,13 @@ func ParseSearchPhoneNumbersResponse(rsp *http.Response) (*SearchPhoneNumbersRes
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -68363,6 +70732,13 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -68432,6 +70808,13 @@ func ParseAttachPhoneNumberResponse(rsp *http.Response) (*AttachPhoneNumberRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -68493,6 +70876,13 @@ func ParseListOptOutsResponse(rsp *http.Response) (*ListOptOutsResponse, error) 
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -68553,6 +70943,13 @@ func ParseCreateOptOutResponse(rsp *http.Response) (*CreateOptOutResponse, error
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -68618,6 +71015,13 @@ func ParseRevokeOptOutResponse(rsp *http.Response) (*RevokeOptOutResponse, error
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -68679,6 +71083,13 @@ func ParseGetPhoneSandboxResponse(rsp *http.Response) (*GetPhoneSandboxResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -68739,6 +71150,13 @@ func ParseSetSandboxRecipientsResponse(rsp *http.Response) (*SetSandboxRecipient
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -68815,6 +71233,13 @@ func ParseListSipTrunksResponse(rsp *http.Response) (*ListSipTrunksResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -68890,6 +71315,13 @@ func ParseCreateSipTrunkResponse(rsp *http.Response) (*CreateSipTrunkResponse, e
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -68960,6 +71392,13 @@ func ParseDeleteSipTrunkResponse(rsp *http.Response) (*DeleteSipTrunkResponse, e
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -69036,6 +71475,13 @@ func ParseGetSipTrunkResponse(rsp *http.Response) (*GetSipTrunkResponse, error) 
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -69110,6 +71556,13 @@ func ParseUpdateSipTrunkResponse(rsp *http.Response) (*UpdateSipTrunkResponse, e
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -69186,6 +71639,13 @@ func ParseAddTrunkNumberResponse(rsp *http.Response) (*AddTrunkNumberResponse, e
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -69247,6 +71707,13 @@ func ParseListUseCasesResponse(rsp *http.Response) (*ListUseCasesResponse, error
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -69307,6 +71774,13 @@ func ParseCreateUseCaseResponse(rsp *http.Response) (*CreateUseCaseResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -69379,6 +71853,13 @@ func ParseDeleteUseCaseResponse(rsp *http.Response) (*DeleteUseCaseResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -69446,6 +71927,13 @@ func ParseGetUseCaseResponse(rsp *http.Response) (*GetUseCaseResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -69522,6 +72010,13 @@ func ParseUpdateUseCaseResponse(rsp *http.Response) (*UpdateUseCaseResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -69589,6 +72084,13 @@ func ParseListUseCaseReviewsResponse(rsp *http.Response) (*ListUseCaseReviewsRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -69665,6 +72167,13 @@ func ParseSubmitUseCaseResponse(rsp *http.Response) (*SubmitUseCaseResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -69718,6 +72227,13 @@ func ParseListPhoneVendorsResponse(rsp *http.Response) (*ListPhoneVendorsRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -69780,6 +72296,13 @@ func ParseGetAppPolicyResponse(rsp *http.Response) (*GetAppPolicyResponse, error
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -69840,6 +72363,13 @@ func ParseUpdateAppPolicyResponse(rsp *http.Response) (*UpdateAppPolicyResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -69902,6 +72432,13 @@ func ParseGetOrganizationPolicyResponse(rsp *http.Response) (*GetOrganizationPol
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -69963,6 +72500,13 @@ func ParseUpdateOrganizationPolicyResponse(rsp *http.Response) (*UpdateOrganizat
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -70023,6 +72567,13 @@ func ParseListRouterConfigsResponse(rsp *http.Response) (*ListRouterConfigsRespo
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -70092,6 +72643,13 @@ func ParseCreateRouterConfigResponse(rsp *http.Response) (*CreateRouterConfigRes
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -70155,6 +72713,13 @@ func ParseDeleteRouterConfigResponse(rsp *http.Response) (*DeleteRouterConfigRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -70223,6 +72788,13 @@ func ParseGetRouterConfigResponse(rsp *http.Response) (*GetRouterConfigResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -70299,6 +72871,13 @@ func ParseUpdateRouterConfigResponse(rsp *http.Response) (*UpdateRouterConfigRes
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -70360,6 +72939,13 @@ func ParseSearchResponse(rsp *http.Response) (*SearchResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -70415,7 +73001,7 @@ func ParseGetAppSettingsResponse(rsp *http.Response) (*GetAppSettingsResponse, e
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
+		var dest Unavailable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -70488,6 +73074,13 @@ func ParseListLimitsResponse(rsp *http.Response) (*ListLimitsResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -70564,6 +73157,13 @@ func ParseCreateLimitResponse(rsp *http.Response) (*CreateLimitResponse, error) 
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -70631,6 +73231,13 @@ func ParseListLimitGrantsResponse(rsp *http.Response) (*ListLimitGrantsResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -70707,6 +73314,13 @@ func ParseCreateLimitGrantResponse(rsp *http.Response) (*CreateLimitGrantRespons
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -70774,6 +73388,13 @@ func ParseRevokeLimitGrantResponse(rsp *http.Response) (*RevokeLimitGrantRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -70843,6 +73464,13 @@ func ParseGetLimitUsageResponse(rsp *http.Response) (*GetLimitUsageResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -70911,6 +73539,13 @@ func ParseResetLimitUsageResponse(rsp *http.Response) (*ResetLimitUsageResponse,
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -70974,6 +73609,13 @@ func ParseDeleteLimitResponse(rsp *http.Response) (*DeleteLimitResponse, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -71043,6 +73685,13 @@ func ParseGetLimitResponse(rsp *http.Response) (*GetLimitResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -71111,6 +73760,13 @@ func ParseUpdateLimitResponse(rsp *http.Response) (*UpdateLimitResponse, error) 
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -71171,6 +73827,13 @@ func ParseGetActivityResponse(rsp *http.Response) (*GetActivityResponse, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -71233,6 +73896,13 @@ func ParseGetAgentStatsResponse(rsp *http.Response) (*GetAgentStatsResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -71293,6 +73963,13 @@ func ParseRunRollupResponse(rsp *http.Response) (*RunRollupResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -71355,6 +74032,13 @@ func ParseGetSpendResponse(rsp *http.Response) (*GetSpendResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -71415,6 +74099,13 @@ func ParseGetTagKeysResponse(rsp *http.Response) (*GetTagKeysResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -71484,6 +74175,13 @@ func ParseTranscribeRecordingResponse(rsp *http.Response) (*TranscribeRecordingR
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -71551,6 +74249,13 @@ func ParseGetTranscriptionResponse(rsp *http.Response) (*GetTranscriptionRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -71620,6 +74325,13 @@ func ParseRecordSpeechResponse(rsp *http.Response) (*RecordSpeechResponse, error
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -71688,6 +74400,13 @@ func ParseGetSpeechResponse(rsp *http.Response) (*GetSpeechResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -71748,6 +74467,13 @@ func ParseGetTurnStatsResponse(rsp *http.Response) (*GetTurnStatsResponse, error
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -71817,6 +74543,13 @@ func ParseListProvidersResponse(rsp *http.Response) (*ListProvidersResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -71884,6 +74617,13 @@ func ParseListRoutesResponse(rsp *http.Response) (*ListRoutesResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -71953,6 +74693,13 @@ func ParseResolveTargetResponse(rsp *http.Response) (*ResolveTargetResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -72021,6 +74768,13 @@ func ParseGetStatsResponse(rsp *http.Response) (*GetStatsResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -72088,6 +74842,13 @@ func ParseGetTagStatsResponse(rsp *http.Response) (*GetTagStatsResponse, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

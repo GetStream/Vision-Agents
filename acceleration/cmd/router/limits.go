@@ -47,9 +47,11 @@ func limitsNeedSomewhereToRead(settings config.Config, pgStore *store.Store) err
 
 // newPolicies is the enforcer every router, LLM response and session asks, reading money from
 // the usage service when there is one, and its spend counters from the Redis it keeps them in
-// when that is set. Nil without a configuration store, which limitsNeedSomewhereToRead allows
-// only with limits off. The returned func closes the counters' connection.
-func newPolicies(settings config.Config, configs *appconfig.Store, usageClient *usageservice.Client, logger *slog.Logger) (*policy.Enforcer, func(), error) {
+// when that is set. What each router holds is shared with the others through holds, the
+// deployment's Redis; with none, holds stay in this process. Nil without a configuration
+// store, which limitsNeedSomewhereToRead allows only with limits off. The returned func closes
+// the counters' connection.
+func newPolicies(settings config.Config, configs *appconfig.Store, usageClient *usageservice.Client, holds rueidis.Client, logger *slog.Logger) (*policy.Enforcer, func(), error) {
 	if configs == nil {
 		return nil, func() {}, nil
 	}
@@ -62,7 +64,7 @@ func newPolicies(settings config.Config, configs *appconfig.Store, usageClient *
 			counters.Close()
 		}
 	}
-	enforcer, err := policy.New(configs, policy.Settings{Mode: settings.Limits.Mode, Usage: usageClient, Counters: counters}, logger)
+	enforcer, err := policy.New(configs, policy.Settings{Mode: settings.Limits.Mode, Usage: usageClient, Counters: counters, Holds: holds}, logger)
 	if err != nil {
 		closeCounters()
 		return nil, nil, err

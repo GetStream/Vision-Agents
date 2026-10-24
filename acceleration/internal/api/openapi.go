@@ -108,6 +108,7 @@ var sharedResponses = map[string]string{
 	"403": "Forbidden",
 	"404": "NotFound",
 	"500": "InternalError",
+	"503": "Unavailable",
 }
 
 var responseDescriptions = map[string]string{
@@ -126,6 +127,10 @@ var responseDescriptions = map[string]string{
 	"NotFound": "No such modality, provider or shortcut",
 	"InternalError": "Something went wrong that is not the caller's doing. The body says " +
 		"only that: quote the response's X-Request-Id to find out more.",
+	"Unavailable": "The request cannot be served now and may be retried. With code " +
+		"spend_check_unavailable, the router could not share what the organization is spending " +
+		"with the other routers for a while, so work that costs money is refused until it can; " +
+		"Retry-After says when to try again, and work on a model that costs nothing is still served.",
 }
 
 // There is one Huma API per process, so its error constructor is set once for all of it.
@@ -385,6 +390,12 @@ func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 	public := operation.Security != nil && len(operation.Security) == 0
 	if _, ok := operation.Responses["402"]; !ok && !socket && !public && !staffOperation(operation) {
 		operation.Responses["402"] = &huma.Response{}
+	}
+	// Whatever can be refused for money can be refused while the spend check is unavailable.
+	if _, ok := operation.Responses["402"]; ok {
+		if _, declared := operation.Responses["503"]; !declared {
+			operation.Responses["503"] = &huma.Response{}
+		}
 	}
 	for code, name := range sharedResponses {
 		// A failure the operation describes in words of its own keeps them.

@@ -37,6 +37,12 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
       description: The customer header is missing
+    Unavailable:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+      description: The request cannot be served now and may be retried. With code spend_check_unavailable, the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; Retry-After says when to try again, and work on a model that costs nothing is still served.
   schemas:
     ActivityBucket:
       properties:
@@ -3756,7 +3762,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -10115,6 +10121,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List the providers configured for a modality and their live health
   /v1/{modality}/routes:
     get:
@@ -10149,6 +10157,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List the capability shortcuts offered as a choice, each with the models it resolves to
   /v1/{modality}/routes/{target}:
     get:
@@ -10198,6 +10208,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Resolve a provider name or capability shortcut to a ranked candidate list
   /v1/{modality}/stats:
     get:
@@ -10263,6 +10275,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Aggregated usage for the calling customer
   /v1/{modality}/stats/tags:
     get:
@@ -10328,6 +10342,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Aggregated usage broken down by the values of one cost label
   /v1/{modality}/stream:
     get:
@@ -10429,6 +10445,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The calls the calling customer has run
   /v1/agents/calls/{id}:
     get:
@@ -10460,6 +10478,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One call, with whatever was made of it afterwards
   /v1/agents/calls/{id}/events:
     get:
@@ -10500,6 +10520,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What the conversation decided, and why
   /v1/agents/calls/{id}/timeline:
     get:
@@ -10534,6 +10556,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The call as it unfolded, said and measured together
   /v1/agents/calls/{id}/token:
     post:
@@ -10571,6 +10595,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What a browser needs to join this call
   /v1/agents/calls/{id}/tokens:
     get:
@@ -10603,6 +10629,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What a call's models read and wrote, and what their prompts were made of
   /v1/agents/calls/{id}/transcript:
     get:
@@ -10637,6 +10665,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What was said on a call
   /v1/agents/calls/reviews/analysis:
     post:
@@ -10668,11 +10698,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
+          $ref: '#/components/responses/Unavailable'
       summary: What caused the calls the agents handled badly
   /v1/agents/campaigns:
     get:
@@ -10696,6 +10722,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The campaigns the calling customer has
     post:
       description: |-
@@ -10727,6 +10755,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Define a list of people to ring
   /v1/agents/campaigns/{id}:
     get:
@@ -10758,6 +10788,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One campaign
   /v1/agents/campaigns/{id}/contacts:
     get:
@@ -10791,6 +10823,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Who a campaign is ringing, and how far it has got
     post:
       description: |-
@@ -10832,6 +10866,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Add people to ring
   /v1/agents/campaigns/{id}/pause:
     post:
@@ -10866,6 +10902,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Stop ringing anybody new
   /v1/agents/campaigns/{id}/start:
     post:
@@ -10900,6 +10938,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Start ringing
   /v1/agents/channels:
     get:
@@ -10928,6 +10968,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List channel lines
     post:
       description: |-
@@ -10959,6 +11001,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Connect a channel line
   /v1/agents/channels/{id}:
     delete:
@@ -10990,6 +11034,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Disconnect a channel line
   /v1/agents/channels/hooks/{token}:
     get:
@@ -11083,6 +11129,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Mint a code to claim a number
   /v1/agents/chat-token:
     post:
@@ -11113,6 +11161,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What a browser needs to read an agent's conversation
   /v1/agents/configs:
     get:
@@ -11154,6 +11204,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The agent configs the calling customer holds
     post:
       description: |-
@@ -11189,6 +11241,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Store a named configuration a session can be created from
   /v1/agents/configs/{id}:
     delete:
@@ -11219,6 +11273,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete an agent config
     get:
       operationId: getAgentConfig
@@ -11249,6 +11305,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One agent config
     patch:
       description: |-
@@ -11295,6 +11353,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Change some of an agent config
     put:
       description: |-
@@ -11340,6 +11400,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Replace an agent config
   /v1/agents/configs/{id}/changes:
     get:
@@ -11377,6 +11439,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What was changed about an agent since its directory was last synced
   /v1/agents/configs/{id}/plugins:
     get:
@@ -11412,6 +11476,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The plugin logins this agent holds
   /v1/agents/configs/{id}/plugins/{plugin_id}:
     delete:
@@ -11450,6 +11516,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Drop a plugin login
   /v1/agents/configs/{id}/plugins/{plugin_id}/authorize:
     post:
@@ -11497,6 +11565,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Start a plugin login
   /v1/agents/configs/{id}/plugins/{plugin_id}/client:
     delete:
@@ -11535,6 +11605,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Drop the OAuth client an agent logs a plugin in with
     put:
       deprecated: true
@@ -11582,6 +11654,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Set the OAuth client an agent logs a plugin in with
   /v1/agents/connections:
     get:
@@ -11639,6 +11713,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List connections
     post:
       description: |-
@@ -11669,6 +11745,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Create a connection
   /v1/agents/connections/{id}:
     delete:
@@ -11713,6 +11791,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a connection
     get:
       description: |-
@@ -11747,6 +11827,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Read a connection
   /v1/agents/connections/{id}/authorizations:
     post:
@@ -11787,6 +11869,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Start a consent
   /v1/agents/connections/{id}/credentials:
     put:
@@ -11836,6 +11920,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Set a connection's credentials
   /v1/agents/connections/{id}/invocations:
     get:
@@ -11888,6 +11974,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List a connection's tool calls
   /v1/agents/connections/{id}/proxy/{path}:
     delete:
@@ -12255,11 +12343,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
+          $ref: '#/components/responses/Unavailable'
       summary: Export a connection's access token
   /v1/agents/connections/{id}/tools:
     get:
@@ -12295,6 +12379,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List a connection's tools
   /v1/agents/connections/{id}/tools/approve:
     post:
@@ -12344,6 +12430,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Approve a connection's tools again
   /v1/agents/connections/{id}/validate:
     post:
@@ -12384,6 +12472,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Validate a connection
   /v1/agents/connector-audit:
     get:
@@ -12434,6 +12524,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List the connector audit
   /v1/agents/connectors:
     get:
@@ -12485,6 +12577,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List or search connectors
     post:
       description: |-
@@ -12515,6 +12609,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Add a custom MCP connector
   /v1/agents/connectors/{id}:
     delete:
@@ -12559,6 +12655,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a custom connector
     get:
       description: |-
@@ -12593,6 +12691,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Read a connector
   /v1/agents/connectors/{id}/event-destinations:
     get:
@@ -12643,6 +12743,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List a connector's event destinations
     post:
       description: |-
@@ -12689,6 +12791,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Forward a connector's provider events to a URL
   /v1/agents/connectors/{id}/event-destinations/{destination_id}:
     delete:
@@ -12727,6 +12831,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Stop forwarding to an event destination
   /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret:
     post:
@@ -12769,6 +12875,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Rotate an event destination's signing secret
   /v1/agents/connectors/{id}/oauth-client:
     delete:
@@ -12800,6 +12908,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Remove the app's own OAuth client for a connector
     get:
       description: |-
@@ -12834,6 +12944,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Read the OAuth client the router keeps for the app and a connector
     put:
       description: |-
@@ -12889,11 +13001,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
+          $ref: '#/components/responses/Unavailable'
       summary: Set the app's own OAuth client for a connector
   /v1/agents/connectors/{id}/provider-app:
     delete:
@@ -12938,11 +13046,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
+          $ref: '#/components/responses/Unavailable'
       summary: Delete the app the router keeps at the connector's provider
     put:
       description: |-
@@ -13004,11 +13108,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
+          $ref: '#/components/responses/Unavailable'
       summary: Create or update the app the router keeps at the connector's provider
   /v1/agents/connectors/events/{connector_id}:
     post:
@@ -13155,6 +13255,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What a command in this conversation ended as
   /v1/agents/conversations/{cid}/messages:
     get:
@@ -13194,6 +13296,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Read a persistent text conversation
   /v1/agents/guests:
     post:
@@ -13227,6 +13331,8 @@ paths:
           description: This app does not admit guests
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Mint a guest so somebody can talk to an agent before signing up
       x-client-accessible: true
   /v1/agents/guests/claim:
@@ -13267,6 +13373,8 @@ paths:
           description: That guest was already claimed
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Move a guest's conversations onto the account they turned out to be
   /v1/agents/knowledge:
     post:
@@ -13298,6 +13406,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Fill a knowledge base with what the business wrote down
   /v1/agents/knowledge/documents:
     get:
@@ -13330,6 +13440,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The documents a knowledge base was filled with
   /v1/agents/knowledge/documents/{id}:
     delete:
@@ -13360,6 +13472,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Take a document out of a knowledge base
     get:
       description: 'What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.'
@@ -13391,6 +13505,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One document, with the text it was posted as
   /v1/agents/knowledge/documents/{id}/passages:
     get:
@@ -13427,6 +13543,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What a document was cut into, in order
   /v1/agents/knowledge/urls:
     get:
@@ -13458,6 +13576,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The pages a knowledge base is kept filled from
     post:
       description: |-
@@ -13489,6 +13609,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Keep a knowledge base filled from a page
   /v1/agents/knowledge/urls/{id}:
     delete:
@@ -13519,6 +13641,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Stop filling a knowledge base from a page
     get:
       operationId: getKnowledgeUrl
@@ -13549,6 +13673,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One page, and when it was last read
   /v1/agents/knowledge/urls/{id}/index:
     post:
@@ -13583,6 +13709,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Read a page again
   /v1/agents/knowledge/urls/{id}/passages:
     get:
@@ -13619,6 +13747,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What a page was last read into, in order
   /v1/agents/logs:
     get:
@@ -13849,6 +13979,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The language models the calling customer serves themselves
     post:
       description: |-
@@ -13890,6 +14022,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Not Implemented
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Add a model of the customer's own
   /v1/agents/models/{id}:
     delete:
@@ -13920,6 +14054,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a model
     get:
       description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
@@ -13951,6 +14087,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One of the customer's models
     put:
       description: |-
@@ -14002,6 +14140,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Not Implemented
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Replace a model
   /v1/agents/plugins:
     get:
@@ -14035,6 +14175,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The hosted MCP servers an agent may attach
   /v1/agents/plugins/{plugin_id}/logo:
     get:
@@ -14239,6 +14381,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Not Implemented
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The scheduled tasks of the user, or of the customer
       x-client-accessible: true
     post:
@@ -14288,6 +14432,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Not Implemented
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Schedule a task for a user
   /v1/agents/scheduled-tasks/{id}:
     delete:
@@ -14316,6 +14462,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a scheduled task
       x-client-accessible: true
     get:
@@ -14348,6 +14496,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One scheduled task
       x-client-accessible: true
     patch:
@@ -14386,6 +14536,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Change a scheduled task
       x-client-accessible: true
   /v1/agents/scheduled-tasks/{id}/pause:
@@ -14419,6 +14571,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Pause a scheduled task
       x-client-accessible: true
   /v1/agents/scheduled-tasks/{id}/resume:
@@ -14462,6 +14616,8 @@ paths:
           description: The task is completed, or the user is at their active-task limit
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Resume a scheduled task
       x-client-accessible: true
   /v1/agents/scheduled-tasks/{id}/run:
@@ -14501,6 +14657,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Not Implemented
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Run a scheduled task now
   /v1/agents/scheduled-tasks/{id}/runs:
     get:
@@ -14549,6 +14707,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: A scheduled task's runs
       x-client-accessible: true
   /v1/agents/sessions:
@@ -14588,6 +14748,8 @@ paths:
           description: A session with that id already exists
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Join a call as a voice agent
       x-client-accessible: true
   /v1/agents/sessions/{id}:
@@ -14618,6 +14780,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a session
       x-client-accessible: true
     get:
@@ -14652,6 +14816,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One session
       x-client-accessible: true
     patch:
@@ -14697,6 +14863,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Change a session
       x-client-accessible: true
   /v1/agents/sessions/{id}/commands/{request_id}:
@@ -14735,6 +14903,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What is known about one durable command
   /v1/agents/sessions/{id}/commands/{request_id}/interrupt:
     post:
@@ -14878,6 +15048,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Continue a conversation as a new one
       x-client-accessible: true
   /v1/agents/sessions/{id}/interrupt:
@@ -14907,6 +15079,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Abandon the reply being spoken
   /v1/agents/sessions/{id}/memories:
     delete:
@@ -14938,6 +15112,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete what one session remembered
   /v1/agents/sessions/{id}/respond:
     post:
@@ -14984,6 +15160,8 @@ paths:
           description: The request id was already accepted with different content
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Answer a piece of text through the model, as though it had been said
   /v1/agents/sessions/{id}/responses:
     get:
@@ -15032,6 +15210,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The turns the agent took in a session
       x-client-accessible: true
     post:
@@ -15078,6 +15258,8 @@ paths:
           description: The request id was already accepted with different content
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Ask the agent something and get a handle on the answer
       x-client-accessible: true
   /v1/agents/sessions/{id}/responses/items:
@@ -15137,6 +15319,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What the agent did, turn by turn, in the order it happened
       x-client-accessible: true
   /v1/agents/sessions/{id}/rewind:
@@ -15174,6 +15358,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Go back to a response and carry on from there
       x-client-accessible: true
   /v1/agents/sessions/{id}/say:
@@ -15209,6 +15395,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Speak a piece of text without going through the model
   /v1/agents/sessions/{id}/settings:
     patch:
@@ -15249,6 +15437,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Change the models and voice of one running session
   /v1/agents/sessions/{id}/stop:
     post:
@@ -15278,6 +15468,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Stop a running session
       x-client-accessible: true
   /v1/agents/sessions/{id}/tools:
@@ -15309,6 +15501,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List the tools a session's model is offered
   /v1/agents/sessions/{id}/voice:
     delete:
@@ -15339,6 +15533,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Stop voice on a session
       x-client-accessible: true
     post:
@@ -15385,6 +15581,8 @@ paths:
           description: Voice is on another call
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Start voice on a session
       x-client-accessible: true
   /v1/agents/sessions/query:
@@ -15420,6 +15618,8 @@ paths:
           $ref: '#/components/responses/PaymentRequired'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List or search the caller's sessions
       x-client-accessible: true
   /v1/agents/simulation-runs:
@@ -15467,6 +15667,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What the simulations have come to, newest first
   /v1/agents/simulation-runs/{id}:
     get:
@@ -15498,6 +15700,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One run, with the conversations it had
   /v1/agents/simulation-runs/{id}/cancel:
     post:
@@ -15532,6 +15736,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Stop a run
   /v1/agents/simulations:
     get:
@@ -15555,6 +15761,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The simulations the calling customer has
     post:
       description: |-
@@ -15586,6 +15794,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Write down a conversation to have with an agent
   /v1/agents/simulations/{id}:
     delete:
@@ -15616,6 +15826,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a simulation
     get:
       operationId: getSimulation
@@ -15646,6 +15858,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One simulation
     put:
       description: |-
@@ -15685,6 +15899,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Replace a simulation
   /v1/agents/simulations/{id}/run:
     post:
@@ -15719,6 +15935,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Have the conversations
   /v1/agents/skills:
     get:
@@ -15750,6 +15968,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The skills the calling customer has defined
     post:
       description: |-
@@ -15787,6 +16007,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Define a kind of work worth handing to the slower model
   /v1/agents/skills/{id}:
     delete:
@@ -15815,6 +16037,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a skill
     get:
       operationId: getSkill
@@ -15845,6 +16069,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One skill
     put:
       description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
@@ -15888,6 +16114,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Replace a skill
   /v1/agents/socket:
     get:
@@ -15953,6 +16181,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Store an agent directory's instructions, skills, knowledge, simulations and settings
   /v1/agents/users/{user_id}/connections:
     delete:
@@ -15985,6 +16215,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete every connection of one user
   /v1/agents/users/{user_id}/memories:
     delete:
@@ -16015,6 +16247,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete everything remembered about one user
   /v1/agents/voices:
     get:
@@ -16038,6 +16272,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The voices the calling customer has brought with them
     post:
       description: |-
@@ -16073,6 +16309,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Name a voice of the customer's own
   /v1/agents/voices/{id}:
     delete:
@@ -16103,6 +16341,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a voice
     get:
       operationId: getVoice
@@ -16133,6 +16373,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One voice, with its recordings and what each provider made of them
     put:
       description: |-
@@ -16178,6 +16420,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Rename a voice
   /v1/agents/voices/{id}/prepare:
     post:
@@ -16218,6 +16462,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Teach the text-to-speech providers this voice
   /v1/agents/voices/{id}/preview:
     post:
@@ -16258,6 +16504,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Hear a voice through one provider
   /v1/agents/voices/{id}/samples:
     post:
@@ -16298,6 +16546,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Add a recording to a voice
   /v1/agents/voices/library:
     get:
@@ -16328,6 +16578,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The voices the speech providers offer
   /v1/agents/voices/library/{provider}/{voice}/preview:
     get:
@@ -16365,6 +16617,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Hear a voice from a provider's library
   /v1/agents/voices/providers:
     get:
@@ -16387,6 +16641,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The providers a voice can be prepared with
   /v1/audit/query:
     post:
@@ -16419,6 +16675,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List the changes made to the app's configuration
   /v1/classify:
     post:
@@ -16723,6 +16981,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Find objects in one image, and return their boxes
   /v1/dispatch:
     get:
@@ -16799,6 +17059,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Draw pictures from a prompt, and return them
   /v1/manage/price-lists/active:
     get:
@@ -16939,11 +17201,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
+          $ref: '#/components/responses/Unavailable'
       security:
         - ManageKey: []
       summary: Change the price list
@@ -17033,11 +17291,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
+          $ref: '#/components/responses/Unavailable'
       security:
         - ManageKey: []
       summary: Cancel a scheduled price change
@@ -17208,6 +17462,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       security:
         - ManageKey: []
       summary: Create a spend limit
@@ -17242,6 +17498,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       security:
         - ManageKey: []
       summary: Delete a spend limit
@@ -17450,6 +17708,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       security:
         - ManageKey: []
       summary: Grant a subject a one-time amount past its limits
@@ -17723,11 +17983,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
+          $ref: '#/components/responses/Unavailable'
       security:
         - OpsKey: []
       summary: Make Stream's own app a customer's provider app
@@ -18004,6 +18260,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Get the business profile
     put:
       description: |-
@@ -18033,6 +18291,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Save the business profile
   /v1/phone/calls:
     post:
@@ -18063,6 +18323,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Place an outbound call and bridge it into a Stream call
   /v1/phone/calls/{vendor_call_id}/digits:
     post:
@@ -18095,6 +18357,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Press digits on a call placed from here
   /v1/phone/calls/transfer:
     post:
@@ -18125,6 +18389,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Bring a human onto a call that is already happening
   /v1/phone/hooks/10dlc:
     post:
@@ -18193,6 +18459,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The numbers the calling customer holds
     post:
       operationId: buyPhoneNumber
@@ -18221,6 +18489,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Buy a number, which starts its monthly charge
   /v1/phone/numbers/{e164}:
     delete:
@@ -18248,6 +18518,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Give a number back, which stops its monthly charge
   /v1/phone/numbers/{e164}/attach:
     post:
@@ -18283,6 +18555,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Point a number at a Stream call
   /v1/phone/numbers/available:
     get:
@@ -18375,6 +18649,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Search for numbers to buy, at one vendor or all of them
   /v1/phone/opt-outs:
     get:
@@ -18418,6 +18694,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List opt-outs
     post:
       description: |-
@@ -18447,6 +18725,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Record an opt-out
   /v1/phone/opt-outs/{id}:
     delete:
@@ -18476,6 +18756,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Revoke an opt-out
   /v1/phone/sandbox:
     get:
@@ -18501,6 +18783,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Get the sandbox
   /v1/phone/sandbox/recipients:
     put:
@@ -18531,6 +18815,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Set the sandbox recipients
   /v1/phone/trunks:
     get:
@@ -18563,6 +18849,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The calling customer's own SIP trunks
     post:
       operationId: createSipTrunk
@@ -18597,6 +18885,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Add one of the customer's own SIP trunks
   /v1/phone/trunks/{id}:
     delete:
@@ -18629,6 +18919,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Remove a SIP trunk with no numbers on it
     get:
       operationId: getSipTrunk
@@ -18663,6 +18955,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One of the customer's own SIP trunks
     patch:
       description: Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
@@ -18704,6 +18998,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Change a SIP trunk
   /v1/phone/trunks/{id}/numbers:
     post:
@@ -18746,6 +19042,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Add a number that is on this SIP trunk
   /v1/phone/use-cases:
     get:
@@ -18789,6 +19087,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List 10DLC use cases
     post:
       description: |-
@@ -18818,6 +19118,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Create a 10DLC use case
   /v1/phone/use-cases/{id}:
     delete:
@@ -18853,6 +19155,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a 10DLC use case
     get:
       description: Server-side only.
@@ -18882,6 +19186,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Get a 10DLC use case
     put:
       description: |-
@@ -18925,6 +19231,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Update a 10DLC use case
   /v1/phone/use-cases/{id}/reviews:
     get:
@@ -18975,6 +19283,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List a use case's review history
   /v1/phone/use-cases/{id}/submit:
     post:
@@ -19014,6 +19324,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Submit a 10DLC use case for review
   /v1/phone/vendors:
     get:
@@ -19036,6 +19348,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List the telephony vendors and whether they can be used
   /v1/policies/app:
     get:
@@ -19058,6 +19372,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The calling app's policy
     put:
       description: |-
@@ -19088,6 +19404,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Replace the calling app's policy
   /v1/policies/organization:
     get:
@@ -19110,6 +19428,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The calling app's organization's policy
     put:
       description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
@@ -19137,6 +19457,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Replace the calling app's organization's policy
   /v1/router/configs:
     get:
@@ -19161,6 +19483,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: The router configs the calling customer holds
     post:
       description: |-
@@ -19196,6 +19520,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Store a named set of per-modality routing options
   /v1/router/configs/{id}:
     delete:
@@ -19226,6 +19552,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a router config
     get:
       operationId: getRouterConfig
@@ -19256,6 +19584,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One router config
     put:
       description: |-
@@ -19301,6 +19631,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Replace a router config
   /v1/search:
     post:
@@ -19329,6 +19661,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Answer a question out of what is true now
       x-client-accessible: true
   /v1/settings/app:
@@ -19354,11 +19688,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
+          $ref: '#/components/responses/Unavailable'
       summary: What the router does for the calling app
   /v1/spend/limits:
     get:
@@ -19446,6 +19776,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List the organization's spend limits
     post:
       description: |-
@@ -19484,6 +19816,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Create a spend limit
   /v1/spend/limits/{limit_id}:
     delete:
@@ -19514,6 +19848,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Delete a spend limit
     get:
       description: |-
@@ -19547,6 +19883,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Read a spend limit
     patch:
       description: |-
@@ -19586,6 +19924,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Change a spend limit's amount or note
   /v1/spend/limits/grants:
     get:
@@ -19668,6 +20008,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: List the organization's grants
     post:
       description: |-
@@ -19706,6 +20048,8 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Grant a subject a one-time amount past its limits
   /v1/spend/limits/grants/{grant_id}/revoke:
     post:
@@ -19746,6 +20090,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Revoke a grant
   /v1/spend/limits/usage:
     get:
@@ -19805,6 +20151,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Read what a subject spent against its limits
   /v1/spend/limits/usage/reset:
     post:
@@ -19838,6 +20186,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Reset a subject's spend for its limits
   /v1/stats/activity:
     get:
@@ -19888,6 +20238,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Who used the calling customer's agents, and how much
   /v1/stats/agents:
     get:
@@ -19931,6 +20283,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: How the calling customer's agents ran, across all of them
   /v1/stats/rollup:
     post:
@@ -19959,6 +20313,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Aggregate request rows into a rollup table
   /v1/stats/spend:
     get:
@@ -20066,6 +20422,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: What the calling customer spent, grouped
   /v1/stats/tags/keys:
     get:
@@ -20120,6 +20478,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Which cost labels the calling customer's spend carries
   /v1/stt/recordings:
     post:
@@ -20152,6 +20512,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Transcribe a recording, off the live path
   /v1/stt/recordings/{id}:
     get:
@@ -20183,6 +20545,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One transcription job, and its transcript once it has one
   /v1/tts/recordings:
     post:
@@ -20213,6 +20577,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Speak a whole text into one audio file, off the live path
   /v1/tts/recordings/{id}:
     get:
@@ -20244,6 +20610,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: One speech job, and its audio once it has some
   /v1/turns/stats:
     get:
@@ -20299,6 +20667,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
       summary: Conversational latency for the calling customer
 security:
   - CustomerId: []

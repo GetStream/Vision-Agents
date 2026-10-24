@@ -626,7 +626,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
 		return err
 	}
-	policies, closeCounters, err := newPolicies(settings, configs, usageClient, logger)
+	var holds rueidis.Client
+	if liveClient != nil {
+		holds = liveClient.Redis()
+	}
+	policies, closeCounters, err := newPolicies(settings, configs, usageClient, holds, logger)
 	if err != nil {
 		return err
 	}
