@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -21,6 +22,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -147,6 +150,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := s.liveSTTComplaint(config, ""); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, nil); !ok {
+		return nil, invalidRequest(message)
+	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
@@ -271,6 +277,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); !ok {
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
@@ -772,6 +781,47 @@ func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string
 		envs[rule.Env] = binding.Name
 	}
 	return "", true, nil
+}
+
+// sandboxLimitsComplaint refuses a config whose sandbox is bigger or more open than the
+// organization's sandbox limits allow, so the customer hears it while writing the config rather
+// than finding the session without its sandbox. was is the sandbox the config had before this
+// save, nil for a new config: a sandbox the save leaves as it was is not refused, so a config
+// stored before its organization's limits tightened stays editable, and its sessions still run
+// without the sandbox. Limits that cannot be read now refuse nothing here.
+func (s *Server) sandboxLimitsComplaint(ctx context.Context, customerID string, config store.AgentConfig, was *savedSandbox) (string, bool) {
+	if config.Sandbox == "" || s.policies == nil {
+		return "", true
+	}
+	now := sandboxOfConfig(config)
+	if was != nil && reflect.DeepEqual(*was, *now) {
+		return "", true
+	}
+	err := s.policies.SandboxAllowed(ctx, routing.Owner{CustomerID: customerID}, now.ask)
+	if err == nil || policy.Transient(err) {
+		return "", true
+	}
+	return err.Error(), false
+}
+
+// savedSandbox is the sandbox a config's sessions ask for, copied from the config.
+type savedSandbox struct {
+	provider string
+	ask      policy.SandboxAsk
+}
+
+func sandboxOfConfig(config store.AgentConfig) *savedSandbox {
+	copied := func(list []string) []string {
+		if len(list) == 0 {
+			return nil
+		}
+		return slices.Clone(list)
+	}
+	options := config.SandboxOptions
+	options.Setup, options.AllowedDomains = copied(options.Setup), copied(options.AllowedDomains)
+	options.NetworkAllowList = copied(options.NetworkAllowList)
+	return &savedSandbox{provider: config.Sandbox, ask: policy.SandboxAsk{Config: options,
+		Granted: slices.ContainsFunc(config.Connectors, func(binding store.ConnectorBinding) bool { return binding.Sandbox })}}
 }
 
 // sensitiveBindingsComplaint refuses a config that binds a sensitive connector, one whose
