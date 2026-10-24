@@ -393,8 +393,7 @@ func (m *money) readGrants(ctx context.Context, db *store.Store, keys []string) 
 // that their writers did not, within reconcileTimeout, unless another router is at it. With one
 // database the writer counts a row in the transaction that writes it, so there is nothing to
 // reconcile. One cut short keeps how far it got, and the next goes on from there.
-func (m *money) reconcilePass(ctx context.Context) {
-	db := m.enforcer.config.DB()
+func (m *money) reconcilePass(ctx context.Context, db *store.Store) {
 	if db == nil || !db.Sharded() {
 		return
 	}

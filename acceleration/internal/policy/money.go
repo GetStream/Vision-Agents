@@ -306,9 +306,11 @@ func (m *money) start(e *Enforcer) {
 	// so does their reconcile, so a long one never holds up reading them. It runs once at
 	// start too, rather than a whole reconcileEvery on.
 	go m.every(ctx, m.settings.Fresh, m.kickGrants, m.grantsPass)
+	db := e.config.DB()
+	reconcile := func(ctx context.Context) { m.reconcilePass(ctx, db) }
 	go func() {
-		m.reconcilePass(ctx)
-		m.every(ctx, reconcileEvery, nil, m.reconcilePass)
+		reconcile(ctx)
+		m.every(ctx, reconcileEvery, nil, reconcile)
 	}()
 }
 
