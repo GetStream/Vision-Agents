@@ -165,7 +165,7 @@ type Manager struct {
 	// records keeps sessions, turns and what each turn did, which is what an old
 	// conversation is read back from. Nil without a store, and never handed an incognito
 	// session.
-	records *sessionRecorder
+	records sessionRecords
 	// invocations logs each connector tool call. Nil without a store or with connectors off,
 	// where no session opens a connector.
 	invocations *invocationRecorder
@@ -228,6 +228,8 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		sessions:      map[string]*Session{},
 		conversations: options.Conversations,
 	}
+	// written is the recorder behind records, which titles are written through too.
+	var written *sessionRecorder
 	if options.Store != nil {
 		if options.Configs == nil {
 			configs, err := appconfig.New(appconfig.Options{Store: options.Store, Logger: options.Logger})
@@ -238,13 +240,14 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
-		manager.records = newSessionRecorder(options.Store, options.Logger)
+		written = newSessionRecorder(options.Store, options.Logger)
+		manager.records = written
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 		if options.Connectors.Transports != nil {
 			manager.invocations = newInvocationRecorder(options.Store, options.Logger)
 		}
 	}
-	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
+	manager.titles = newTitler(options.LLM, written, options.Logger)
 	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
 	return manager, nil
 }

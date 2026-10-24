@@ -64,6 +64,12 @@ func (r *heldRecorder) Voiced(string, string, string) {}
 
 func (r *heldRecorder) Flush(context.Context) error { return nil }
 
+func (r *heldRecorder) Opened(store.AgentSession, []store.ToolDefinition) {}
+
+func (r *heldRecorder) Closed(string, time.Time) {}
+
+func (r *heldRecorder) Close() {}
+
 // kinds is the conversation as a reader would see it: what happened, in order.
 func (r *heldRecorder) kinds() []string {
 	r.mu.Lock()

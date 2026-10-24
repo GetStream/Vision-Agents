@@ -87,6 +87,15 @@ type recorder interface {
 	Flush(ctx context.Context) error
 }
 
+// sessionRecords is a recorder for every session a manager opens, which also hears each
+// session open and close.
+type sessionRecords interface {
+	recorder
+	Opened(row store.AgentSession, tools []store.ToolDefinition)
+	Closed(id string, at time.Time)
+	Close()
+}
+
 // sessionRecorder writes sessions, turns and items to Postgres off the conversation's path.
 //
 // Same trade as the call recorder and for the same reason: a caller must never wait on a
