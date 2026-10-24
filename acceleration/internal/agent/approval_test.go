@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -25,9 +26,9 @@ func (s *AgentSuite) TestACallThatNeedsApprovalAsksTheQuestionAsWrittenAndDoesNo
 
 func (s *AgentSuite) TestAYesRunsTheCallOnceWithItsOwnID() {
 	s.askedToApprove()
-	var approved bool
+	var approved atomic.Bool
 	s.runner.run = func(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
-		approved = Approved(ctx)
+		approved.Store(Approved(ctx))
 		return llm.TextParts("order 12 booked"), nil
 	}
 	s.confirms(`{"tool_call_id":"call-1","allowed":true}`)
@@ -39,11 +40,11 @@ func (s *AgentSuite) TestAYesRunsTheCallOnceWithItsOwnID() {
 	s.Equal("call-1", ran.ID, "the call runs under the id the model gave it")
 	s.Equal("lookup_order", ran.Name)
 	s.Equal(`{"order":"12"}`, ran.Arguments)
-	s.True(approved, "the call is marked approved for whoever runs it")
 	s.eventually(func() bool { return strings.Contains(s.historyWith(llm.ToolResult), "order 12 booked") },
 		"the call's result never answered the confirmation")
-	decided, found := firstOf[ToolApprovalDecided](s.reported())
-	s.Require().True(found)
+	s.True(approved.Load(), "the call is marked approved for whoever runs it")
+	s.eventually(func() bool { return countOf[ToolApprovalDecided](s.reported()) == 1 }, "the answer was never reported")
+	decided, _ := firstOf[ToolApprovalDecided](s.reported())
 	s.Equal(ToolApprovalDecided{ID: "call-1", TurnID: decided.TurnID, Allowed: true}, decided)
 }
 
@@ -56,8 +57,8 @@ func (s *AgentSuite) TestANoNeverRunsTheCall() {
 	s.eventually(func() bool { return strings.Contains(s.historyWith(llm.ToolResult), "declined") },
 		"the model was never told the caller declined")
 	s.never(func() bool { return len(s.runner.asked()) > 0 }, "a declined call ran")
-	decided, found := firstOf[ToolApprovalDecided](s.reported())
-	s.Require().True(found)
+	s.eventually(func() bool { return countOf[ToolApprovalDecided](s.reported()) == 1 }, "the answer was never reported")
+	decided, _ := firstOf[ToolApprovalDecided](s.reported())
 	s.False(decided.Allowed)
 }
 

@@ -302,7 +302,6 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 
 	s.mu.Lock()
 	s.scripts[params.ID] = script
-	s.handed = append(s.handed, script)
 	s.order = append(s.order, params.ID)
 	s.handed = append(s.handed, script)
 	reply := append([]string(nil), s.reply...)
