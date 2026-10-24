@@ -44,6 +44,13 @@ func (f Frame) Int(key string) int {
 	return int(value)
 }
 
+// Int64 reads a numeric field as int64, such as an amount of micros, zero if it is absent or
+// another type.
+func (f Frame) Int64(key string) int64 {
+	value, _ := f[key].(float64)
+	return int64(value)
+}
+
 // Frame reads a nested object, nil if it is absent or another type.
 func (f Frame) Frame(key string) Frame {
 	value, _ := f[key].(map[string]any)
