@@ -408,7 +408,8 @@ func (s *Server) runRelayedCommands(found *session.Session, proxy *proxyWatcher)
 			continue
 		}
 		// The other node holds the socket's address, so only its user is counted here.
-		sender := routing.Caller{UserID: proxy.owner.UserID, ServerSide: proxy.owner.Kind == auth.KindServer}
+		sender := routing.Caller{UserID: proxy.owner.UserID, ServerSide: proxy.owner.Kind == auth.KindServer,
+			Verified: proxy.owner.UserID != "" && proxy.owner.Kind.Verified()}
 		s.applyCommand(found, proxy.owner, sender, command)
 	}
 }

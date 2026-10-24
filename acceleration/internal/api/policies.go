@@ -49,23 +49,26 @@ func (*Policy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schem
 	return schema
 }
 
-// Quota is what one end user of the app may spend in a UTC day. The app sets it, and an
-// organization has none.
+// Quota is what one end user may spend in a UTC day: on an organization's policy the default
+// for every user of its apps, on an app's the default for its users, and on a user's their own.
 type Quota struct {
 	// The maximums only catch a typo: a person who asked for a response every ten seconds
 	// round the clock would still be under 10,000 a day, so 10,000,000 is a thousand of
 	// them, and 10^12 tokens is a thousand times 10,000,000 responses of 100,000 tokens.
-	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty" minimum:"0" maximum:"10000000" example:"20000" doc:"How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies."`
-	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty" minimum:"0" maximum:"1000000000000" example:"50000000" doc:"How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies."`
+	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty" minimum:"0" maximum:"10000000" example:"20000" doc:"How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level's applies: the app's, then the organization's, then the router's default."`
+	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty" minimum:"0" maximum:"1000000000000" example:"50000000" doc:"How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the next level's applies, as for messages."`
 }
 
 func (*Quota) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "What one end user of the app may spend in a UTC day, counted per " +
-		"user and per address. Only an app's policy has one: an organization's that sets it " +
-		"is refused. A turn is counted on the day of the user who sent it, and a backend's " +
-		"own are never counted. A request over the limit is a 429 rate_limited with " +
-		"Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining " +
-		"and X-Quota-Reset."
+	schema.Description = "What one end user may spend in a UTC day. Each number is the first set of " +
+		"the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the " +
+		"router's default. A quota set here counts everything recorded with the user: what their " +
+		"devices ask for and what the app's backend asks for in their name. (An app's quota counted " +
+		"devices only before; the router's default still does.) A device is counted by its address " +
+		"as well. A turn is counted on the day of the user who sent it. A request over the limit is a " +
+		"429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app " +
+		"<id>, every user of organization <id>), and a counted request carries X-Quota-Limit, " +
+		"X-Quota-Remaining and X-Quota-Reset."
 	return schema
 }
 
@@ -156,7 +159,7 @@ func (s *Server) updateAppPolicy(ctx context.Context, request *policyRequest) (*
 	if request.Body.Budget != nil {
 		return nil, errBudgetMoved
 	}
-	policy, err := s.savePolicy(ctx, store.ScopeApp, customerID, request.Body)
+	policy, err := s.savePolicy(ctx, store.ScopeApp, customerID, request.Body, customerID)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
@@ -184,7 +187,8 @@ func (s *Server) getOrganizationPolicy(ctx context.Context, _ *struct{}) (*polic
 
 // updateOrganizationPolicy replaces what the calling app's organization decided.
 func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRequest) (*policyResponse, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
 		return nil, errMissingCustomer
 	}
 	if s.policies == nil {
@@ -197,15 +201,16 @@ func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRe
 	if request.Body.Budget != nil {
 		return nil, errBudgetMoved
 	}
-	policy, err := s.savePolicy(ctx, store.ScopeOrganization, organizationID, request.Body)
+	policy, err := s.savePolicy(ctx, store.ScopeOrganization, organizationID, request.Body, customerID)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
 	return &policyResponse{Body: policy}, nil
 }
 
-// savePolicy validates and stores a policy, and returns it as it now reads.
-func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id string, sent Policy) (Policy, error) {
+// savePolicy validates and stores a policy, audits it under auditedAs, and returns it as it
+// now reads.
+func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id string, sent Policy, auditedAs string) (Policy, error) {
 	document := store.PolicyDocument{
 		Quota:                quotaOf(sent.Quota),
 		DataPolicy:           dataPolicyOf(sent.DataPolicy),
@@ -214,10 +219,6 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 		Tags:                 sent.Tags,
 		RequireOwnStreamApp:  sent.RequireOwnStreamApp,
 		BalanceWarningMicros: sent.BalanceWarningMicros,
-	}
-	// A daily limit is what one end user of an app may spend, so it is set on each app.
-	if scope == store.ScopeOrganization && sent.Quota != nil {
-		return Policy{}, errors.New("an organization has no daily limit per end user: set quota on each app")
 	}
 	// Credit is the organization's, so the balance it is warned at is too.
 	if scope == store.ScopeApp && sent.BalanceWarningMicros != nil {
@@ -259,7 +260,7 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 	if err := s.policies.Save(ctx, scope, id, document); err != nil {
 		return Policy{}, err
 	}
-	s.audit(ctx, auditRecord{
+	s.auditAs(ctx, auditedAs, auditRecord{
 		ResourceType: store.AuditPolicy, ResourceID: id, ResourceName: string(scope),
 		Action: store.AuditUpdated, Changes: auditDiff(before, document),
 	})

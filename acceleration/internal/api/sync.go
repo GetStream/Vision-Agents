@@ -229,7 +229,10 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		return nil, invalidRequest(message)
 	}
 	config := existing
-	if !found {
+	var stored *savedSandbox
+	if found {
+		stored = sandboxOfConfig(existing)
+	} else {
 		config = store.AgentConfig{CustomerID: customerID, Name: name}
 	}
 	applySettings(&config, body)
@@ -276,6 +279,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, stored); !ok {
 		return nil, invalidRequest(message)
 	}
 

@@ -554,6 +554,65 @@ func (s *MigrationOrderSuite) TestTheAuditLogTakesCancelledAndThePreviousRouterS
 	s.Require().NoError(audit(AuditCreated))
 }
 
+// userScopeVersion lets a policy belong to one end user of an app (T7 B).
+const userScopeVersion int64 = 20261112130000
+
+// TestThePoliciesTakeTheUserScopeAndThePreviousRouterStillWrites: a database holding an
+// organization's and an app's policy migrates, keeps both, and takes a user's and no other new
+// scope. The router before it still migrates the database as a no-op and writes its policies.
+// Down keeps the users' rows and refuses new ones.
+func (s *MigrationOrderSuite) TestThePoliciesTakeTheUserScopeAndThePreviousRouterStillWrites() {
+	db := s.open()
+	before := s.migrationBefore(userScopeVersion)
+	s.upTo(db, before)
+	policy := func(scope, id string) error {
+		_, err := db.DB().ExecContext(s.ctx, "INSERT INTO policies (scope, scope_id, document, updated_at) "+
+			"VALUES (?, ?, '{}', now()) ON CONFLICT (scope, scope_id) DO UPDATE SET updated_at = now()", scope, id)
+		return err
+	}
+	rows := func() int {
+		var count int
+		s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM policies").Scan(&count))
+		return count
+	}
+	s.Require().NoError(policy("organization", "org-1"))
+	s.Require().NoError(policy("app", "app-1"))
+	s.Require().ErrorContains(policy("user", "app-1/ann"), "policies_scope_check")
+
+	s.upTo(db, userScopeVersion)
+
+	s.Equal(2, rows())
+	s.Require().NoError(policy(string(ScopeUser), UserScopeID("app-1", "ann")))
+	s.Require().ErrorContains(policy("team", "app-1/a"), "policies_scope_check")
+
+	previous := fstest.MapFS{}
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	s.Require().NoError(err)
+	for _, name := range carried {
+		if version, _, _ := strings.Cut(name, "_"); version >= strconv.FormatInt(userScopeVersion, 10) {
+			continue
+		}
+		body, err := fs.ReadFile(migrations.FS, name)
+		s.Require().NoError(err)
+		previous[name] = &fstest.MapFile{Data: body}
+	}
+	goose.SetBaseFS(previous)
+	s.Require().NoError(goose.SetDialect("postgres"))
+	s.Require().NoError(goose.UpContext(s.ctx, db.DB().DB, "."), "the previous router migrates a newer database as a no-op")
+	s.Require().NoError(policy("app", "app-1"))
+
+	s.goose()
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", before))
+	s.Equal(3, rows(), "a user's policy is kept for the next Up")
+	s.Require().ErrorContains(policy("user", "app-1/bea"), "policies_scope_check")
+	s.Require().NoError(policy("organization", "org-1"))
+
+	s.upTo(db, userScopeVersion)
+	has, err := db.HasUserPolicies(s.ctx, "app-1")
+	s.Require().NoError(err)
+	s.True(has, "Up again finds the users' rows it kept")
+}
+
 func (s *MigrationOrderSuite) auditRows(db *Store) int {
 	var rows int
 	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM connector_audit").Scan(&rows))

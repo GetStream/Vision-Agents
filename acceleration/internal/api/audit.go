@@ -360,11 +360,17 @@ type auditRecord struct {
 // the wrong trade. A record with no changes writes nothing: a save that moved nothing is
 // not a change, and a log full of them is a log nobody reads.
 func (s *Server) audit(ctx context.Context, record auditRecord) {
-	if s.store == nil || (len(record.Changes) == 0 && record.Action != store.AuditSynced) {
-		return
-	}
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
+		return
+	}
+	s.auditAs(ctx, customerID, record)
+}
+
+// auditAs is audit under customerID, for a change no customer's own request made, as staff's
+// through the management API.
+func (s *Server) auditAs(ctx context.Context, customerID string, record auditRecord) {
+	if s.store == nil || customerID == "" || (len(record.Changes) == 0 && record.Action != store.AuditSynced) {
 		return
 	}
 	agentID := record.AgentID
