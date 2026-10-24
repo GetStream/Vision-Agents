@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 // DispatchSuite covers the worker side of dispatch: what a worker has to send to be given
@@ -295,7 +296,7 @@ func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
 		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
 
 	type answer struct {
-		output string
+		output []llm.ContentPart
 		err    error
 	}
 	answered := make(chan answer, 1)
@@ -317,7 +318,64 @@ func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
 
 	got := <-answered
 	s.Require().NoError(got.err)
-	s.Equal("targetSdkVersion 35", got.output)
+	s.Equal("targetSdkVersion 35", llm.TextOf(got.output))
+}
+
+// hostedAnswer is what came of one hosted call.
+type hostedAnswer struct {
+	parts []llm.ContentPart
+	err   error
+}
+
+// asksTheWorker hosts investigate_sdk on the suite's worker and makes one call to it.
+func (s *DispatchSuite) asksTheWorker() (*websocket.Conn, <-chan hostedAnswer) {
+	worker := s.worker()
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], "stream-support",
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+	answered := make(chan hostedAnswer, 1)
+	go func() {
+		parts, err := s.dispatch.RunHosted(s.T().Context(), s.customerID(), "stream-support",
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+		answered <- hostedAnswer{parts, err}
+	}()
+	s.Equal("tool_call", s.next(worker)["type"])
+	return worker, answered
+}
+
+func (s *DispatchSuite) TestAHostedResultNamesItsCallAsASessionsDoes() {
+	worker, answered := s.asksTheWorker()
+
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "tool_result", "tool_call_id": "call-1", "output": "targetSdkVersion 35"}))
+
+	got := <-answered
+	s.Require().NoError(got.err)
+	s.Equal(llm.TextParts("targetSdkVersion 35"), got.parts)
+}
+
+func (s *DispatchSuite) TestAHostedToolCanAnswerWithAPicture() {
+	worker, answered := s.asksTheWorker()
+
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "tool_result", "tool_call_id": "call-1", "output": []frame{
+			{"type": "text", "text": "the settings screen"},
+			{"type": "image_url", "image_url": frame{"url": roses}},
+		}}))
+
+	got := <-answered
+	s.Require().NoError(got.err)
+	s.Require().Len(got.parts, 2)
+	s.Equal("the settings screen", got.parts[0].Text)
+	s.Require().NotNil(got.parts[1].Image, "the picture was dropped")
+	s.Equal("image/png", got.parts[1].Image.MIME)
+}
+
+func (s *DispatchSuite) TestAHostedResultThatIsNotContentFailsTheCall() {
+	worker, answered := s.asksTheWorker()
+
+	s.Require().NoError(worker.WriteJSON(frame{"type": "tool_result", "tool_call_id": "call-1", "output": 42}))
+
+	s.Error((<-answered).err)
 }
 
 func (s *DispatchSuite) TestAHostedCallTheSessionGivesUpOnIsCancelledOnTheWorker() {

@@ -14,7 +14,7 @@ import (
 // is the one there is.
 type ToolHosts interface {
 	HostedTools(customerID, agentID string) ([]dispatch.Tool, time.Duration)
-	RunHosted(ctx context.Context, customerID, agentID string, call dispatch.ToolCall) (string, error)
+	RunHosted(ctx context.Context, customerID, agentID string, call dispatch.ToolCall) ([]llm.ContentPart, error)
 }
 
 // HostTools lets sessions under an agent id use the tools a connected worker runs for it.
@@ -79,11 +79,7 @@ func (r *hostedRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Conten
 	if !r.names[call.Name] {
 		return r.next.Run(ctx, call)
 	}
-	output, err := r.hosts.RunHosted(ctx, r.spec.CustomerID, r.agentID, dispatch.ToolCall{
+	return r.hosts.RunHosted(ctx, r.spec.CustomerID, r.agentID, dispatch.ToolCall{
 		ID: call.ID, SessionID: r.sessionID, Name: call.Name, Arguments: call.Arguments,
 	})
-	if err != nil {
-		return nil, err
-	}
-	return llm.TextParts(output), nil
 }

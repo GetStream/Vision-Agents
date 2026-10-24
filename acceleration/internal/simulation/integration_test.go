@@ -23,6 +23,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -102,11 +103,11 @@ func (c *counter) HostedTools(customerID, _ string) ([]dispatch.Tool, time.Durat
 	}}, time.Minute
 }
 
-func (c *counter) RunHosted(_ context.Context, customerID, _ string, call dispatch.ToolCall) (string, error) {
+func (c *counter) RunHosted(_ context.Context, customerID, _ string, call dispatch.ToolCall) ([]llm.ContentPart, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.orders[customerID] = append(c.orders[customerID], call.Arguments)
-	return fmt.Sprintf("order %d placed: %s", len(c.orders[customerID]), call.Arguments), nil
+	return llm.TextParts(fmt.Sprintf("order %d placed: %s", len(c.orders[customerID]), call.Arguments)), nil
 }
 
 func (c *counter) placed(customerID string) []string {

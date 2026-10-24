@@ -26,10 +26,10 @@ func (f *fakeHosts) HostedTools(customerID, agentID string) ([]dispatch.Tool, ti
 	}, time.Minute
 }
 
-func (f *fakeHosts) RunHosted(_ context.Context, _, agentID string, call dispatch.ToolCall) (string, error) {
+func (f *fakeHosts) RunHosted(_ context.Context, _, agentID string, call dispatch.ToolCall) ([]llm.ContentPart, error) {
 	f.ran = append(f.ran, call)
 	f.agents = append(f.agents, agentID)
-	return "from the worker", nil
+	return llm.TextParts("from the worker"), nil
 }
 
 type callerTools struct{ ran []string }

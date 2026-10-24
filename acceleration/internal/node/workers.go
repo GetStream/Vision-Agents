@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 )
 
@@ -81,8 +82,11 @@ type workRequest struct {
 
 // workReply is what came of it: a tool's output, or the worker a message went to.
 type workReply struct {
-	ID       string `json:"id"`
-	Output   string `json:"output,omitempty"`
+	ID string `json:"id"`
+	// Parts is the tool's output, pictures included. Output is its text alone, which a node
+	// from before parts reads, and is what one sends.
+	Parts    []llm.ContentPart `json:"parts,omitempty"`
+	Output   string            `json:"output,omitempty"`
 	WorkerID string `json:"worker_id,omitempty"`
 	Failure  string `json:"failure,omitempty"`
 }
@@ -153,7 +157,7 @@ func (w *Workers) HostedTools(customerID, agentID string) ([]dispatch.Tool, time
 
 // RunHosted runs one call on a worker hosting the tool, here if one is, and otherwise on a
 // node whose worker does.
-func (w *Workers) RunHosted(ctx context.Context, customerID, agentID string, call dispatch.ToolCall) (string, error) {
+func (w *Workers) RunHosted(ctx context.Context, customerID, agentID string, call dispatch.ToolCall) ([]llm.ContentPart, error) {
 	local, _ := w.pool.HostedTools(customerID, agentID)
 	if slices.ContainsFunc(local, func(tool dispatch.Tool) bool { return tool.Name == call.Name }) {
 		return w.pool.RunHosted(ctx, customerID, agentID, call)
@@ -168,16 +172,19 @@ func (w *Workers) RunHosted(ctx context.Context, customerID, agentID string, cal
 		}
 	}
 	if len(hosts) == 0 {
-		return "", fmt.Errorf("dispatch: no worker is running %s now", call.Name)
+		return nil, fmt.Errorf("dispatch: no worker is running %s now", call.Name)
 	}
 
 	reply, err := w.ask(ctx, hosts[rand.IntN(len(hosts))], workRequest{
 		Kind: toolKind, CustomerID: customerID, AgentID: agentID, Call: &call,
 	}, timeout+replyMargin)
 	if err != nil {
-		return "", fmt.Errorf("dispatch: %s: %w", call.Name, err)
+		return nil, fmt.Errorf("dispatch: %s: %w", call.Name, err)
 	}
-	return reply.Output, nil
+	if len(reply.Parts) == 0 {
+		return llm.TextParts(reply.Output), nil
+	}
+	return reply.Parts, nil
 }
 
 // AssignMessage gives a message to one of the customer's workers, here if any is connected
@@ -298,7 +305,8 @@ func (w *Workers) take(ctx context.Context, payload []byte) {
 	var err error
 	switch {
 	case request.Kind == toolKind && request.Call != nil:
-		reply.Output, err = w.pool.RunHosted(ctx, request.CustomerID, request.AgentID, *request.Call)
+		reply.Parts, err = w.pool.RunHosted(ctx, request.CustomerID, request.AgentID, *request.Call)
+		reply.Output = llm.TextOf(reply.Parts)
 	case request.Kind == messageKind && request.Message != nil:
 		var worker *dispatch.Worker
 		if worker, err = w.pool.AssignMessage(request.CustomerID, *request.Message); err == nil {

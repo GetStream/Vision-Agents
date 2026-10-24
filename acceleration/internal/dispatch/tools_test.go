@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 var investigate = Tool{Name: "investigate_sdk", Description: "Read SDK source"}
@@ -35,12 +37,12 @@ func TestAHostedCallIsAnsweredByTheWorkerRunningIt(t *testing.T) {
 
 	go func() {
 		call := <-worker.ToolCalls()
-		worker.Resolve(call.ID, ToolResult{Output: "targetSdkVersion 35 in " + call.Arguments})
+		worker.Resolve(call.ID, ToolResult{Output: llm.TextParts("targetSdkVersion 35 in " + call.Arguments)})
 	}()
 	output, err := pool.RunHosted(context.Background(), "acme", "support",
 		ToolCall{ID: "call-1", SessionID: "s", Name: "investigate_sdk", Arguments: `{"sdk":"android"}`})
-	if err != nil || output != `targetSdkVersion 35 in {"sdk":"android"}` {
-		t.Fatalf("answered %q, %v", output, err)
+	if err != nil || llm.TextOf(output) != `targetSdkVersion 35 in {"sdk":"android"}` {
+		t.Fatalf("answered %q, %v", llm.TextOf(output), err)
 	}
 }
 
@@ -68,13 +70,13 @@ func TestAHostedCallGoesToWhicheverHostHasTheLeastToAnswer(t *testing.T) {
 	}
 	go func() {
 		call := <-idle.ToolCalls()
-		idle.Resolve(call.ID, ToolResult{Output: "read android"})
+		idle.Resolve(call.ID, ToolResult{Output: llm.TextParts("read android")})
 	}()
 	output, err := pool.RunHosted(context.Background(), "acme", "support",
 		ToolCall{ID: "call-1", Name: "investigate_sdk"})
 
-	if err != nil || output != "read android" {
-		t.Fatalf("answered %q, %v; the idle host should have taken it", output, err)
+	if err != nil || llm.TextOf(output) != "read android" {
+		t.Fatalf("answered %q, %v; the idle host should have taken it", llm.TextOf(output), err)
 	}
 }
 
@@ -113,7 +115,7 @@ func TestAHostedCallIsBoundedByTheWorkersTimeout(t *testing.T) {
 	if _, err := pool.RunHosted(context.Background(), "acme", "support", ToolCall{ID: "call-1", Name: "investigate_sdk"}); err == nil {
 		t.Fatal("a call nobody answered did not time out")
 	}
-	if worker.Resolve("call-1", ToolResult{Output: "late"}) {
+	if worker.Resolve("call-1", ToolResult{Output: llm.TextParts("late")}) {
 		t.Error("an answer after the timeout was taken")
 	}
 }

@@ -253,10 +253,13 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			AgentID   string       `json:"agent_id"`
 			Tools     []hostedTool `json:"tools"`
 			TimeoutMs int          `json:"timeout_ms"`
-			// ID, Output and Error answer one hosted tool call.
-			ID     string `json:"id"`
-			Output string `json:"output"`
-			Error  string `json:"error"`
+			// ToolCallID, Output and Error answer one hosted tool call, as a session's
+			// tool_result does: Output is a string or a parts array. ID is ToolCallID under
+			// the name workers sent it by before.
+			ToolCallID string          `json:"tool_call_id"`
+			ID         string          `json:"id"`
+			Output     json.RawMessage `json:"output"`
+			Error      string          `json:"error"`
 		}
 		_, payload, err := connection.ReadMessage()
 		if err != nil {
@@ -298,9 +301,19 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			}
 
 		case "tool_result":
-			if !worker.Resolve(report.ID, dispatch.ToolResult{Output: report.Output, Failure: report.Error}) {
+			id := report.ToolCallID
+			if id == "" {
+				id = report.ID
+			}
+			result := dispatch.ToolResult{Failure: report.Error}
+			if parts, err := parseToolOutput(report.Output); err != nil {
+				result.Failure = "the tool's output could not be read: " + err.Error()
+			} else {
+				result.Output = parts
+			}
+			if !worker.Resolve(id, result) {
 				s.logger.Debug("a hosted tool answered a call nobody is waiting on",
-					"worker", worker.ID, "id", report.ID)
+					"worker", worker.ID, "id", id)
 			}
 
 		case "done":

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 // defaultHostedTimeout is how long a hosted tool is given when its worker did not say, which
@@ -47,7 +49,8 @@ type ToolCall struct {
 
 // ToolResult is what the worker said happened.
 type ToolResult struct {
-	Output string
+	// Output is text and pictures, as a session's own tools answer.
+	Output []llm.ContentPart
 	// Failure is why the tool did not work, in words for the model. Empty on success.
 	Failure string
 }
@@ -167,9 +170,9 @@ func (p *Pool) AgentsHostedBy(worker *Worker) []string {
 //
 // It goes to whichever host has the least still to answer, and hosts that are equally busy
 // take turns. One whose queue is full is passed over.
-func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call ToolCall) (string, error) {
+func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call ToolCall) ([]llm.ContentPart, error) {
 	if call.ID == "" {
-		return "", errors.New("dispatch: a hosted call needs an id")
+		return nil, errors.New("dispatch: a hosted call needs an id")
 	}
 	answer := make(chan ToolResult, 1)
 
@@ -194,13 +197,13 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 	}
 	if chosen == nil {
 		p.mu.Unlock()
-		return "", fmt.Errorf("dispatch: no worker is running %s now", call.Name)
+		return nil, fmt.Errorf("dispatch: no worker is running %s now", call.Name)
 	}
 	chosen.worker.mu.Lock()
 	if _, duplicate := chosen.worker.results[call.ID]; duplicate {
 		chosen.worker.mu.Unlock()
 		p.mu.Unlock()
-		return "", fmt.Errorf("dispatch: %s was already asked for", call.ID)
+		return nil, fmt.Errorf("dispatch: %s was already asked for", call.ID)
 	}
 	chosen.worker.results[call.ID] = answer
 	chosen.worker.mu.Unlock()
@@ -214,16 +217,16 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 	select {
 	case result := <-answer:
 		if result.Failure != "" {
-			return "", errors.New(result.Failure)
+			return nil, errors.New(result.Failure)
 		}
 		return result.Output, nil
 	case <-deadline.Done():
 		chosen.worker.forget(call.ID)
 		p.cancelHosted(chosen.worker, call)
 		if err := ctx.Err(); err != nil {
-			return "", fmt.Errorf("dispatch: %s stopped: %w", call.Name, err)
+			return nil, fmt.Errorf("dispatch: %s stopped: %w", call.Name, err)
 		}
-		return "", fmt.Errorf("dispatch: %s did not answer within %s", call.Name, chosen.timeout)
+		return nil, fmt.Errorf("dispatch: %s did not answer within %s", call.Name, chosen.timeout)
 	}
 }
 
