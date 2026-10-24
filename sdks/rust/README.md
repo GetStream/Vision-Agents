@@ -171,7 +171,7 @@ agent.tools.register(
     json!({"type": "object", "properties": {"city": {"type": "string"}}}),
     async |arguments| Ok::<_, String>(format!("sunny in {}", arguments["city"])),
 );
-dispatch.host(&agent, None); // None: the router waits its default two minutes for each tool call
+dispatch.host(&agent, None); // None: the router waits its default 30 seconds for each tool call
 dispatch.run().await?;
 ```
 

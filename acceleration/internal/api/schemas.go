@@ -1026,8 +1026,11 @@ type SessionTool struct {
 	Description  string                  `json:"description" doc:"What the model is told the tool does, which is the whole of how it decides when to reach for one."`
 	DisplayTitle *string                 `json:"display_title,omitempty" doc:"What a call is doing, in words for the people in the conversation, such as \"Checking your location\". Shown on the reply's ai_tool_call attachment." maxLength:"80"`
 	Executor     *SessionToolExecutor    `json:"executor,omitempty" doc:"Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server." enum:"server,client"`
-	Name         string                  `json:"name"`
-	Parameters   *map[string]interface{} `json:"parameters,omitempty" doc:"A JSON Schema object describing the arguments."`
+	// Interruptible and TimeoutMs are the tool's own, beside the session's.
+	Interruptible *bool                   `json:"interruptible,omitempty" doc:"Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes."`
+	Name          string                  `json:"name"`
+	Parameters    *map[string]interface{} `json:"parameters,omitempty" doc:"A JSON Schema object describing the arguments."`
+	TimeoutMs     *int                    `json:"timeout_ms,omitempty" doc:"How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's." minimum:"0" maximum:"1800000"`
 }
 
 func (*SessionTool) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

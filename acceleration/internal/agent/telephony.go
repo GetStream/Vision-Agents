@@ -489,11 +489,22 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 	if parent == nil {
 		parent = context.Background()
 	}
+	if requester := a.requesterLocked(); requester != (Requester{}) {
+		parent = WithRequester(parent, requester)
+	}
 	ctx, cancel := context.WithCancel(parent)
 	if a.toolCancels == nil {
 		a.toolCancels = map[string]context.CancelFunc{}
 	}
 	a.toolCancels[requested.Call.ID] = cancel
+	if a.toolContexts == nil {
+		a.toolContexts = map[string]context.Context{}
+	}
+	a.toolContexts[requested.Call.ID] = ctx
+	if a.toolTurns == nil {
+		a.toolTurns = map[string]string{}
+	}
+	a.toolTurns[requested.Call.ID] = requested.TurnID
 	if a.toolsRunning == nil {
 		a.toolsRunning = map[string]string{}
 	}
@@ -518,6 +529,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		cancel()
 		a.mu.Lock()
 		delete(a.toolCancels, requested.Call.ID)
+		delete(a.toolContexts, requested.Call.ID)
+		delete(a.toolTurns, requested.Call.ID)
 		delete(a.toolHolds, requested.Call.ID)
 		a.mu.Unlock()
 	}()
@@ -576,6 +589,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	}
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
+	delete(a.toolUpdates, requested.Call.ID)
 	a.mu.Unlock()
 	// Visual tool results go to the vision worker in both native and cascade calls. The
 	// call is still open in the history it is handed, which a provider refuses to replay.
@@ -592,6 +606,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	}
 	result := llm.TextOf(parts)
 	a.mu.Lock()
+	if hold == nil {
+		hold = a.toolHolds[requested.Call.ID]
+	}
 	a.resolveToolLocked(requested.Call, parts, hold, ctx.Err() != nil)
 	if !left && !a.native() && ctx.Err() == nil && a.followsTool(requested) {
 		a.toolReply = true
@@ -1150,6 +1167,25 @@ func (a *Agent) stopTools() {
 		cancel()
 	}
 	a.toolReply = false
+}
+
+// HoldTool makes a running call that an interruption would cancel outlive one from now on,
+// as a call to a tool that never asked to be cancelled does: answered stillRunning, and its
+// result told when it comes. It reports false when the call is not running, which for a
+// call that was is an interruption that came first.
+func (a *Agent) HoldTool(id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if ctx, running := a.toolContexts[id]; !running || ctx.Err() != nil {
+		return false
+	}
+	if a.toolHolds == nil {
+		a.toolHolds = map[string]*toolHold{}
+	}
+	if a.toolHolds[id] == nil {
+		a.toolHolds[id] = &toolHold{}
+	}
+	return true
 }
 
 // dropTool cancels the calls to a tool still running, because the caller no longer wants

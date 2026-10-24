@@ -419,6 +419,9 @@ async fn watch_socket(
         };
 
         match frame.kind() {
+            // Every watcher is sent every call and the first answer wins: answering a tool
+            // held elsewhere would beat whoever runs it, with an error.
+            "tool_call" if !tools.has(frame.text("name")) => {}
             "tool_call" => run_tool(frame, &sender, &shared, &tools),
             "tool_cancel" => {
                 if let Some(running) = shared

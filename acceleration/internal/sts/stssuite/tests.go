@@ -310,3 +310,27 @@ func (s *Suite) TestAPromptMakesTheModelSpeakUnasked() {
 	s.NotEmpty(reply.Chunks, "the model should have greeted the caller")
 	s.False(reply.Complete.Interrupted)
 }
+
+func (s *Suite) TestAModelToldHowAnOpenCallIsGoingSaysSoAndCallsNothing() {
+	updater, ok := s.New(Ask{}).(sts.CallUpdater)
+	if !ok || !updater.UpdatesCalls() {
+		s.T().Skip("this model cannot be told how an open call is going")
+	}
+	provider := s.Started(Ask{
+		Instructions: briefly + " Always use the get_weather tool when asked about the weather.",
+		Tools:        []llm.Tool{weatherTool},
+	})
+	defer s.Hangup(provider)
+	s.Require().NoError(provider.SendText("What is the weather in Paris right now?", speaker))
+	call := s.Asked(provider).ToolCalls[0]
+
+	s.Require().NoError(provider.(sts.CallUpdater).UpdateCall(call.CallID, "still reaching the forecast service",
+		briefly+" The weather lookup is still running and reports: still reaching the forecast service. "+
+			"Tell the caller in one short sentence that you are still checking. Do not call any tool."))
+	update := s.Spoken(provider)
+
+	s.NotEmpty(update.Chunks, "the model should have said the lookup is still running")
+	s.Empty(update.ToolCalls, "a reply about an open call must call nothing")
+	s.Require().NoError(provider.Answer(call.CallID, `{"forecast":"sunny","temperature_c":21}`, nil))
+	s.NotEmpty(s.Spoken(provider).Chunks, "the open call should still take its answer")
+}

@@ -132,7 +132,7 @@ final class Dispatch
      *
      * @param int $toolTimeoutMs how long the router waits for one tool call to be answered before
      *                           telling the model it failed, not how long the worker runs; 0 takes
-     *                           the router's default of two minutes
+     *                           the router's default of 30 seconds
      */
     public function host(AgentHandle $agent, int $toolTimeoutMs = 0): self
     {

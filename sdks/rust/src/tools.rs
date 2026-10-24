@@ -99,6 +99,11 @@ impl Tools {
             .collect()
     }
 
+    /// Whether a function is registered under this name.
+    pub fn has(&self, name: &str) -> bool {
+        self.registered.lock().expect("tools").contains_key(name)
+    }
+
     /// Runs one function with the arguments the model wrote, as the output to send back.
     pub async fn call(&self, name: &str, arguments: &str) -> Result<Value, String> {
         let run = self

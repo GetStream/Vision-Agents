@@ -114,6 +114,33 @@ type ToolCall struct {
 	// Arguments is the JSON object the model filled in, left as text because it is the
 	// caller that knows what shape to expect.
 	Arguments string
+	// SessionID, User and Conversation say what the call is part of: this session, the
+	// person whose turn asked for it, and the conversation it is held in.
+	SessionID    string
+	User         *ToolUser
+	Conversation *ToolConversation
+	// Run says whether the watcher it went to is one that runs it. Every watcher sees a
+	// call, since a page shows calls, and only those that run it should answer.
+	Run bool
+}
+
+// ToolHeld says a call will outlive the caller talking over the agent from now on, because
+// whoever runs it asked (HoldTool).
+type ToolHeld struct {
+	ID string
+}
+
+// ToolUser is who a tool call was made for.
+type ToolUser struct {
+	ID   string
+	Name string
+}
+
+// ToolConversation is the conversation a tool call was made in: its id, when it is kept,
+// and the session's custom.
+type ToolConversation struct {
+	CID    string
+	Custom map[string]any
 }
 
 // Session is one conversation this process is running on somebody's behalf.
@@ -386,6 +413,7 @@ func (s *Session) Speech() string {
 type watcher struct {
 	events chan Event
 	once   sync.Once
+	seat   Seat
 }
 
 func (w *watcher) close() { w.once.Do(func() { close(w.events) }) }
@@ -408,17 +436,19 @@ func (w *watcher) send(event Event) bool {
 // that connects late has missed the conversation, and a control channel that opened with a
 // backlog would have it answering tool calls that timed out before it arrived.
 func (s *Session) Watch() (<-chan Event, func()) {
-	return s.watch(false)
+	return s.WatchAs(Seat{Owner: OwnerOf(s.spec)})
 }
 
 // WatchPendingVoiceTools opts a durable tool host into replay of pending live
 // voice requests. Text command recovery uses the persistent conversation path.
 func (s *Session) WatchPendingVoiceTools() (<-chan Event, func()) {
-	return s.watch(true)
+	return s.WatchAs(Seat{Owner: OwnerOf(s.spec), ReplayPendingVoiceTools: true})
 }
 
-func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
-	attached := &watcher{events: make(chan Event, watcherBuffer)}
+// WatchAs is Watch for a watcher that says who it is and which tools it runs, which is
+// what its tool calls are addressed by.
+func (s *Session) WatchAs(seat Seat) (<-chan Event, func()) {
+	attached := &watcher{events: make(chan Event, watcherBuffer), seat: seat}
 
 	s.mu.Lock()
 	if s.state == Ended {
@@ -436,9 +466,11 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	for _, unavailable := range s.connectorsUnavailable {
 		attached.send(unavailable)
 	}
-	if replayVoiceTools && !s.spec.Text && s.tools != nil {
+	if seat.ReplayPendingVoiceTools && !s.spec.Text && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
-			attached.send(pending)
+			replayed := s.placed(pending)
+			replayed.Run = s.seatRuns(seat, replayed.Name)
+			attached.send(replayed)
 		}
 	}
 	s.mu.Unlock()
@@ -1222,6 +1254,27 @@ func (s *Session) Describe(ctx context.Context, labels Labels) {
 	}
 }
 
+// HoldTool keeps a call running when the caller talks over the agent, which a call to an
+// interruptible tool would not, and tells every watcher which happened first: ToolHeld, or
+// the call's cancel when it is not running any more.
+func (s *Session) HoldTool(id string) bool {
+	name, waiting := s.tools.nameOf(id)
+	if waiting && s.current().HoldTool(id) {
+		s.broadcast(ToolHeld{ID: id})
+		return true
+	}
+	s.broadcast(ToolCall{ID: id, Name: name, Cancel: true})
+	return false
+}
+
+// ToolUpdate passes on what whoever runs a call says about it while it runs (agent
+// ToolUpdate). An update for a call this session is not waiting on is dropped.
+func (s *Session) ToolUpdate(id, text string, verbatim bool) {
+	if _, waiting := s.tools.nameOf(id); waiting {
+		s.current().ToolUpdate(id, text, verbatim)
+	}
+}
+
 // ResolveTool hands a tool result back to the model waiting for it, reporting whether
 // anything was.
 func (s *Session) ResolveTool(id, output, failure string) bool {
@@ -1658,6 +1711,20 @@ func (s *Session) broadcast(event Event) {
 	}
 }
 
+// placed is call with what it is part of filled in: this session, its conversation, and
+// the session's own user when the agent did not say whose turn asked for it.
+func (s *Session) placed(call ToolCall) ToolCall {
+	if call.Cancel {
+		return call
+	}
+	call.SessionID = s.id
+	call.Conversation = &ToolConversation{CID: s.spec.ConversationID, Custom: s.spec.Custom}
+	if call.User == nil && s.spec.Caller.UserID != "" {
+		call.User = &ToolUser{ID: s.spec.Caller.UserID}
+	}
+	return call
+}
+
 // askTool publishes a tool request, failing when nobody is connected to answer it.
 //
 // The failure matters: without it the model would wait out the whole timeout on a call the
@@ -1666,6 +1733,7 @@ func (s *Session) askTool(call ToolCall) error {
 	if call.TurnID != "" && s.persisted != nil {
 		call.CommandID, _ = s.persisted.CommandForTurn(call.TurnID)
 	}
+	call = s.placed(call)
 	// Only a conversation held in writing is asked by command. On a call a question is spoken,
 	// with no request id, and the vision skill's request for frames belongs to no turn: their
 	// results are taken by turn or by id (ResolveTurnTool, ResolveToolParts), as anywhere else.
@@ -1678,9 +1746,18 @@ func (s *Session) askTool(call ToolCall) error {
 	if len(s.watchers) == 0 {
 		return errors.New("session: nobody is connected to run it")
 	}
+	runnable := call.Cancel
+	for _, attached := range s.watchers {
+		runnable = runnable || s.seatRuns(attached.seat, call.Name)
+	}
+	if !runnable {
+		return fmt.Errorf("session: nobody connected runs %s", call.Name)
+	}
 	delivered := false
 	for _, attached := range s.watchers {
-		if attached.send(call) {
+		addressed := call
+		addressed.Run = s.seatRuns(attached.seat, call.Name)
+		if attached.send(addressed) {
 			delivered = true
 		}
 	}

@@ -744,6 +744,10 @@ class Session:
                 running.cancel()
             return
         if kind == "tool_call":
+            # Every watcher is sent every call and the first answer wins: answering a tool
+            # held elsewhere would beat whoever runs it, with an error.
+            if str(frame.get("name", "")) not in self._functions.functions:
+                return
             if len(self._running) >= RUNNING_TOOLS:
                 await self._command(
                     {

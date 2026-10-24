@@ -251,13 +251,33 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("reports a tool the model asked for that nothing is registered as", async () => {
-    const [session, connection] = await opened(new Tools());
+  it("leaves a call for a tool held elsewhere to whoever holds it", async () => {
+    const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
+    const [session, connection] = await opened(tools);
 
-    connection.send({ type: "tool_call", id: "call_1", name: "unknown", arguments: "{}" });
+    // Every watcher is sent every call and the first answer wins, so answering a tool this
+    // session does not hold would beat the backend that runs it.
+    connection.send({ type: "tool_call", id: "call_1", name: "book_flight", arguments: "{}" });
+    connection.send({ type: "tool_call", id: "call_2", name: "lookup", arguments: "{}" });
 
-    const answer = await connection.next();
-    assert.match(String(answer["error"]), /nothing is registered as unknown/);
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_2", output: "found" });
+    await session.close();
+  });
+
+  it("answers no call at all when it holds no tools", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "tool_call", id: "call_1", name: "book_flight", arguments: "{}" });
+    connection.send({ type: "joined" });
+    // Frames are read in order, so once joined is read the call before it has been seen.
+    for await (const event of session.events()) {
+      if (event.kind === "joined") {
+        break;
+      }
+    }
+    session.say("one moment");
+
+    assert.deepEqual(await connection.next(), { type: "say", text: "one moment" });
     await session.close();
   });
 

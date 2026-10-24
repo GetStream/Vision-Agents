@@ -194,6 +194,22 @@ class TestAgent < LocalRouterTest
     end
   end
 
+  def test_a_call_for_a_tool_held_elsewhere_is_left_for_whoever_holds_it
+    results = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "book_flight", arguments: "{}")
+      peer.send_frame(type: "tool_call", id: "t2", name: "weather", arguments: "{}")
+      results << peer.receive_type("tool_result")
+      results << peer.receive_type("tool_result", timeout: 0.3)
+    end
+    tools = VA::Tools.new.register("weather", description: "Weather") { "clear" }
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal "t2", results.pop(timeout: 5)&.fetch("tool_call_id")
+      assert_nil results.pop(timeout: 5)
+    end
+  end
+
   def test_events_report_what_the_conversation_did
     serve_session do |peer|
       peer.send_frame(type: "heard", text: "hi", participant: { id: "p1", user_id: "ada" })

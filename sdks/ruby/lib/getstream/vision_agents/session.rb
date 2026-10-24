@@ -227,7 +227,10 @@ module GetStream
 
       def received(frame)
         case frame["type"]
-        when "tool_call" then run_tool(frame)
+        when "tool_call"
+          # Every watcher is sent every call and the first answer wins: answering a tool held
+          # elsewhere would beat whoever runs it, with an error.
+          run_tool(frame) if @tools&.include?(frame["name"].to_s)
         when "tool_cancel"
           # The model has moved on. A Ruby thread cannot be stopped safely from outside, so the
           # tool is left to finish and its answer is dropped rather than sent.

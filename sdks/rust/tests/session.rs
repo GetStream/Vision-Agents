@@ -136,7 +136,7 @@ async fn a_tool_call_is_answered_by_the_watcher_whether_or_not_anybody_reads_eve
         .await;
 
     let mut results = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..2 {
         results.push(socket.expect("tool_result").await);
     }
     results.sort_by_key(|result| result["tool_call_id"].as_str().unwrap().to_string());
@@ -148,11 +148,13 @@ async fn a_tool_call_is_answered_by_the_watcher_whether_or_not_anybody_reads_eve
         results[1],
         json!({"type": "tool_result", "tool_call_id": "t2", "error": "which city?"})
     );
+    // Every watcher is sent every call and the first answer wins, so a call for a tool held
+    // elsewhere is left for whoever holds it.
     assert!(
-        results[2]["error"]
-            .as_str()
-            .unwrap()
-            .contains("no such tool")
+        tokio::time::timeout(Duration::from_millis(300), socket.expect("tool_result"))
+            .await
+            .is_err(),
+        "a call for a tool this session does not hold was answered"
     );
 }
 

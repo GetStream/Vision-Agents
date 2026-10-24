@@ -71,8 +71,10 @@ type proxyWatcher struct {
 	detach func()
 	// owner is who the socket's caller was when it attached, and is what its commands are
 	// carried out as. It is kept rather than read off each command so that a node cannot
-	// change who it claims to be halfway through a conversation.
+	// change who it claims to be halfway through a conversation. seat is the same caller
+	// with the tools it said it runs.
 	owner session.Owner
+	seat  session.Seat
 	// commands are what that caller sent, carried out one at a time by a goroutine of
 	// this watcher's own. They cannot be run where they arrive: every node's requests
 	// come in on one subscription, and answering a question through the model takes as
@@ -114,6 +116,7 @@ func (s *Server) newRelayed(ctx context.Context, bus *relay.Bus) (*relayed, erro
 // trusted to have checked, so the caller is named on the bus and checked there.
 func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id string, owner session.Owner) bool {
 	state := s.relayed
+	seat := seatOf(r, owner)
 	watcher := uuid.NewString()
 	socket := &remoteSocket{
 		attached: make(chan string, 1),
@@ -141,7 +144,9 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 			UserID:     owner.UserID,
 			Kind:       string(owner.Kind),
 		},
-		ReplayPendingTools: r.URL.Query().Get("replay_pending_tools") == "true",
+		ReplayPendingTools: seat.ReplayPendingVoiceTools,
+		Tools:              seat.Tools,
+		DeclaresTools:      seat.Declares,
 	}); err != nil {
 		s.logger.Error("could not ask for a session held elsewhere", "session", id, "error", err)
 		writeError(w, unavailable("the session could not be reached"))
@@ -325,15 +330,16 @@ func (s *Server) attachProxy(ctx context.Context, state *relayed, request relay.
 	held := session.OwnerOf(spec)
 	key := relay.Owner{CustomerID: held.CustomerID, UserID: held.UserID}.Key()
 
-	watch := found.Watch
-	if request.ReplayPendingTools {
-		watch = found.WatchPendingVoiceTools
+	seat := session.Seat{
+		Owner: owner, Tools: request.Tools, Declares: request.DeclaresTools,
+		ReplayPendingVoiceTools: request.ReplayPendingTools,
 	}
-	events, detach := watch()
+	events, detach := found.WatchAs(seat)
 
 	proxy := &proxyWatcher{
 		detach:   detach,
 		owner:    owner,
+		seat:     seat,
 		commands: make(chan json.RawMessage, remoteCommands),
 		seen:     time.Now(),
 	}
@@ -416,7 +422,7 @@ func (s *Server) runRelayedCommands(found *session.Session, proxy *proxyWatcher)
 		}
 		// The other node holds the socket's address, so only its user is counted here.
 		sender := routing.Caller{UserID: proxy.owner.UserID, ServerSide: proxy.owner.Kind == auth.KindServer}
-		s.applyCommand(found, proxy.owner, sender, command)
+		s.applyCommand(found, proxy.seat, sender, command)
 	}
 }
 

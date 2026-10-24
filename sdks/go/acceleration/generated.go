@@ -6816,10 +6816,16 @@ type SessionTool struct {
 
 	// Executor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
 	Executor *SessionToolExecutor `json:"executor,omitempty"`
-	Name     string               `json:"name"`
+
+	// Interruptible Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes.
+	Interruptible *bool  `json:"interruptible,omitempty"`
+	Name          string `json:"name"`
 
 	// Parameters A JSON Schema object describing the arguments.
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+
+	// TimeoutMs How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's.
+	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
 }
 
 // SessionToolExecutor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.

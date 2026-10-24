@@ -316,6 +316,9 @@ final class WorkerTest extends TestCase
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
             LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'weather in Paris?']);
+            // Every watcher is sent every call and the first answer wins, so a call for a tool
+            // held elsewhere is left for whoever holds it.
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't0', 'name' => 'book_flight', 'arguments' => '{}']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't1', 'name' => 'get_weather', 'arguments' => '{"city":"Paris"}', 'request_id' => 'req1', 'turn_id' => 'turn1']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't2', 'name' => 'broken', 'arguments' => '{}']);
             while (count($server->sent('tool_result')) < 2 && $server->next($socket) !== null) {
@@ -340,6 +343,7 @@ final class WorkerTest extends TestCase
         foreach ($server->sent('tool_result') as $result) {
             $results[Json::string($result, 'tool_call_id')] = $result;
         }
+        self::assertArrayNotHasKey('t0', $results);
         self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't1', 'request_id' => 'req1', 'turn_id' => 'turn1', 'output' => '{"city":"Paris","sky":"clear"}'], $results['t1']);
         self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't2', 'error' => 'the weather service is down'], $results['t2']);
     }

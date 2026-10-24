@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -191,6 +193,7 @@ type Pipeline struct {
 	stop    context.CancelFunc
 	running sync.WaitGroup
 	watcher sync.WaitGroup
+	holds   holds
 }
 
 // Accelerated configures a pipeline to run remotely.
@@ -228,6 +231,14 @@ func (p *Pipeline) Session() *acceleration.Session {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.session
+}
+
+// sessionID is the id of the session the pipeline is holding, or empty.
+func (p *Pipeline) sessionID() string {
+	if session := p.Session(); session != nil {
+		return session.Id
+	}
+	return ""
 }
 
 // Join creates the session and starts watching it.
@@ -298,7 +309,7 @@ func (p *Pipeline) Watch(ctx context.Context, session *acceleration.Session) err
 	}
 
 	socket := NewSocket(
-		backend.SocketURL("/v1/agents/sessions/"+session.Id+"/events"),
+		backend.SocketURL("/v1/agents/sessions/"+session.Id+"/events?"+p.runs().Encode()),
 		credentials,
 		backend.HTTPClient,
 		p.logger,
@@ -502,6 +513,16 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	return request
 }
 
+// runs is the socket's query saying which of the session's tools this process runs: the
+// functions registered here, and none when there are none.
+func (p *Pipeline) runs() url.Values {
+	var names []string
+	for _, function := range p.functions.List() {
+		names = append(names, function.Name)
+	}
+	return url.Values{"tools": {strings.Join(names, ",")}}
+}
+
 // tools are the functions registered here, as the model will be offered them.
 func (p *Pipeline) tools() []acceleration.SessionTool {
 	registered := p.functions.List()
@@ -511,6 +532,14 @@ func (p *Pipeline) tools() []acceleration.SessionTool {
 		if function.Parameters != nil {
 			parameters := function.Parameters
 			tool.Parameters = &parameters
+		}
+		if function.Interruptible {
+			interruptible := true
+			tool.Interruptible = &interruptible
+		}
+		if function.Timeout > 0 {
+			timeout := function.Timeout.Milliseconds()
+			tool.TimeoutMs = &timeout
 		}
 		declared = append(declared, tool)
 	}
@@ -549,13 +578,26 @@ func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event) 
 			continue
 		}
 
-		if frame.Type() == "tool_call" {
+		switch frame.Type() {
+		case "tool_call":
+			// Every watcher is sent every call, and the router says which are to run it.
+			// One from before it said holds the same rule: answering a tool held elsewhere
+			// would beat the process that runs it.
+			if frame["run"] == false || !p.functions.Holds(frame.String("name")) {
+				p.logger.Debug("leaving a call for a tool held elsewhere", "tool", frame.String("name"))
+				continue
+			}
 			p.running.Add(1)
 			go func() {
 				defer p.running.Done()
 				p.runTool(ctx, frame)
 			}()
 			continue
+		case "tool_cancel":
+			p.holds.answer(frame.String("id"), false)
+			p.functions.Cancel(p.sessionID(), frame.String("id"))
+		case "tool_held":
+			p.holds.answer(frame.String("id"), true)
 		}
 
 		select {
@@ -581,7 +623,8 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 		}
 	}
 
-	output, err := p.functions.Call(ctx, name, frame.String("arguments"))
+	line := tools.WithLine(ctx, toolLine{send: p.command, holds: &p.holds})
+	output, err := p.functions.Run(line, toolCallOf(frame, p.sessionID()), name, frame.String("arguments"))
 	if err != nil {
 		p.logger.Error("the tool failed", "tool", name, "error", err)
 		result["error"] = err.Error()
@@ -598,6 +641,25 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	if err := socket.Send(result); err != nil {
 		p.logger.Error("the tool result never reached the model", "tool", name, "error", err)
 	}
+}
+
+// toolCallOf is the call a tool_call frame asks for, as tools.CallFrom gives it to the function.
+// sessionID stands in for a frame that does not name its session, as a router's from before
+// session_id did not.
+func toolCallOf(frame Frame, sessionID string) tools.Call {
+	call := tools.Call{ID: frame.String("id"), SessionID: frame.String("session_id"), TurnID: frame.String("turn_id")}
+	if call.SessionID == "" {
+		call.SessionID = sessionID
+	}
+	if user := frame.Frame("user"); user != nil {
+		call.User = tools.User{ID: user.String("id"), Name: user.String("name")}
+		call.User.Custom, _ = user["custom"].(map[string]any)
+	}
+	if conversation := frame.Frame("conversation"); conversation != nil {
+		call.Conversation = tools.Conversation{CID: conversation.String("cid")}
+		call.Conversation.Custom, _ = conversation["custom"].(map[string]any)
+	}
+	return call
 }
 
 // stopWatching drops the socket and everything reading it.

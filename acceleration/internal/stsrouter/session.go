@@ -100,6 +100,22 @@ func (s *Session) Answer(callID string, output string, err error) error {
 // Prompt asks the model to speak, guided by the text.
 func (s *Session) Prompt(text string) error { return s.provider.Prompt(text) }
 
+// UpdatesCalls reports whether the model can be told how an open tool call is going.
+func (s *Session) UpdatesCalls() bool {
+	updater, ok := s.provider.(sts.CallUpdater)
+	return ok && updater.UpdatesCalls()
+}
+
+// UpdateCall has the model speak about the open call callID, guided by prompt, where it
+// can (UpdatesCalls).
+func (s *Session) UpdateCall(callID, status, prompt string) error {
+	updater, ok := s.provider.(sts.CallUpdater)
+	if !ok {
+		return sts.ErrNoCallUpdates
+	}
+	return updater.UpdateCall(callID, status, prompt)
+}
+
 // Interrupt stops the reply in flight. Its audio stops being forwarded at once, before the
 // provider has heard about it, since the caller has already stopped listening.
 func (s *Session) Interrupt(playedMs int) error {

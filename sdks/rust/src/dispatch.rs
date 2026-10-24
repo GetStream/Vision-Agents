@@ -255,7 +255,7 @@ impl Dispatch {
     /// these functions to each session naming the agent and sends every call to a worker
     /// hosting them. `tool_timeout` is how long the router waits for one tool call to be
     /// answered before telling the model it failed, not how long the worker runs; `None`
-    /// takes the router's default of two minutes. Call before [`Dispatch::run`].
+    /// takes the router's default of 30 seconds. Call before [`Dispatch::run`].
     ///
     /// ```no_run
     /// # async fn example(client: vision_agents::Client) -> vision_agents::Result<()> {

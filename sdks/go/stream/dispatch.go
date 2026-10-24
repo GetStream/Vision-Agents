@@ -172,6 +172,8 @@ type Dispatch struct {
 	handling atomic.Int64
 
 	pong chan struct{}
+	// holds are the hosted calls waiting to hear whether they were held.
+	holds holds
 
 	firstRetry time.Duration
 }
@@ -231,7 +233,7 @@ type HostedAgent interface {
 // every call to one of them here. The router matches a session on its agent id or its
 // agent's name, so the name is what the agent is hosted under. toolTimeout is how long the
 // router waits for one tool call to be answered before telling the model it failed, not how
-// long the worker runs; zero takes the router's default of two minutes. Call before Run.
+// long the worker runs; zero takes the router's default of 30 seconds. Call before Run.
 func (d *Dispatch) Host(agent HostedAgent, toolTimeout time.Duration) {
 	d.hosted = append(d.hosted, hosting{agentID: agent.Name(), functions: agent.Tools(), toolTimeout: toolTimeout})
 }
@@ -241,7 +243,14 @@ func (d *Dispatch) host() {
 	for _, offer := range d.hosted {
 		declared := []Frame{}
 		for _, function := range offer.functions.List() {
-			declared = append(declared, Frame{"name": function.Name, "description": function.Description, "parameters": function.Parameters})
+			tool := Frame{"name": function.Name, "description": function.Description, "parameters": function.Parameters}
+			if function.Interruptible {
+				tool["interruptible"] = true
+			}
+			if function.Timeout > 0 {
+				tool["timeout_ms"] = function.Timeout.Milliseconds()
+			}
+			declared = append(declared, tool)
 		}
 		d.tell(Frame{"type": "host_tools", "agent_id": offer.agentID, "tools": declared, "timeout_ms": offer.toolTimeout.Milliseconds()})
 	}
@@ -260,7 +269,7 @@ func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
 		}
 	}
 	if functions == nil {
-		d.tell(Frame{"type": "tool_result", "id": id, "error": "this worker does not run " + name})
+		d.tell(Frame{"type": "tool_result", "tool_call_id": id, "id": id, "error": "this worker does not run " + name})
 		return
 	}
 
@@ -271,19 +280,15 @@ func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
 		defer d.running.Done()
 		defer d.active.Add(-1)
 
-		result := Frame{"type": "tool_result", "id": id}
-		output, err := functions.Call(ctx, name, frame.String("arguments"))
-		switch {
-		case err != nil:
+		// id is tool_call_id under the name a router from before it reads.
+		result := Frame{"type": "tool_result", "tool_call_id": id, "id": id}
+		line := tools.WithLine(ctx, toolLine{send: d.send, holds: &d.holds})
+		output, err := functions.Run(line, toolCallOf(frame, ""), name, frame.String("arguments"))
+		if err != nil {
 			d.logger.Error("a hosted tool failed", "tool", name, "error", err)
 			result["error"] = err.Error()
-		case len(output.Images) > 0:
-			// The router takes a worker's result as words, so its pictures would be lost
-			// without the model knowing; saying so lets it tell the person.
-			d.logger.Error("a hosted tool returned pictures, which a worker cannot send", "tool", name)
-			result["error"] = name + " returned pictures, and a hosted tool's result reaches the model as words only"
-		default:
-			result["output"] = output.Text
+		} else {
+			result["output"] = output.Wire()
 		}
 		if !d.tell(result) {
 			d.logger.Error("a hosted tool's result never reached the router", "tool", name)
@@ -477,6 +482,13 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 			d.host()
 		case "tool_call":
 			d.runHosted(ctx, frame)
+		case "tool_held":
+			d.holds.answer(frame.String("id"), true)
+		case "tool_cancel":
+			d.holds.answer(frame.String("id"), false)
+			for _, offer := range d.hosted {
+				offer.functions.Cancel(frame.String("session_id"), frame.String("id"))
+			}
 		case "hosting":
 			d.logger.Info("the router sends this worker's tools here", "agent", frame.String("agent_id"))
 		case "hosting_refused":
@@ -621,6 +633,14 @@ func (d *Dispatch) measure(ctx context.Context) {
 //
 // A closed socket is not an error here: every one of these is something the router would
 // like to know rather than something a conversation depends on.
+// send is tell for a caller that wants an error.
+func (d *Dispatch) send(frame Frame) error {
+	if !d.tell(frame) {
+		return errNoSocket
+	}
+	return nil
+}
+
 func (d *Dispatch) tell(frame Frame) bool {
 	d.mu.Lock()
 	socket := d.socket

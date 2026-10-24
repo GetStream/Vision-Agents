@@ -500,6 +500,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
+		spec.Tools,
 		created.askTool,
 	)
 
@@ -508,7 +509,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// drops whichever of them nothing on this call can carry out.
 	tools := append([]harness.Tool(nil), spec.Tools...)
 	var callers agent.ToolRunner = created.tools
-	tools, callers = m.hostedTools(spec, created.id, tools, callers)
+	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
 	tools, callers = moderationTools(spec, stream, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()
@@ -578,10 +579,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
 	}
 	// Only a connector binding's policy names a phrase or lets a call go on after an
-	// interruption; a session without one runs its tools as it always has.
+	// interruption, and only a caller's or a worker's tool that says so is cancelled by one;
+	// a session with neither runs its tools as it always has.
 	var toolPolicy func(string) agent.ToolPolicy
 	if connectors != nil {
 		toolPolicy = connectors.toolPolicy
+	}
+	if policy := interruptible(tools, toolPolicy); policy != nil {
+		toolPolicy = policy
 	}
 	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {

@@ -55,7 +55,7 @@ module GetStream
       # (its name when it has none, as #sync stores it) and sends every call to this worker.
       # tool_timeout is how many seconds the router waits for one tool call to be answered
       # before telling the model it failed, not how long the worker runs; nil takes the
-      # router's default of two minutes. Call before #run.
+      # router's default of 30 seconds. Call before #run.
       def host(agent, tool_timeout: nil)
         agent_id = (agent.config || agent.name).to_s
         raise ConfigurationError, "hosting needs an agent with a name" if agent_id.empty?

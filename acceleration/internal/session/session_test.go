@@ -1368,11 +1368,28 @@ func (s *SessionSuite) TestAToolNobodyAnswersGivesUpRatherThanHangingTheTurn() {
 	s.Require().NotNil(awaitToolCall(events), "the caller was never asked in the first place")
 }
 
+func (s *SessionSuite) TestAToolsOwnTimeoutReplacesTheSessions() {
+	s.manages()
+	created := s.joins(Spec{
+		ToolTimeoutMs: 60_000,
+		Tools:         []harness.Tool{{Name: "search_flights", Description: "Search for flights", Timeout: 50 * time.Millisecond}},
+	})
+	events, detach := created.Watch()
+	defer detach()
+
+	started := time.Now()
+	_, err := created.tools.Run(s.ctx, llm.ToolCall{ID: "call-1", Name: "search_flights"})
+
+	s.Require().ErrorIs(err, context.DeadlineExceeded)
+	s.Less(time.Since(started), 5*time.Second, "the call waited out the session's timeout")
+	s.Require().NotNil(awaitToolCall(events), "the caller was never asked in the first place")
+}
+
 func (s *SessionSuite) TestToolCancellationRetainsTheInterruptedTurn() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	events := make(chan ToolCall, 2)
-	tools := newBridge(time.Second, func(call ToolCall) error { events <- call; return nil })
+	tools := newBridge(time.Second, nil, func(call ToolCall) error { events <- call; return nil })
 	finished := make(chan error, 1)
 	go func() {
 		_, err := tools.Run(ctx, llm.ToolCall{ID: "call-one", TurnID: "turn-one", Name: "lookup_order", Arguments: "{}"})
@@ -1447,7 +1464,7 @@ func (s *SessionSuite) TestCancelledAndExpiredToolsAreNotPending() {
 		if expired {
 			timeout = 10 * time.Millisecond
 		}
-		tools := newBridge(timeout, func(call ToolCall) error { asked <- call; return nil })
+		tools := newBridge(timeout, nil, func(call ToolCall) error { asked <- call; return nil })
 		finished := make(chan error, 1)
 		go func() {
 			_, err := tools.Run(ctx, llm.ToolCall{ID: "pending", TurnID: "turn", Name: "lookup_order"})

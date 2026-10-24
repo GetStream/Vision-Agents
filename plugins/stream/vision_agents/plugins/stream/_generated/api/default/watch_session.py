@@ -16,6 +16,7 @@ def _get_kwargs(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -25,6 +26,8 @@ def _get_kwargs(
     params["decisions"] = decisions
 
     params["replay_pending_tools"] = replay_pending_tools
+
+    params["tools"] = tools
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -85,6 +88,7 @@ def sync_detailed(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> Response[Any | ErrorResponse]:
     """Watch the conversation and answer the model's tool calls
 
@@ -104,11 +108,11 @@ def sync_detailed(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
-    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
-    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
-    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
-    `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and
+    message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and
+    where all it had been sent is in the reply's message, when any of it had), `overlap_decided`,
+    `conversation_compacted`, `models_changed`, `error` and `left`.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -183,9 +187,29 @@ def sync_detailed(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
     (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
-    be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
-    another command or turn.
+    be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
+    `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). Every watcher
+    sees every `tool_call`, and `run` says whether this one is to run it: only a watcher that runs the
+    tool answers, and a result from any other is dropped. A watcher says which tools it runs with
+    `tools` when it attaches. Without it, it runs the session's tools when it is on the side that
+    created the session: a backend for a session a backend created, the same person for one a device
+    created. A tool a backend declared runs only on a backend, whatever a device says it holds. A call
+    that no watcher attached runs fails at once. `tool_cancel` (`id`, `turn_id`) says a call is no
+    longer wanted: its timeout passed, or the caller interrupted a call to an `interruptible` tool. Tool
+    calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat
+    both values so a result cannot be adopted by another command or turn.
+    While it runs a call, the watcher running it may send `tool_hold` (`tool_call_id`) to keep the call
+    going when the caller talks over the agent, which would otherwise cancel a call to an
+    `interruptible` tool. Every watcher is sent `tool_held` (`id`) when it was held, or `tool_cancel`
+    when the call had already stopped. An explicit `interrupt` still cancels a held call. It may also
+    send `tool_update` (`tool_call_id`, `text`, `verbatim`) to say how the call is going: the agent
+    tells a voice caller in its own words once nobody is talking, and a persistent conversation shows
+    `text` as the summary of the call's step until it ends. On speech-to-speech, only OpenAI Realtime is
+    told while the call is open; other models only report it. With `verbatim` true, the agent says or
+    posts `text` as written instead. A newer update replaces one not yet said, and a call's result
+    replaces both. Every watcher is sent `tool_updated` (`id`, `turn_id`, `tool`, `text`, `verbatim`)
+    for each update. An update or hold from a watcher that does not run the call is dropped.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -209,6 +233,7 @@ def sync_detailed(
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        tools (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -223,6 +248,7 @@ def sync_detailed(
         interim=interim,
         decisions=decisions,
         replay_pending_tools=replay_pending_tools,
+        tools=tools,
     )
 
     response = client.get_httpx_client().request(
@@ -239,6 +265,7 @@ def sync(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> Any | ErrorResponse | None:
     """Watch the conversation and answer the model's tool calls
 
@@ -258,11 +285,11 @@ def sync(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
-    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
-    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
-    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
-    `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and
+    message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and
+    where all it had been sent is in the reply's message, when any of it had), `overlap_decided`,
+    `conversation_compacted`, `models_changed`, `error` and `left`.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -337,9 +364,29 @@ def sync(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
     (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
-    be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
-    another command or turn.
+    be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
+    `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). Every watcher
+    sees every `tool_call`, and `run` says whether this one is to run it: only a watcher that runs the
+    tool answers, and a result from any other is dropped. A watcher says which tools it runs with
+    `tools` when it attaches. Without it, it runs the session's tools when it is on the side that
+    created the session: a backend for a session a backend created, the same person for one a device
+    created. A tool a backend declared runs only on a backend, whatever a device says it holds. A call
+    that no watcher attached runs fails at once. `tool_cancel` (`id`, `turn_id`) says a call is no
+    longer wanted: its timeout passed, or the caller interrupted a call to an `interruptible` tool. Tool
+    calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat
+    both values so a result cannot be adopted by another command or turn.
+    While it runs a call, the watcher running it may send `tool_hold` (`tool_call_id`) to keep the call
+    going when the caller talks over the agent, which would otherwise cancel a call to an
+    `interruptible` tool. Every watcher is sent `tool_held` (`id`) when it was held, or `tool_cancel`
+    when the call had already stopped. An explicit `interrupt` still cancels a held call. It may also
+    send `tool_update` (`tool_call_id`, `text`, `verbatim`) to say how the call is going: the agent
+    tells a voice caller in its own words once nobody is talking, and a persistent conversation shows
+    `text` as the summary of the call's step until it ends. On speech-to-speech, only OpenAI Realtime is
+    told while the call is open; other models only report it. With `verbatim` true, the agent says or
+    posts `text` as written instead. A newer update replaces one not yet said, and a call's result
+    replaces both. Every watcher is sent `tool_updated` (`id`, `turn_id`, `tool`, `text`, `verbatim`)
+    for each update. An update or hold from a watcher that does not run the call is dropped.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -363,6 +410,7 @@ def sync(
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        tools (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -378,6 +426,7 @@ def sync(
         interim=interim,
         decisions=decisions,
         replay_pending_tools=replay_pending_tools,
+        tools=tools,
     ).parsed
 
 
@@ -388,6 +437,7 @@ async def asyncio_detailed(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> Response[Any | ErrorResponse]:
     """Watch the conversation and answer the model's tool calls
 
@@ -407,11 +457,11 @@ async def asyncio_detailed(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
-    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
-    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
-    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
-    `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and
+    message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and
+    where all it had been sent is in the reply's message, when any of it had), `overlap_decided`,
+    `conversation_compacted`, `models_changed`, `error` and `left`.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -486,9 +536,29 @@ async def asyncio_detailed(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
     (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
-    be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
-    another command or turn.
+    be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
+    `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). Every watcher
+    sees every `tool_call`, and `run` says whether this one is to run it: only a watcher that runs the
+    tool answers, and a result from any other is dropped. A watcher says which tools it runs with
+    `tools` when it attaches. Without it, it runs the session's tools when it is on the side that
+    created the session: a backend for a session a backend created, the same person for one a device
+    created. A tool a backend declared runs only on a backend, whatever a device says it holds. A call
+    that no watcher attached runs fails at once. `tool_cancel` (`id`, `turn_id`) says a call is no
+    longer wanted: its timeout passed, or the caller interrupted a call to an `interruptible` tool. Tool
+    calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat
+    both values so a result cannot be adopted by another command or turn.
+    While it runs a call, the watcher running it may send `tool_hold` (`tool_call_id`) to keep the call
+    going when the caller talks over the agent, which would otherwise cancel a call to an
+    `interruptible` tool. Every watcher is sent `tool_held` (`id`) when it was held, or `tool_cancel`
+    when the call had already stopped. An explicit `interrupt` still cancels a held call. It may also
+    send `tool_update` (`tool_call_id`, `text`, `verbatim`) to say how the call is going: the agent
+    tells a voice caller in its own words once nobody is talking, and a persistent conversation shows
+    `text` as the summary of the call's step until it ends. On speech-to-speech, only OpenAI Realtime is
+    told while the call is open; other models only report it. With `verbatim` true, the agent says or
+    posts `text` as written instead. A newer update replaces one not yet said, and a call's result
+    replaces both. Every watcher is sent `tool_updated` (`id`, `turn_id`, `tool`, `text`, `verbatim`)
+    for each update. An update or hold from a watcher that does not run the call is dropped.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -512,6 +582,7 @@ async def asyncio_detailed(
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        tools (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -526,6 +597,7 @@ async def asyncio_detailed(
         interim=interim,
         decisions=decisions,
         replay_pending_tools=replay_pending_tools,
+        tools=tools,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -540,6 +612,7 @@ async def asyncio(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
+    tools: str | Unset = UNSET,
 ) -> Any | ErrorResponse | None:
     """Watch the conversation and answer the model's tool calls
 
@@ -559,11 +632,11 @@ async def asyncio(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
-    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
-    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
-    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
-    `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and
+    message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and
+    where all it had been sent is in the reply's message, when any of it had), `overlap_decided`,
+    `conversation_compacted`, `models_changed`, `error` and `left`.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -638,9 +711,29 @@ async def asyncio(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
     (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
-    be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
-    another command or turn.
+    be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
+    `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). Every watcher
+    sees every `tool_call`, and `run` says whether this one is to run it: only a watcher that runs the
+    tool answers, and a result from any other is dropped. A watcher says which tools it runs with
+    `tools` when it attaches. Without it, it runs the session's tools when it is on the side that
+    created the session: a backend for a session a backend created, the same person for one a device
+    created. A tool a backend declared runs only on a backend, whatever a device says it holds. A call
+    that no watcher attached runs fails at once. `tool_cancel` (`id`, `turn_id`) says a call is no
+    longer wanted: its timeout passed, or the caller interrupted a call to an `interruptible` tool. Tool
+    calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat
+    both values so a result cannot be adopted by another command or turn.
+    While it runs a call, the watcher running it may send `tool_hold` (`tool_call_id`) to keep the call
+    going when the caller talks over the agent, which would otherwise cancel a call to an
+    `interruptible` tool. Every watcher is sent `tool_held` (`id`) when it was held, or `tool_cancel`
+    when the call had already stopped. An explicit `interrupt` still cancels a held call. It may also
+    send `tool_update` (`tool_call_id`, `text`, `verbatim`) to say how the call is going: the agent
+    tells a voice caller in its own words once nobody is talking, and a persistent conversation shows
+    `text` as the summary of the call's step until it ends. On speech-to-speech, only OpenAI Realtime is
+    told while the call is open; other models only report it. With `verbatim` true, the agent says or
+    posts `text` as written instead. A newer update replaces one not yet said, and a call's result
+    replaces both. Every watcher is sent `tool_updated` (`id`, `turn_id`, `tool`, `text`, `verbatim`)
+    for each update. An update or hold from a watcher that does not run the call is dropped.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -664,6 +757,7 @@ async def asyncio(
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
         replay_pending_tools (bool | Unset):  Default: False.
+        tools (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -680,5 +774,6 @@ async def asyncio(
             interim=interim,
             decisions=decisions,
             replay_pending_tools=replay_pending_tools,
+            tools=tools,
         )
     ).parsed

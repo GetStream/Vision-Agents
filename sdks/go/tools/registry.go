@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 )
 
 // Function is one of the caller's own functions, as the model is offered it and as it runs.
@@ -17,8 +18,15 @@ type Function struct {
 	Description string
 	// Parameters is the JSON Schema object describing the arguments.
 	Parameters map[string]any
+	// Interruptible is whether the caller talking over the agent cancels a call.
+	Interruptible bool
+	// Timeout bounds one call. Zero leaves it to the session.
+	Timeout time.Duration
+	// Concurrency caps how many calls run at once. Zero is no cap beyond the registry's.
+	Concurrency int
 
-	run func(ctx context.Context, arguments []byte) (Output, error)
+	run   func(ctx context.Context, arguments []byte) (Output, error)
+	slots chan struct{}
 }
 
 // Output is what a tool returns to show the model pictures beside its words, such as a frame
@@ -89,11 +97,20 @@ type Registry struct {
 	mu        sync.RWMutex
 	functions map[string]*Function
 	order     []string
+
+	running  map[string]*running
+	slots    chan struct{}
+	receipts Receipts
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
-	return &Registry{functions: map[string]*Function{}}
+	return &Registry{
+		functions: map[string]*Function{},
+		running:   map[string]*running{},
+		slots:     make(chan struct{}, DefaultConcurrency),
+		receipts:  newMemoryReceipts(),
+	}
 }
 
 // Register adds a function to the registry.
@@ -107,7 +124,7 @@ func NewRegistry() *Registry {
 //	    }) (any, error) {
 //	        return weatherAt(ctx, in.Location)
 //	    })
-func Register[In any](registry *Registry, name, description string, run func(context.Context, In) (any, error)) error {
+func Register[In any](registry *Registry, name, description string, run func(context.Context, In) (any, error), options ...Option) error {
 	if registry == nil {
 		return fmt.Errorf("tools: %s has no registry to go in", name)
 	}
@@ -144,14 +161,50 @@ func Register[In any](registry *Registry, name, description string, run func(con
 			}
 			return outputOf(output), nil
 		},
-	})
+	}, options)
+}
+
+// RegisterSchema adds a function described by a JSON Schema written by hand, for arguments
+// no Go type describes well. The function is handed the model's arguments as they came, a
+// JSON object, to decode itself.
+func RegisterSchema(registry *Registry, name, description string, parameters map[string]any, run func(context.Context, json.RawMessage) (any, error), options ...Option) error {
+	if registry == nil {
+		return fmt.Errorf("tools: %s has no registry to go in", name)
+	}
+	if name == "" {
+		return fmt.Errorf("tools: a function needs a name")
+	}
+	if description == "" {
+		return fmt.Errorf("tools: %s needs a description, since it is all the model has to choose by", name)
+	}
+	if run == nil {
+		return fmt.Errorf("tools: %s has nothing to run", name)
+	}
+	if kind, _ := parameters["type"].(string); kind != "object" {
+		return fmt.Errorf("tools: %s: a tool's parameters are a JSON Schema object, with type object", name)
+	}
+	return registry.add(&Function{
+		Name:        name,
+		Description: description,
+		Parameters:  parameters,
+		run: func(ctx context.Context, arguments []byte) (Output, error) {
+			if !json.Valid(arguments) {
+				return Output{}, fmt.Errorf("tools: %s was asked for with arguments that are not JSON", name)
+			}
+			output, err := run(ctx, json.RawMessage(arguments))
+			if err != nil {
+				return Output{}, err
+			}
+			return outputOf(output), nil
+		},
+	}, options)
 }
 
 // Add offers a tool to the model.
 //
 // Every call runs on a copy of the value added, with the model's arguments decoded into it,
 // so calls running at once never share their arguments.
-func (r *Registry) Add(tool Tool) error {
+func (r *Registry) Add(tool Tool, options ...Option) error {
 	if r == nil {
 		return fmt.Errorf("tools: there is no registry to add to")
 	}
@@ -196,14 +249,32 @@ func (r *Registry) Add(tool Tool) error {
 			}
 			return outputOf(output), nil
 		},
-	})
+	}, options)
 }
 
-func (r *Registry) add(function *Function) error {
+func (r *Registry) add(function *Function, options []Option) error {
+	for _, option := range options {
+		if err := option(function); err != nil {
+			return fmt.Errorf("tools: %s: %w", function.Name, err)
+		}
+	}
+	if function.Concurrency > 0 {
+		function.slots = make(chan struct{}, function.Concurrency)
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.functions == nil {
 		r.functions = map[string]*Function{}
+	}
+	if r.running == nil {
+		r.running = map[string]*running{}
+	}
+	if r.receipts == nil {
+		r.receipts = newMemoryReceipts()
+	}
+	if r.slots == nil {
+		r.slots = make(chan struct{}, DefaultConcurrency)
 	}
 	if _, taken := r.functions[function.Name]; taken {
 		return fmt.Errorf("tools: %s is registered twice", function.Name)
@@ -231,17 +302,7 @@ func (r *Registry) List() []*Function {
 // Arguments are the JSON object the model wrote. Empty is treated as no arguments, since a
 // model calling a function that takes none often sends nothing at all.
 func (r *Registry) Call(ctx context.Context, name string, arguments string) (Output, error) {
-	r.mu.RLock()
-	function := r.functions[name]
-	r.mu.RUnlock()
-
-	if function == nil {
-		return Output{}, fmt.Errorf("tools: nothing is registered as %s", name)
-	}
-	if arguments == "" {
-		arguments = "{}"
-	}
-	return function.run(ctx, []byte(arguments))
+	return r.Run(ctx, Call{}, name, arguments)
 }
 
 // outputOf is what a function returned as the model is given it: an Output as it is, and

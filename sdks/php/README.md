@@ -223,7 +223,7 @@ $agent->tools->register('get_weather', 'The weather in a city', [
     'properties' => ['city' => ['type' => 'string']],
 ], fn (array $args): string => weatherIn($args['city']));
 
-$dispatch->host($agent, toolTimeoutMs: 0); // 0: the router waits its default two minutes per tool call
+$dispatch->host($agent, toolTimeoutMs: 0); // 0: the router waits its default 30 seconds per tool call
 $dispatch->run();
 ```
 

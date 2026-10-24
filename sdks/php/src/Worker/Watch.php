@@ -56,6 +56,11 @@ final class Watch implements IteratorAggregate
                 }
                 $kind = Json::string($frame, 'type');
                 if ($kind === 'tool_call') {
+                    // Every watcher is sent every call and the first answer wins: answering a
+                    // tool held elsewhere would beat whoever runs it, with an error.
+                    if ($this->tools === null || !$this->tools->has(Json::string($frame, 'name'))) {
+                        continue;
+                    }
                     $id = Json::string($frame, 'id');
                     // Each call in its own fiber, so a slow tool does not hold up the events
                     // behind it or the other calls the model made in the same turn.

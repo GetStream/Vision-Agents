@@ -762,6 +762,7 @@ func (a *Agent) consumeNativePresence(p *pipeline) {
 		select {
 		case <-ticker.C:
 			a.followUp()
+			a.sayNativeToolUpdate()
 		case <-p.ctx.Done():
 			return
 		}

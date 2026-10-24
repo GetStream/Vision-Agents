@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -43,6 +44,11 @@ type Tool struct {
 	// Approval, when set, is what a person is asked before each call runs. A persistent
 	// conversation shows the call as awaiting their answer.
 	Approval *ToolApproval `yaml:"-"`
+	// Interruptible says the caller interrupting cancels a call in flight. Otherwise it
+	// outlives the interruption and its result is told when it comes.
+	Interruptible bool `yaml:"-"`
+	// Timeout is how long one call may take, in place of the session's. Zero takes it.
+	Timeout time.Duration `yaml:"-"`
 }
 
 // ToolApproval is the question a person answers before a call runs.

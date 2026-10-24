@@ -68,8 +68,56 @@ return tools.Output{Text: "the room, just now", Images: []tools.Image{{URL: "dat
 
 On a call the router hands them to the agent's `vision` skill. In a chat, which has no such
 worker, a model that sees images is shown them itself, with its next reply alone; one that reads
-only text is told the tool failed. A tool hosted on a dispatch worker answers in words only, and
-one that returns pictures is reported as failed.
+only text is told the tool failed. A tool hosted on a dispatch worker sends its pictures the same
+way.
+
+A function registered with `tools.Register` takes options for how its calls are run:
+
+```go
+tools.Register(agent.Tools(), "search_flights", "Search for flights", searchFlights,
+    tools.Interruptible(true),       // the caller talking over the agent cancels the call
+    tools.Timeout(10*time.Second),   // in place of the session's 30 seconds
+    tools.Concurrency(4))            // at most four at once; the registry allows 16
+```
+
+Its `ctx` is cancelled when the router cancels the call: its timeout passed, or, for an
+interruptible tool, the caller interrupted. `tools.CallFrom(ctx)` is the call being run, whose
+`ID` is the same when the router sends a call again, so a function that changes something can
+key on it. A call sent again while it is still running joins it, and one that finished is answered
+with what it returned, without running twice.
+
+A call that takes a while can say how it is going, and protect a write from the caller
+talking over the agent:
+
+```go
+func(ctx context.Context, args RebookFlight) (any, error) {
+    call := tools.CallFrom(ctx)
+    call.Update(ctx, "Checking seats on the new flight")
+
+    // Read only: the caller interrupting cancels ctx, and nothing has changed.
+    seat, err := airline.HoldSeat(ctx, args.NewFlightID)
+    if err != nil {
+        return nil, err
+    }
+
+    // From here on, the caller interrupting no longer cancels the call.
+    ctx = call.DisallowInterruptions(ctx)
+    call.Say(ctx, "Got a seat, moving your booking now.")
+    return airline.Rebook(ctx, args.BookingID, seat, call.ID)
+}
+```
+
+`call.Update` hands the agent a status, which it tells a voice caller in its own words once
+nobody is talking, and which a conversation shows on the call's step. `call.Say` has it say
+the words as written, or post them in text; a speech-to-speech model may paraphrase them.
+`DisallowInterruptions` returns a context only the call's timeout and the socket ending cancel.
+When the call was already stopped, that context comes back cancelled, so the write never starts.
+Outside a call, all three do nothing.
+
+Struct tags describe arguments beyond `schema`: `enum:"economy,business"`, `minimum:"1"`,
+`maximum:"9"`, `pattern`, `format` and `example`. A type that describes itself implements
+`JSONSchema() map[string]any`, and `tools.RegisterSchema` takes a schema as written and hands the
+function the raw arguments.
 
 ## Conversations somebody comes back to
 

@@ -1461,6 +1461,10 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		unsaved = true
+	case agent.ToolUpdated:
+		if e.Verbatim || !c.acceptTurn(e.TurnID, false) || !reported(m, e.ID, e.Text) {
+			return
+		}
 	case agent.ToolRan:
 		if !c.acceptTurn(e.TurnID, false) {
 			return

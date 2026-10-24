@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 // DispatchSuite covers the worker side of dispatch: what a worker has to send to be given
@@ -272,7 +274,42 @@ func (s *DispatchSuite) TestHostedToolsAreKeptForTheAgentTheWorkerNames() {
 	tools, timeout := s.dispatch.HostedTools(s.customerID(), "stream-support")
 	s.Require().Len(tools, 1)
 	s.Equal("investigate_sdk", tools[0].Name)
-	s.Equal(2*time.Minute, timeout, "a worker that names no timeout takes the default")
+	s.Equal(30*time.Second, timeout, "a worker that names no timeout takes the session's default")
+}
+
+func (s *DispatchSuite) TestAHostedToolsOwnTimeoutReplacesTheWorkers() {
+	worker := s.worker()
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "host_tools", "agent_id": "stream-support", "timeout_ms": 60_000,
+		"tools": []frame{{"name": "investigate_sdk", "description": "Read SDK source", "timeout_ms": 50, "interruptible": true}},
+	}))
+	s.Require().Equal("hosting", s.next(worker)["type"])
+	tools, _ := s.dispatch.HostedTools(s.customerID(), "stream-support")
+	s.Require().Len(tools, 1)
+	s.True(tools[0].Interruptible)
+	answered := make(chan error, 1)
+	started := time.Now()
+	go func() {
+		_, err := s.dispatch.RunHosted(s.T().Context(), s.customerID(), "stream-support",
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+		answered <- err
+	}()
+	s.Equal("tool_call", s.next(worker)["type"])
+
+	s.Equal("tool_cancel", s.next(worker)["type"])
+	s.Error(<-answered)
+	s.Less(time.Since(started), 5*time.Second, "the call waited out the worker's timeout")
+}
+
+func (s *DispatchSuite) TestANegativeHostedToolTimeoutIsRefused() {
+	worker := s.worker()
+
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "host_tools", "agent_id": "stream-support",
+		"tools": []frame{{"name": "investigate_sdk", "description": "Read SDK source", "timeout_ms": -1}},
+	}))
+
+	s.Equal("hosting_refused", s.next(worker)["type"])
 }
 
 func (s *DispatchSuite) TestHostedToolsNeedAnAgentToBeFor() {
@@ -294,7 +331,7 @@ func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
 		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
 
 	type answer struct {
-		output string
+		output []llm.ContentPart
 		err    error
 	}
 	answered := make(chan answer, 1)
@@ -316,7 +353,119 @@ func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
 
 	got := <-answered
 	s.Require().NoError(got.err)
-	s.Equal("targetSdkVersion 35", got.output)
+	s.Equal("targetSdkVersion 35", llm.TextOf(got.output))
+}
+
+// hostedAnswer is what came of one hosted call.
+type hostedAnswer struct {
+	parts []llm.ContentPart
+	err   error
+}
+
+// asksTheWorker hosts investigate_sdk on the suite's worker and makes one call to it.
+func (s *DispatchSuite) asksTheWorker() (*websocket.Conn, <-chan hostedAnswer) {
+	worker := s.worker()
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], "stream-support",
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+	answered := make(chan hostedAnswer, 1)
+	go func() {
+		parts, err := s.dispatch.RunHosted(s.T().Context(), s.customerID(), "stream-support",
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+		answered <- hostedAnswer{parts, err}
+	}()
+	s.Equal("tool_call", s.next(worker)["type"])
+	return worker, answered
+}
+
+func (s *DispatchSuite) TestAHostedCallSaysWhoAskedAndInWhichConversation() {
+	worker := s.worker()
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], "stream-support",
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+	go func() {
+		_, _ = s.dispatch.RunHosted(s.T().Context(), s.customerID(), "stream-support", dispatch.ToolCall{
+			ID: "call-1", SessionID: "session-1", TurnID: "turn-1", Name: "investigate_sdk",
+			User:         &dispatch.User{ID: "jean", Name: "Jean"},
+			Conversation: &dispatch.Conversation{CID: "messaging:support-1", Custom: map[string]any{"plan": "gold"}},
+		})
+	}()
+
+	call := s.next(worker)
+
+	s.Equal("turn-1", call["turn_id"])
+	s.Equal(frame{"id": "jean", "name": "Jean"}, frame(call["user"].(map[string]any)))
+	s.Equal(frame{"cid": "messaging:support-1", "custom": map[string]any{"plan": "gold"}},
+		frame(call["conversation"].(map[string]any)))
+}
+
+func (s *DispatchSuite) TestAHostedResultNamesItsCallAsASessionsDoes() {
+	worker, answered := s.asksTheWorker()
+
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "tool_result", "tool_call_id": "call-1", "output": "targetSdkVersion 35"}))
+
+	got := <-answered
+	s.Require().NoError(got.err)
+	s.Equal(llm.TextParts("targetSdkVersion 35"), got.parts)
+}
+
+func (s *DispatchSuite) TestAHostedToolCanAnswerWithAPicture() {
+	worker, answered := s.asksTheWorker()
+
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "tool_result", "tool_call_id": "call-1", "output": []frame{
+			{"type": "text", "text": "the settings screen"},
+			{"type": "image_url", "image_url": frame{"url": roses}},
+		}}))
+
+	got := <-answered
+	s.Require().NoError(got.err)
+	s.Require().Len(got.parts, 2)
+	s.Equal("the settings screen", got.parts[0].Text)
+	s.Require().NotNil(got.parts[1].Image, "the picture was dropped")
+	s.Equal("image/png", got.parts[1].Image.MIME)
+}
+
+func (s *DispatchSuite) TestAHostedResultThatIsNotContentFailsTheCall() {
+	worker, answered := s.asksTheWorker()
+
+	s.Require().NoError(worker.WriteJSON(frame{"type": "tool_result", "tool_call_id": "call-1", "output": 42}))
+
+	s.Error((<-answered).err)
+}
+
+func (s *DispatchSuite) TestAHostedCallTheSessionGivesUpOnIsCancelledOnTheWorker() {
+	worker := s.worker()
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], "stream-support",
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+	ctx, giveUp := context.WithCancel(s.T().Context())
+	go func() {
+		_, _ = s.dispatch.RunHosted(ctx, s.customerID(), "stream-support",
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+	}()
+	s.Equal("tool_call", s.next(worker)["type"])
+
+	giveUp()
+
+	cancel := s.next(worker)
+	s.Equal("tool_cancel", cancel["type"])
+	s.Equal("call-1", cancel["id"])
+	s.Equal("session-1", cancel["session_id"])
+}
+
+func (s *DispatchSuite) TestAHostedCallThatTimesOutIsCancelledOnTheWorker() {
+	worker := s.worker()
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], "stream-support",
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, 50*time.Millisecond))
+	go func() {
+		_, _ = s.dispatch.RunHosted(s.T().Context(), s.customerID(), "stream-support",
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+	}()
+	s.Equal("tool_call", s.next(worker)["type"])
+
+	cancel := s.next(worker)
+
+	s.Equal("tool_cancel", cancel["type"])
+	s.Equal("call-1", cancel["id"])
 }
 
 func (s *DispatchSuite) TestADrainingRouterSendsItsWorkersToReconnectElsewhere() {
