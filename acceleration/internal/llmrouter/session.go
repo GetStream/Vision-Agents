@@ -195,13 +195,19 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 	span.End()
 	held := claim(ctx)
 	reserved := held.idOf()
+	owner := s.owner
+	// A response asked for with a Spent of its own, as the LLM socket asks each one, adds its
+	// cost up apart from the session's.
+	if spent := routing.SpentFrom(ctx); spent != nil {
+		owner.Spent = spent
+	}
 	if err != nil {
 		// The provider took nothing on, so nothing it would bill is held.
 		s.recorder.Release(reserved)
 		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
 		code := createErrorCode(ctx)
 		stat := routing.Stat{
-			Owner:        s.owner,
+			Owner:        owner,
 			StartedAt:    startedAt,
 			OperationID:  params.ID,
 			Purpose:      params.Purpose,
@@ -231,7 +237,7 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 		if _, done := event.(llm.ResponseCompleted); done {
 			settled()
 		}
-		s.observe(startedAt, createdAt, params, hedge, event, charged, reserved)
+		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved)
 	}), nil
 }
 
@@ -314,7 +320,7 @@ func (s *Session) Close() error {
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, charged routing.Caller, reserved uuid.UUID) {
+func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, owner routing.Owner, charged routing.Caller, reserved uuid.UUID) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
@@ -347,7 +353,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		"success", served(response), "error_code", errorCode(response))
 	composed := llm.Compose(params).Scaled(stat.InputTokens)
 	usage := stat.Usage
-	stat.Owner = s.owner
+	stat.Owner = owner
 	// Recorded under the id it was reserved under, which settles the reservation at the cost.
 	stat.UsageID = reserved
 	stat.StartedAt = startedAt

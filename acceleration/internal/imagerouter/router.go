@@ -114,6 +114,7 @@ func (r *Router) Generate(ctx context.Context, request Request) (Generation, err
 	core := routing.Request{
 		CustomerID:  request.CustomerID,
 		Attribution: routing.AttributionFrom(ctx),
+		Spent:       routing.SpentFrom(ctx),
 		Tags:        request.Tags,
 		Target:      request.Target,
 		Providers:   request.Providers,

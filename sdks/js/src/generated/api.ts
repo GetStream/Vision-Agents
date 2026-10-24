@@ -151,6 +151,7 @@ export type paths = {
          *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
          *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. A model that refuses the session part way through hands it to the next model routed for it, which is announced with another `started` frame naming its `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields; incomplete responses additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
          *     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`. A refusal about money also carries `code` and `error_type`, as an HTTP request is refused: `account_suspended` (`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or `spend_limit_reached` (`payment_required`) for a model that costs money, while one that costs nothing is still served; the socket then closes with 1008.
+         *     A server-side caller is told what each unit cost and when its organization's credit runs low; an end user's device is told neither. A settled `transcript`, a `synthesis_complete` and a `complete` carry `cost_micros`, what that turn, utterance or response cost in millionths of a dollar. What is recorded as the socket closes, such as a transcriber's last audio or a voice's failed utterance, comes on no frame. A `balance` frame, with `balance_micros` and `warning` (`low` or `exhausted`), says the organization's balance went down into that state while the socket was open, the values X-Stream-Balance-Micros and X-Stream-Balance-Warning carry on an answer: once per crossing, and at once after `started` when it already is.
          *     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
          */
         readonly get: operations["streamModality"];
@@ -5017,6 +5018,11 @@ export type components = {
         };
         /** @description What the request read and wrote. The state's tokens are counted once however many questions shared them. */
         readonly ClassifyUsage: {
+            /**
+             * Format: int64
+             * @description What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says: absent when it recorded nothing. Only a server-side caller is told.
+             */
+            readonly cost_micros?: number;
             /** Format: int64 */
             readonly input_tokens: number;
             /** Format: int64 */
@@ -7233,6 +7239,12 @@ export type components = {
              *     ]
              */
             readonly allowed_models?: readonly string[];
+            /**
+             * Format: int64
+             * @description The organization's own warning threshold, in millionths of a dollar: at or below it, every answer to a backend says X-Stream-Balance-Warning: low, and the organization's stream event destinations get one account.balance_low. It wins over the tier's. Left out, the tier's applies. Only an organization's policy has one: an app's that sets it is refused.
+             * @example 20000000
+             */
+            readonly balance_warning_micros?: number;
             /**
              * @deprecated
              * @description Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400 budget_moved, and none is read back.
@@ -9826,6 +9838,8 @@ export type components = {
         /** @description The organization may not spend money now, so work that costs money is refused: its credit is spent (insufficient_credits), its spend hard limit for the day or the month is reached whatever its credit (system_limit_reached), or a budget is spent (spend_limit_reached). The message says which, and for a limit when it resets. Work on a model that costs nothing is still served. */
         readonly PaymentRequired: {
             headers: {
+                readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
                 readonly [name: string]: unknown;
             };
             content: {
@@ -9853,7 +9867,16 @@ export type components = {
     };
     parameters: never;
     requestBodies: never;
-    headers: never;
+    headers: {
+        /** @description The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none. */
+        readonly "X-Stream-Balance-Micros": number;
+        /** @description low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold. */
+        readonly "X-Stream-Balance-Warning": "low" | "exhausted";
+        /** @description true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise. */
+        readonly "X-Stream-Cost-Estimated": "true";
+        /** @description What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none. */
+        readonly "X-Stream-Cost-Micros": number;
+    };
     pathItems: never;
 };
 export type $defs = Record<string, never>;
@@ -9925,6 +9948,10 @@ export interface operations {
             /** @description The configured providers */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9955,6 +9982,10 @@ export interface operations {
             /** @description The offered shortcuts, default first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9990,6 +10021,10 @@ export interface operations {
             /** @description Candidates in preference order, best first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10028,6 +10063,10 @@ export interface operations {
             /** @description One row per bucket, provider and model */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10066,6 +10105,10 @@ export interface operations {
             /** @description One row per bucket and label value */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10132,6 +10175,10 @@ export interface operations {
             /** @description The customer's calls, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10161,6 +10208,10 @@ export interface operations {
             /** @description The call */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10194,6 +10245,10 @@ export interface operations {
             /** @description The judgements, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10224,6 +10279,10 @@ export interface operations {
             /** @description The exchanges, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10258,6 +10317,10 @@ export interface operations {
             /** @description The credentials, and the call they are for */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10288,6 +10351,10 @@ export interface operations {
             /** @description The call's tokens */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10318,6 +10385,10 @@ export interface operations {
             /** @description The conversation, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10349,6 +10420,10 @@ export interface operations {
             /** @description The causes, the one behind the most calls first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10375,6 +10450,10 @@ export interface operations {
             /** @description The customer's campaigns, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10405,6 +10484,10 @@ export interface operations {
             /** @description The campaign was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10435,6 +10518,10 @@ export interface operations {
             /** @description The campaign */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10465,6 +10552,10 @@ export interface operations {
             /** @description The contacts, in the order they are rung */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10499,6 +10590,10 @@ export interface operations {
             /** @description The contacts, in the order they are rung */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10529,6 +10624,10 @@ export interface operations {
             /** @description The campaign is paused */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10559,6 +10658,10 @@ export interface operations {
             /** @description The campaign is running */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10586,6 +10689,10 @@ export interface operations {
             /** @description The lines */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10616,6 +10723,10 @@ export interface operations {
             /** @description The line, with where to deliver */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10645,6 +10756,10 @@ export interface operations {
             /** @description Disconnected */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -10764,6 +10879,10 @@ export interface operations {
             /** @description The code and when it stops working */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10795,6 +10914,10 @@ export interface operations {
             /** @description The credentials, and the channel they are for */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10826,6 +10949,10 @@ export interface operations {
             /** @description The customer's configs, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10856,6 +10983,10 @@ export interface operations {
             /** @description The config was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10894,6 +11025,10 @@ export interface operations {
             /** @description The config */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10928,6 +11063,10 @@ export interface operations {
             /** @description The config as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10967,6 +11106,10 @@ export interface operations {
             /** @description The config is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -10999,6 +11142,10 @@ export interface operations {
             /** @description The config as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11038,6 +11185,10 @@ export interface operations {
             /** @description The changes since the last sync */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11068,6 +11219,10 @@ export interface operations {
             /** @description The config's connections */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11100,6 +11255,10 @@ export interface operations {
             /** @description The login is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -11134,6 +11293,10 @@ export interface operations {
             /** @description The URL the browser should open */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11170,6 +11333,10 @@ export interface operations {
             /** @description The client as stored, without its secret */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11202,6 +11369,10 @@ export interface operations {
             /** @description The client is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -11236,6 +11407,10 @@ export interface operations {
             /** @description A page of connections */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11266,6 +11441,10 @@ export interface operations {
             /** @description The pending connection */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11295,6 +11474,10 @@ export interface operations {
             /** @description The connection */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11328,6 +11511,10 @@ export interface operations {
             /** @description The connection is deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -11369,6 +11556,10 @@ export interface operations {
             /** @description The consent is waiting for its browser */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11403,6 +11594,10 @@ export interface operations {
             /** @description The connection, connected */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11447,6 +11642,10 @@ export interface operations {
             /** @description A page of tool calls */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11479,6 +11678,10 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -11549,6 +11752,10 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -11619,6 +11826,10 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -11684,6 +11895,10 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -11754,6 +11969,10 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -11818,6 +12037,10 @@ export interface operations {
             readonly 200: {
                 headers: {
                     readonly "Cache-Control"?: string;
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11857,6 +12080,10 @@ export interface operations {
             /** @description The connection's tools */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11891,6 +12118,10 @@ export interface operations {
             /** @description The tools approved */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11934,6 +12165,10 @@ export interface operations {
             /** @description What the validate found */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11968,6 +12203,10 @@ export interface operations {
             /** @description A page of audit rows */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12001,6 +12240,10 @@ export interface operations {
             /** @description A page of connectors */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12031,6 +12274,10 @@ export interface operations {
             /** @description The connector as stored */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12060,6 +12307,10 @@ export interface operations {
             /** @description The connector */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12093,6 +12344,10 @@ export interface operations {
             /** @description The connector is deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -12135,6 +12390,10 @@ export interface operations {
             /** @description A page of destinations */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12168,6 +12427,10 @@ export interface operations {
             /** @description The destination and its secret */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12209,6 +12472,10 @@ export interface operations {
             /** @description The destination is removed */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -12239,6 +12506,10 @@ export interface operations {
             /** @description The destination and its new secret */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12269,6 +12540,10 @@ export interface operations {
             /** @description The client */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12303,6 +12578,10 @@ export interface operations {
             /** @description The client was replaced */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12312,6 +12591,10 @@ export interface operations {
             /** @description The client was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12351,6 +12634,10 @@ export interface operations {
             /** @description The client is removed */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -12383,6 +12670,10 @@ export interface operations {
             /** @description The app exists; its manifest was applied again */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12392,6 +12683,10 @@ export interface operations {
             /** @description The app was created */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12440,6 +12735,10 @@ export interface operations {
             /** @description The app is deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -12620,6 +12919,10 @@ export interface operations {
             /** @description The command's current receipt */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12651,6 +12954,10 @@ export interface operations {
             /** @description Conversation messages, oldest first, with an older-page cursor */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12683,6 +12990,10 @@ export interface operations {
             /** @description The guest and a token for them */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12721,6 +13032,10 @@ export interface operations {
             /** @description The conversations were moved */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12761,6 +13076,10 @@ export interface operations {
             /** @description The passages were written */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12790,6 +13109,10 @@ export interface operations {
             /** @description The customer's documents, most recently written first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12819,6 +13142,10 @@ export interface operations {
             /** @description The document */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12849,6 +13176,10 @@ export interface operations {
             /** @description The document and its passages are gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -12877,6 +13208,10 @@ export interface operations {
             /** @description The passages */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12907,6 +13242,10 @@ export interface operations {
             /** @description The customer's pages, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12937,6 +13276,10 @@ export interface operations {
             /** @description The page was stored and its read queued */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12966,6 +13309,10 @@ export interface operations {
             /** @description The page */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12996,6 +13343,10 @@ export interface operations {
             /** @description The page and its passages are gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -13024,6 +13375,10 @@ export interface operations {
             /** @description The page as it is while the read is queued */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13054,6 +13409,10 @@ export interface operations {
             /** @description The passages */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13094,6 +13453,10 @@ export interface operations {
             /** @description Newest first; resume cursor marks the history/live handoff. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13130,6 +13493,10 @@ export interface operations {
             /** @description One log with full safe metadata. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13178,6 +13545,10 @@ export interface operations {
             /** @description SSE events logs, checkpoint and reset. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13217,6 +13588,10 @@ export interface operations {
             /** @description The customer's models, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13247,6 +13622,10 @@ export interface operations {
             /** @description The model was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13294,6 +13673,10 @@ export interface operations {
             /** @description The model */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13328,6 +13711,10 @@ export interface operations {
             /** @description The model as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13376,6 +13763,10 @@ export interface operations {
             /** @description The model is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -13404,6 +13795,10 @@ export interface operations {
             /** @description Matching plugins, in catalog order */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13531,6 +13926,10 @@ export interface operations {
             /** @description What the agent said last, and what the run spent */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13603,6 +14002,10 @@ export interface operations {
             /** @description A page of scheduled tasks */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13645,6 +14048,10 @@ export interface operations {
             /** @description The task was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13693,6 +14100,10 @@ export interface operations {
             /** @description The task */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13723,6 +14134,10 @@ export interface operations {
             /** @description The task is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -13755,6 +14170,10 @@ export interface operations {
             /** @description The task as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13785,6 +14204,10 @@ export interface operations {
             /** @description The task, paused */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13815,6 +14238,10 @@ export interface operations {
             /** @description The task, running again */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13862,6 +14289,10 @@ export interface operations {
             /** @description The run that was set going */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13906,6 +14337,10 @@ export interface operations {
             /** @description A page of the task's runs */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13937,6 +14372,10 @@ export interface operations {
             /** @description The agent is in the call */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13976,6 +14415,10 @@ export interface operations {
             /** @description The session */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14006,6 +14449,10 @@ export interface operations {
             /** @description The session is deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -14037,6 +14484,10 @@ export interface operations {
             /** @description The session as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14069,6 +14520,10 @@ export interface operations {
             /** @description The command's current receipt */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14100,6 +14555,10 @@ export interface operations {
             /** @description The command's terminal receipt */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14172,6 +14631,10 @@ export interface operations {
             /** @description The fork is running */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14202,6 +14665,10 @@ export interface operations {
             /** @description The reply was abandoned, if there was one */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -14230,6 +14697,10 @@ export interface operations {
             /** @description The memories are deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -14262,6 +14733,10 @@ export interface operations {
             /** @description Durable command accepted or replayed; only a new command starts inference */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14271,6 +14746,10 @@ export interface operations {
             /** @description The model is answering */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -14313,6 +14792,10 @@ export interface operations {
             /** @description The session's turns, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14347,6 +14830,10 @@ export interface operations {
             /** @description The agent is answering */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14393,6 +14880,10 @@ export interface operations {
             /** @description The items, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14427,6 +14918,10 @@ export interface operations {
             /** @description The conversation carries on from the end of that response */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -14459,6 +14954,10 @@ export interface operations {
             /** @description The text is being spoken */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -14491,6 +14990,10 @@ export interface operations {
             /** @description The session, on its new models */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14521,6 +15024,10 @@ export interface operations {
             /** @description The agent has left */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -14548,6 +15055,10 @@ export interface operations {
             /** @description The tools */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14581,6 +15092,10 @@ export interface operations {
             /** @description The agent is on the call */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14620,6 +15135,10 @@ export interface operations {
             /** @description The agent has left the call */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14650,6 +15169,10 @@ export interface operations {
             /** @description A page of sessions */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14679,6 +15202,10 @@ export interface operations {
             /** @description The runs, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14708,6 +15235,10 @@ export interface operations {
             /** @description The run and its conversations */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14738,6 +15269,10 @@ export interface operations {
             /** @description The run is stopping */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14765,6 +15300,10 @@ export interface operations {
             /** @description The customer's simulations, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14795,6 +15334,10 @@ export interface operations {
             /** @description The simulation was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14825,6 +15368,10 @@ export interface operations {
             /** @description The simulation */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14859,6 +15406,10 @@ export interface operations {
             /** @description The simulation as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14889,6 +15440,10 @@ export interface operations {
             /** @description The simulation is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -14917,6 +15472,10 @@ export interface operations {
             /** @description The run is going */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14947,6 +15506,10 @@ export interface operations {
             /** @description The customer's skills, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14977,6 +15540,10 @@ export interface operations {
             /** @description The skill was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15016,6 +15583,10 @@ export interface operations {
             /** @description The skill */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15050,6 +15621,10 @@ export interface operations {
             /** @description The skill as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15089,6 +15664,10 @@ export interface operations {
             /** @description The skill is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -15140,6 +15719,10 @@ export interface operations {
             /** @description The config as stored, or as it already was */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15178,6 +15761,10 @@ export interface operations {
             /** @description The user's connections are deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -15205,6 +15792,10 @@ export interface operations {
             /** @description The memories are deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -15229,6 +15820,10 @@ export interface operations {
             /** @description The customer's voices, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15259,6 +15854,10 @@ export interface operations {
             /** @description The voice was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15297,6 +15896,10 @@ export interface operations {
             /** @description The voice */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15331,6 +15934,10 @@ export interface operations {
             /** @description The voice as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15370,6 +15977,10 @@ export interface operations {
             /** @description The voice is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -15402,6 +16013,10 @@ export interface operations {
             /** @description The voice with a binding per provider */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15436,6 +16051,10 @@ export interface operations {
             /** @description The line, spoken */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15470,6 +16089,10 @@ export interface operations {
             /** @description The voice with the recording added */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15500,6 +16123,10 @@ export interface operations {
             /** @description The voices, by provider and then name */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15530,6 +16157,10 @@ export interface operations {
             /** @description The sample */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15557,6 +16188,10 @@ export interface operations {
             /** @description The providers, sorted by name */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15587,6 +16222,10 @@ export interface operations {
             /** @description A page of changes */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15617,6 +16256,10 @@ export interface operations {
             /** @description The answers, under the ids they were asked under */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15814,6 +16457,10 @@ export interface operations {
             /** @description The changes since the cursor */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15857,6 +16504,10 @@ export interface operations {
             /** @description The export, streamed */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15895,6 +16546,10 @@ export interface operations {
             /** @description What was written */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15933,6 +16588,10 @@ export interface operations {
             /** @description What was found, or why nothing was */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15994,6 +16653,10 @@ export interface operations {
             /** @description What was drawn, or why nothing was */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16021,6 +16684,10 @@ export interface operations {
             /** @description The profile */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16052,6 +16719,10 @@ export interface operations {
             /** @description The profile as saved */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16082,6 +16753,10 @@ export interface operations {
             /** @description The vendor is placing the call */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16115,6 +16790,10 @@ export interface operations {
             /** @description The digits were pressed */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -16144,6 +16823,10 @@ export interface operations {
             /** @description The vendor is dialling the human */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16256,6 +16939,10 @@ export interface operations {
             /** @description The customer's numbers, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16286,6 +16973,10 @@ export interface operations {
             /** @description The number is bought and recorded */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16316,6 +17007,10 @@ export interface operations {
             /** @description The number was released */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -16347,6 +17042,10 @@ export interface operations {
             /** @description The number now reaches a call */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16392,6 +17091,10 @@ export interface operations {
             /** @description What the vendors are offering, and which could not answer */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16424,6 +17127,10 @@ export interface operations {
             /** @description A page of opt-outs */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16454,6 +17161,10 @@ export interface operations {
             /** @description The opt-out, or the one already recorded */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16482,6 +17193,10 @@ export interface operations {
             /** @description Revoked */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -16507,6 +17222,10 @@ export interface operations {
             /** @description The sandbox */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16537,6 +17256,10 @@ export interface operations {
             /** @description The sandbox */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16563,6 +17286,10 @@ export interface operations {
             /** @description The customer's trunks, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16603,6 +17330,10 @@ export interface operations {
             /** @description The trunk is stored, its password sealed */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16641,6 +17372,10 @@ export interface operations {
             /** @description The trunk */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16679,6 +17414,10 @@ export interface operations {
             /** @description The trunk was removed */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -16719,6 +17458,10 @@ export interface operations {
             /** @description The trunk as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16761,6 +17504,10 @@ export interface operations {
             /** @description The number is on the trunk */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16802,6 +17549,10 @@ export interface operations {
             /** @description A page of use cases */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16832,6 +17583,10 @@ export interface operations {
             /** @description The draft */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16860,6 +17615,10 @@ export interface operations {
             /** @description The use case */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16893,6 +17652,10 @@ export interface operations {
             /** @description The use case */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16931,6 +17694,10 @@ export interface operations {
             /** @description Deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -16972,6 +17739,10 @@ export interface operations {
             /** @description A page of moves */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17001,6 +17772,10 @@ export interface operations {
             /** @description The submitted use case */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17037,6 +17812,10 @@ export interface operations {
             /** @description The declared vendors */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17062,6 +17841,10 @@ export interface operations {
             /** @description The app's policy */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17092,6 +17875,10 @@ export interface operations {
             /** @description The policy was stored */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17118,6 +17905,10 @@ export interface operations {
             /** @description The organization's policy */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17148,6 +17939,10 @@ export interface operations {
             /** @description The policy was stored */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17179,6 +17974,10 @@ export interface operations {
             /** @description A page of users */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17208,6 +18007,10 @@ export interface operations {
             /** @description The user's quota */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17241,6 +18044,10 @@ export interface operations {
             /** @description The user's quota as it now stands */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17270,6 +18077,10 @@ export interface operations {
             /** @description The user has no policy of their own */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -17294,6 +18105,10 @@ export interface operations {
             /** @description The customer's router configs, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17324,6 +18139,10 @@ export interface operations {
             /** @description The config was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17362,6 +18181,10 @@ export interface operations {
             /** @description The config */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17396,6 +18219,10 @@ export interface operations {
             /** @description The config as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17435,6 +18262,10 @@ export interface operations {
             /** @description The config is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -17464,6 +18295,10 @@ export interface operations {
             /** @description What the provider found */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17490,6 +18325,10 @@ export interface operations {
             /** @description The app's settings */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17529,6 +18368,10 @@ export interface operations {
             /** @description OK */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17560,6 +18403,10 @@ export interface operations {
             /** @description The limit was created */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17598,6 +18445,10 @@ export interface operations {
             /** @description OK */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17627,6 +18478,10 @@ export interface operations {
             /** @description The limit was deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -17658,6 +18513,10 @@ export interface operations {
             /** @description OK */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17698,6 +18557,10 @@ export interface operations {
             /** @description OK */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17729,6 +18592,10 @@ export interface operations {
             /** @description The grant was made */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17771,6 +18638,10 @@ export interface operations {
             /** @description OK */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17805,6 +18676,10 @@ export interface operations {
             /** @description OK */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17836,6 +18711,10 @@ export interface operations {
             /** @description OK */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17869,6 +18748,10 @@ export interface operations {
             /** @description One row per bucket, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17900,6 +18783,10 @@ export interface operations {
             /** @description The window's figures */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17930,6 +18817,10 @@ export interface operations {
             /** @description The rollup completed */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -17976,6 +18867,10 @@ export interface operations {
             /** @description One row per bucket and group, oldest bucket first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -18009,6 +18904,10 @@ export interface operations {
             /** @description One row per label key, largest spend first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -18039,6 +18938,10 @@ export interface operations {
             /** @description The job was accepted */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -18069,6 +18972,10 @@ export interface operations {
             /** @description The job as it now stands */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -18100,6 +19007,10 @@ export interface operations {
             /** @description The job was accepted */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -18130,6 +19041,10 @@ export interface operations {
             /** @description The job as it now stands */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -18165,6 +19080,10 @@ export interface operations {
             /** @description One row per bucket and agent */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {

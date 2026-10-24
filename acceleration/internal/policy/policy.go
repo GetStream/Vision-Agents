@@ -218,6 +218,9 @@ type decision struct {
 	ownApp bool
 	// organization is the one the app is in, empty while it is not known.
 	organization string
+	// balanceWarning is the balance its organization's policy warns at, over its tier's; nil
+	// where it sets none.
+	balanceWarning *int64
 	// appQuota and organizationQuota are the daily limits per end user the app's and the
 	// organization's policies set, nil where they set none. users is an app some of whose
 	// users have a policy of their own, so a user of an app with none costs no lookup.
@@ -685,8 +688,9 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 		tags:   labelled(organization, app),
 		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
-		ownApp:       enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
-		organization: organizationID,
+		ownApp:         enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
+		organization:   organizationID,
+		balanceWarning: organization.BalanceWarningMicros,
 	}
 	decided.appQuota, decided.organizationQuota = app.Quota, organization.Quota
 	// An app whose users cannot be told apart is taken to have some with a policy, so each is

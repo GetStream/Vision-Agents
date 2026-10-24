@@ -114,6 +114,7 @@ func (r *Router) Detect(ctx context.Context, request Request) (Found, error) {
 	core := routing.Request{
 		CustomerID:  request.CustomerID,
 		Attribution: routing.AttributionFrom(ctx),
+		Spent:       routing.SpentFrom(ctx),
 		Tags:        request.Tags,
 		Target:      request.Target,
 		Providers:   request.Providers,

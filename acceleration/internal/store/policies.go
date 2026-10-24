@@ -64,6 +64,9 @@ type PolicyDocument struct {
 	// written there for want of one of its own, and what it wrote there before can only be
 	// read. An organization's is set only by the operator.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
+	// BalanceWarningMicros is the balance, in micros, at or below which the organization is
+	// warned, over its tier's; on an organization's document only.
+	BalanceWarningMicros *int64 `json:"balance_warning_micros,omitempty"`
 }
 
 // Quota is what one end user may spend in a UTC day. A nil field is no opinion, so the

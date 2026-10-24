@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -131,6 +132,53 @@ var responseDescriptions = map[string]string{
 		"spend_check_unavailable, the router could not share what the organization is spending " +
 		"with the other routers for a while, so work that costs money is refused until it can; " +
 		"Retry-After says when to try again, and work on a model that costs nothing is still served.",
+}
+
+// answerHeaders are what an answer to a customer's backend says of money, declared once under
+// components/headers and referred to from every answer that can carry them.
+var answerHeaders = map[string]*huma.Header{
+	headerCostMicros: {
+		Description: "What the request cost, in millionths of a dollar: the sum of the usage it recorded. " +
+			"Sent on a success to a server-side caller when the request recorded any, and never to an end user's " +
+			"device. An operation that answers before its work runs, such as createResponse, sends none.",
+		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
+	},
+	headerCostEstimated: {
+		Description: "true when some of X-Stream-Cost-Micros is the router's own count, because the " +
+			"vendor never said what the work used. Absent otherwise.",
+		Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"true"}},
+	},
+	headerBalanceMicros: {
+		Description: "The organization's credit left, in millionths of a dollar, less what its work under " +
+			"way holds: the figure admission refuses at. Sent on a success and on a refusal for money to " +
+			"a server-side caller once the router has read the organization's account, and never to " +
+			"an end user's device. A router that " +
+			"bills nobody sends none.",
+		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
+	},
+	headerBalanceWarning: {
+		Description: "low when X-Stream-Balance-Micros is at or below the organization's warning " +
+			"threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below " +
+			"0. Absent while the balance is above the threshold.",
+		Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{balanceLow, balanceExhausted}},
+	},
+}
+
+// costHeaderNames are the headers an answer that recorded work carries, and balanceHeaderNames
+// the ones every answer to a backend carries, a refusal for money included.
+var (
+	costHeaderNames    = []string{headerCostMicros, headerCostEstimated}
+	balanceHeaderNames = []string{headerBalanceMicros, headerBalanceWarning}
+)
+
+// declareHeaders refers the response to the named headers of answerHeaders.
+func declareHeaders(response *huma.Response, names ...string) {
+	if response.Headers == nil {
+		response.Headers = map[string]*huma.Header{}
+	}
+	for _, name := range names {
+		response.Headers[name] = &huma.Header{Ref: "#/components/headers/" + name}
+	}
 }
 
 // There is one Huma API per process, so its error constructor is set once for all of it.
@@ -272,6 +320,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 			},
 		}
 	}
+	declareHeaders(responses["PaymentRequired"], balanceHeaderNames...)
 	config := huma.Config{
 		OpenAPI: &huma.OpenAPI{
 			OpenAPI: "3.1.0",
@@ -285,6 +334,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 			Components: &huma.Components{
 				Schemas:         huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer),
 				Responses:       responses,
+				Headers:         answerHeaders,
 				SecuritySchemes: securitySchemes,
 			},
 			OnAddOperation: []huma.AddOpFunc{shareErrorResponses},
@@ -392,10 +442,16 @@ func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 	if _, ok := operation.Responses["402"]; !ok && !socket && !public && !staffOperation(operation) {
 		operation.Responses["402"] = &huma.Response{}
 	}
-	// Whatever can be refused for money can be refused while the spend check is unavailable.
+	// Whatever can be refused for money can be refused while the spend check is unavailable, and
+	// can record work: its answers to a backend say what it cost and what credit is left.
 	if _, ok := operation.Responses["402"]; ok {
 		if _, declared := operation.Responses["503"]; !declared {
 			operation.Responses["503"] = &huma.Response{}
+		}
+		for code, response := range operation.Responses {
+			if strings.HasPrefix(code, "2") && response.Ref == "" {
+				declareHeaders(response, append(slices.Clone(costHeaderNames), balanceHeaderNames...)...)
+			}
 		}
 	}
 	for code, name := range sharedResponses {

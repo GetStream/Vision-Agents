@@ -98,6 +98,9 @@ type Identified interface {
 func Call[R pricing.Metered](ctx context.Context, meter Meter, ask func(context.Context) (R, error)) (R, error) {
 	started := time.Now()
 	stat := meter.stat(started)
+	if stat.Spent == nil {
+		stat.Spent = SpentFrom(ctx)
+	}
 	reserved, err := meter.reserve(&stat)
 	if err != nil {
 		var refused R
