@@ -114,6 +114,24 @@ type ToolCall struct {
 	// Arguments is the JSON object the model filled in, left as text because it is the
 	// caller that knows what shape to expect.
 	Arguments string
+	// SessionID, User and Conversation say what the call is part of: this session, the
+	// person whose turn asked for it, and the conversation it is held in.
+	SessionID    string
+	User         *ToolUser
+	Conversation *ToolConversation
+}
+
+// ToolUser is who a tool call was made for.
+type ToolUser struct {
+	ID   string
+	Name string
+}
+
+// ToolConversation is the conversation a tool call was made in: its id, when it is kept,
+// and the session's custom.
+type ToolConversation struct {
+	CID    string
+	Custom map[string]any
 }
 
 // Session is one conversation this process is running on somebody's behalf.
@@ -438,7 +456,7 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	}
 	if replayVoiceTools && !s.spec.Text && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
-			attached.send(pending)
+			attached.send(s.placed(pending))
 		}
 	}
 	s.mu.Unlock()
@@ -1658,6 +1676,20 @@ func (s *Session) broadcast(event Event) {
 	}
 }
 
+// placed is call with what it is part of filled in: this session, its conversation, and
+// the session's own user when the agent did not say whose turn asked for it.
+func (s *Session) placed(call ToolCall) ToolCall {
+	if call.Cancel {
+		return call
+	}
+	call.SessionID = s.id
+	call.Conversation = &ToolConversation{CID: s.spec.ConversationID, Custom: s.spec.Custom}
+	if call.User == nil && s.spec.Caller.UserID != "" {
+		call.User = &ToolUser{ID: s.spec.Caller.UserID}
+	}
+	return call
+}
+
 // askTool publishes a tool request, failing when nobody is connected to answer it.
 //
 // The failure matters: without it the model would wait out the whole timeout on a call the
@@ -1666,6 +1698,7 @@ func (s *Session) askTool(call ToolCall) error {
 	if call.TurnID != "" && s.persisted != nil {
 		call.CommandID, _ = s.persisted.CommandForTurn(call.TurnID)
 	}
+	call = s.placed(call)
 	// Only a conversation held in writing is asked by command. On a call a question is spoken,
 	// with no request id, and the vision skill's request for frames belongs to no turn: their
 	// results are taken by turn or by id (ResolveTurnTool, ResolveToolParts), as anywhere else.

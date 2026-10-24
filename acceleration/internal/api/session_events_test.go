@@ -61,6 +61,24 @@ func (s *SessionEventsSuite) TestTheSocketAsksTheCallerToRunItsOwnToolAndUsesThe
 	s.Empty(ran["error"])
 }
 
+func (s *SessionEventsSuite) TestAToolCallSaysWhoAskedAndInWhichConversation() {
+	owner := s.data.createUser()
+	request := s.askingForATool()
+	request.Custom = &map[string]any{"plan": "gold"}
+	opened := s.inWriting(request)
+	watching := s.watch(opened.Id)
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.actingFor(owner).do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "where is my order"}, nil))
+
+	asked := s.await(watching, "tool_call")
+	s.Equal(opened.Id, asked["session_id"])
+	user, _ := asked["user"].(map[string]any)
+	s.Equal(owner.userID, user["id"], "the call names the person whose turn asked for it")
+	conversation, _ := asked["conversation"].(map[string]any)
+	s.Equal(map[string]any{"plan": "gold"}, conversation["custom"])
+}
+
 func (s *SessionEventsSuite) TestAToolTheCallerCouldNotRunIsToldToTheModelInWords() {
 	opened := s.withATool()
 	watching := s.watch(opened.Id)

@@ -456,14 +456,22 @@ func frameOf(event session.Event) (frame, bool) {
 		if typed.Cancel {
 			return frame{"type": "tool_cancel", "id": typed.ID, "request_id": typed.CommandID, "turn_id": typed.TurnID}, true
 		}
-		return frame{
+		call := frame{
 			"type":       "tool_call",
 			"id":         typed.ID,
 			"name":       typed.Name,
 			"arguments":  typed.Arguments,
 			"request_id": typed.CommandID,
 			"turn_id":    typed.TurnID,
-		}, true
+			"session_id": typed.SessionID,
+		}
+		if typed.User != nil {
+			call["user"] = toolUserFrame(typed.User.ID, typed.User.Name)
+		}
+		if typed.Conversation != nil {
+			call["conversation"] = toolConversationFrame(typed.Conversation.CID, typed.Conversation.Custom)
+		}
+		return call, true
 
 	case agent.Joined:
 		return frame{"type": "joined", "at": typed.At}, true

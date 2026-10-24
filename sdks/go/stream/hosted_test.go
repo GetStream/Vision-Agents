@@ -67,6 +67,41 @@ func (s *HostedCallSuite) TestAWorkerDeclaresEachToolsPolicies() {
 	s.NotContains(byName["search_docs"], "timeout_ms")
 }
 
+func (s *HostedCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
+	router := newPool(s.T(), func(connection *websocket.Conn) {
+		_ = connection.WriteJSON(Frame{
+			"type": "tool_call", "id": "call-1", "session_id": "s", "turn_id": "turn-1", "name": "photograph_room", "arguments": "{}",
+			"user":         Frame{"id": "jean", "name": "Jean"},
+			"conversation": Frame{"cid": "messaging:support-1", "custom": Frame{"plan": "gold"}},
+		})
+	})
+	seen := make(chan tools.Call, 1)
+	functions := tools.NewRegistry()
+	s.Require().NoError(tools.Register(functions, "photograph_room", "Photograph the room", func(ctx context.Context, _ struct{}) (any, error) {
+		seen <- *tools.CallFrom(ctx)
+		return "the kitchen", nil
+	}))
+	worker := waiting(s.T(), router, DispatchOptions{})
+	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+	ctx, cancel := context.WithCancel(s.T().Context())
+	stopped := run(s.T(), ctx, worker)
+	defer func() {
+		cancel()
+		stopped()
+	}()
+
+	select {
+	case call := <-seen:
+		s.Equal(tools.Call{
+			ID: "call-1", SessionID: "s", TurnID: "turn-1",
+			User:         tools.User{ID: "jean", Name: "Jean"},
+			Conversation: tools.Conversation{CID: "messaging:support-1", Custom: map[string]any{"plan": "gold"}},
+		}, call)
+	case <-time.After(3 * time.Second):
+		s.Fail("the function never ran")
+	}
+}
+
 func (s *HostedCallSuite) TestAResultNamesItsCallAsASessionsDoes() {
 	answered := s.answer(func(context.Context, struct{}) (any, error) { return "the kitchen", nil })
 

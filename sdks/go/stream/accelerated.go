@@ -606,8 +606,7 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 		}
 	}
 
-	call := tools.Call{ID: frame.String("id"), SessionID: p.sessionID(), TurnID: frame.String("turn_id")}
-	output, err := p.functions.Run(ctx, call, name, frame.String("arguments"))
+	output, err := p.functions.Run(ctx, toolCallOf(frame, p.sessionID()), name, frame.String("arguments"))
 	if err != nil {
 		p.logger.Error("the tool failed", "tool", name, "error", err)
 		result["error"] = err.Error()
@@ -624,6 +623,25 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	if err := socket.Send(result); err != nil {
 		p.logger.Error("the tool result never reached the model", "tool", name, "error", err)
 	}
+}
+
+// toolCallOf is the call a tool_call frame asks for, as tools.CallFrom gives it to the function.
+// sessionID stands in for a frame that does not name its session, as a router's from before
+// session_id did not.
+func toolCallOf(frame Frame, sessionID string) tools.Call {
+	call := tools.Call{ID: frame.String("id"), SessionID: frame.String("session_id"), TurnID: frame.String("turn_id")}
+	if call.SessionID == "" {
+		call.SessionID = sessionID
+	}
+	if user := frame.Frame("user"); user != nil {
+		call.User = tools.User{ID: user.String("id"), Name: user.String("name")}
+		call.User.Custom, _ = user["custom"].(map[string]any)
+	}
+	if conversation := frame.Frame("conversation"); conversation != nil {
+		call.Conversation = tools.Conversation{CID: conversation.String("cid")}
+		call.Conversation.Custom, _ = conversation["custom"].(map[string]any)
+	}
+	return call
 }
 
 // stopWatching drops the socket and everything reading it.

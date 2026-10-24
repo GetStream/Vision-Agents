@@ -394,13 +394,43 @@ func toolCallFrame(call dispatch.ToolCall) frame {
 	if call.Cancel {
 		return frame{"type": "tool_cancel", "id": call.ID, "session_id": call.SessionID}
 	}
-	return frame{
+	rendered := frame{
 		"type":       "tool_call",
 		"id":         call.ID,
 		"session_id": call.SessionID,
+		"turn_id":    call.TurnID,
 		"name":       call.Name,
 		"arguments":  call.Arguments,
 	}
+	if call.User != nil {
+		rendered["user"] = toolUserFrame(call.User.ID, call.User.Name)
+	}
+	if call.Conversation != nil {
+		rendered["conversation"] = toolConversationFrame(call.Conversation.CID, call.Conversation.Custom)
+	}
+	return rendered
+}
+
+// toolUserFrame is who a tool call was made for, as both sockets carry it.
+func toolUserFrame(id, name string) frame {
+	user := frame{"id": id}
+	if name != "" {
+		user["name"] = name
+	}
+	return user
+}
+
+// toolConversationFrame is the conversation a tool call was made in, as both sockets carry
+// it. custom is always an object, so a client reads an empty one rather than a missing one.
+func toolConversationFrame(cid string, custom map[string]any) frame {
+	if custom == nil {
+		custom = map[string]any{}
+	}
+	conversation := frame{"custom": custom}
+	if cid != "" {
+		conversation["cid"] = cid
+	}
+	return conversation
 }
 
 // callFrame renders one arriving call for the wire.

@@ -82,7 +82,14 @@ func (r *hostedRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Conten
 	if !r.names[call.Name] {
 		return r.next.Run(ctx, call)
 	}
-	return r.hosts.RunHosted(ctx, r.spec.CustomerID, r.agentID, dispatch.ToolCall{
-		ID: call.ID, SessionID: r.sessionID, Name: call.Name, Arguments: call.Arguments,
-	})
+	hosted := dispatch.ToolCall{
+		ID: call.ID, SessionID: r.sessionID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments,
+		Conversation: &dispatch.Conversation{CID: r.spec.ConversationID, Custom: r.spec.Custom},
+	}
+	if requester, ok := agent.RequesterFrom(ctx); ok {
+		hosted.User = &dispatch.User{ID: requester.UserID, Name: requester.Name}
+	} else if r.spec.Caller.UserID != "" {
+		hosted.User = &dispatch.User{ID: r.spec.Caller.UserID}
+	}
+	return r.hosts.RunHosted(ctx, r.spec.CustomerID, r.agentID, hosted)
 }

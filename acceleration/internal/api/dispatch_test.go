@@ -377,6 +377,26 @@ func (s *DispatchSuite) asksTheWorker() (*websocket.Conn, <-chan hostedAnswer) {
 	return worker, answered
 }
 
+func (s *DispatchSuite) TestAHostedCallSaysWhoAskedAndInWhichConversation() {
+	worker := s.worker()
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], "stream-support",
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+	go func() {
+		_, _ = s.dispatch.RunHosted(s.T().Context(), s.customerID(), "stream-support", dispatch.ToolCall{
+			ID: "call-1", SessionID: "session-1", TurnID: "turn-1", Name: "investigate_sdk",
+			User:         &dispatch.User{ID: "jean", Name: "Jean"},
+			Conversation: &dispatch.Conversation{CID: "messaging:support-1", Custom: map[string]any{"plan": "gold"}},
+		})
+	}()
+
+	call := s.next(worker)
+
+	s.Equal("turn-1", call["turn_id"])
+	s.Equal(frame{"id": "jean", "name": "Jean"}, frame(call["user"].(map[string]any)))
+	s.Equal(frame{"cid": "messaging:support-1", "custom": map[string]any{"plan": "gold"}},
+		frame(call["conversation"].(map[string]any)))
+}
+
 func (s *DispatchSuite) TestAHostedResultNamesItsCallAsASessionsDoes() {
 	worker, answered := s.asksTheWorker()
 

@@ -153,6 +153,8 @@ func (s *ToolCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 	backend := newRouter(s.T(), func(t *testing.T, connection *websocket.Conn) {
 		if err := connection.WriteJSON(map[string]any{
 			"type": "tool_call", "id": "call-3", "name": "lookup_order", "arguments": "{}", "turn_id": "turn-2",
+			"session_id": "session-1", "user": map[string]any{"id": "jean", "name": "Jean"},
+			"conversation": map[string]any{"cid": "messaging:support-1", "custom": map[string]any{"plan": "gold"}},
 		}); err != nil {
 			return
 		}
@@ -174,6 +176,8 @@ func (s *ToolCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 		s.Equal("call-3", call.ID)
 		s.Equal("session-1", call.SessionID)
 		s.Equal("turn-2", call.TurnID)
+		s.Equal(tools.User{ID: "jean", Name: "Jean"}, call.User)
+		s.Equal(tools.Conversation{CID: "messaging:support-1", Custom: map[string]any{"plan": "gold"}}, call.Conversation)
 	case <-time.After(3 * time.Second):
 		s.Fail("the function never ran")
 	}

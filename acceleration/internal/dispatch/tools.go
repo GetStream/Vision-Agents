@@ -43,13 +43,31 @@ type ToolCall struct {
 	ID string
 	// SessionID is the conversation the call was made in, for the worker's logs.
 	SessionID string
-	Name      string
+	// TurnID, User and Conversation say what the call is part of: the turn that asked for
+	// it, the person whose turn that was, and the conversation it is held in.
+	TurnID       string        `json:",omitempty"`
+	User         *User         `json:",omitempty"`
+	Conversation *Conversation `json:",omitempty"`
+	Name         string
 	// Arguments is the JSON object the model wrote.
 	Arguments string
 	// Cancel says the call with this id is no longer wanted: its deadline passed or the
 	// session gave up on it. It travels on the same queue as the call, so it cannot
 	// overtake it.
 	Cancel bool `json:",omitempty"`
+}
+
+// User is who a hosted call was made for.
+type User struct {
+	ID   string
+	Name string `json:",omitempty"`
+}
+
+// Conversation is the conversation a hosted call was made in: its id, when it is kept, and
+// the session's custom.
+type Conversation struct {
+	CID    string         `json:",omitempty"`
+	Custom map[string]any `json:",omitempty"`
 }
 
 // ToolResult is what the worker said happened.

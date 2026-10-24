@@ -183,9 +183,13 @@ def sync_detailed(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
     (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
-    be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
-    another command or turn.
+    be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
+    `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). `tool_cancel`
+    (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or the caller interrupted a
+    call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and
+    `turn_id`; their result must repeat both values so a result cannot be adopted by another command or
+    turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -337,9 +341,13 @@ def sync(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
     (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
-    be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
-    another command or turn.
+    be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
+    `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). `tool_cancel`
+    (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or the caller interrupted a
+    call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and
+    `turn_id`; their result must repeat both values so a result cannot be adopted by another command or
+    turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -486,9 +494,13 @@ async def asyncio_detailed(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
     (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
-    be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
-    another command or turn.
+    be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
+    `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). `tool_cancel`
+    (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or the caller interrupted a
+    call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and
+    `turn_id`; their result must repeat both values so a result cannot be adopted by another command or
+    turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting
@@ -638,9 +650,13 @@ async def asyncio(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
     (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
     its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
-    be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
-    another command or turn.
+    be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`,
+    `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows)
+    and `conversation` (`cid` when the conversation is kept, and the session's `custom`). `tool_cancel`
+    (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or the caller interrupted a
+    call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and
+    `turn_id`; their result must repeat both values so a result cannot be adopted by another command or
+    turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`. A connector call waiting

@@ -489,6 +489,9 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 	if parent == nil {
 		parent = context.Background()
 	}
+	if requester := a.requesterLocked(); requester != (Requester{}) {
+		parent = WithRequester(parent, requester)
+	}
 	ctx, cancel := context.WithCancel(parent)
 	if a.toolCancels == nil {
 		a.toolCancels = map[string]context.CancelFunc{}
