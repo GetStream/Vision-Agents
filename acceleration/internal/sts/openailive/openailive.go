@@ -108,6 +108,7 @@ const (
 
 // Nested Responses event types, inside a response.event envelope.
 const (
+	nestedCreated        = "response.created"
 	nestedOutputItemDone = "response.output_item.done"
 	nestedFailed         = "response.failed"
 	nestedError          = "error"
@@ -287,6 +288,12 @@ type STS struct {
 	// muted drops the rest of a reply the caller cut off from this side, since the API
 	// has no way to tell the model to stop.
 	muted bool
+	// owed is a tool's answer whose reply waits for the one in flight to end, since the
+	// server ignores a response.create while the model is speaking, with no error. A reply
+	// asked for and not begun by the backend is unconfirmed, and asked for once more when
+	// the next reply ends: the model can start speaking just after it was asked.
+	owed        bool
+	unconfirmed bool
 	// carrying is whether silence is going up to move the session clock along, which only
 	// happens while waiting for something appended to be spoken.
 	carrying bool
@@ -509,8 +516,21 @@ func (s *STS) Answer(callID string, output string, err error) error {
 	}}); sendErr != nil {
 		return sendErr
 	}
-	if sendErr := s.send(clientEvent{Type: eventResponseCreate}); sendErr != nil {
-		return sendErr
+	s.mu.Lock()
+	speaking := s.turn != nil
+	s.owed = speaking
+	s.unconfirmed = !speaking
+	s.mu.Unlock()
+	if speaking {
+		return nil
+	}
+	return s.carryOn()
+}
+
+// carryOn asks the model for the reply a tool's answer is owed.
+func (s *STS) carryOn() error {
+	if err := s.send(clientEvent{Type: eventResponseCreate}); err != nil {
+		return err
 	}
 	s.carryTheClock()
 	return nil
@@ -793,6 +813,10 @@ func (s *STS) delegated(envelope serverEvent) {
 	}
 
 	switch nested.Type {
+	case nestedCreated:
+		s.mu.Lock()
+		s.unconfirmed = false
+		s.mu.Unlock()
 	case nestedOutputItemDone:
 		if nested.Item == nil || nested.Item.Type != "function_call" {
 			return
@@ -959,9 +983,18 @@ func (s *STS) settleTurn(interrupted bool) {
 	s.mu.Lock()
 	turn := s.turn
 	s.turn = nil
+	owed := (s.owed || s.unconfirmed) && !s.closed && !s.ended && !interrupted
+	s.unconfirmed = s.owed && owed
+	s.owed = false
 	s.mu.Unlock()
 	if turn == nil {
 		return
 	}
 	s.emitter.Send(turn.Complete(ProviderName, s.options.Model, interrupted, sts.Usage{}))
+	// A caller who cut in is answered with the tool's answer already in hand.
+	if owed {
+		if err := s.carryOn(); err != nil {
+			s.emitter.Send(sts.Error{Provider: ProviderName, Model: s.options.Model, Err: err, Context: "response"})
+		}
+	}
 }

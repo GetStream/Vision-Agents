@@ -53,10 +53,14 @@ func (m *Manager) hostedTools(spec Spec, sessionID string, conversation dispatch
 			continue
 		}
 		hosted[tool.Name] = true
-		declared = append(declared, harness.Tool{
+		offer := harness.Tool{
 			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
 			Interruptible: tool.Interruptible, Timeout: tool.Timeout,
-		})
+		}
+		if tool.Approval != "" {
+			offer.Approval = &harness.ToolApproval{Title: tool.Approval}
+		}
+		declared = append(declared, offer)
 	}
 	if len(hosted) == 0 {
 		return declared, next
@@ -88,6 +92,7 @@ func (r *hostedRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Conten
 	}
 	hosted := dispatch.ToolCall{
 		ID: call.ID, SessionID: r.sessionID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments,
+		Approved:     agent.Approved(ctx),
 		Conversation: &dispatch.Conversation{CID: r.spec.ConversationID, Custom: r.spec.Custom},
 		Progress:     r.conversation,
 	}

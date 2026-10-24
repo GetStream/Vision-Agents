@@ -9,9 +9,11 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -312,4 +314,17 @@ func TestFramesOfAnUtteranceWithNoKnownPlaceInTheMessageLeaveItOut(t *testing.T)
 		require.NotContains(t, sent, "message_start")
 		require.NotContains(t, sent, "message_end")
 	}
+}
+
+func TestACallTheCallerAlreadyAllowedSaysSoOnBothSockets(t *testing.T) {
+	asked, ok := frameOf(session.ToolCall{ID: "call-1", Name: "book_flight", Arguments: `{}`, Run: true, Approved: true})
+	require.True(t, ok)
+	require.Equal(t, true, asked["approved"])
+
+	plain, ok := frameOf(session.ToolCall{ID: "call-2", Name: "book_flight", Arguments: `{}`, Run: true})
+	require.True(t, ok)
+	require.NotContains(t, plain, "approved", "a call nobody was asked about carries no approval")
+
+	require.Equal(t, true, toolCallFrame(dispatch.ToolCall{ID: "call-1", Name: "book_flight", Approved: true})["approved"])
+	require.NotContains(t, toolCallFrame(dispatch.ToolCall{ID: "call-2", Name: "book_flight"}), "approved")
 }

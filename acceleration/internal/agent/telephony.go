@@ -483,7 +483,7 @@ func unspelled(arguments string) string {
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
 	cancels := telephonyTool(requested.Call.Name) ||
-		a.options.ToolPolicy != nil && a.options.ToolPolicy(requested.Call.Name).Cancels
+		a.options.ToolPolicy != nil && a.options.ToolPolicy(a.approvedName(requested.Call)).Cancels
 	a.mu.Lock()
 	parent := a.ctx
 	if parent == nil {
@@ -556,7 +556,10 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	// history the model reads: compaction summarises that, and a value it summarised away
 	// was still said or returned.
 	record := a.record()
-	if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
+	if requested.Call.Name == confirmTool && a.offersConfirm() {
+		ran = true
+		parts, err = a.confirm(ctx, requested.Call)
+	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
@@ -583,6 +586,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		ran = true
 		said, files, err = a.runCode(ctx, requested.Call)
 		parts = llm.TextParts(said)
+	} else if question := a.approvalQuestion(tool); question != "" {
+		parts = a.askApproval(requested.Call, question)
 	} else {
 		ran = true
 		parts, left, err = a.callTool(ctx, requested.Call)
@@ -637,7 +642,10 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 			a.mu.Lock()
 			a.nativeAwaiting = true
 			a.mu.Unlock()
-			if err := model.Answer(requested.Call.ID, result, nil); err != nil {
+			err := model.Answer(requested.Call.ID, result, nil)
+			if err == nil {
+				a.askedApproval(requested.Call.ID)
+			} else {
 				a.mu.Lock()
 				a.nativeAwaiting = false
 				a.mu.Unlock()
@@ -791,6 +799,9 @@ func (a *Agent) availableTools() harness.Tools {
 		if runnable {
 			available.Tools = append(available.Tools, tool)
 		}
+	}
+	if a.offersConfirm() {
+		available.Tools = append(available.Tools, confirmToolDefinition())
 	}
 	if a.loadsSkills() {
 		available.Tools = append(available.Tools, a.options.Skills.LoadTool())
@@ -1176,6 +1187,7 @@ func (a *Agent) stopTools() {
 func (a *Agent) HoldTool(id string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	id = a.runningAsLocked(id)
 	if ctx, running := a.toolContexts[id]; !running || ctx.Err() != nil {
 		return false
 	}

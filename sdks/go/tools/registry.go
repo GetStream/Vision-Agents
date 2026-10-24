@@ -24,6 +24,9 @@ type Function struct {
 	Timeout time.Duration
 	// Concurrency caps how many calls run at once. Zero is no cap beyond the registry's.
 	Concurrency int
+	// Approval is the question a voice caller is asked before each call runs, with
+	// {argument} filled in from the call. Empty asks nothing.
+	Approval string
 
 	run   func(ctx context.Context, arguments []byte) (Output, error)
 	slots chan struct{}

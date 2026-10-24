@@ -541,6 +541,9 @@ func (p *Pipeline) tools() []acceleration.SessionTool {
 			timeout := function.Timeout.Milliseconds()
 			tool.TimeoutMs = &timeout
 		}
+		if function.Approval != "" {
+			tool.Approval = &acceleration.SessionToolApproval{Title: function.Approval}
+		}
 		declared = append(declared, tool)
 	}
 	return declared
@@ -647,7 +650,7 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 // sessionID stands in for a frame that does not name its session, as a router's from before
 // session_id did not.
 func toolCallOf(frame Frame, sessionID string) tools.Call {
-	call := tools.Call{ID: frame.String("id"), SessionID: frame.String("session_id"), TurnID: frame.String("turn_id")}
+	call := tools.Call{ID: frame.String("id"), SessionID: frame.String("session_id"), TurnID: frame.String("turn_id"), Approved: frame.Bool("approved")}
 	if call.SessionID == "" {
 		call.SessionID = sessionID
 	}

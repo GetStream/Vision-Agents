@@ -249,4 +249,23 @@ func (s *RunSuite) TestABadOptionIsRefusedAtRegistration() {
 
 	s.Error(Register(s.registry, "a", "a", run, Timeout(0)))
 	s.Error(Register(s.registry, "b", "b", run, Concurrency(0)))
+	s.Error(Register(s.registry, "c", "c", run, NeedsApproval("  ")))
+}
+
+func (s *RunSuite) TestAnApprovalQuestionMayNameOnlyTheToolsArguments() {
+	run := func(context.Context, struct {
+		FlightID string `json:"flight_id"`
+		Seats    int    `json:"seats"`
+	}) (any, error) {
+		return nil, nil
+	}
+
+	s.Require().NoError(Register(s.registry, "book", "Book a flight", run, NeedsApproval("Book {seats} seats on {flight_id}?")))
+	err := Register(s.registry, "rebook", "Rebook a flight", run, NeedsApproval("Rebook {flight}?"))
+	s.Require().Error(err)
+	s.Contains(err.Error(), "{flight}")
+
+	registered := s.registry.List()
+	s.Require().Len(registered, 1)
+	s.Equal("Book {seats} seats on {flight_id}?", registered[0].Approval)
 }

@@ -72,3 +72,16 @@ func (s *ToolPolicySuite) TestAWorkersToolKeepsItsPolicies() {
 	s.True(tools[0].Interruptible)
 	s.Equal(time.Second, tools[0].Timeout)
 }
+
+func (s *ToolPolicySuite) TestAWorkersToolAsksItsApprovalQuestion() {
+	m := &Manager{logger: slog.Default(), hosts: offering{tools: []dispatch.Tool{
+		{Name: "book_flight", Description: "Book a flight", Approval: "Book flight {flight_id}?"},
+		{Name: "search_flights", Description: "Search flights"},
+	}}}
+
+	tools, _ := m.hostedTools(Spec{CustomerID: "acme", AgentID: "support"}, "session-1", nil, nil, nil)
+
+	s.Require().Len(tools, 2)
+	s.Equal(&harness.ToolApproval{Title: "Book flight {flight_id}?"}, tools[0].Approval)
+	s.Nil(tools[1].Approval)
+}

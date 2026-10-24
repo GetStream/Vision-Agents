@@ -48,8 +48,12 @@ func (a *Agent) ToolUpdate(id, text string, verbatim bool) {
 		updatesCalls = session.UpdatesCalls()
 	}
 	a.mu.Lock()
-	name, running := a.toolsRunning[id]
-	turnID := a.toolTurns[id]
+	held := a.runningAsLocked(id)
+	name, running := a.toolsRunning[held]
+	if run, approved := a.approvedRuns[id]; approved {
+		name = run.tool
+	}
+	turnID := a.toolTurns[held]
 	if !running || text == "" {
 		a.mu.Unlock()
 		return
@@ -59,7 +63,7 @@ func (a *Agent) ToolUpdate(id, text string, verbatim bool) {
 		if a.toolUpdates == nil {
 			a.toolUpdates = map[string]toolUpdate{}
 		}
-		a.toolUpdates[id] = toolUpdate{text: text, verbatim: verbatim}
+		a.toolUpdates[held] = toolUpdate{text: text, verbatim: verbatim}
 	}
 	a.mu.Unlock()
 

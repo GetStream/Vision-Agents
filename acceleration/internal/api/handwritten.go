@@ -173,7 +173,9 @@ func documentHandWritten(api huma.API) {
 			"said, and a call's result replaces both. Every watcher is sent `tool_updated` (`id`, " +
 			"`turn_id`, `tool`, `text`, `verbatim`) for each update. An update or hold from a watcher " +
 			"that does not run the call is dropped.\n" +
-			"A call to a tool declared with an `approval` waits for a person. The client reports " +
+			"On a voice call, a call to a tool declared with an `approval` is asked about out loud " +
+			"instead, and sent only once the caller said yes, with `approved` true; a watcher does " +
+			"not ask again. In writing, a call to a tool declared with an `approval` waits for a person. The client reports " +
 			"their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, " +
 			"and optionally a `summary` shown when they declined), before it answers the call with " +
 			"`tool_result`. A connector call waiting for the person to sign in " +

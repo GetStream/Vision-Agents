@@ -2,6 +2,8 @@ package tools
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -36,6 +38,34 @@ func Concurrency(calls int) Option {
 			return fmt.Errorf("concurrency must be at least one, not %d", calls)
 		}
 		function.Concurrency = calls
+		return nil
+	}
+}
+
+// placeholder is one {argument} in an approval question.
+var placeholder = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// NeedsApproval has the router ask a voice caller before each call runs, such as
+// "Book flight {flight_id}?", with each {argument} filled in from the call. The caller
+// answers out loud, and has 15 seconds from the end of the question: only a yes runs the
+// function, on the call's own id and with Call.Approved set, and its Timeout starts then. A
+// speech-to-speech model asks in its own voice, and may say the question close to as written.
+//
+// It is asked on voice calls only. In writing, the question travels with the tool for the app
+// to show, as the session's approval, and the call is run as it comes.
+func NeedsApproval(question string) Option {
+	return func(function *Function) error {
+		question = strings.TrimSpace(question)
+		if question == "" {
+			return fmt.Errorf("an approval needs a question")
+		}
+		properties, _ := function.Parameters["properties"].(map[string]any)
+		for _, found := range placeholder.FindAllStringSubmatch(question, -1) {
+			if _, ok := properties[found[1]]; !ok {
+				return fmt.Errorf("the approval question names {%s}, which is not one of its arguments", found[1])
+			}
+		}
+		function.Approval = question
 		return nil
 	}
 }

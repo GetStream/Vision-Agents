@@ -80,6 +80,21 @@ tools.Register(agent.Tools(), "search_flights", "Search for flights", searchFlig
     tools.Concurrency(4))            // at most four at once; the registry allows 16
 ```
 
+A function that changes something can ask a voice caller first:
+
+```go
+tools.Register(agent.Tools(), "book_flight", "Book a flight", bookFlight,
+    tools.NeedsApproval("Book flight {flight_id}?"))
+```
+
+The router asks the question, with each `{argument}` filled in from the call, and runs the
+function only once the caller says yes within 15 seconds of the question ending. The function
+sees `tools.CallFrom(ctx).Approved` set, and its timeout starts then. A no or silence declines
+the call, and it never runs. A speech-to-speech model asks in its own voice and may not say the
+question word for word. Registering a question that names an argument the function does not
+take is an error. Only voice calls ask: in writing, the question goes out as the tool's
+`approval` for the app to show, and the call runs as it comes.
+
 Its `ctx` is cancelled when the router cancels the call: its timeout passed, or, for an
 interruptible tool, the caller interrupted. `tools.CallFrom(ctx)` is the call being run, whose
 `ID` is the same when the router sends a call again, so a function that changes something can

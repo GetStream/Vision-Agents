@@ -70,6 +70,7 @@ type pendingTool struct {
 	turnID   string
 	call     llm.ToolCall
 	user     *ToolUser
+	approved bool
 	ctx      context.Context
 	answer   chan toolResult
 	resolved bool
@@ -122,7 +123,8 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 	if requester, ok := agent.RequesterFrom(ctx); ok {
 		user = &ToolUser{ID: requester.UserID, Name: requester.Name}
 	}
-	b.pending[call.ID] = pendingTool{turnID: call.TurnID, call: call, user: user, ctx: deadline, answer: answer}
+	approved := agent.Approved(ctx)
+	b.pending[call.ID] = pendingTool{turnID: call.TurnID, call: call, user: user, approved: approved, ctx: deadline, answer: answer}
 	b.mu.Unlock()
 
 	defer func() {
@@ -131,7 +133,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		b.mu.Unlock()
 	}()
 
-	if err := b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments, User: user}); err != nil {
+	if err := b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments, User: user, Approved: approved}); err != nil {
 		return nil, err
 	}
 
@@ -164,7 +166,7 @@ func (b *bridge) Pending() []ToolCall {
 			continue
 		}
 		call := pending.call
-		calls = append(calls, ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments, User: pending.user})
+		calls = append(calls, ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments, User: pending.user, Approved: pending.approved})
 	}
 	return calls
 }
