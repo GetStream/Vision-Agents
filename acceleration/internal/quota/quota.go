@@ -208,25 +208,30 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 
 	// One clock reading names the day counted and the midnight it resets at.
 	now := time.Now()
-	held := l.quota(ctx, customerID, caller.UserID)
+	held := l.quota(ctx, customerID, named(caller))
 	if !held.Enforced() {
 		return Status{}, nil
 	}
+	every := append(held.enforced(true), held.enforced(false)...)
 	var buckets []bucket
-	if key := customerKey(customerID, caller.UserID, now); key != "" {
+	if key := customerKey(customerID, named(caller), now); key != "" {
 		if limits := held.enforced(true); len(limits) > 0 {
 			buckets = append(buckets, bucket{key: key, limits: limits})
 		}
 	}
 	if !caller.ServerSide {
-		if key := userKey(customerID, caller.UserID, now); key != "" {
-			if limits := held.enforced(false); len(limits) > 0 {
-				buckets = append(buckets, bucket{key: key, limits: limits})
-			}
+		// A name nobody vouched for has no customer bucket, so its device bucket answers for
+		// every number, as it did before customers counted backends.
+		limits := every
+		if caller.Verified {
+			limits = held.enforced(false)
+		}
+		if key := userKey(customerID, caller.UserID, now); key != "" && len(limits) > 0 {
+			buckets = append(buckets, bucket{key: key, limits: limits})
 		}
 		// An address answers for every limit, whoever set it, as it did before customers set any.
 		if key := addressKey(customerID, caller.IP, now); key != "" {
-			buckets = append(buckets, bucket{key: key, limits: append(held.enforced(true), held.enforced(false)...)})
+			buckets = append(buckets, bucket{key: key, limits: every})
 		}
 	}
 	if len(buckets) == 0 {
@@ -269,12 +274,12 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	now := time.Now()
-	held := l.quota(ctx, customerID, caller.UserID)
+	held := l.quota(ctx, customerID, named(caller))
 	if !held.Enforced() {
 		return
 	}
 	var keys []string
-	if key := customerKey(customerID, caller.UserID, now); key != "" && len(held.enforced(true)) > 0 {
+	if key := customerKey(customerID, named(caller), now); key != "" && len(held.enforced(true)) > 0 {
 		keys = append(keys, key)
 	}
 	if !caller.ServerSide {
@@ -364,6 +369,16 @@ func (l *Limiter) quota(ctx context.Context, customerID, userID string) Quota {
 // device caller's address.
 func countable(customerID string, caller routing.Caller) bool {
 	return customerID != "" && caller.UserID != "" || !caller.ServerSide && caller.IP != ""
+}
+
+// named is the user whose own quota and customer bucket a caller answers for: the one a
+// backend or a verified token names, and nobody for an anonymous name, which anyone could
+// claim.
+func named(caller routing.Caller) string {
+	if caller.ServerSide || caller.Verified {
+		return caller.UserID
+	}
+	return ""
 }
 
 // customerKey is the bucket the customer's quotas count a user in, whoever asked for the work.

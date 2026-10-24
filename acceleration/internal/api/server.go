@@ -1110,6 +1110,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 				UserID:     principal.UserID,
 				IP:         s.callerIP(r, principal.UserID),
 				ServerSide: principal.ServerSide,
+				Verified:   principal.UserID != "" && principal.Kind.Verified(),
 			})
 			ctx = context.WithValue(ctx, actorContextKey{}, actorOf(r, principal.ServerSide))
 			ctx = routing.WithAttribution(ctx, attributionOf(principal))
