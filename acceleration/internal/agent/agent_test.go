@@ -2194,7 +2194,7 @@ func (s *AgentSuite) TestMemoriesBelongToTheCustomerAndTheApp() {
 	s.join(true)
 
 	s.Equal(memory.Scope{
-		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		AppID: "acme", UserID: "acme", AgentID: s.agentID, RunID: "session-1",
 		Extra: map[string]string{"app_id": "router"},
 	}, s.remembers.scopedTo(), "the app id is always the customer, and a caller's own only narrows it")
 }
@@ -2249,7 +2249,7 @@ func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
 
 	s.eventually(func() bool { return len(s.remembers.remembered()) == 1 }, "nothing was remembered")
 	s.Equal(memory.Scope{
-		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		AppID: "acme", UserID: "acme", AgentID: s.agentID, RunID: "session-1",
 		Extra: map[string]string{"app_id": "router"},
 	}, s.remembers.writtenAs())
 	exchange := s.remembers.remembered()[0]
