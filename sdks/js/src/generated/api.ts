@@ -4964,7 +4964,7 @@ export type components = {
         readonly ClassifyUsage: {
             /**
              * Format: int64
-             * @description What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says. Only a server-side caller is told.
+             * @description What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says: absent when it recorded nothing. Only a server-side caller is told.
              */
             readonly cost_micros?: number;
             /** Format: int64 */

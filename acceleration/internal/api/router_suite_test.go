@@ -1367,8 +1367,10 @@ func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
 	}
 	if s.limited {
 		s.shipping = true
+		// A database of the suite's own: suites run in parallel, and starting one empties it.
+		database := "usage_" + strings.ToLower(strings.TrimPrefix(s.T().Name(), "Test"))
 		s.usage = usagetest.Start(s.T(), usagetest.Options{
-			DSN: usagetest.Database(s.T(), "usage_admission"), ManageKey: "manage-" + s.utils.uuid(), Logger: logger,
+			DSN: usagetest.Database(s.T(), database), ManageKey: "manage-" + s.utils.uuid(), Logger: logger,
 		})
 		s.usageFront = newUsageFront(s.T(), s.usage)
 		client, err := usage.NewClient(usage.ClientOptions{URL: s.usageFront.server.URL, Token: s.usage.Token})

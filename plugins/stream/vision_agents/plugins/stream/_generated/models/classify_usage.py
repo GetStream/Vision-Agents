@@ -19,8 +19,8 @@ class ClassifyUsage:
     Attributes:
         input_tokens (int):
         output_tokens (int):
-        cost_micros (int | Unset): What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says. Only
-            a server-side caller is told.
+        cost_micros (int | Unset): What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says:
+            absent when it recorded nothing. Only a server-side caller is told.
     """
 
     input_tokens: int

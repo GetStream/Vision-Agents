@@ -220,7 +220,7 @@ type ClassifyResult struct {
 type ClassifyUsage struct {
 	InputTokens  int64  `json:"input_tokens"`
 	OutputTokens int64  `json:"output_tokens"`
-	CostMicros   *int64 `json:"cost_micros,omitempty" doc:"What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says. Only a server-side caller is told."`
+	CostMicros   *int64 `json:"cost_micros,omitempty" doc:"What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says: absent when it recorded nothing. Only a server-side caller is told."`
 }
 
 func (*ClassifyUsage) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

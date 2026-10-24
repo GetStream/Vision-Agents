@@ -3896,7 +3896,7 @@ type ClassifyResult struct {
 
 // ClassifyUsage What the request read and wrote. The state's tokens are counted once however many questions shared them.
 type ClassifyUsage struct {
-	// CostMicros What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says. Only a server-side caller is told.
+	// CostMicros What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says: absent when it recorded nothing. Only a server-side caller is told.
 	CostMicros   *int64 `json:"cost_micros,omitempty"`
 	InputTokens  int64  `json:"input_tokens"`
 	OutputTokens int64  `json:"output_tokens"`

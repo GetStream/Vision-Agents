@@ -198,12 +198,16 @@ func (s *Server) watchBalance(ctx context.Context, out *socket, appID, organizat
 }
 
 // spentMicros is what the request's rows cost so far, for an answer whose usage object says
-// so, or nil for an end user's device, which is told nothing of money.
+// so, as X-Stream-Cost-Micros does: nil when it recorded nothing, and for an end user's device,
+// which is told nothing of money.
 func spentMicros(ctx context.Context) *int64 {
 	state, ok := ctx.Value(costedKey{}).(*costed)
 	if !ok {
 		return nil
 	}
-	micros, _, _ := state.spent.Total()
+	micros, rows, _ := state.spent.Total()
+	if rows == 0 {
+		return nil
+	}
 	return &micros
 }
