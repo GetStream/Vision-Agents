@@ -87,6 +87,7 @@ public sealed class Session : IAsyncDisposable
     private readonly Channel<SessionEvent> _events = Channel.CreateBounded<SessionEvent>(
         new BoundedChannelOptions(256) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _running = new();
+    private readonly Holds _holds = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly TaskCompletionSource _ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<Participant> _joined = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -357,17 +358,24 @@ public sealed class Session : IAsyncDisposable
                     case "tool_call":
                         // Every watcher is sent every call and the first answer wins: answering a
                         // tool held elsewhere would beat whoever runs it, with an error.
-                        if (_tools?.Runs(frame.Text("name")) == true)
+                        if (_tools?.Runs(frame.Text("name")) == true && ToolCall.ToRun(frame))
                         {
                             RunTool(frame);
                         }
                         continue;
+                    // A call held through interruptions is not cancelled by one: only its
+                    // timeout and the end of the session stop it.
+                    // Cancelled before the hold is refused, so the refusal finds the call stopped.
                     case "tool_cancel":
-                        if (_running.TryRemove(frame.Text("id"), out var cancelled))
+                        if (!_holds.Held(frame.Text("id")) && _running.TryRemove(frame.Text("id"), out var cancelled))
                         {
                             await cancelled.CancelAsync().ConfigureAwait(false);
                         }
+                        _holds.Answer(frame.Text("id"), false);
                         continue;
+                    case "tool_held":
+                        _holds.Answer(frame.Text("id"), true);
+                        break;
                 }
 
                 var happened = new SessionEvent(frame);
@@ -422,6 +430,7 @@ public sealed class Session : IAsyncDisposable
 
         var cancel = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
         _running[id] = cancel;
+        var call = ToolCall.Of(frame, Id, new ToolLine((sent, token) => SendAsync(sent, token), _holds, id));
         _ = Task.Run(async () =>
         {
             JsonObject result;
@@ -433,9 +442,9 @@ public sealed class Session : IAsyncDisposable
                     null => "",
                     var other => other.ToJsonString(),
                 };
-                result = answer("output", await _tools.CallAsync(frame.Text("name"), arguments, cancel.Token).ConfigureAwait(false));
+                result = answer("output", await _tools.CallAsync(frame.Text("name"), arguments, cancel.Token, call).ConfigureAwait(false));
             }
-            catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+            catch (Exception) when (cancel.IsCancellationRequested)
             {
                 // Cancelled by the router, which is no longer waiting for an answer.
                 return;
@@ -448,6 +457,7 @@ public sealed class Session : IAsyncDisposable
             finally
             {
                 _running.TryRemove(id, out _);
+                _holds.Forget(id);
                 cancel.Dispose();
             }
             await TrySendAsync(result).ConfigureAwait(false);

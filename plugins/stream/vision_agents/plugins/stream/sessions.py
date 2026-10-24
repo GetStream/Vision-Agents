@@ -746,7 +746,6 @@ class Session:
             return
         if kind == "tool_held":
             self._holds.answer(call_id, True)
-            return
         if kind == "tool_call":
             # Every watcher is sent every call, and the router says which are to run it. One
             # from before it said holds the same rule: answering a tool held elsewhere would

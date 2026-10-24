@@ -59,6 +59,49 @@ call. `agent.resume(id)` carries on a conversation held in writing by its sessio
 Tool calls are answered by the session itself, whether or not anything is reading events: the
 model is mid-sentence waiting. A tool that returns `Err` is reported to the model.
 
+A tool declared with `register_call` says how the backend treats its calls, and is handed the
+call it runs for:
+
+```rust
+use vision_agents::{Error, ToolCall, types};
+
+tools.register_call(
+    types::SessionTool {
+        name: "book_flight".into(),
+        description: "Book a flight for the caller".into(),
+        parameters: json!({"type": "object", "properties": {"flight_id": {"type": "string"}}})
+            .as_object().unwrap().clone(),
+        timeout_ms: Some(20_000),
+        approval: Some(types::SessionToolApproval { title: "Book flight {flight_id}?".into(), ..Default::default() }),
+        ..Default::default()
+    },
+    async |arguments, call: ToolCall| {
+        call.update("checking seats").await?;
+        call.disallow_interruptions().await?;
+        Ok::<_, Error>(book(&arguments["flight_id"], &call.user.id, &call.id).await)
+    },
+)?;
+```
+
+- `interruptible: Some(true)` lets the caller talking over the agent cancel a call in flight.
+  By default it keeps running and the model is told it is still going.
+- `timeout_ms` is how long one call may take, in place of the session's. A call that takes
+  longer is stopped and fails.
+- `approval` is a question the caller answers before each call runs, where each `{name}` is
+  one of the tool's parameters. On a voice call the agent asks it out loud and waits 15
+  seconds for a yes, and `call.approved` is then true. In writing it goes to the app.
+  `register_call` refuses a `{name}` that is not a parameter, a blank question and a negative
+  timeout.
+
+`call.id` is the id the model gave the call, which a call sent again keeps, so it is the key
+to make a side effect happen once; `session_id`, `turn_id`, `user` and `conversation` say where
+it came from. `update(text)` says how the call is going: a voice agent tells the caller in its
+own words once nobody is talking. `say(text)` has it say `text` as written, which a
+speech-to-speech model may paraphrase. `disallow_interruptions` keeps the call going from then
+on, for a write that must not stop halfway, and returns `Error::NotHeld` when the router had
+already cancelled it. A cancelled call is aborted at its next `.await` and is not answered. A
+call the router addresses to another watcher (`run: false`) is left alone.
+
 A session closes when it is dropped. To close it at a point you choose and wait for it,
 scope it:
 
@@ -175,7 +218,9 @@ dispatch.host(&agent, None); // None: the router waits its default 30 seconds fo
 dispatch.run().await?;
 ```
 
-A worker that only hosts tools needs no handler. If the router refuses the tools, `run`
+A hosted tool registered with `register_call` takes the same `interruptible`, `timeout_ms` and
+`approval` (asked on a voice call), is handed its call, and is cancelled when the router gives
+up on it. A worker that only hosts tools needs no handler. If the router refuses the tools, `run`
 returns `Error::Failed` naming the agent and the reason.
 
 Every caller to an attached number gets a session of their own: the `call` handed to a worker

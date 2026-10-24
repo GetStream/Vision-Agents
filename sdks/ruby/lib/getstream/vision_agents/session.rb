@@ -228,14 +228,20 @@ module GetStream
       def received(frame)
         case frame["type"]
         when "tool_call"
-          # Every watcher is sent every call and the first answer wins: answering a tool held
-          # elsewhere would beat whoever runs it, with an error.
-          run_tool(frame) if @tools&.include?(frame["name"].to_s)
+          # Every watcher is sent every call, and the router says which are to run it. One
+          # from before it said holds the same rule: answering a tool held elsewhere would
+          # beat whoever runs it, with an error.
+          run_tool(frame) if frame["run"] != false && @tools&.include?(frame["name"].to_s)
         when "tool_cancel"
           # The model has moved on. A Ruby thread cannot be stopped safely from outside, so the
-          # tool is left to finish and its answer is dropped rather than sent.
-          @lock.synchronize { @running.delete(frame["id"].to_s) }
+          # tool is left to finish and its answer is dropped rather than sent, unless it asked
+          # to be held.
+          @lock.synchronize do
+            call = @running[frame["id"].to_s]
+            @running.delete(frame["id"].to_s) if call&.cancel!
+          end
         else
+          @lock.synchronize { @running[frame["id"].to_s]&.held! } if frame["type"] == "tool_held"
           seen(frame)
           push(Event.from(frame))
         end
@@ -262,11 +268,12 @@ module GetStream
         answer[:request_id] = frame["request_id"] unless frame["request_id"].to_s.empty?
         answer[:turn_id] = frame["turn_id"] unless frame["turn_id"].to_s.empty?
 
+        call = ToolCall.from(frame, session_id: id, send: ->(sent) { reply(sent) })
         busy = @lock.synchronize do
           full = @running.size >= RUNNING_TOOLS
           # Held before the thread starts, so a tool quicker than this line still finds itself
           # wanted.
-          @running[call_id] = true unless full
+          @running[call_id] = call unless full
           full
         end
         return reply(answer.merge(error: "too many tools are already running")) if busy
@@ -275,7 +282,7 @@ module GetStream
           # A tool that raises is reported to the model rather than dropped: it is
           # mid-sentence waiting, and can only say something useful if it is told.
           result = begin
-            { output: @tools.call(frame["name"].to_s, frame["arguments"]) }
+            { output: @tools.call(frame["name"].to_s, frame["arguments"], call) }
           rescue StandardError => e
             { error: e.message }
           end
@@ -308,6 +315,7 @@ module GetStream
       def ended
         @lock.synchronize do
           @ended = true
+          @running.each_value(&:stop!)
           @running.clear
           @changed.broadcast
         end
