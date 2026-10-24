@@ -496,6 +496,14 @@ class Accelerated(OmniLLM):
             return
         if kind == "tool_call":
             call_id = str(frame.get("id", ""))
+            name = str(frame.get("name", ""))
+            # Every watcher is sent every call and the first answer wins: answering a tool
+            # held elsewhere would beat whoever runs it, with an error.
+            if (
+                name != "get_video_frames"
+                and name not in self.function_registry.functions
+            ):
+                return
             if len(self._tool_tasks) >= 16:
                 await self._command(
                     {

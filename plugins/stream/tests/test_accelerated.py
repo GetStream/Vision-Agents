@@ -613,6 +613,32 @@ class TestAccelerated:
             "output": "it is raining in Amsterdam",
         }
 
+    async def test_a_call_for_a_tool_held_elsewhere_is_left_for_whoever_holds_it(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        await router.send(
+            {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "book_flight",
+                "arguments": "{}",
+            }
+        )
+        await router.send(
+            {
+                "type": "tool_call",
+                "id": "call-2",
+                "name": "weather",
+                "arguments": json.dumps({"city": "Amsterdam"}),
+            }
+        )
+
+        answer = await router.answered()
+
+        assert answer["tool_call_id"] == "call-2"
+        await asyncio.sleep(0.1)
+        assert router.commands.empty()
+
     async def test_a_tool_that_fails_tells_the_model_so(
         self, router: Router, joined: stream.Accelerated
     ):
