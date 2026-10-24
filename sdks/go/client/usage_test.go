@@ -117,6 +117,46 @@ func TestTheBalanceWarningFiresOncePerCrossing(t *testing.T) {
 	}
 }
 
+func TestABalanceHoveringNearTheLineWarnsOnce(t *testing.T) {
+	server := moneyRouter(t,
+		money("1", "4000000", BalanceLow),
+		money("1", "-1", BalanceExhausted),
+		money("1", "1", BalanceLow), // work under way let go: back up, but not out of trouble
+		money("1", "-1", BalanceExhausted),
+		money("1", "1", BalanceLow),
+		money("1", "6000000", ""), // credit enough again re-arms both
+		money("1", "-1", BalanceExhausted),
+	)
+	var warned []string
+	api, err := New(stream.Backend{URL: server.URL, CustomerID: "acme"},
+		WithBalanceWarning(func(warning BalanceWarning) { warned = append(warned, warning.Warning) }))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lookUp(t, api, 7)
+
+	want := []string{BalanceLow, BalanceExhausted, BalanceExhausted}
+	if strings.Join(warned, ",") != strings.Join(want, ",") {
+		t.Fatalf("warned %v, want %v", warned, want)
+	}
+}
+
+func TestTheDefaultLogHoversNoMoreThanTheCallback(t *testing.T) {
+	server := moneyRouter(t, money("", "-1", BalanceExhausted), money("", "1", BalanceLow), money("", "-1", BalanceExhausted))
+	var logged bytes.Buffer
+	api, err := New(stream.Backend{URL: server.URL, CustomerID: "acme"}, WithLogger(slog.New(slog.NewTextHandler(&logged, nil))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lookUp(t, api, 3)
+
+	if got := strings.Count(logged.String(), "level=WARN"); got != 1 {
+		t.Fatalf("one WARN until the credit is fine again, got %d:\n%s", got, logged.String())
+	}
+}
+
 func TestWithNoCallbackTheWarningIsLoggedOncePerCrossing(t *testing.T) {
 	server := moneyRouter(t, money("", "4000000", BalanceLow), money("", "3000000", BalanceLow))
 	var logged bytes.Buffer

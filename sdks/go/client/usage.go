@@ -54,15 +54,20 @@ type BalanceWarning struct {
 // Option changes how a Client is made.
 type Option func(*watcher)
 
-// WithUsage calls usage after every answer that says what it cost or what credit is left,
-// from the goroutine that made the request. Every resource method's answers go through it.
+// WithUsage calls usage after every answer that says what it cost or what credit is left.
+// Every resource method's answers go through it. It runs on the goroutine that made the
+// request, before the request returns, so it must not block; requests made at once call it at
+// once, so it must be safe for concurrent use.
 func WithUsage(usage func(Usage)) Option {
 	return func(w *watcher) { w.usage = usage }
 }
 
-// WithBalanceWarning calls warned once each time answers go from saying nothing, or another
-// warning, to low or exhausted, and again after an answer has said there is credit enough. With
-// neither it nor WithUsage, the client logs one WARN for each instead.
+// WithBalanceWarning calls warned when answers say the credit went down further than they have
+// said since they last said there was credit enough: once on going low, once more on going on to
+// exhausted, and nothing for going back up from exhausted to low or for any answer after. An
+// answer saying there is credit enough re-arms both. With neither it nor WithUsage, the client
+// logs one WARN for each instead. Like WithUsage's, warned runs on the goroutine that made the
+// request, must not block, and may be called concurrently.
 func WithBalanceWarning(warned func(BalanceWarning)) Option {
 	return func(w *watcher) { w.warned = warned }
 }
@@ -80,7 +85,8 @@ type watcher struct {
 	logger *slog.Logger
 
 	mu sync.Mutex
-	// told is the warning last passed on, empty once an answer said there was credit enough.
+	// told is the furthest down a warning passed on went since an answer last said there was
+	// credit enough, empty since then.
 	told string
 }
 
@@ -132,8 +138,10 @@ func (w *watcher) read(operation string, header http.Header) {
 		return
 	}
 	w.mu.Lock()
-	crossed := said.BalanceWarning != "" && said.BalanceWarning != w.told
-	w.told = said.BalanceWarning
+	crossed := depth(said.BalanceWarning) > depth(w.told)
+	if crossed || said.BalanceWarning == "" {
+		w.told = said.BalanceWarning
+	}
 	w.mu.Unlock()
 	if !crossed {
 		return
@@ -150,4 +158,16 @@ func (w *watcher) read(operation string, header http.Header) {
 		logger.Warn("the organization's credit is running out", "warning", warning.Warning,
 			"balance_micros", warning.BalanceMicros, "operation", operation)
 	}
+}
+
+// depth is how far down a warning is: none, low, then exhausted. One the client does not know
+// counts as low.
+func depth(warning string) int {
+	switch warning {
+	case "":
+		return 0
+	case BalanceExhausted:
+		return 2
+	}
+	return 1
 }
