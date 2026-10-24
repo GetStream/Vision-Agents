@@ -263,7 +263,9 @@ func documentHandWritten(api huma.API) {
 			"A server-side caller is told what each unit cost and when its organization's credit " +
 			"runs low; an end user's device is told neither. A settled `transcript`, a " +
 			"`synthesis_complete` and a `complete` carry `cost_micros`, what that turn, utterance " +
-			"or response cost in millionths of a dollar. A `balance` frame, with `balance_micros` " +
+			"or response cost in millionths of a dollar. What is recorded as the socket closes, such " +
+			"as a transcriber's last audio or a voice's failed utterance, comes on no frame. A " +
+			"`balance` frame, with `balance_micros` " +
 			"and `warning` (`low` or `exhausted`), says the organization's balance went down into " +
 			"that state while the socket was open, the values X-Stream-Balance-Micros and " +
 			"X-Stream-Balance-Warning carry on an answer: once per crossing, and at once after " +
