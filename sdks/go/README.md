@@ -375,6 +375,30 @@ the `Type` and `Code` to branch on, the `Message` and the `DocURL` explaining it
 added, so expect one this SDK does not know, and a failure that was not the router's own, such
 as a proxy's error page, has its body as the `Message` and no type or code.
 
+## What it cost, and when credit runs low
+
+Every answer to a backend says what the request cost and what the organization has left.
+`client.New` takes two options for it, and every resource method's answers go through them:
+
+```go
+api, err := client.New(stream.Backend{},
+    client.WithUsage(func(usage client.Usage) {
+        log.Printf("%s cost %d micros", usage.Operation, usage.CostMicros)
+    }),
+    client.WithBalanceWarning(func(warning client.BalanceWarning) {
+        alert("credit is " + warning.Warning) // low, then exhausted
+    }),
+)
+```
+
+The balance warning fires once each time the answers go into `low` or `exhausted`, and again
+after an answer has said there is credit enough. With neither option the client logs one WARN
+per crossing. A `stream.Router` built on `api.Backend()` is heard the same way, and its sockets
+carry `CostMicros` on a final `Transcript`, a finished `Audio` and a finished `Answer`, and a
+`Balance` when credit goes down into low or exhausted while the socket is open. An end user's
+client is told none of it. To be told by webhook instead, add an event destination for the
+connector `stream`, which is sent `account.balance_low` and `account.balance_exhausted`.
+
 ## Layout
 
 | Path            | What is in it                                                     |
