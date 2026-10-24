@@ -12,6 +12,17 @@ const statusPurpose = "What they asked for is still being worked on, and whoever
 	"reports: %q. Tell them where it has got to, in terms of what they asked for. It is still " +
 	"running, so do not guess its result."
 
+// nativeStatusPrompt and nativeSayPrompt are what a speech-to-speech model is asked to say
+// about a call that is still open: a status in its own words, or words as written, which a
+// native model can only be asked for.
+const (
+	nativeStatusPrompt = "Something the caller asked for is still being worked on, and whoever is doing it " +
+		"reports: %q. Tell the caller where it has got to in one short sentence, in your own words. It is " +
+		"still running: do not call it again and do not guess its result."
+	nativeSayPrompt = "Something the caller asked for is still being worked on. Say this to the caller now, " +
+		"in these words or close to them: %q. It is still running: do not call it again and do not guess its result."
+)
+
 // toolSaidPurpose marks words whoever runs a call asked to be said as written.
 const toolSaidPurpose = "tool-said"
 
@@ -29,6 +40,11 @@ type toolUpdate struct {
 // them. An update for a call that is not running is dropped.
 func (a *Agent) ToolUpdate(id, text string, verbatim bool) {
 	text = strings.TrimSpace(text)
+	native := a.native()
+	updatesCalls := false
+	if session := a.speech(); native && session != nil {
+		updatesCalls = session.UpdatesCalls()
+	}
 	a.mu.Lock()
 	name, running := a.toolsRunning[id]
 	turnID := a.toolTurns[id]
@@ -36,7 +52,7 @@ func (a *Agent) ToolUpdate(id, text string, verbatim bool) {
 		a.mu.Unlock()
 		return
 	}
-	spoken := !a.options.Text && !a.native()
+	spoken := !a.options.Text && (!native || updatesCalls)
 	if spoken {
 		if a.toolUpdates == nil {
 			a.toolUpdates = map[string]toolUpdate{}
@@ -101,4 +117,45 @@ func (a *Agent) sayToolUpdate() {
 		}
 		a.sayComposed(participant, line, statusPurpose, asked)
 	}()
+}
+
+// sayNativeToolUpdate asks a speech-to-speech model to say one update waiting for the line,
+// when it is free: nothing is being said or asked for, and the caller is not talking. The
+// call it is about stays open for its result.
+func (a *Agent) sayNativeToolUpdate() {
+	if a.waitingForPlayout() {
+		return
+	}
+	a.mu.Lock()
+	if a.closed || a.switching.Load() || a.interrupting || a.sts == nil || a.generating || a.utterances > 0 ||
+		a.nativeAwaiting || a.nativeListening || !a.waitingSince.IsZero() || len(a.toolUpdates) == 0 {
+		a.mu.Unlock()
+		return
+	}
+	var id string
+	var update toolUpdate
+	for queued, waiting := range a.toolUpdates {
+		id, update = queued, waiting
+		break
+	}
+	delete(a.toolUpdates, id)
+	if _, running := a.toolsRunning[id]; !running {
+		a.mu.Unlock()
+		return
+	}
+	guidance := nativeStatusPrompt
+	if update.verbatim {
+		guidance = nativeSayPrompt
+	}
+	// A reply's own instructions replace the session's, so they are carried along.
+	prompt := a.instructions() + "\n\n" + fmt.Sprintf(guidance, update.text)
+	a.generating = true
+	model := a.sts
+	a.mu.Unlock()
+	if err := model.UpdateCall(id, update.text, prompt); err != nil {
+		a.mu.Lock()
+		a.generating = false
+		a.mu.Unlock()
+		a.logger.Warn("could not tell the caller how a tool is going", "error", err)
+	}
 }

@@ -302,6 +302,8 @@ type content struct {
 
 type responseRequest struct {
 	Instructions string `json:"instructions,omitempty"`
+	// ToolChoice "none" keeps a reply from calling anything.
+	ToolChoice string `json:"tool_choice,omitempty"`
 }
 
 // serverEvent is a frame from the server, with the fields every event type this package
@@ -725,6 +727,23 @@ func (s *STS) Prompt(text string) error {
 		return s.ask(clientEvent{Type: eventResponseCreate})
 	}
 	return s.ask(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: text}})
+}
+
+// UpdatesCalls reports whether the model can be asked to speak while a call is open with no
+// tools for that reply, which OpenAI's response.create documents.
+func (s *STS) UpdatesCalls() bool { return s.dialect == DialectOpenAI && s.capabilities.Tools }
+
+// UpdateCall asks the model to speak now about a call that is still open, guided by the
+// prompt. The reply may call nothing, and the call's function_call_output still goes in when
+// its result comes.
+func (s *STS) UpdateCall(_, _, prompt string) error {
+	if !s.UpdatesCalls() {
+		return stack.Wrap(sts.ErrNoCallUpdates)
+	}
+	if err := s.ready(); err != nil {
+		return err
+	}
+	return s.ask(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: prompt, ToolChoice: "none"}})
 }
 
 // Interrupt stops the reply in flight and tells the model how much of it was heard, so its
