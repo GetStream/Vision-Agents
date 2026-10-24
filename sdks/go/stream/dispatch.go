@@ -272,7 +272,8 @@ func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
 		defer d.active.Add(-1)
 
 		result := Frame{"type": "tool_result", "id": id}
-		output, err := functions.Call(ctx, name, frame.String("arguments"))
+		call := tools.Call{ID: id, SessionID: frame.String("session_id"), TurnID: frame.String("turn_id")}
+		output, err := functions.Run(ctx, call, name, frame.String("arguments"))
 		switch {
 		case err != nil:
 			d.logger.Error("a hosted tool failed", "tool", name, "error", err)
@@ -477,6 +478,10 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 			d.host()
 		case "tool_call":
 			d.runHosted(ctx, frame)
+		case "tool_cancel":
+			for _, offer := range d.hosted {
+				offer.functions.Cancel(frame.String("session_id"), frame.String("id"))
+			}
 		case "hosting":
 			d.logger.Info("the router sends this worker's tools here", "agent", frame.String("agent_id"))
 		case "hosting_refused":

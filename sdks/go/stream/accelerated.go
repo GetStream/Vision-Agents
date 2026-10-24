@@ -230,6 +230,14 @@ func (p *Pipeline) Session() *acceleration.Session {
 	return p.session
 }
 
+// sessionID is the id of the session the pipeline is holding, or empty.
+func (p *Pipeline) sessionID() string {
+	if session := p.Session(); session != nil {
+		return session.Id
+	}
+	return ""
+}
+
 // Join creates the session and starts watching it.
 //
 // It returns once the backend is in the call, so an agent that has joined is one that is
@@ -549,13 +557,22 @@ func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event) 
 			continue
 		}
 
-		if frame.Type() == "tool_call" {
+		switch frame.Type() {
+		case "tool_call":
+			// Every watcher is sent every call, and the first answer is the one the model
+			// gets: answering a tool held elsewhere would beat the process that runs it.
+			if !p.functions.Holds(frame.String("name")) {
+				p.logger.Debug("leaving a call for a tool held elsewhere", "tool", frame.String("name"))
+				continue
+			}
 			p.running.Add(1)
 			go func() {
 				defer p.running.Done()
 				p.runTool(ctx, frame)
 			}()
 			continue
+		case "tool_cancel":
+			p.functions.Cancel(p.sessionID(), frame.String("id"))
 		}
 
 		select {
@@ -581,7 +598,8 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 		}
 	}
 
-	output, err := p.functions.Call(ctx, name, frame.String("arguments"))
+	call := tools.Call{ID: frame.String("id"), SessionID: p.sessionID(), TurnID: frame.String("turn_id")}
+	output, err := p.functions.Run(ctx, call, name, frame.String("arguments"))
 	if err != nil {
 		p.logger.Error("the tool failed", "tool", name, "error", err)
 		result["error"] = err.Error()

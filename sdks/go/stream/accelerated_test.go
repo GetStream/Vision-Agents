@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -433,7 +434,7 @@ func TestAToolThatFailsSaysSoRatherThanLeavingTheModelWaiting(t *testing.T) {
 	answered := make(chan map[string]any, 1)
 	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
 		if err := connection.WriteJSON(map[string]any{
-			"type": "tool_call", "id": "call-42", "name": "nothing", "arguments": "{}",
+			"type": "tool_call", "id": "call-42", "name": "lookup_order", "arguments": "{}",
 		}); err != nil {
 			return
 		}
@@ -445,6 +446,13 @@ func TestAToolThatFailsSaysSoRatherThanLeavingTheModelWaiting(t *testing.T) {
 	})
 
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	err := tools.Register(pipeline.Functions(), "lookup_order", "Look up an order",
+		func(context.Context, struct{}) (any, error) {
+			return nil, errors.New("the orders database is down")
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +460,7 @@ func TestAToolThatFailsSaysSoRatherThanLeavingTheModelWaiting(t *testing.T) {
 
 	select {
 	case frame := <-answered:
-		if frame["error"] == nil {
+		if frame["error"] != "the orders database is down" {
 			t.Fatalf("the model was sent %v, and would wait forever for a result", frame)
 		}
 	case <-time.After(5 * time.Second):
