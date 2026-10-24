@@ -178,7 +178,7 @@ func (s *RecordedCreateSuite) TestTheSpecReadsRaceNoChose() {
 		"the session row":   func() { sessionRow(joining) },
 		"the call row":      func() { row(joining) },
 		"the episode card":  func() { (*callCards)(nil).started(joining, streamapp.Bound{}) },
-		"the title asked":   func() { _, _ = joining.naming.titles.ask(s.ctx, joining.Spec(), joining.id, nil) },
+		"the title asked":   func() { _ = joining.retitle(s.ctx, nil) },
 		"a lookup":          func() { m.Get(joining.id, owner) },
 		"a listing":         func() { m.List(owner) },
 		"the newest":        func() { m.newest(func(Spec) bool { return true }, nil) },
