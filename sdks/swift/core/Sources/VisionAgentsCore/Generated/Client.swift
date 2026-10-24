@@ -78,6 +78,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 201:
+                    let headers: Operations.CreateGuestUser.Output.Created.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.CreateGuestUser.Output.Created.Body
                     let chosenContentType = try converter.bestContentType(
@@ -98,7 +120,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .created(.init(body: body))
+                    return .created(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -150,6 +175,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 201:
+                    let headers: Operations.CreateSession.Output.Created.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.CreateSession.Output.Created.Body
                     let chosenContentType = try converter.bestContentType(
@@ -170,7 +217,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .created(.init(body: body))
+                    return .created(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -215,6 +265,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 200:
+                    let headers: Operations.GetSession.Output.Ok.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.GetSession.Output.Ok.Body
                     let chosenContentType = try converter.bestContentType(
@@ -235,7 +307,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .ok(.init(body: body))
+                    return .ok(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -294,6 +369,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 200:
+                    let headers: Operations.UpdateSession.Output.Ok.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.UpdateSession.Output.Ok.Body
                     let chosenContentType = try converter.bestContentType(
@@ -314,7 +411,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .ok(.init(body: body))
+                    return .ok(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -356,7 +456,29 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 204:
-                    return .noContent(.init())
+                    let headers: Operations.DeleteSession.Output.NoContent.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
+                    return .noContent(.init(headers: headers))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -412,6 +534,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 201:
+                    let headers: Operations.ForkSession.Output.Created.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.ForkSession.Output.Created.Body
                     let chosenContentType = try converter.bestContentType(
@@ -432,7 +576,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .created(.init(body: body))
+                    return .created(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -490,6 +637,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 200:
+                    let headers: Operations.ListResponses.Output.Ok.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.ListResponses.Output.Ok.Body
                     let chosenContentType = try converter.bestContentType(
@@ -510,7 +679,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .ok(.init(body: body))
+                    return .ok(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -564,6 +736,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 202:
+                    let headers: Operations.CreateResponse.Output.Accepted.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.CreateResponse.Output.Accepted.Body
                     let chosenContentType = try converter.bestContentType(
@@ -584,7 +778,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .accepted(.init(body: body))
+                    return .accepted(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -651,6 +848,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 200:
+                    let headers: Operations.ListResponseItems.Output.Ok.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.ListResponseItems.Output.Ok.Body
                     let chosenContentType = try converter.bestContentType(
@@ -671,7 +890,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .ok(.init(body: body))
+                    return .ok(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -721,7 +943,29 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 204:
-                    return .noContent(.init())
+                    let headers: Operations.RewindSession.Output.NoContent.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
+                    return .noContent(.init(headers: headers))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -763,7 +1007,29 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 204:
-                    return .noContent(.init())
+                    let headers: Operations.StopSession.Output.NoContent.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
+                    return .noContent(.init(headers: headers))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -820,6 +1086,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 200:
+                    let headers: Operations.StartSessionVoice.Output.Ok.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.StartSessionVoice.Output.Ok.Body
                     let chosenContentType = try converter.bestContentType(
@@ -840,7 +1128,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .ok(.init(body: body))
+                    return .ok(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -884,6 +1175,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 200:
+                    let headers: Operations.StopSessionVoice.Output.Ok.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.StopSessionVoice.Output.Ok.Body
                     let chosenContentType = try converter.bestContentType(
@@ -904,7 +1217,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .ok(.init(body: body))
+                    return .ok(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -965,6 +1281,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 200:
+                    let headers: Operations.QuerySessions.Output.Ok.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.QuerySessions.Output.Ok.Body
                     let chosenContentType = try converter.bestContentType(
@@ -985,7 +1323,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .ok(.init(body: body))
+                    return .ok(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -1036,6 +1377,28 @@ internal struct Client: APIProtocol {
             deserializer: { response, responseBody in
                 switch response.status.code {
                 case 200:
+                    let headers: Operations.Search.Output.Ok.Headers = .init(
+                        xStreamBalanceMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Micros",
+                            as: Components.Headers.XStreamBalanceMicros.self
+                        ),
+                        xStreamBalanceWarning: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Balance-Warning",
+                            as: Components.Headers.XStreamBalanceWarning.self
+                        ),
+                        xStreamCostEstimated: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Estimated",
+                            as: Components.Headers.XStreamCostEstimated.self
+                        ),
+                        xStreamCostMicros: try converter.getOptionalHeaderFieldAsURI(
+                            in: response.headerFields,
+                            name: "X-Stream-Cost-Micros",
+                            as: Components.Headers.XStreamCostMicros.self
+                        )
+                    )
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.Search.Output.Ok.Body
                     let chosenContentType = try converter.bestContentType(
@@ -1056,7 +1419,10 @@ internal struct Client: APIProtocol {
                     default:
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
-                    return .ok(.init(body: body))
+                    return .ok(.init(
+                        headers: headers,
+                        body: body
+                    ))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,

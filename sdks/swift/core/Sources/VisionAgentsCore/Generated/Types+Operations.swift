@@ -54,6 +54,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Created: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.CreateGuestUser.Output.Created.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/content/application\/json`.
@@ -76,8 +124,13 @@ internal enum Operations {
                 /// Creates a new `Created`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.CreateGuestUser.Output.Created.Body) {
+                internal init(
+                    headers: Operations.CreateGuestUser.Output.Created.Headers = .init(),
+                    body: Operations.CreateGuestUser.Output.Created.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -178,6 +231,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Created: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.CreateSession.Output.Created.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/201/content/application\/json`.
@@ -200,8 +301,13 @@ internal enum Operations {
                 /// Creates a new `Created`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.CreateSession.Output.Created.Body) {
+                internal init(
+                    headers: Operations.CreateSession.Output.Created.Headers = .init(),
+                    body: Operations.CreateSession.Output.Created.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -311,6 +417,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.GetSession.Output.Ok.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/content/application\/json`.
@@ -333,8 +487,13 @@ internal enum Operations {
                 /// Creates a new `Ok`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.GetSession.Output.Ok.Body) {
+                internal init(
+                    headers: Operations.GetSession.Output.Ok.Headers = .init(),
+                    body: Operations.GetSession.Output.Ok.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -458,6 +617,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.UpdateSession.Output.Ok.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/content/application\/json`.
@@ -480,8 +687,13 @@ internal enum Operations {
                 /// Creates a new `Ok`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.UpdateSession.Output.Ok.Body) {
+                internal init(
+                    headers: Operations.UpdateSession.Output.Ok.Headers = .init(),
+                    body: Operations.UpdateSession.Output.Ok.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -575,8 +787,61 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct NoContent: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/204/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/204/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/204/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/204/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/204/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.DeleteSession.Output.NoContent.Headers
                 /// Creates a new `NoContent`.
-                internal init() {}
+                ///
+                /// - Parameters:
+                ///   - headers: Received HTTP response headers
+                internal init(headers: Operations.DeleteSession.Output.NoContent.Headers = .init()) {
+                    self.headers = headers
+                }
             }
             /// The session is deleted
             ///
@@ -584,14 +849,6 @@ internal enum Operations {
             ///
             /// HTTP response code: `204 noContent`.
             case noContent(Operations.DeleteSession.Output.NoContent)
-            /// The session is deleted
-            ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)/responses/204`.
-            ///
-            /// HTTP response code: `204 noContent`.
-            internal static var noContent: Self {
-                .noContent(.init())
-            }
             /// The associated value of the enum case if `self` is `.noContent`.
             ///
             /// - Throws: An error if `self` is not `.noContent`.
@@ -676,6 +933,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Created: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.ForkSession.Output.Created.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/201/content/application\/json`.
@@ -698,8 +1003,13 @@ internal enum Operations {
                 /// Creates a new `Created`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.ForkSession.Output.Created.Body) {
+                internal init(
+                    headers: Operations.ForkSession.Output.Created.Headers = .init(),
+                    body: Operations.ForkSession.Output.Created.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -835,6 +1145,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.ListResponses.Output.Ok.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/content/application\/json`.
@@ -857,8 +1215,13 @@ internal enum Operations {
                 /// Creates a new `Ok`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.ListResponses.Output.Ok.Body) {
+                internal init(
+                    headers: Operations.ListResponses.Output.Ok.Headers = .init(),
+                    body: Operations.ListResponses.Output.Ok.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -977,6 +1340,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Accepted: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.CreateResponse.Output.Accepted.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/content/application\/json`.
@@ -999,8 +1410,13 @@ internal enum Operations {
                 /// Creates a new `Accepted`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.CreateResponse.Output.Accepted.Body) {
+                internal init(
+                    headers: Operations.CreateResponse.Output.Accepted.Headers = .init(),
+                    body: Operations.CreateResponse.Output.Accepted.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -1145,6 +1561,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.ListResponseItems.Output.Ok.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/content/application\/json`.
@@ -1167,8 +1631,13 @@ internal enum Operations {
                 /// Creates a new `Ok`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.ListResponseItems.Output.Ok.Body) {
+                internal init(
+                    headers: Operations.ListResponseItems.Output.Ok.Headers = .init(),
+                    body: Operations.ListResponseItems.Output.Ok.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -1272,8 +1741,61 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct NoContent: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/204/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/204/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/204/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/204/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/204/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.RewindSession.Output.NoContent.Headers
                 /// Creates a new `NoContent`.
-                internal init() {}
+                ///
+                /// - Parameters:
+                ///   - headers: Received HTTP response headers
+                internal init(headers: Operations.RewindSession.Output.NoContent.Headers = .init()) {
+                    self.headers = headers
+                }
             }
             /// The conversation carries on from the end of that response
             ///
@@ -1281,14 +1803,6 @@ internal enum Operations {
             ///
             /// HTTP response code: `204 noContent`.
             case noContent(Operations.RewindSession.Output.NoContent)
-            /// The conversation carries on from the end of that response
-            ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)/responses/204`.
-            ///
-            /// HTTP response code: `204 noContent`.
-            internal static var noContent: Self {
-                .noContent(.init())
-            }
             /// The associated value of the enum case if `self` is `.noContent`.
             ///
             /// - Throws: An error if `self` is not `.noContent`.
@@ -1348,8 +1862,61 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct NoContent: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/204/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/204/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/204/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/204/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/204/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.StopSession.Output.NoContent.Headers
                 /// Creates a new `NoContent`.
-                internal init() {}
+                ///
+                /// - Parameters:
+                ///   - headers: Received HTTP response headers
+                internal init(headers: Operations.StopSession.Output.NoContent.Headers = .init()) {
+                    self.headers = headers
+                }
             }
             /// The agent has left
             ///
@@ -1357,14 +1924,6 @@ internal enum Operations {
             ///
             /// HTTP response code: `204 noContent`.
             case noContent(Operations.StopSession.Output.NoContent)
-            /// The agent has left
-            ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)/responses/204`.
-            ///
-            /// HTTP response code: `204 noContent`.
-            internal static var noContent: Self {
-                .noContent(.init())
-            }
             /// The associated value of the enum case if `self` is `.noContent`.
             ///
             /// - Throws: An error if `self` is not `.noContent`.
@@ -1450,6 +2009,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.StartSessionVoice.Output.Ok.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/POST/responses/200/content/application\/json`.
@@ -1472,8 +2079,13 @@ internal enum Operations {
                 /// Creates a new `Ok`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.StartSessionVoice.Output.Ok.Body) {
+                internal init(
+                    headers: Operations.StartSessionVoice.Output.Ok.Headers = .init(),
+                    body: Operations.StartSessionVoice.Output.Ok.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -1582,6 +2194,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.StopSessionVoice.Output.Ok.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/voice/DELETE/responses/200/content/application\/json`.
@@ -1604,8 +2264,13 @@ internal enum Operations {
                 /// Creates a new `Ok`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.StopSessionVoice.Output.Ok.Body) {
+                internal init(
+                    headers: Operations.StopSessionVoice.Output.Ok.Headers = .init(),
+                    body: Operations.StopSessionVoice.Output.Ok.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -1713,6 +2378,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.QuerySessions.Output.Ok.Headers
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/content/application\/json`.
@@ -1735,8 +2448,13 @@ internal enum Operations {
                 /// Creates a new `Ok`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.QuerySessions.Output.Ok.Body) {
+                internal init(
+                    headers: Operations.QuerySessions.Output.Ok.Headers = .init(),
+                    body: Operations.QuerySessions.Output.Ok.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
@@ -1836,6 +2554,54 @@ internal enum Operations {
         }
         internal enum Output: Sendable, Hashable {
             internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/headers`.
+                internal struct Headers: Sendable, Hashable {
+                    /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/headers/X-Stream-Balance-Micros`.
+                    internal var xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Warning`.
+                    internal enum XStreamBalanceWarning: String, Codable, Hashable, Sendable, CaseIterable {
+                        case low = "low"
+                        case exhausted = "exhausted"
+                    }
+                    /// low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/headers/X-Stream-Balance-Warning`.
+                    internal var xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning?
+                    /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Estimated`.
+                    internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
+                        case _true = "true"
+                    }
+                    /// true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/headers/X-Stream-Cost-Estimated`.
+                    internal var xStreamCostEstimated: Components.Headers.XStreamCostEstimated?
+                    /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    ///
+                    /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/headers/X-Stream-Cost-Micros`.
+                    internal var xStreamCostMicros: Components.Headers.XStreamCostMicros?
+                    /// Creates a new `Headers`.
+                    ///
+                    /// - Parameters:
+                    ///   - xStreamBalanceMicros: The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+                    ///   - xStreamBalanceWarning: low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold.
+                    ///   - xStreamCostEstimated: true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise.
+                    ///   - xStreamCostMicros: What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+                    internal init(
+                        xStreamBalanceMicros: Components.Headers.XStreamBalanceMicros? = nil,
+                        xStreamBalanceWarning: Components.Headers.XStreamBalanceWarning? = nil,
+                        xStreamCostEstimated: Components.Headers.XStreamCostEstimated? = nil,
+                        xStreamCostMicros: Components.Headers.XStreamCostMicros? = nil
+                    ) {
+                        self.xStreamBalanceMicros = xStreamBalanceMicros
+                        self.xStreamBalanceWarning = xStreamBalanceWarning
+                        self.xStreamCostEstimated = xStreamCostEstimated
+                        self.xStreamCostMicros = xStreamCostMicros
+                    }
+                }
+                /// Received HTTP response headers
+                internal var headers: Operations.Search.Output.Ok.Headers
                 /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/search/POST/responses/200/content/application\/json`.
@@ -1858,8 +2624,13 @@ internal enum Operations {
                 /// Creates a new `Ok`.
                 ///
                 /// - Parameters:
+                ///   - headers: Received HTTP response headers
                 ///   - body: Received HTTP response body
-                internal init(body: Operations.Search.Output.Ok.Body) {
+                internal init(
+                    headers: Operations.Search.Output.Ok.Headers = .init(),
+                    body: Operations.Search.Output.Ok.Body
+                ) {
+                    self.headers = headers
                     self.body = body
                 }
             }
