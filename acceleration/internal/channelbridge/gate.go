@@ -80,14 +80,21 @@ func (b *Bridge) replyTo(ctx context.Context, thread store.ChannelThread) (strin
 	return contact.Address, nil
 }
 
-// sent counts a reply the provider took against a sandboxed customer's daily limit (dlc.Gate
-// Sent, which counts nothing for a customer the sandbox does not hold), on a texting
-// connector, as internal/channels counts each reply.
+// sent counts a reply the provider took against a sandboxed customer's daily limit and its
+// organization's channel limits (dlc.Gate Sent), on a texting connector, as internal/channels
+// counts each reply. A person the thread's replies reach who cannot be told is not counted as
+// reached; the reply still is.
 func (b *Bridge) sent(thread store.ChannelThread) {
-	if episodeSources[thread.ConnectorID].optOuts == "" {
+	channel := episodeSources[thread.ConnectorID].optOuts
+	if channel == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
-	b.gate.Sent(ctx, thread.CustomerID)
+	to, err := b.replyTo(ctx, thread)
+	if err != nil {
+		b.logger.Warn("could not tell who a reply reached, counting it alone", "connector", thread.ConnectorID,
+			"customer", thread.CustomerID, "error", err)
+	}
+	b.gate.Sent(ctx, thread.CustomerID, channel, to)
 }

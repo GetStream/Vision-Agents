@@ -152,11 +152,11 @@ func (s *QuotaSuite) TestAUsersTurnsOverTheSocketOfAnUnrecordedSessionTheirBacke
 	s.awaitTheDaySpent()
 }
 
-func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCounted() {
+func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCountedByTheDefault() {
+	// The router's default of one a day guards against devices, so it never counts a backend.
 	s.useApp(s.data.createApp())
 	s.client = s.data.createUser()
 	s.backend = s.serverClient.actingFor(s.client)
-	s.putQuota(2)
 	opened := s.backendOpensACountedSession()
 
 	for turn := range 3 {
@@ -168,7 +168,31 @@ func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCoun
 
 	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 	s.Require().Equal(http.StatusCreated, response.StatusCode)
-	s.Equal("2", response.Header.Get("X-Quota-Remaining"), "none of the backend's turns was the user's")
+	s.Equal("1", response.Header.Get("X-Quota-Remaining"), "none of the backend's turns was the user's")
+}
+
+func (s *QuotaSuite) TestAnAppsQuotaCountsItsBackendsTurnsForTheUser() {
+	// A quota the app set is its rule about its user, so what its backend asks for in the
+	// user's name counts as much as what the user's device does.
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+	s.backend = s.serverClient.actingFor(s.client)
+	s.putQuota(2)
+	opened := s.backendOpensACountedSession()
+	status, failure := s.backend.failure(http.MethodPost, "/v1/agents/sessions/"+opened+"/respond",
+		RespondRequest{Text: "how much does a call cost", RequestId: pointerTo(s.utils.uuid())})
+	s.Require().Equal(http.StatusOK, status, failure)
+	s.awaitReplies(opened, 1)
+	s.spend(s.client)
+
+	status, refused := s.backend.failure(http.MethodPost, "/v1/agents/sessions/"+opened+"/respond",
+		RespondRequest{Text: "and a text", RequestId: pointerTo(s.utils.uuid())})
+	s.Equal(http.StatusTooManyRequests, status, "the backend's third turn for the user is refused")
+	s.Contains(refused, "every user of app "+s.customerID())
+	s.Equal(http.StatusTooManyRequests, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil),
+		"and so is the user's device")
+	s.NotEqual(http.StatusTooManyRequests, s.data.createUser().do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil),
+		"another user of the same app is not")
 }
 
 func (s *QuotaSuite) TestAUsersOwnSessionIsCountedOnTheirDayWhoeverSendsItsTurns() {
@@ -289,8 +313,57 @@ func (s *QuotaSuite) messagesBeforeRefusal() int {
 }
 
 // spend charges one message to a user's day, the way one of their own replies is.
-func (s *QuotaSuite) spend(user *testClient) {
-	s.limiter.Debit(s.T().Context(), s.customerID(), routing.Caller{UserID: user.userID}, 1)
+func (s *QuotaSuite) spend(client *testClient) {
+	s.limiter.Debit(s.T().Context(), s.customerID(), routing.Caller{
+		UserID: client.userID, Verified: client.kind == user || client.kind == guest,
+	}, 1)
+}
+
+func (s *QuotaSuite) TestAnAnonymousCallerClaimingAUsersIDIsHeldToTheAppsQuota() {
+	// The user's own quota of 0 is no cap. A device going by their id with no token is
+	// anybody, so it is held to the app's two messages and spends nothing of the user's day.
+	s.useApp(s.data.createApp())
+	vip := s.data.createUser()
+	s.putQuota(2)
+	none := int64(0)
+	s.Require().NoError(s.enforcer.Save(s.T().Context(), store.ScopeUser, store.UserScopeID(s.customerID(), vip.userID),
+		store.PolicyDocument{Quota: &store.Quota{MessagesPerUserPerDay: &none}}))
+	impostor := s.data.claiming(vip.userID)
+
+	response := s.raw(impostor)
+	s.Equal("2", response.Header.Get("X-Quota-Limit"), "the app's cap, not the user's own")
+	s.spend(impostor)
+	s.spend(impostor)
+
+	status, refused := impostor.failure(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+	s.Equal(http.StatusTooManyRequests, status)
+	s.Contains(refused, "every user of app "+s.customerID())
+	answered := s.raw(vip)
+	s.Empty(answered.Header.Get("X-Quota-Limit"), "the user themselves is held to their own: no cap")
+}
+
+func (s *QuotaSuite) TestABackendStillReadsASpentUsersSessionAndIsRefusedOnlyNewWork() {
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+	s.backend = s.serverClient.actingFor(s.client)
+	s.putQuota(1)
+	opened := s.backend.createSession(textSession(nil))
+	s.spend(s.client)
+
+	s.Equal(http.StatusOK, s.backend.do(http.MethodGet, "/v1/agents/sessions/"+opened.Id, nil, nil),
+		"a read starts no model work")
+	status, _ := s.backend.failure(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+	s.Equal(http.StatusTooManyRequests, status, "a new session for the user is refused")
+	status, _ = s.backend.failure(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		RespondRequest{Text: "and a text", RequestId: pointerTo(s.utils.uuid())})
+	s.Equal(http.StatusTooManyRequests, status, "and so is a turn")
+}
+
+// raw opens a session as client and answers the response, which must be a 201.
+func (s *QuotaSuite) raw(client *testClient) *http.Response {
+	response := client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+	s.Require().Equal(http.StatusCreated, response.StatusCode)
+	return response
 }
 
 // spendTheDay opens a session the app's backend holds for the client, and spends the

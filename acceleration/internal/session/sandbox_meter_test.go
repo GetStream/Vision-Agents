@@ -53,7 +53,7 @@ func (s *RuntimeSuite) TestASessionsSandboxIsLabelledAndBilledToTheSession() {
 	id := "runtime-" + uuid.NewString()
 	spec := Spec{ID: id, CustomerID: s.customer, Sandbox: daytonaProvider, AgentID: "agent-1",
 		Attribution: routing.Attribution{APIKey: "key-runtime", OrganizationID: "org-1", SessionID: id}}
-	box, err := s.manager.box(spec, nil)
+	box, err := s.manager.box(s.ctx, spec, nil)
 	s.Require().NoError(err)
 
 	_, err = box.Run(s.ctx, "print(1)", nil)

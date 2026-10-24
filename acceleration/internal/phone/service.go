@@ -1124,8 +1124,10 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 			return Dialed{}, err
 		}
 	}
-	// A transfer dials someone as surely as a call does, so it answers to the same gate.
-	if err := s.gate.Allow(ctx, request.Owner.CustomerID, dlc.Voice, request.To); err != nil {
+	// A transfer dials someone as surely as a call does, so it answers to the same gate; the
+	// leg it transfers is already up, and only the human's counts as a new call.
+	into := dlc.Call{Type: cmp.Or(request.CallType, defaultCallType), ID: request.CallID}
+	if err := s.gate.AllowTransfer(ctx, request.Owner.CustomerID, request.To, into); err != nil {
 		return Dialed{}, stack.Wrap(err)
 	}
 	// The human is routed into the call the agent is on, so the trunk is made in the app

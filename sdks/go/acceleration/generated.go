@@ -1710,6 +1710,27 @@ func (e PluginConnectionStatus) Valid() bool {
 	}
 }
 
+// Defines values for PolicyScope.
+const (
+	PolicyScopeApp          PolicyScope = "app"
+	PolicyScopeOrganization PolicyScope = "organization"
+	PolicyScopeUser         PolicyScope = "user"
+)
+
+// Valid indicates whether the value is a known member of the PolicyScope enum.
+func (e PolicyScope) Valid() bool {
+	switch e {
+	case PolicyScopeApp:
+		return true
+	case PolicyScopeOrganization:
+		return true
+	case PolicyScopeUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PriceChangeKind.
 const (
 	PriceChangeKindApi     PriceChangeKind = "api"
@@ -1725,6 +1746,30 @@ func (e PriceChangeKind) Valid() bool {
 	case PriceChangeKindRelease:
 		return true
 	case PriceChangeKindSeed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for QuotaLevel.
+const (
+	QuotaLevelApp          QuotaLevel = "app"
+	QuotaLevelDefault      QuotaLevel = "default"
+	QuotaLevelOrganization QuotaLevel = "organization"
+	QuotaLevelUser         QuotaLevel = "user"
+)
+
+// Valid indicates whether the value is a known member of the QuotaLevel enum.
+func (e QuotaLevel) Valid() bool {
+	switch e {
+	case QuotaLevelApp:
+		return true
+	case QuotaLevelDefault:
+		return true
+	case QuotaLevelOrganization:
+		return true
+	case QuotaLevelUser:
 		return true
 	default:
 		return false
@@ -5074,6 +5119,21 @@ type DetectionStatus string
 // DispatchSetting Whether this kind of work is left to the customer's own dispatch worker.
 type DispatchSetting string
 
+// EffectiveQuota The quota a user is held to: each number is the first set of the user's own, the app's, the organization's and the router's default. Both are 0 on a router that counts nothing.
+type EffectiveQuota struct {
+	// MessagesPerUserPerDay Responses the user may ask for today. 0 is no cap.
+	MessagesPerUserPerDay int64 `json:"messages_per_user_per_day"`
+
+	// MessagesSetBy Who set a number of a quota: the user's own policy, the app's, the organization's, or the router's default. The router's default counts the user's devices only; every other counts the app's backend acting for the user too.
+	MessagesSetBy QuotaLevel `json:"messages_set_by"`
+
+	// TokensPerUserPerDay Tokens the user's responses may cost today. 0 is no cap.
+	TokensPerUserPerDay int64 `json:"tokens_per_user_per_day"`
+
+	// TokensSetBy Who set a number of a quota: the user's own policy, the app's, the organization's, or the router's default. The router's default counts the user's devices only; every other counts the app's backend acting for the user too.
+	TokensSetBy QuotaLevel `json:"tokens_set_by"`
+}
+
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 type Endpointing string
 
@@ -6377,7 +6437,7 @@ type Policy struct {
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
-	// Quota What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 	Quota *Quota `json:"quota,omitempty"`
 
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
@@ -6388,6 +6448,9 @@ type Policy struct {
 	// Example: {"application":"support"}
 	Tags *map[string]string `json:"tags,omitempty"`
 }
+
+// PolicyScope Whose policy: an organization's, an app's, or one end user's.
+type PolicyScope string
 
 // PostalAddress defines model for PostalAddress.
 type PostalAddress struct {
@@ -6779,18 +6842,21 @@ type ProviderPrice struct {
 	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
 }
 
-// Quota What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 type Quota struct {
-	// MessagesPerUserPerDay How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+	// MessagesPerUserPerDay How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level's applies: the app's, then the organization's, then the router's default.
 	//
 	// Example: 20000
 	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty"`
 
-	// TokensPerUserPerDay How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+	// TokensPerUserPerDay How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the next level's applies, as for messages.
 	//
 	// Example: 50000000
 	TokensPerUserPerDay *int64 `json:"tokens_per_user_per_day,omitempty"`
 }
+
+// QuotaLevel Who set a number of a quota: the user's own policy, the app's, the organization's, or the router's default. The router's default counts the user's devices only; every other counts the app's backend acting for the user too.
+type QuotaLevel string
 
 // RCSProfile defines model for RCSProfile.
 type RCSProfile struct {
@@ -8982,6 +9048,46 @@ type UseCaseReview struct {
 // UseCaseStatus Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
 type UseCaseStatus string
 
+// UserPolicy One end user of the calling app: their own quota, if any, the quota they are held to, and what they spent today.
+type UserPolicy struct {
+	// Effective The quota a user is held to: each number is the first set of the user's own, the app's, the organization's and the router's default. Both are 0 on a router that counts nothing.
+	Effective EffectiveQuota `json:"effective"`
+
+	// Messages Responses counted today toward a quota the customer set, the app's backend acting for the user included. A day held only to the router's default counts the user's devices alone, which this leaves out.
+	Messages int64 `json:"messages"`
+
+	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	Quota *Quota `json:"quota,omitempty"`
+
+	// ResetsAt When the day ends and the count starts again: the next UTC midnight.
+	ResetsAt time.Time `json:"resets_at"`
+
+	// Tokens Tokens counted today toward a quota the customer set, counted as messages is.
+	Tokens int64  `json:"tokens"`
+	UserId string `json:"user_id"`
+}
+
+// UserPolicyEntry defines model for UserPolicyEntry.
+type UserPolicyEntry struct {
+	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	Quota     *Quota    `json:"quota,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UserId    string    `json:"user_id"`
+}
+
+// UserPolicyInput One end user's own policy, which holds a quota only.
+type UserPolicyInput struct {
+	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	Quota *Quota `json:"quota,omitempty"`
+}
+
+// UserPolicyPage defines model for UserPolicyPage.
+type UserPolicyPage struct {
+	HasMore    bool               `json:"has_more"`
+	Items      *[]UserPolicyEntry `json:"items"`
+	NextCursor *string            `json:"next_cursor,omitempty"`
+}
+
 // VideoSource defines model for VideoSource.
 type VideoSource struct {
 	// MaxFrames How many frames to sample, evenly spaced across the clip. Default 8.
@@ -9498,6 +9604,15 @@ type ListUseCaseReviewsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// ListUserPoliciesParams defines parameters for ListUserPolicies.
+type ListUserPoliciesParams struct {
+	// Limit Up to 100. Omitted is 100.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListLimitsParams defines parameters for ListLimits.
 type ListLimitsParams struct {
 	// Subject Only limits on this subject. team lists the teams' limits, category every other category's.
@@ -9865,6 +9980,9 @@ type UpdateAppPolicyJSONRequestBody = Policy
 
 // UpdateOrganizationPolicyJSONRequestBody defines body for UpdateOrganizationPolicy for application/json ContentType.
 type UpdateOrganizationPolicyJSONRequestBody = Policy
+
+// UpdateUserPolicyJSONRequestBody defines body for UpdateUserPolicy for application/json ContentType.
+type UpdateUserPolicyJSONRequestBody = UserPolicyInput
 
 // CreateRouterConfigJSONRequestBody defines body for CreateRouterConfig for application/json ContentType.
 type CreateRouterConfigJSONRequestBody = RouterConfigRequest
@@ -12706,6 +12824,55 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
 	UpdateOrganizationPolicy(ctx context.Context, body UpdateOrganizationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListUserPolicies List the calling app's users with a policy of their own
+	//
+	// By user id, in byte order. A user with no policy of their own is held to the app's quota, the organization's, or the router's default, and is not listed.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/policies/users (the `ListUserPolicies` operationId).
+	ListUserPolicies(ctx context.Context, params *ListUserPoliciesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteUserPolicy Remove one end user's own quota
+	//
+	// The user falls back to the app's quota, the organization's, or the router's default. A user with none of their own answers 204 too.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/policies/users/{user_id} (the `DeleteUserPolicy` operationId).
+	DeleteUserPolicy(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUserPolicy Read one end user's quota
+	//
+	// The user's own quota, if they have one, the quota they are held to and who set each number of it, and what they spent today toward a quota the customer set. Any user id may be read, with a policy of their own or not.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/policies/users/{user_id} (the `GetUserPolicy` operationId).
+	GetUserPolicy(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateUserPolicyWithBody Replace one end user's own quota
+	//
+	// The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
+	UpdateUserPolicyWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateUserPolicy Replace one end user's own quota
+	//
+	// The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
+	UpdateUserPolicy(ctx context.Context, userId string, body UpdateUserPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListRouterConfigs The router configs the calling customer holds
 	//
@@ -18250,6 +18417,105 @@ func (c *Client) UpdateOrganizationPolicyWithBody(ctx context.Context, contentTy
 // Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
 func (c *Client) UpdateOrganizationPolicy(ctx context.Context, body UpdateOrganizationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateOrganizationPolicyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListUserPolicies List the calling app's users with a policy of their own
+//
+// By user id, in byte order. A user with no policy of their own is held to the app's quota, the organization's, or the router's default, and is not listed.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/policies/users (the `ListUserPolicies` operationId).
+func (c *Client) ListUserPolicies(ctx context.Context, params *ListUserPoliciesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListUserPoliciesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteUserPolicy Remove one end user's own quota
+//
+// The user falls back to the app's quota, the organization's, or the router's default. A user with none of their own answers 204 too.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/policies/users/{user_id} (the `DeleteUserPolicy` operationId).
+func (c *Client) DeleteUserPolicy(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteUserPolicyRequest(c.Server, userId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUserPolicy Read one end user's quota
+//
+// The user's own quota, if they have one, the quota they are held to and who set each number of it, and what they spent today toward a quota the customer set. Any user id may be read, with a policy of their own or not.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/policies/users/{user_id} (the `GetUserPolicy` operationId).
+func (c *Client) GetUserPolicy(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUserPolicyRequest(c.Server, userId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateUserPolicyWithBody Replace one end user's own quota
+//
+// The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
+func (c *Client) UpdateUserPolicyWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateUserPolicyRequestWithBody(c.Server, userId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateUserPolicy Replace one end user's own quota
+//
+// The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
+func (c *Client) UpdateUserPolicy(ctx context.Context, userId string, body UpdateUserPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateUserPolicyRequest(c.Server, userId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -28174,6 +28440,187 @@ func NewUpdateOrganizationPolicyRequestWithBody(server string, contentType strin
 	return req, nil
 }
 
+// NewListUserPoliciesRequest constructs an http.Request for the ListUserPolicies method
+func NewListUserPoliciesRequest(server string, params *ListUserPoliciesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/policies/users")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteUserPolicyRequest constructs an http.Request for the DeleteUserPolicy method
+func NewDeleteUserPolicyRequest(server string, userId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/policies/users/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetUserPolicyRequest constructs an http.Request for the GetUserPolicy method
+func NewGetUserPolicyRequest(server string, userId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/policies/users/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateUserPolicyRequest calls the generic UpdateUserPolicy builder with application/json body
+func NewUpdateUserPolicyRequest(server string, userId string, body UpdateUserPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateUserPolicyRequestWithBody(server, userId, "application/json", bodyReader)
+}
+
+// NewUpdateUserPolicyRequestWithBody constructs an http.Request for the UpdateUserPolicy method, with any body, and a specified content type
+func NewUpdateUserPolicyRequestWithBody(server string, userId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/policies/users/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListRouterConfigsRequest constructs an http.Request for the ListRouterConfigs method
 func NewListRouterConfigsRequest(server string) (*http.Request, error) {
 	var err error
@@ -32844,6 +33291,61 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
 	UpdateOrganizationPolicyWithResponse(ctx context.Context, body UpdateOrganizationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateOrganizationPolicyResponse, error)
+
+	// ListUserPoliciesWithResponse List the calling app's users with a policy of their own
+	//
+	// By user id, in byte order. A user with no policy of their own is held to the app's quota, the organization's, or the router's default, and is not listed.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/policies/users (the `ListUserPolicies` operationId).
+	ListUserPoliciesWithResponse(ctx context.Context, params *ListUserPoliciesParams, reqEditors ...RequestEditorFn) (*ListUserPoliciesResponse, error)
+
+	// DeleteUserPolicyWithResponse Remove one end user's own quota
+	//
+	// The user falls back to the app's quota, the organization's, or the router's default. A user with none of their own answers 204 too.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/policies/users/{user_id} (the `DeleteUserPolicy` operationId).
+	DeleteUserPolicyWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*DeleteUserPolicyResponse, error)
+
+	// GetUserPolicyWithResponse Read one end user's quota
+	//
+	// The user's own quota, if they have one, the quota they are held to and who set each number of it, and what they spent today toward a quota the customer set. Any user id may be read, with a policy of their own or not.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/policies/users/{user_id} (the `GetUserPolicy` operationId).
+	GetUserPolicyWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*GetUserPolicyResponse, error)
+
+	// UpdateUserPolicyWithBodyWithResponse Replace one end user's own quota
+	//
+	// The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
+	UpdateUserPolicyWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUserPolicyResponse, error)
+
+	// UpdateUserPolicyWithResponse Replace one end user's own quota
+	//
+	// The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
+	UpdateUserPolicyWithResponse(ctx context.Context, userId string, body UpdateUserPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUserPolicyResponse, error)
 
 	// ListRouterConfigsWithResponse The router configs the calling customer holds
 	//
@@ -53722,6 +54224,403 @@ func (r UpdateOrganizationPolicyResponse) ContentType() string {
 	return ""
 }
 
+// ListUserPoliciesResponse200Headers the declared response headers of an HTTP 200 response for ListUserPolicies
+type ListUserPoliciesResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ListUserPoliciesResponse402Headers the declared response headers of an HTTP 402 response for ListUserPolicies
+type ListUserPoliciesResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ListUserPoliciesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UserPolicyPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListUserPoliciesResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ListUserPoliciesResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListUserPoliciesResponse) GetJSON200() *UserPolicyPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListUserPoliciesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListUserPoliciesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListUserPoliciesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListUserPoliciesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListUserPoliciesResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListUserPoliciesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListUserPoliciesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListUserPoliciesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListUserPoliciesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListUserPoliciesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteUserPolicyResponse204Headers the declared response headers of an HTTP 204 response for DeleteUserPolicy
+type DeleteUserPolicyResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// DeleteUserPolicyResponse402Headers the declared response headers of an HTTP 402 response for DeleteUserPolicy
+type DeleteUserPolicyResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type DeleteUserPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *DeleteUserPolicyResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *DeleteUserPolicyResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteUserPolicyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteUserPolicyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteUserPolicyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteUserPolicyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteUserPolicyResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteUserPolicyResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteUserPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteUserPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteUserPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteUserPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetUserPolicyResponse200Headers the declared response headers of an HTTP 200 response for GetUserPolicy
+type GetUserPolicyResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetUserPolicyResponse402Headers the declared response headers of an HTTP 402 response for GetUserPolicy
+type GetUserPolicyResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetUserPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UserPolicy
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetUserPolicyResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetUserPolicyResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUserPolicyResponse) GetJSON200() *UserPolicy {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUserPolicyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUserPolicyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetUserPolicyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetUserPolicyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUserPolicyResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetUserPolicyResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUserPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUserPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUserPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUserPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UpdateUserPolicyResponse200Headers the declared response headers of an HTTP 200 response for UpdateUserPolicy
+type UpdateUserPolicyResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// UpdateUserPolicyResponse402Headers the declared response headers of an HTTP 402 response for UpdateUserPolicy
+type UpdateUserPolicyResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type UpdateUserPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UserPolicy
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *UpdateUserPolicyResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *UpdateUserPolicyResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateUserPolicyResponse) GetJSON200() *UserPolicy {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateUserPolicyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateUserPolicyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateUserPolicyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateUserPolicyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateUserPolicyResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateUserPolicyResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateUserPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateUserPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateUserPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateUserPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListRouterConfigsResponse200Headers the declared response headers of an HTTP 200 response for ListRouterConfigs
 type ListRouterConfigsResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -61473,6 +62372,91 @@ func (c *ClientWithResponses) UpdateOrganizationPolicyWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseUpdateOrganizationPolicyResponse(rsp)
+}
+
+// ListUserPoliciesWithResponse List the calling app's users with a policy of their own
+//
+// By user id, in byte order. A user with no policy of their own is held to the app's quota, the organization's, or the router's default, and is not listed.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/policies/users (the `ListUserPolicies` operationId).
+func (c *ClientWithResponses) ListUserPoliciesWithResponse(ctx context.Context, params *ListUserPoliciesParams, reqEditors ...RequestEditorFn) (*ListUserPoliciesResponse, error) {
+	rsp, err := c.ListUserPolicies(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListUserPoliciesResponse(rsp)
+}
+
+// DeleteUserPolicyWithResponse Remove one end user's own quota
+//
+// The user falls back to the app's quota, the organization's, or the router's default. A user with none of their own answers 204 too.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/policies/users/{user_id} (the `DeleteUserPolicy` operationId).
+func (c *ClientWithResponses) DeleteUserPolicyWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*DeleteUserPolicyResponse, error) {
+	rsp, err := c.DeleteUserPolicy(ctx, userId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteUserPolicyResponse(rsp)
+}
+
+// GetUserPolicyWithResponse Read one end user's quota
+//
+// The user's own quota, if they have one, the quota they are held to and who set each number of it, and what they spent today toward a quota the customer set. Any user id may be read, with a policy of their own or not.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/policies/users/{user_id} (the `GetUserPolicy` operationId).
+func (c *ClientWithResponses) GetUserPolicyWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*GetUserPolicyResponse, error) {
+	rsp, err := c.GetUserPolicy(ctx, userId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUserPolicyResponse(rsp)
+}
+
+// UpdateUserPolicyWithBodyWithResponse Replace one end user's own quota
+//
+// The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
+func (c *ClientWithResponses) UpdateUserPolicyWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUserPolicyResponse, error) {
+	rsp, err := c.UpdateUserPolicyWithBody(ctx, userId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateUserPolicyResponse(rsp)
+}
+
+// UpdateUserPolicyWithResponse Replace one end user's own quota
+//
+// The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
+func (c *ClientWithResponses) UpdateUserPolicyWithResponse(ctx context.Context, userId string, body UpdateUserPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUserPolicyResponse, error) {
+	rsp, err := c.UpdateUserPolicy(ctx, userId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateUserPolicyResponse(rsp)
 }
 
 // ListRouterConfigsWithResponse The router configs the calling customer holds
@@ -85967,6 +86951,478 @@ func ParseUpdateOrganizationPolicyResponse(rsp *http.Response) (*UpdateOrganizat
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers UpdateOrganizationPolicyResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListUserPoliciesResponse parses an HTTP response from a ListUserPoliciesWithResponse call
+func ParseListUserPoliciesResponse(rsp *http.Response) (*ListUserPoliciesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListUserPoliciesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UserPolicyPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListUserPoliciesResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ListUserPoliciesResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteUserPolicyResponse parses an HTTP response from a DeleteUserPolicyWithResponse call
+func ParseDeleteUserPolicyResponse(rsp *http.Response) (*DeleteUserPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteUserPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers DeleteUserPolicyResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers DeleteUserPolicyResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetUserPolicyResponse parses an HTTP response from a GetUserPolicyWithResponse call
+func ParseGetUserPolicyResponse(rsp *http.Response) (*GetUserPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUserPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UserPolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetUserPolicyResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetUserPolicyResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUpdateUserPolicyResponse parses an HTTP response from a UpdateUserPolicyWithResponse call
+func ParseUpdateUserPolicyResponse(rsp *http.Response) (*UpdateUserPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateUserPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UserPolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers UpdateUserPolicyResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers UpdateUserPolicyResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

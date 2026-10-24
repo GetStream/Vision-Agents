@@ -480,6 +480,43 @@ func (s *Store) endLegs(ctx context.Context, where func(*bun.UpdateQuery) *bun.U
 	return slices.Concat(lists...), nil
 }
 
+// OpenCallLegs is how many legs of an organization's calls are up or ringing now, in every
+// shard: open, with their phone joined or dialed since ringingSince, so a leg whose answer was
+// never heard drops out once it could no longer be ringing. inCall is how many of those are
+// legs of the call callType:callID, none when it is empty. A leg with no organization is never
+// counted.
+func (s *Store) OpenCallLegs(ctx context.Context, organizationID string, ringingSince time.Time, callType, callID string) (total, inCall int, err error) {
+	if organizationID == "" {
+		return 0, 0, nil
+	}
+	type counted struct {
+		Total  int `bun:"total"`
+		InCall int `bun:"in_call"`
+	}
+	counts, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (counted, error) {
+		var found counted
+		err := db.NewSelect().Model((*CallLeg)(nil)).
+			ColumnExpr("count(*) AS total").
+			ColumnExpr("count(*) FILTER (WHERE call_type = ? AND call_id = ?) AS in_call", callType, callID).
+			Where("organization_id = ?", organizationID).Where("ended_at IS NULL").
+			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("started_at IS NOT NULL").WhereOr("dialed_at > ?", ringingSince.UTC())
+			}).
+			Scan(ctx, &found)
+		return found, err
+	})
+	if err != nil {
+		return 0, 0, stack.Wrap(fmt.Errorf("store: open call legs: %w", err))
+	}
+	for _, count := range counts {
+		total += count.Total
+		if callID != "" {
+			inCall += count.InCall
+		}
+	}
+	return total, inCall, nil
+}
+
 // SweepCallLegs ends the legs of this shard open longer than longest at now: one whose phone
 // joined before now less longest is ended at its start plus longest, as swept, and one that has
 // rung since before then as unanswered. At most limit of each are ended at once.

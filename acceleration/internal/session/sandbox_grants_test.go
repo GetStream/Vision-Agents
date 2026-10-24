@@ -82,7 +82,7 @@ func (s *SandboxGrantsSuite) opened(config store.AgentConfig) (sandbox.Sandbox, 
 	spec.ID, spec.Sandbox = uuid.NewString(), daytonaProvider
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
-	box, err := s.manager.box(spec, d)
+	box, err := s.manager.box(s.ctx, spec, d)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
 	return box, d
@@ -228,7 +228,7 @@ func (s *SandboxGrantsSuite) boxed(options sandbox.Config) error {
 	spec.ID, spec.Sandbox, spec.SandboxOptions = uuid.NewString(), daytonaProvider, options
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
-	_, err = s.manager.box(spec, d)
+	_, err = s.manager.box(s.ctx, spec, d)
 	return err
 }
 
@@ -269,7 +269,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	spec.ID, spec.Sandbox, spec.SandboxOptions = uuid.NewString(), daytonaProvider, sandbox.Config{AllowedDomains: []string{"PyPI.org", "Files.PythonHosted.org"}}
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
-	box, err := s.manager.box(spec, d)
+	box, err := s.manager.box(s.ctx, spec, d)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
 

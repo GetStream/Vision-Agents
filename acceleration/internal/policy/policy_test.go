@@ -772,6 +772,16 @@ func quotaOf(messages, tokens *int64) *store.Quota {
 	return &store.Quota{MessagesPerUserPerDay: messages, TokensPerUserPerDay: tokens}
 }
 
+// limitsOf is the numbers of a quota, whoever set them.
+func limitsOf(held quota.Quota) quota.Limits {
+	return quota.Limits{MessagesPerDay: held.Messages.PerDay, TokensPerDay: held.Tokens.PerDay}
+}
+
+// limits is the numbers the suite's app's user is held to.
+func (s *PolicySuite) limits(userID string) quota.Limits {
+	return limitsOf(s.enforcer.Quota(s.ctx, s.app, userID, deployment))
+}
+
 func (s *PolicySuite) TestADailyLimitIsTheAppsNumberElseTheDeployments() {
 	cases := []struct {
 		name              string
@@ -791,17 +801,17 @@ func (s *PolicySuite) TestADailyLimitIsTheAppsNumberElseTheDeployments() {
 			want: quota.Limits{},
 		},
 		{
-			// A limit is set only on an app, so an organization's is never read, whatever
-			// its document holds.
-			name:         "an organization's limit is not one",
+			// The app's number wins where it sets one, and the organization's shows through
+			// where it does not.
+			name:         "an app's limit wins over its organization's",
 			organization: quotaOf(new(int64(5)), new(int64(5))),
 			app:          quotaOf(new(int64(20_000)), nil),
-			want:         quota.Limits{MessagesPerDay: 20_000, TokensPerDay: deployment.TokensPerDay},
+			want:         quota.Limits{MessagesPerDay: 20_000, TokensPerDay: 5},
 		},
 		{
-			name:         "an organization's limit is not one for an app that sets none",
+			name:         "an organization's limit is the default for an app that sets none",
 			organization: quotaOf(new(int64(5)), new(int64(5))),
-			want:         deployment,
+			want:         quota.Limits{MessagesPerDay: 5, TokensPerDay: 5},
 		},
 	}
 	for _, c := range cases {
@@ -809,18 +819,77 @@ func (s *PolicySuite) TestADailyLimitIsTheAppsNumberElseTheDeployments() {
 			s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: c.organization})
 			s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: c.app})
 
-			s.Equal(c.want, s.enforcer.Limits(s.ctx, s.app, deployment))
+			s.Equal(c.want, s.limits("someone"))
 		})
 	}
 }
 
 func (s *PolicySuite) TestARaisedDailyLimitIsSeenAtOnceOnTheNodeThatSavedIt() {
-	s.enforcer.Limits(s.ctx, s.app, deployment)
+	s.limits("someone")
 	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(3)), nil)})
 
-	limits := s.enforcer.Limits(s.ctx, s.app, deployment)
+	s.EqualValues(3, s.limits("someone").MessagesPerDay, "the cached decision is dropped when the policy is saved")
+}
 
-	s.EqualValues(3, limits.MessagesPerDay, "the cached decision is dropped when the policy is saved")
+func (s *PolicySuite) TestEachNumberSaysWhoSetIt() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: quotaOf(nil, new(int64(9)))})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(4)), nil)})
+
+	held := s.enforcer.Quota(s.ctx, s.app, "someone", deployment)
+
+	s.Equal(quota.Limit{PerDay: 4, By: quota.Setter{Level: quota.LevelApp, ID: s.app}}, held.Messages)
+	s.Equal(quota.Limit{PerDay: 9, By: quota.Setter{Level: quota.LevelOrganization, ID: s.org}}, held.Tokens)
+	s.False(quota.Default(deployment).Messages.By.Customer(), "the deployment's is nobody's the customer set")
+}
+
+func (s *PolicySuite) TestAUsersOwnQuotaWinsOverTheirAppsAndOrganizations() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: quotaOf(new(int64(5)), new(int64(5)))})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(20)), nil)})
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(1_000)), nil)})
+
+	held := s.enforcer.Quota(s.ctx, s.app, "vip", deployment)
+
+	s.Equal(quota.Limit{PerDay: 1_000, By: quota.Setter{Level: quota.LevelUser, ID: "vip"}}, held.Messages)
+	s.EqualValues(5, held.Tokens.PerDay, "the tokens the user's own leaves out are the organization's")
+	s.Equal(quota.Limits{MessagesPerDay: 20, TokensPerDay: 5}, s.limits("someone"), "another user keeps the app's")
+}
+
+func (s *PolicySuite) TestTheSameUserIDInTwoAppsIsTwoUsers() {
+	sibling := fmt.Sprintf("app-sibling-%d", time.Now().UnixNano())
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, sibling, s.org))
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "same"), store.PolicyDocument{Quota: quotaOf(new(int64(1)), nil)})
+
+	s.EqualValues(1, s.limits("same").MessagesPerDay)
+	s.Equal(deployment, limitsOf(s.enforcer.Quota(s.ctx, sibling, "same", deployment)))
+}
+
+func (s *PolicySuite) TestDeletingAUsersQuotaFallsBackToTheirApps() {
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(20)), nil)})
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(1_000)), nil)})
+	s.Require().EqualValues(1_000, s.limits("vip").MessagesPerDay)
+
+	deleted, err := s.enforcer.Delete(s.ctx, store.ScopeUser, store.UserScopeID(s.app, "vip"))
+
+	s.Require().NoError(err)
+	s.True(deleted)
+	s.EqualValues(20, s.limits("vip").MessagesPerDay, "seen at once on the node that deleted it")
+	again, err := s.enforcer.Delete(s.ctx, store.ScopeUser, store.UserScopeID(s.app, "vip"))
+	s.Require().NoError(err)
+	s.False(again, "there was none left to delete")
+}
+
+func (s *PolicySuite) TestAnAppWithNoUserPoliciesLooksNoUserUp() {
+	s.limits("someone")
+	decided, ok := s.enforcer.decided(s.app)
+	s.Require().True(ok)
+	s.False(decided.users, "the app's decision answers its users with no lookup of their own")
+
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(2)), nil)})
+	s.limits("someone")
+
+	decided, ok = s.enforcer.decided(s.app)
+	s.Require().True(ok)
+	s.True(decided.users, "saving a user's policy drops the app's decision, which reads it again")
 }
 
 func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
@@ -831,7 +900,7 @@ func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
 	s.Require().NoError(err)
 	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
 
-	s.Equal(deployment, enforcer.Limits(s.ctx, s.app, deployment))
+	s.Equal(deployment, limitsOf(enforcer.Quota(s.ctx, s.app, "someone", deployment)))
 }
 
 func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
@@ -851,11 +920,11 @@ func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 		Quota: quotaOf(new(int64(20_000)), nil),
 	}))
 	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
-	s.Require().EqualValues(20_000, enforcer.Limits(s.ctx, s.app, deployment).MessagesPerDay)
+	s.Require().EqualValues(20_000, enforcer.Quota(s.ctx, s.app, "someone", deployment).Messages.PerDay)
 	s.Require().NoError(db.Close())
 	enforcer.forget(s.app)
 
-	limits := enforcer.Limits(s.ctx, s.app, deployment)
+	limits := limitsOf(enforcer.Quota(s.ctx, s.app, "someone", deployment))
 	requires, unread := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
 
 	s.EqualValues(20_000, limits.MessagesPerDay, "the app's limit, not the deployment's")
