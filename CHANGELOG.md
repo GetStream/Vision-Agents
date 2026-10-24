@@ -6,6 +6,10 @@
 
 A worker on `/v1/dispatch` whose `host_tools` names no `timeout_ms` now gives each call 30 seconds, the default for the tools a session's caller runs, rather than two minutes. A worker whose tools take longer says so with `timeout_ms`.
 
+### A session's tool call is answered only by a watcher that runs it
+
+Every watcher of a session's events socket still sees each `tool_call`, which now carries `run`: whether this watcher is the one to run it. A `tool_result` from a watcher that was not asked is dropped, so a browser watching a backend's session can no longer fail a call the backend was running, which it did by answering first. A watcher says which tools it runs with `?tools=a,b` when it attaches (empty for none). Without it, it runs the session's tools when it is on the side that created the session: a backend for a session a backend created, the same person for one a device created. A tool a backend declared never runs on a device, whatever the device declares. A call that no attached watcher runs fails at once instead of waiting out its timeout. A backend that answers the tools of a session a device created now has to name them in `tools`. The Go SDK names its registered functions when it attaches and leaves a call alone when `run` is false.
+
 ### Go's `ToolApprovalCommand.TurnId` is a `*string`
 
 `turn_id` is optional in the session socket's `tool_approval`: an answer to a connector call held for approval needs none. The Go client's generated `acceleration.ToolApprovalCommand.TurnId` is now a `*string`, so code that sets it takes its address (AI-1640, #1182).
