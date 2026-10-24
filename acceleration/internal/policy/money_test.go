@@ -63,8 +63,11 @@ type front struct {
 	down   atomic.Bool
 	// windowsDown drops the reads of usage windows alone.
 	windowsDown atomic.Bool
-	standings   atomic.Int64
-	windows     atomic.Int64
+	// stalled holds every call until it is cleared or its caller gives up, as a service that
+	// accepts connections and never answers.
+	stalled   atomic.Bool
+	standings atomic.Int64
+	windows   atomic.Int64
 }
 
 func (s *PolicySuite) front(service *usagetest.Service) *front {
@@ -73,6 +76,9 @@ func (s *PolicySuite) front(service *usagetest.Service) *front {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	f := &front{}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for f.stalled.Load() && r.Context().Err() == nil {
+			time.Sleep(time.Millisecond)
+		}
 		if f.down.Load() || (f.windowsDown.Load() && r.URL.Path == usage.PathWindows) {
 			// The connection drops, as it does when the service is gone.
 			panic(http.ErrAbortHandler)
@@ -467,16 +473,17 @@ func (s *PolicySuite) TestAnOldAccountAnswersAtOnce() {
 	s.usage().Credit(s.T(), s.org, 1_000_000)
 	enforcer.Join(s.app, s.org, openTier)
 	s.read(enforcer.Enforcer, s.org)
-	enforcer.front.down.Store(true)
+	// A service that never answers: an admission waiting on it would wait readTimeout.
+	enforcer.front.stalled.Store(true)
 	s.usage().Credit(s.T(), s.org, -1_000_000)
 
 	started := time.Now()
 	for range 1_000 {
 		s.Require().NoError(s.admit(enforcer.Enforcer, s.app).Spend, "the old standing")
 	}
-	s.Less(time.Since(started), 10*time.Millisecond, "nothing waits on the usage service")
+	s.Less(time.Since(started), time.Second, "nothing waits on the usage service")
 
-	enforcer.front.down.Store(false)
+	enforcer.front.stalled.Store(false)
 	s.spendRefused(enforcer.Enforcer, s.app, ErrNoCredits)
 }
 
