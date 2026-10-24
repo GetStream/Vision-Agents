@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ func (s *UsageAlertsSuite) named(name string) alerts.Condition {
 	return alerts.Condition{}
 }
 
-func (s *UsageAlertsSuite) TestTheRouterHasItsSevenConditions() {
+func (s *UsageAlertsSuite) TestTheRouterHasItsEightConditions() {
 	levels := map[string]alerts.Level{}
 	for _, condition := range Alerts(time.Minute) {
 		levels[condition.Name] = condition.Level
@@ -36,8 +37,27 @@ func (s *UsageAlertsSuite) TestTheRouterHasItsSevenConditions() {
 
 	s.Equal(map[string]alerts.Level{
 		"lost": alerts.Page, "rejected": alerts.Page, "write_failing": alerts.Page, "ship_stale": alerts.Page,
-		"unowned": alerts.Warn, "pending_slow": alerts.Warn, "unattributed": alerts.Warn,
+		"holds_flush_failing": alerts.Page, "unowned": alerts.Warn, "pending_slow": alerts.Warn, "unattributed": alerts.Warn,
 	}, levels)
+}
+
+func (s *UsageAlertsSuite) TestHoldsFlushFailingPagesOncePastTenSeconds() {
+	var unflushed atomic.Int64
+	ReportUnflushedHolds(func() float64 { return float64(unflushed.Load()) })
+	defer ReportUnflushedHolds(func() float64 { return 0 })
+	failing := s.named("holds_flush_failing")
+	start := time.Now()
+
+	unflushed.Store(9)
+	holds, _ := failing.Check(start)
+	s.False(holds, "admission is still answered from memory")
+	unflushed.Store(11)
+	holds, extra := failing.Check(start.Add(15 * time.Second))
+	s.True(holds, "billable work is being refused")
+	s.Equal(float64(11), extra["unflushed_oldest_seconds"])
+	unflushed.Store(0)
+	holds, _ = failing.Check(start.Add(30 * time.Second))
+	s.False(holds, "a flush landed")
 }
 
 func (s *UsageAlertsSuite) TestAnUnattributedRowWarnsOnce() {

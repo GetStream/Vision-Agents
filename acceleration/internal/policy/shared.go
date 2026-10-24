@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/redis/rueidis"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
@@ -29,8 +30,12 @@ var errUnshared = refusedWith(ErrSpendCheckUnavailable, "could not share spend w
 // counters: hold:{<organization>}:<subject>:<ids>.
 const holdPrefix = "hold"
 
-// flushTimeout bounds one round trip of the flush, and of the refresh.
-const flushTimeout = time.Second
+// flushTimeout bounds one round trip of the flush, and of the refresh, each of at most
+// flushChunk keys, so a router in use by many organizations never sends one unbounded pipeline.
+const (
+	flushTimeout = time.Second
+	flushChunk   = 256
+)
 
 // reasonUnshared is the refusal of billable work while holds cannot be shared.
 const reasonUnshared = "holds_unshared"
@@ -65,15 +70,8 @@ var (
 	_ = promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: "router",
 		Name:      "holds_unflushed_oldest_seconds",
-		Help:      "How long the oldest change to a hold has waited to be written to the shared Redis; past ROUTER_HOLDS_FLUSH_MAX_LAG billable work is refused",
-	}, func() float64 {
-		var oldest time.Duration
-		enforcers.Range(func(key, _ any) bool {
-			oldest = max(oldest, key.(*Enforcer).money.unflushedFor(time.Now()))
-			return true
-		})
-		return oldest.Seconds()
-	})
+		Help:      "How long the oldest change to a hold has waited to be written to the shared Redis; past 10 s billable work is refused",
+	}, unflushedOldest)
 	_ = promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: "router",
 		Name:      "holds_live",
@@ -87,6 +85,19 @@ var (
 		return float64(live)
 	})
 )
+
+func init() { routing.ReportUnflushedHolds(unflushedOldest) }
+
+// unflushedOldest is how long the oldest change to a hold of any Enforcer has waited to be
+// shared, in seconds.
+func unflushedOldest() float64 {
+	var oldest time.Duration
+	enforcers.Range(func(key, _ any) bool {
+		oldest = max(oldest, key.(*Enforcer).money.unflushedFor(time.Now()))
+		return true
+	})
+	return oldest.Seconds()
+}
 
 // dirtyHold is a hold changed since it was last written to the shared Redis: the account it is
 // kept under, when it first changed unwritten, and which change this is.
@@ -158,19 +169,29 @@ func (m *money) sharedUntil(h *hold) time.Time {
 	return h.made.Add(m.settings.PendingTTL)
 }
 
-// grantSharedUntil is when the other routers stop counting a hold against its grants, unless
-// this one lets go of it first: as long as this router may keep it (release).
+// grantSharedUntil is when the other routers stop counting a hold against its grants: while it
+// counts here, as long as this router may keep it (release); once a count of its row let it go
+// here, 2 × Fresh later, by when every router's read of the grants has the count; one let go
+// uncounted (stranded, or never known written) at once.
 func (m *money) grantSharedUntil(h *hold) time.Time {
-	if !h.settled {
+	switch {
+	case !h.settled:
 		return h.expires
+	case h.granted:
+		return later(h.made.Add(acklessAges*m.settings.PendingTTL), h.writtenAt.Add(uncountable))
+	case !h.grantsLetGo.IsZero():
+		return h.grantsLetGo.Add(2 * m.settings.Fresh)
 	}
-	return later(h.made.Add(acklessAges*m.settings.PendingTTL), h.writtenAt.Add(uncountable))
+	return time.Time{}
 }
 
 // sharing reports, under m.mu, whether a hold that counts nothing here any more is still shared
 // with the other routers, and so kept until it is not.
 func (m *money) sharing(h *hold, now time.Time) bool {
-	return m.settings.Holds != nil && h.settled && h.micros > 0 && m.sharedUntil(h).After(now)
+	if m.settings.Holds == nil || !h.settled || h.micros <= 0 {
+		return false
+	}
+	return m.sharedUntil(h).After(now) || len(h.grants) > 0 && m.grantSharedUntil(h).After(now)
 }
 
 // holdKey is the key of a subject's shared holds, from the key of its counters.
@@ -191,13 +212,13 @@ func (m *money) shareOf(key string, h *hold, now time.Time) map[string]string {
 	}
 	out := map[string]string{}
 	if until := m.sharedUntil(h); until.After(now) {
-		value := m.shareValue(h.micros, until)
+		value := shareValue(h.micros, until, now)
 		for _, subject := range h.subjects {
 			out[holdKey(subject)] = value
 		}
 	}
-	if until := m.grantSharedUntil(h); h.granted && until.After(now) {
-		value := m.shareValue(h.micros, until)
+	if until := m.grantSharedUntil(h); len(h.grants) > 0 && until.After(now) {
+		value := shareValue(h.micros, until, now)
 		organization := limitsOrganization(key)
 		for _, id := range h.grants {
 			out[grantKey(organization, id)] = value
@@ -206,8 +227,10 @@ func (m *money) shareOf(key string, h *hold, now time.Time) map[string]string {
 	return out
 }
 
-func (m *money) shareValue(micros int64, until time.Time) string {
-	return strconv.FormatInt(micros, 10) + ":" + strconv.FormatInt(until.UnixMilli(), 10) + ":" + m.instance
+// shareValue is a hold as the script takes it: its micros and how long from now it lives, which
+// the script turns into an expiry by Redis's own clock, so no router's clock skews it.
+func shareValue(micros int64, until, now time.Time) string {
+	return strconv.FormatInt(micros, 10) + ":" + strconv.FormatInt(max(until.Sub(now).Milliseconds(), 1), 10)
 }
 
 // remoteSlot is what one shared key's total is, in an account: the other routers' holds
@@ -245,33 +268,40 @@ func (m *money) flushPass(ctx context.Context) {
 		return
 	}
 	keys := make([]string, 0, len(plans))
-	execs := make([]rueidis.LuaExec, 0, len(plans))
-	nowMs := strconv.FormatInt(now.UnixMilli(), 10)
-	for key, plan := range plans {
+	for key := range plans {
 		keys = append(keys, key)
-		execs = append(execs, rueidis.LuaExec{Keys: []string{key}, Args: append([]string{nowMs, m.instance}, plan.args...)})
 	}
-	call, cancel := context.WithTimeout(ctx, flushTimeout)
-	results := holdsScript.ExecMulti(call, m.settings.Holds, execs...)
-	cancel()
-
 	failed := map[string]bool{}
 	answers := map[string]int64{}
 	var firstErr error
-	for i, result := range results {
-		values, err := result.AsIntSlice()
-		if err == nil && len(values) != 2 {
-			err = errors.New("policy: the holds script answered " + strconv.Itoa(len(values)) + " values")
+	for start := 0; start < len(keys); start += flushChunk {
+		chunk := keys[start:min(start+flushChunk, len(keys))]
+		execs := make([]rueidis.LuaExec, len(chunk))
+		for i, key := range chunk {
+			execs[i] = rueidis.LuaExec{Keys: []string{key}, Args: append([]string{m.instance}, plans[key].args...)}
 		}
-		if err != nil {
-			failed[keys[i]] = true
-			if firstErr == nil {
-				firstErr = err
+		call, cancel := context.WithTimeout(ctx, flushTimeout)
+		results := holdsScript.ExecMulti(call, m.settings.Holds, execs...)
+		cancel()
+		for i, key := range chunk {
+			var values []int64
+			err := errors.New("policy: the holds script gave no answer")
+			if i < len(results) {
+				values, err = results[i].AsIntSlice()
 			}
-			continue
+			if err == nil && len(values) != 2 {
+				err = errors.New("policy: the holds script answered " + strconv.Itoa(len(values)) + " values")
+			}
+			if err != nil {
+				failed[key] = true
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			answers[key] = values[0]
+			holdsPerSubject.Observe(float64(values[1]))
 		}
-		answers[keys[i]] = values[0]
-		holdsPerSubject.Observe(float64(values[1]))
 	}
 	m.landFlush(plans, taken, answers, failed, time.Now())
 	if firstErr != nil {
@@ -296,6 +326,11 @@ func (m *money) planFlush(now time.Time) (map[string]*keyPlan, map[uuid.UUID]flu
 			plan = &keyPlan{slot: slot}
 			plans[key] = plan
 		}
+		// A key first planned for a drop knows no account; one wanted later fills it in, so its
+		// answer is kept.
+		if plan.slot.account == "" && slot.account != "" {
+			plan.slot = slot
+		}
 		return plan
 	}
 	taken := make(map[uuid.UUID]flushing, len(m.dirty))
@@ -319,7 +354,13 @@ func (m *money) planFlush(now time.Time) (map[string]*keyPlan, map[uuid.UUID]flu
 			if _, kept := desired[key]; kept {
 				continue
 			}
-			plan := planFor(key, remoteSlot{})
+			// A key of the hold's own account answers for it; one left from another it moved
+			// from answers for nobody.
+			slot := remoteSlot{}
+			if strings.HasPrefix(key, holdPrefix+":{"+limitsOrganization(d.key)+"}:") {
+				slot = slotOf(d.key, key)
+			}
+			plan := planFor(key, slot)
 			plan.args = append(plan.args, field, "")
 			plan.ids = append(plan.ids, id)
 			took.keys = append(took.keys, key)
