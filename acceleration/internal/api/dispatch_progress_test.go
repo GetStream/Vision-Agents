@@ -89,6 +89,7 @@ func (s *DispatchSuite) TestAHostedCallItIsTooLateToHoldIsCancelled() {
 	cancel := s.next(worker)
 	s.Equal("tool_cancel", cancel["type"])
 	s.Equal("call-1", cancel["id"])
+	s.Equal("session-1", cancel["session_id"], "a worker matches a cancel on its call's session")
 }
 
 // runsOnTheOtherNode hosts investigate_sdk on a worker on the other node and makes one call
@@ -135,5 +136,7 @@ func (s *ForwardedDispatchSuite) TestAWorkerOnAnotherNodeIsToldWhenItsCallCannot
 
 	s.Require().NoError(worker.WriteJSON(frame{"type": "tool_hold", "tool_call_id": "call-1"}))
 
-	s.Equal("call-1", s.await(worker, "tool_cancel")["id"])
+	cancel := s.await(worker, "tool_cancel")
+	s.Equal("call-1", cancel["id"])
+	s.Equal("session-1", cancel["session_id"])
 }

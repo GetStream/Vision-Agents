@@ -139,21 +139,28 @@ func (w *Worker) Resolve(id string, result ToolResult) bool {
 }
 
 // Hold keeps a hosted call the worker is running going when the caller talks over the
-// agent, reporting whether the call was still running to be held.
-func (w *Worker) Hold(id string) bool {
-	progress := w.progressOf(id)
-	return progress != nil && progress.HoldTool(id)
+// agent, reporting the session the call was made in and whether it was still running to be
+// held.
+func (w *Worker) Hold(id string) (string, bool) {
+	call := w.progressOf(id)
+	return call.sessionID, call.progress != nil && call.progress.HoldTool(id)
 }
 
 // Update tells the conversation a hosted call was made in how it is going. An update for
 // a call nobody is waiting on is dropped.
 func (w *Worker) Update(id, text string, verbatim bool) {
-	if progress := w.progressOf(id); progress != nil {
-		progress.ToolUpdate(id, text, verbatim)
+	if call := w.progressOf(id); call.progress != nil {
+		call.progress.ToolUpdate(id, text, verbatim)
 	}
 }
 
-func (w *Worker) progressOf(id string) Progress {
+// listening is a running hosted call's conversation, and the session it is.
+type listening struct {
+	sessionID string
+	progress  Progress
+}
+
+func (w *Worker) progressOf(id string) listening {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.progress[id]
@@ -281,7 +288,7 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 	}
 	chosen.worker.results[call.ID] = answer
 	if call.Progress != nil {
-		chosen.worker.progress[call.ID] = call.Progress
+		chosen.worker.progress[call.ID] = listening{sessionID: call.SessionID, progress: call.Progress}
 	}
 	chosen.worker.mu.Unlock()
 	// Cannot block: the queue was not full a moment ago and nothing else writes to it
@@ -371,7 +378,7 @@ func (p *Pool) unhost(worker *Worker) {
 	worker.mu.Lock()
 	waiting := worker.results
 	worker.results = map[string]chan ToolResult{}
-	worker.progress = map[string]Progress{}
+	worker.progress = map[string]listening{}
 	worker.mu.Unlock()
 	for _, answer := range waiting {
 		answer <- ToolResult{Failure: "the worker running this tool disconnected"}

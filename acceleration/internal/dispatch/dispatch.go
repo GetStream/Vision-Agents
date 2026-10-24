@@ -186,7 +186,7 @@ type Worker struct {
 	carried  int
 	load     Load
 	results  map[string]chan ToolResult
-	progress map[string]Progress
+	progress map[string]listening
 }
 
 // Calls is what the worker's connection reads from. It is closed when the worker is
@@ -354,7 +354,7 @@ func (p *Pool) Register(customerID string, registration Registration) (*Worker, 
 		working:    map[string]struct{}{},
 		carried:    max(registration.Active, 0),
 		results:    map[string]chan ToolResult{},
-		progress:   map[string]Progress{},
+		progress:   map[string]listening{},
 	}
 	p.workers[customerID] = append(p.workers[customerID], worker)
 	p.mu.Unlock()

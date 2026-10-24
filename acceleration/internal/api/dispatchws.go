@@ -328,8 +328,8 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			// the worker's other frames are not held up behind.
 			go func(id string) {
 				reply := frame{"type": "tool_held", "id": id}
-				if !worker.Hold(id) {
-					reply = frame{"type": "tool_cancel", "id": id}
+				if sessionID, held := worker.Hold(id); !held {
+					reply = frame{"type": "tool_cancel", "id": id, "session_id": sessionID}
 				}
 				select {
 				case replies <- reply:

@@ -147,20 +147,20 @@ func TestAWorkerRunningAHostedCallReachesItsConversation(t *testing.T) {
 	go func() {
 		call := <-worker.ToolCalls()
 		worker.Update(call.ID, "reading the gradle files", false)
-		if !worker.Hold(call.ID) {
+		if _, held := worker.Hold(call.ID); !held {
 			t.Error("a call its conversation holds was not held")
 		}
 		worker.Resolve(call.ID, ToolResult{Output: llm.TextParts("35")})
 	}()
 	if _, err := pool.RunHosted(context.Background(), "acme", "support",
-		ToolCall{ID: "call-1", Name: "investigate_sdk", Progress: heard}); err != nil {
+		ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk", Progress: heard}); err != nil {
 		t.Fatal(err)
 	}
 
 	if len(heard.updates) != 1 || heard.updates[0] != "call-1: reading the gradle files" || len(heard.held) != 1 {
 		t.Fatalf("the conversation heard %+v and held %+v", heard.updates, heard.held)
 	}
-	if worker.Hold("call-1") {
+	if _, held := worker.Hold("call-1"); held {
 		t.Error("an answered call was held")
 	}
 	worker.Update("call-1", "late", false)
