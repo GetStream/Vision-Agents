@@ -22,6 +22,7 @@ use GetStream\VisionAgents\Inbound\InboundMessage;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Responses;
 use GetStream\VisionAgents\Session;
+use GetStream\VisionAgents\ToolCall;
 use GetStream\VisionAgents\Tools;
 use Revolt\EventLoop;
 use Throwable;
@@ -58,6 +59,9 @@ final class Dispatch
     private array $hosted = [];
     /** @var array<int, Future<mixed>> */
     private array $running = [];
+    /** @var array<string, ToolCall> hosted calls running, by what `tool_cancel` names them by */
+    private array $hostedCalls = [];
+    private Holds $holds;
     private int $nextJob = 0;
     /** The calls and messages being handled, which the router counts against capacity; hosted tool calls are not. */
     private int $handling = 0;
@@ -88,6 +92,7 @@ final class Dispatch
         }
         $this->client = $client ?? new Client();
         $this->channels = new LocalKeyedMutex();
+        $this->holds = new Holds();
     }
 
     /**
@@ -203,6 +208,7 @@ final class Dispatch
         $socket = Socket::open($this->client, '/v1/dispatch', $this->waiting());
         $this->socket = $socket;
         $this->hosting = [];
+        $this->holds = new Holds();
 
         $watchers = [EventLoop::repeat($this->reportEvery, fn () => $this->report())];
         if (\extension_loaded('pcntl')) {
@@ -220,6 +226,8 @@ final class Dispatch
                     'message' => $this->write(Json::string($frame, 'work_id'), InboundMessage::fromFrame($frame)),
                     'ready' => $this->ready(Json::string($frame, 'worker_id')),
                     'tool_call' => $this->runHosted($frame),
+                    'tool_held' => $this->holds->answer(self::hostedKey($frame), true),
+                    'tool_cancel' => $this->cancelHosted(self::hostedKey($frame)),
                     'hosting' => $this->hosting[] = Json::string($frame, 'agent_id'),
                     // A worker whose tools were refused is one nobody will call.
                     'hosting_refused' => throw new HostingRefusedException(Json::string($frame, 'agent_id'), Json::string($frame, 'reason')),
@@ -229,7 +237,12 @@ final class Dispatch
             }
         } finally {
             array_map(EventLoop::cancel(...), $watchers);
+            foreach ($this->hostedCalls as $call) {
+                $call->stop();
+            }
+            $this->holds->release();
             Future\awaitAll($this->running);
+            $this->hostedCalls = [];
             $this->answering = [];
             $socket->close();
             $this->socket = null;
@@ -294,6 +307,10 @@ final class Dispatch
      */
     private function runHosted(array $frame): void
     {
+        // One the router addresses to another worker says so with `run` false.
+        if (($frame['run'] ?? true) === false) {
+            return;
+        }
         $id = Json::string($frame, 'id');
         $name = Json::string($frame, 'name');
         $tools = null;
@@ -305,19 +322,51 @@ final class Dispatch
             }
         }
         if ($tools === null) {
-            $this->tell(['type' => 'tool_result', 'id' => $id, 'error' => "this worker does not run {$name}"]);
+            $this->tell(['type' => 'tool_result', 'tool_call_id' => $id, 'id' => $id, 'error' => "this worker does not run {$name}"]);
             return;
         }
         $arguments = $frame['arguments'] ?? '';
-        $this->track(function () use ($tools, $id, $name, $arguments): void {
-            $result = ['type' => 'tool_result', 'id' => $id];
+        $key = self::hostedKey($frame);
+        $call = ToolCall::fromFrame($frame, '', $this->tell(...), $this->holds, $key);
+        $this->hostedCalls[$key] = $call;
+        $this->track(function () use ($tools, $id, $name, $arguments, $key, $call): void {
+            $result = ['type' => 'tool_result', 'tool_call_id' => $id, 'id' => $id];
             try {
-                $result['output'] = $tools->call($name, is_string($arguments) ? $arguments : Json::encode($arguments));
+                $result['output'] = $tools->call($name, is_string($arguments) ? $arguments : Json::encode($arguments), $call);
             } catch (Throwable $failed) {
                 $result['error'] = $failed->getMessage();
             }
-            $this->tell($result);
+            $this->holds->forget($key);
+            // Gone from the table means cancelled: the model has moved on without it.
+            if (($this->hostedCalls[$key] ?? null) === $call) {
+                unset($this->hostedCalls[$key]);
+                $this->tell($result);
+            }
         });
+    }
+
+    /**
+     * Acts on a `tool_cancel`: stops the call unless it asked to be held and was. A PHP
+     * callable cannot be stopped from outside, so its answer is dropped instead.
+     */
+    private function cancelHosted(string $key): void
+    {
+        if (!$this->holds->held($key)) {
+            ($this->hostedCalls[$key] ?? null)?->stop();
+            unset($this->hostedCalls[$key]);
+        }
+        $this->holds->answer($key, false);
+    }
+
+    /**
+     * What `tool_cancel` and `tool_held` name a hosted call by: ids are only unique within a
+     * session, and one worker runs calls for many.
+     *
+     * @param array<string, mixed> $frame
+     */
+    private static function hostedKey(array $frame): string
+    {
+        return Json::string($frame, 'session_id') . '/' . Json::string($frame, 'id');
     }
 
     private function pickUp(string $workId, InboundCall $call): void

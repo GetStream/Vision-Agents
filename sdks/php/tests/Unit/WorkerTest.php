@@ -260,10 +260,10 @@ final class WorkerTest extends TestCase
         foreach ($server->sent('tool_result') as $result) {
             $results[Json::string($result, 'id')] = $result;
         }
-        self::assertSame(['type' => 'tool_result', 'id' => 't2', 'output' => '{"location":"Boulder, Colorado","sky":"sunny"}'], $results['t2']);
-        self::assertSame(['type' => 'tool_result', 'id' => 't3', 'error' => 'the weather service is down'], $results['t3']);
-        self::assertSame(['type' => 'tool_result', 'id' => 't4', 'error' => 'this worker does not run read_source'], $results['t4']);
-        self::assertSame(['type' => 'tool_result', 'id' => 't1', 'output' => 'done'], $results['t1']);
+        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't2', 'id' => 't2', 'output' => '{"location":"Boulder, Colorado","sky":"sunny"}'], $results['t2']);
+        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't3', 'id' => 't3', 'error' => 'the weather service is down'], $results['t3']);
+        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't4', 'id' => 't4', 'error' => 'this worker does not run read_source'], $results['t4']);
+        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't1', 'id' => 't1', 'output' => 'done'], $results['t1']);
         self::assertSame('t1', array_key_last($results), 'a slow tool held up the calls behind it');
         self::assertSame(0, $dispatch->active());
     }
