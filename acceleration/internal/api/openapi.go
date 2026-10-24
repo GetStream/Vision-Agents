@@ -139,7 +139,7 @@ var responseDescriptions = map[string]string{
 var answerHeaders = map[string]*huma.Header{
 	headerCostMicros: {
 		Description: "What the request cost, in millionths of a dollar: the sum of the usage it recorded. " +
-			"Sent to a server-side caller when the request recorded any, and never to an end user's " +
+			"Sent on a success to a server-side caller when the request recorded any, and never to an end user's " +
 			"device. An operation that answers before its work runs, such as createResponse, sends none.",
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
 	},
@@ -150,8 +150,9 @@ var answerHeaders = map[string]*huma.Header{
 	},
 	headerBalanceMicros: {
 		Description: "The organization's credit left, in millionths of a dollar, less what its work under " +
-			"way holds: the figure admission refuses at. Sent to a server-side caller once the router " +
-			"has read the organization's account, and never to an end user's device. A router that " +
+			"way holds: the figure admission refuses at. Sent on a success and on a refusal for money to " +
+			"a server-side caller once the router has read the organization's account, and never to " +
+			"an end user's device. A router that " +
 			"bills nobody sends none.",
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
 	},

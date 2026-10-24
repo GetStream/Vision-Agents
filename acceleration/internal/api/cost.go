@@ -78,12 +78,12 @@ type costedResponse struct {
 }
 
 func (c *costedResponse) WriteHeader(code int) {
-	c.stamp()
+	c.stamp(code)
 	c.ResponseWriter.WriteHeader(code)
 }
 
 func (c *costedResponse) Write(body []byte) (int, error) {
-	c.stamp()
+	c.stamp(http.StatusOK)
 	return c.ResponseWriter.Write(body)
 }
 
@@ -91,13 +91,19 @@ func (c *costedResponse) Write(body []byte) (int, error) {
 // http.ResponseController.
 func (c *costedResponse) Unwrap() http.ResponseWriter { return c.ResponseWriter }
 
-func (c *costedResponse) stamp() {
+// stamp sets the headers the spec declares on an answer with code: the cost on a success, and
+// the balance on a success and on a refusal for money.
+func (c *costedResponse) stamp(code int) {
 	if c.stamped {
 		return
 	}
 	c.stamped = true
+	success := code >= 200 && code < 300
+	if !success && code != http.StatusPaymentRequired {
+		return
+	}
 	header := c.ResponseWriter.Header()
-	if micros, rows, estimated := c.state.spent.Total(); rows > 0 && !c.state.off.Load() {
+	if micros, rows, estimated := c.state.spent.Total(); success && rows > 0 && !c.state.off.Load() {
 		header.Set(headerCostMicros, strconv.FormatInt(micros, 10))
 		if estimated {
 			header.Set(headerCostEstimated, "true")

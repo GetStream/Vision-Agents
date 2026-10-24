@@ -12,7 +12,7 @@ import struct Foundation.Date
 extension Components {
     /// Types generated from the `#/components/headers` section of the OpenAPI document.
     internal enum Headers {
-        /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
+        /// The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none.
         ///
         /// - Remark: Generated from `#/components/headers/X-Stream-Balance-Micros`.
         internal typealias XStreamBalanceMicros = Swift.Int64
@@ -29,7 +29,7 @@ extension Components {
         internal enum XStreamCostEstimated: String, Codable, Hashable, Sendable, CaseIterable {
             case _true = "true"
         }
-        /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
+        /// What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none.
         ///
         /// - Remark: Generated from `#/components/headers/X-Stream-Cost-Micros`.
         internal typealias XStreamCostMicros = Swift.Int64
