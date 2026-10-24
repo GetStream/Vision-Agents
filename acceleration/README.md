@@ -268,8 +268,10 @@ A backend may still say which of its users it is working for, in `X-Stream-User-
 server token names no user by definition, so the header is the only place to put it, and it
 is unsigned because a caller holding the secret could mint a token for that user anyway.
 What it buys is that the session the backend opens belongs to that user, so the user's own
-device can reach it afterwards. It costs nothing: the caller is still server-side, still
-reaches everything, and is still charged no daily limit.
+device can reach it afterwards. The caller is still server-side and still reaches
+everything. It is held only to the daily quotas the customer set for that user, never to the
+router's default, and is refused only work that asks a model for something (a session, a
+turn, a run, a socket), never a read.
 
 Beside it, a backend may say the email that user signs in with, in `X-Stream-User-Email`. The
 router keeps the latest one per user and reads it from a server-side caller only, since a
@@ -370,9 +372,17 @@ customer too, since each has its own limit. Both matter.
 A user id is the honest answer to who is asking, and the address is the answer that
 still holds when a backend mints a fresh user id per request.
 
-What a backend asks for is never counted, even when it names the user it acts for, and
-neither are the backend's own turns in a session it opened. Answers from `mock/*` models are not
-counted either. A counted HTTP answer carries `X-Quota-Limit`, `X-Quota-Remaining`
+Against the deployment's default, what a backend asks for is never counted, even when it
+names the user it acts for, and neither are the backend's own turns in a session it opened.
+A quota the customer set is the customer's own rule about its users, so it counts everything
+recorded with the user, a backend acting for them included, in a bucket of its own per user
+(and, for a device caller, against the address as well). An app's `quota` counted only device
+callers before; it now counts its backend's work for the user too. A backend over a user's
+quota is refused only work that asks a model for something, never a read. An anonymous
+caller's name is anybody's, so it is never held to that user's own quota nor counted in their
+bucket: it is held to the app's or organization's, counted by the name and the address. A refusal names the quota:
+`user <id>`, `every user of app <id>`, or the router's default. Answers from `mock/*` models
+are not counted either. A counted HTTP answer carries `X-Quota-Limit`, `X-Quota-Remaining`
 and `X-Quota-Reset` (the unix time of the next UTC midnight), for the limit nearest to
 refusing the caller.
 

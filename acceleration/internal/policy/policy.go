@@ -7,8 +7,9 @@
 // is the stricter of the two, prompt injection is screened if either turns it on, only a
 // model both allow may be routed to, and the organization's tags win over the app's. That is
 // the only reading under which an organization's setting means anything, since an app that
-// could switch it off would make it a suggestion. A daily limit per end user is the app's
-// alone, so it has no organization's to meet.
+// could switch it off would make it a suggestion. A daily quota per end user is the other way
+// round: each number is the most specific set of a named user's own, the app's and the
+// organization's, so an app may raise its organization's default and a user their app's.
 //
 // The customer's spend limits are rows of their own (store.Limit), one per subject, level and
 // interval: on the organization, an app, a key, an end user, a usage category or a team. Work
@@ -191,6 +192,8 @@ type Enforcer struct {
 	tiers   map[string]tierSeen
 	// now is the clock the tiers are kept by.
 	now func() time.Time
+	// userQuotaLogs throttles the line a user's own quota that cannot be read logs, per app.
+	userQuotaLogs throttle
 
 	money money
 }
@@ -215,10 +218,12 @@ type decision struct {
 	ownApp bool
 	// organization is the one the app is in, empty while it is not known.
 	organization string
-	// messages and tokens are the daily limits per end user the app's policy sets, nil
-	// where it sets none.
-	messages *int64
-	tokens   *int64
+	// appQuota and organizationQuota are the daily limits per end user the app's and the
+	// organization's policies set, nil where they set none. users is an app some of whose
+	// users have a policy of their own, so a user of an app with none costs no lookup.
+	appQuota          *store.Quota
+	organizationQuota *store.Quota
+	users             bool
 	// unread is a decision made without the policies, which could not be read.
 	unread error
 	// read is when the policies were read, used when Admit last answered with it, and
@@ -296,18 +301,48 @@ func (e *Enforcer) Attribute(ctx context.Context, customerID string) (routing.Ad
 	return routing.Admission{Tags: labelled(organization, app), OrganizationID: organizationID, OrganizationTier: e.tier(ctx, organizationID)}, nil
 }
 
-// Limits returns what one of a customer's end users may spend in a day: the number the
-// app's policy sets, or defaults where it sets none. A limit of zero is no cap. A policy
-// that could not be read leaves defaults in place.
-func (e *Enforcer) Limits(ctx context.Context, customerID string, defaults quota.Limits) quota.Limits {
+// Quota returns what one of a customer's end users may spend in a day, each number the first
+// set of the user's own policy, the app's, the organization's and defaults. A limit of zero
+// is no cap. A policy that could not be read leaves the level below it in place.
+//
+// It answers from the app's decision in memory. Only a user of an app some of whose users
+// have a policy of their own is looked up, through appconfig.
+func (e *Enforcer) Quota(ctx context.Context, customerID, userID string, defaults quota.Limits) quota.Quota {
+	held := quota.Default(defaults)
 	if e == nil || customerID == "" {
-		return defaults
+		return held
 	}
 	decided := e.decide(ctx, customerID)
-	return quota.Limits{
-		MessagesPerDay: orDefault(decided.messages, defaults.MessagesPerDay),
-		TokensPerDay:   orDefault(decided.tokens, defaults.TokensPerDay),
+	held = layered(held, decided.organizationQuota, quota.Setter{Level: quota.LevelOrganization, ID: decided.organization})
+	held = layered(held, decided.appQuota, quota.Setter{Level: quota.LevelApp, ID: customerID})
+	if !decided.users || userID == "" {
+		return held
 	}
+	reading, cancel := context.WithTimeout(ctx, joinTimeout)
+	defer cancel()
+	own, err := e.config.Policy(reading, store.ScopeUser, store.UserScopeID(customerID, userID))
+	if err != nil {
+		if e.userQuotaLogs.due(customerID, time.Minute) {
+			e.logger.Error("could not read a user's own quota, holding them to their app's",
+				"customer", customerID, "error", err)
+		}
+		return held
+	}
+	return layered(held, own.Quota, quota.Setter{Level: quota.LevelUser, ID: userID})
+}
+
+// layered is held with the numbers set lays over it, each one by.
+func layered(held quota.Quota, set *store.Quota, by quota.Setter) quota.Quota {
+	if set == nil {
+		return held
+	}
+	if set.MessagesPerUserPerDay != nil {
+		held.Messages = quota.Limit{PerDay: *set.MessagesPerUserPerDay, By: by}
+	}
+	if set.TokensPerUserPerDay != nil {
+		held.Tokens = quota.Limit{PerDay: *set.TokensPerUserPerDay, By: by}
+	}
+	return held
 }
 
 // Join records that an app was seen under an organization, which is what an organization's
@@ -490,15 +525,38 @@ func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string,
 	if err := e.config.SavePolicy(ctx, scope, id, document); err != nil {
 		return err
 	}
-	if scope == store.ScopeApp {
+	e.changed(scope, id)
+	return nil
+}
+
+// Delete removes a scope's policy, drops the decisions it may have changed, and reports
+// whether there was one.
+func (e *Enforcer) Delete(ctx context.Context, scope store.PolicyScope, id string) (bool, error) {
+	deleted, err := e.config.DeletePolicy(ctx, scope, id)
+	if err != nil {
+		return false, err
+	}
+	e.changed(scope, id)
+	return deleted, nil
+}
+
+// changed drops the decisions a write of one scope's policy may have changed: the app's, for
+// the app or one of its users, and every one for an organization.
+func (e *Enforcer) changed(scope store.PolicyScope, id string) {
+	switch scope {
+	case store.ScopeApp:
 		e.forget(id)
-		return nil
+		return
+	case store.ScopeUser:
+		if appID, _, ok := store.SplitUserScopeID(id); ok {
+			e.forget(appID)
+			return
+		}
 	}
 	e.mu.Lock()
 	clear(e.decisions)
 	e.forgotten++
 	e.mu.Unlock()
-	return nil
 }
 
 // decide answers from the customer's decision whatever its age and starts a background
@@ -629,10 +687,15 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 		ownApp:       enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
 		organization: organizationID,
 	}
-	if app.Quota != nil {
-		decided.messages = app.Quota.MessagesPerUserPerDay
-		decided.tokens = app.Quota.TokensPerUserPerDay
+	decided.appQuota, decided.organizationQuota = app.Quota, organization.Quota
+	// An app whose users cannot be told apart is taken to have some with a policy, so each is
+	// looked up, and one that fails holds them to the app's quota. The decision itself stands:
+	// it is what RequiresOwnStreamApp fails closed on.
+	users, err := e.config.HasUserPolicies(ctx, appID)
+	if err != nil {
+		users = true
 	}
+	decided.users = users
 	return decided, nil
 }
 
@@ -669,13 +732,6 @@ func (e *Enforcer) decided(appID string) (decision, bool) {
 }
 
 func enabled(flag *bool) bool { return flag != nil && *flag }
-
-func orDefault(limit *int64, fallback int64) int64 {
-	if limit == nil {
-		return fallback
-	}
-	return *limit
-}
 
 // allowedByBoth is the models both scopes allow: nil where neither has a list, the one
 // list where only one has, and what is on both where both have.

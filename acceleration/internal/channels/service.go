@@ -389,7 +389,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	spec.Greeting = ""
 	spec.PersistConversation = true
 	spec.ConversationID = identity.ConversationID
-	spec.Caller = routing.Caller{UserID: identity.UserID}
+	spec.Caller = routing.Caller{UserID: identity.UserID, Verified: true}
 	spec.CallerKind = auth.KindAuthenticated
 	// No key started it: the person texted one of the app's numbers.
 	spec.Attribution = routing.Attribution{APIKey: routing.OriginPhoneInbound,
