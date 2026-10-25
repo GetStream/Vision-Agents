@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -176,22 +178,51 @@ func (s *Store) DeletePluginConnection(ctx context.Context, customerID, configID
 }
 
 // AddConfigPlugin names a plugin on a config as the app's if it is not already there. One
-// each end user connected becomes the app's, keeping its options.
-func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, pluginID string) error {
-	config, err := s.AgentConfig(ctx, customerID, configID)
-	if err != nil {
-		return err
-	}
-	at := slices.IndexFunc(config.Plugins, func(entry PluginEntry) bool { return entry.Name == pluginID })
-	switch {
-	case at < 0:
-		config.Plugins = append(config.Plugins, PluginEntry{Name: pluginID})
-	case config.Plugins[at].User:
-		config.Plugins[at].User = false
-	default:
+// each end user connected becomes the app's, keeping its options. allow is asked about the
+// config as it is about to be written, with the config's row locked FOR UPDATE from the read
+// to the write, so a rule it checks holds against an edit made meanwhile: an update that
+// lands first is read here, and one that comes second waits and then writes over this one.
+// Nothing is written when allow fails, and its error is returned as is. Only the plugins
+// column is written, with updated_at. The config is returned as it is after, for a caller
+// that forgets a cached copy.
+func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, pluginID string, allow func(context.Context, AgentConfig) error) (config AgentConfig, err error) {
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		err := tx.NewSelect().Model(&config).
+			Where("id = ?", configID).
+			Where("customer_id = ?", customerID).
+			Where("deleted_at IS NULL").
+			For("UPDATE").
+			Scan(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			return unknownAgentConfig(configID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: add config plugin: %w", err)
+		}
+		at := slices.IndexFunc(config.Plugins, func(entry PluginEntry) bool { return entry.Name == pluginID })
+		switch {
+		case at < 0:
+			config.Plugins = append(config.Plugins, PluginEntry{Name: pluginID})
+		case config.Plugins[at].User:
+			config.Plugins[at].User = false
+		default:
+			return nil
+		}
+		if err := allow(ctx, config); err != nil {
+			return err
+		}
+		config.UpdatedAt = time.Now().UTC()
+		_, err = tx.NewUpdate().Model(&config).
+			Column("plugins", "updated_at").
+			Where("id = ?", configID).
+			Where("customer_id = ?", customerID).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: add config plugin: %w", err)
+		}
 		return nil
-	}
-	return s.UpdateAgentConfig(ctx, &config)
+	})
+	return config, stack.Wrap(err)
 }
 
 // ErrUnknownPluginClient is a plugin no OAuth client was set for on the config.

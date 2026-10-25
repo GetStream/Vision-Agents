@@ -154,9 +154,11 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // take turns. A fixed binding's connection is locked as UpdateAgentConfig locks it and must
 // be live. added is false, and nothing is written, when the config already has a binding of
 // that name. The config is returned as it is after, for a caller that forgets a cached copy.
-// For router plugins migrate (T61 in acceleration/docs/connectors/subtasks.md on
+// allow, when not nil, is asked about the config as it is about to be written, under the
+// row lock, as AddConfigPlugin asks it; nothing is written when it fails, and its error is
+// returned. For router plugins migrate (T61 in acceleration/docs/connectors/subtasks.md on
 // connectors/planning).
-func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID string, binding ConnectorBinding) (config AgentConfig, added bool, err error) {
+func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID string, binding ConnectorBinding, allow func(context.Context, AgentConfig) error) (config AgentConfig, added bool, err error) {
 	if customerID == "" || configID == "" || binding.Name == "" {
 		return AgentConfig{}, false, stack.Wrap(errors.New("store: a customer, a config and a binding name are required"))
 	}
@@ -204,6 +206,11 @@ func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID st
 			return err
 		}
 		config.Connectors = append(config.Connectors, binding)
+		if allow != nil {
+			if err := allow(ctx, config); err != nil {
+				return err
+			}
+		}
 		config.UpdatedAt = time.Now().UTC()
 		_, err = tx.NewUpdate().Model(&config).
 			Column("connectors", "updated_at").
