@@ -3,6 +3,7 @@ package users
 import (
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -38,6 +39,28 @@ func (s *SeenSuite) TestTheSameIdUnderTwoAppsIsTwoUsers() {
 
 	s.False(cache.Get("somebody-else", "jlahey"), "a user id belongs to the app that named it")
 	s.Equal(1, cache.Len())
+}
+
+func (s *SeenSuite) TestAUserHeldWithOneValueIsNotHeldWithAnother() {
+	cache := newSeen(10)
+	cache.Keep("app", "jlahey", "jim@fake.example", time.Time{})
+	s.True(cache.Holds("app", "jlahey", "jim@fake.example", time.Now()))
+	s.False(cache.Holds("app", "jlahey", "randy@fake.example", time.Now()))
+
+	cache.Keep("app", "jlahey", "randy@fake.example", time.Time{})
+
+	s.True(cache.Holds("app", "jlahey", "randy@fake.example", time.Now()))
+	s.False(cache.Holds("app", "jlahey", "jim@fake.example", time.Now()), "the new value replaces the old")
+	s.Equal(1, cache.Len())
+}
+
+func (s *SeenSuite) TestAHoldEndsWhenItExpires() {
+	cache := newSeen(10)
+	start := time.Now()
+	cache.Keep("app", "jlahey", "jim@fake.example", start.Add(time.Minute))
+
+	s.True(cache.Holds("app", "jlahey", "jim@fake.example", start.Add(time.Minute-time.Nanosecond)))
+	s.False(cache.Holds("app", "jlahey", "jim@fake.example", start.Add(time.Minute)))
 }
 
 func (s *SeenSuite) TestAddingAUserTwiceHoldsThemOnce() {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -233,7 +234,7 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 		return llm.TextParts(instead), nil
 	}
 	if verb == loginListTools {
-		return llm.TextParts(listed(opened.tools, l.binding.Name)), nil
+		return llm.TextParts(listed(opened.tools, opened.leftOut, l.binding.Name)), nil
 	}
 	var asked struct {
 		Tool      string          `json:"tool"`
@@ -244,6 +245,9 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 	}
 	name := l.binding.Name + mcp.Separator + asked.Tool
 	found, ok := opened.routes[name]
+	if why, left := opened.leftOut[name]; !ok && left {
+		return llm.TextParts(toolLeftOut(why)), nil
+	}
 	if !ok {
 		return nil, errUnknownTool(name)
 	}
@@ -388,7 +392,10 @@ func (d *dispatcher) openLogin(ctx context.Context, l *login, connectionID strin
 	// while the tools are listed names this session, whether the turn or the consent's
 	// callback asked for it.
 	reason, err := d.logins.open(d.correlated(ctx), d.spec, l.binding, connectionID, opened)
-	if err != nil || reason != "" {
+	// A granted tool whose schema changed is left out, and the binding opens with the rest, as
+	// it does when the session opens: no login brings that tool back, so asking again would
+	// only loop until the consent expires.
+	if err != nil || (reason != "" && reason != unavailableTool) {
 		opened.Close()
 		d.logins.logger.Warn("a login in the conversation is on a connection the session cannot use",
 			"connector", l.binding.Name, "reason", reason, "error", err)
@@ -599,21 +606,31 @@ func loginUnavailable(alias string) string {
 }
 
 // listed is the tools of an opened binding as the model reads them through list_tools: each
-// one's name at the provider, what it does and its input schema.
-func listed(tools []harness.Tool, alias string) string {
+// one's name at the provider, what it does and its input schema, and each granted tool left
+// out (leftOut) with why.
+func listed(tools []harness.Tool, leftOut map[string]string, alias string) string {
 	type entry struct {
 		Name        string         `json:"name"`
 		Description string         `json:"description,omitempty"`
 		InputSchema map[string]any `json:"input_schema,omitempty"`
+	}
+	type absent struct {
+		Name    string `json:"name"`
+		Message string `json:"message"`
 	}
 	entries := make([]entry, 0, len(tools))
 	for _, tool := range tools {
 		entries = append(entries, entry{Name: strings.TrimPrefix(tool.Name, alias+mcp.Separator),
 			Description: tool.Description, InputSchema: tool.Parameters})
 	}
+	var absents []absent
+	for _, name := range slices.Sorted(maps.Keys(leftOut)) {
+		absents = append(absents, absent{Name: strings.TrimPrefix(name, alias+mcp.Separator), Message: leftOut[name]})
+	}
 	raw, _ := json.Marshal(struct {
-		Tools []entry `json:"tools"`
-	}{entries})
+		Tools   []entry  `json:"tools"`
+		LeftOut []absent `json:"left_out,omitempty"`
+	}{entries, absents})
 	return string(raw)
 }
 

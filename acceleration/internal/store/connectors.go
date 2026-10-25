@@ -120,10 +120,30 @@ func connectorDefinition(ctx context.Context, db bun.IDB, customerID, id string,
 
 // LatestConnectorDefinition returns the newest revision of a definition the customer can see.
 func (s *Store) LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error) {
+	return latestVisibleDefinition(ctx, s.db, customerID, id)
+}
+
+// Definitions reads the connector definitions a customer can see: a Store, on its pool, or
+// the one a config write hands its check, on the write's transaction.
+type Definitions interface {
+	LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error)
+}
+
+// txDefinitions reads definitions on a transaction. A check that runs under a write's row
+// lock reads on it, as a read on the pool waits for a second connection while the write
+// holds one, and with every connection held by such a write none comes.
+type txDefinitions struct{ tx bun.Tx }
+
+func (d txDefinitions) LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error) {
+	return latestVisibleDefinition(ctx, d.tx, customerID, id)
+}
+
+// latestVisibleDefinition is LatestConnectorDefinition read on db.
+func latestVisibleDefinition(ctx context.Context, db bun.IDB, customerID, id string) (ConnectorDefinition, error) {
 	if customerID == "" || id == "" {
 		return ConnectorDefinition{}, stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
-	definition, err := latestDefinition(ctx, s.db, visibleTo(customerID), id)
+	definition, err := latestDefinition(ctx, db, visibleTo(customerID), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id))
 	}
@@ -631,11 +651,19 @@ func latestDefinition(ctx context.Context, db bun.IDB, scope func(*bun.SelectQue
 // ones unless the app's settings say internal_connectors. customer_id is the app's id, so the
 // flag is read in the same query. The JSON is compared as jsonb, so a setting that is not a
 // boolean hides the internal definitions rather than failing every read.
+//
+// A built-in is internal at every revision when its latest revision says so, so making a
+// public built-in internal hides the revisions before it too, and making it public shows them.
+// A custom definition is internal revision by revision, as it was before.
 func visibleTo(customerID string) func(*bun.SelectQuery) *bun.SelectQuery {
 	return func(q *bun.SelectQuery) *bun.SelectQuery {
 		return q.Where("cd.customer_id IN (?, ?)", BuiltinCustomer, customerID).
-			Where("(cd.manifest->'internal' IS DISTINCT FROM 'true'::jsonb OR EXISTS ("+
-				"SELECT 1 FROM apps AS ap WHERE ap.id = ? AND ap.settings->'internal_connectors' = 'true'::jsonb))", customerID)
+			Where("(CASE WHEN cd.customer_id = ? THEN ("+
+				"SELECT lr.manifest->'internal' FROM connector_definitions AS lr "+
+				"WHERE lr.customer_id = cd.customer_id AND lr.id = cd.id ORDER BY lr.revision DESC LIMIT 1"+
+				") ELSE cd.manifest->'internal' END IS DISTINCT FROM 'true'::jsonb OR EXISTS ("+
+				"SELECT 1 FROM apps AS ap WHERE ap.id = ? AND ap.settings->'internal_connectors' = 'true'::jsonb))",
+				BuiltinCustomer, customerID)
 	}
 }
 

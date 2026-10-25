@@ -13,14 +13,20 @@
 // one whose Redis is unreachable. Nothing here fails a request because a cache is missing,
 // and nothing here fails a request at all: recording who called is not what the caller
 // asked for.
+//
+// The email a backend says its user signs in with is said on every request too, and is
+// held in an LRU of its own, by user and address, for emailTTL: a changed address is written
+// at once.
 package users
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/rueidis"
@@ -32,6 +38,18 @@ import (
 // policy: the key says the row exists, the row is never deleted on its own, and claiming
 // drops the key itself.
 const DefaultTTL = time.Hour
+
+// emailTTL is how long an email this process wrote is not written again. It is short, and
+// not the TTL, because the row is what the first consent for an owner_email connector is
+// checked against (api ownerEmailRefusal): an address another replica wrote under this one
+// is the one that consent admits until this replica writes its own again, so a held address
+// leaves the row stale for at most this long.
+const emailTTL = time.Minute
+
+// emailStripes is how many locks the email writes are spread over, so that one slow write
+// holds up only the users that hash to its lock. Any count is correct; 64 is a judgement,
+// not a measurement.
+const emailStripes = 64
 
 // trackingCacheBytes is how much rueidis keeps per connection. It is small because the
 // LRU here is the in-memory tier; rueidis only needs a cache at all because reading
@@ -63,8 +81,15 @@ type Recorder struct {
 	db     *store.Store
 	redis  rueidis.Client
 	seen   *seen
+	emails *seen
 	ttl    time.Duration
 	logger *slog.Logger
+
+	// emailTTL is emailTTL; a test shortens it.
+	emailTTL time.Duration
+	// emailLocks keep each user's write and hold together, so that two requests saying two
+	// addresses at once leave the held one the one the row holds.
+	emailLocks [emailStripes]sync.Mutex
 }
 
 // New returns a Recorder reading through Redis, or one holding the LRU alone when no
@@ -83,8 +108,11 @@ func New(options Options) (*Recorder, error) {
 	recorder := &Recorder{
 		db:     options.Store,
 		seen:   newSeen(options.Capacity),
+		emails: newSeen(options.Capacity),
 		ttl:    options.TTL,
 		logger: options.Logger,
+
+		emailTTL: emailTTL,
 	}
 	if options.Address == "" {
 		return recorder, nil
@@ -156,6 +184,38 @@ func (r *Recorder) Seen(ctx context.Context, customerID, userID, kind string) er
 	}
 	r.seen.Add(customerID, userID)
 	return nil
+}
+
+// Email records the address a backend said a user signs in with (store.SetUserEmail), and
+// does nothing for the address this process last wrote for them within emailTTL. A backend
+// may say it on every request. A changed address is written at once; one another replica
+// wrote under this one is written again here once emailTTL ends, so a row lags for at most
+// that long. A failed write is not held, so the next request tries again. Like Seen, a
+// request naming no app or no user records nothing.
+func (r *Recorder) Email(ctx context.Context, customerID, userID, email string) error {
+	if customerID == "" || userID == "" || email == "" {
+		return nil
+	}
+	if r.emails.Holds(customerID, userID, email, time.Now()) {
+		return nil
+	}
+
+	lock := r.emailLock(customerID, userID)
+	lock.Lock()
+	defer lock.Unlock()
+	now := time.Now()
+	if err := r.db.SetUserEmail(ctx, customerID, userID, email); err != nil {
+		return err
+	}
+	r.emails.Keep(customerID, userID, email, now.Add(r.emailTTL))
+	return nil
+}
+
+// emailLock is the lock one user's email writes take.
+func (r *Recorder) emailLock(customerID, userID string) *sync.Mutex {
+	hash := fnv.New32a()
+	hash.Write([]byte(key(customerID, userID)))
+	return &r.emailLocks[hash.Sum32()%emailStripes]
 }
 
 // Forget drops a user from the caches, for one whose row has changed under them. Deleting

@@ -244,7 +244,15 @@ func (s *Server) setPluginClient(ctx context.Context, request *setPluginClientRe
 		return nil, err
 	}
 	if named {
-		if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
+		// Only the plugins are written, as they are then, so an edit or a login that landed
+		// since the config was read is kept, and checked again with this plugin named.
+		err := s.configs.EditConfigPlugins(ctx, customerID, request.Id, func(entries []store.PluginEntry) ([]store.PluginEntry, bool) {
+			if store.NamesPlugin(entries, plugin.ID) {
+				return entries, false
+			}
+			return append(entries, store.PluginEntry{Name: plugin.ID, User: true}), true
+		}, sensitiveCheck(customerID))
+		if err != nil {
 			return nil, err
 		}
 		s.pluginEvents.Changed(customerID, request.Id)
@@ -370,9 +378,13 @@ func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPlugin
 	}
 	plugins.ReportUse(ctx, s.logger, plugins.PathDisconnect,
 		"customer", customerID, "config", config.ID, "plugin", string(request.PluginId), "via", plugins.Via(string(request.PluginId)))
+	// Only the plugins are written, as they are then, so a plugin a login named since the
+	// config was read is kept. Taking one out cannot break the sensitive rule: nothing to check.
 	unnamed := func(entry store.PluginEntry) bool { return entry.Name == string(request.PluginId) }
-	config.Plugins = slices.DeleteFunc(config.Plugins, unnamed)
-	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
+	err = s.configs.EditConfigPlugins(ctx, customerID, request.Id, func(entries []store.PluginEntry) ([]store.PluginEntry, bool) {
+		return slices.DeleteFunc(entries, unnamed), true
+	}, nil)
+	if err != nil {
 		return nil, err
 	}
 	err = s.store.DeletePluginClient(ctx, customerID, request.Id, string(request.PluginId))
@@ -474,15 +486,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	// an update that bound a sensitive connector during the exchange passed its own check, as
 	// the config did not name the plugin yet.
 	if conn.UserID == "" && listed {
-		err := s.configs.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID,
-			func(ctx context.Context, config store.AgentConfig) error {
-				if message, ok, err := s.sensitiveBindingsComplaint(ctx, conn.CustomerID, config); err != nil {
-					return err
-				} else if !ok {
-					return invalidRequest(message)
-				}
-				return nil
-			})
+		err := s.configs.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID, sensitiveCheck(conn.CustomerID))
 		if refused, ok := errors.AsType[APIError](err); ok {
 			failed()
 			writeError(w, refused)

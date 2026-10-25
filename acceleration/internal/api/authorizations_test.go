@@ -752,6 +752,53 @@ func (s *AuthorizationsSuite) TestOnlyTheBackendSaysTheEmailItsUserSignsInWith()
 	s.Equal("alice@other.example", s.userEmail(alice), "a request saying none keeps it")
 }
 
+// TestABackendSayingTheSameEmailAgainCostsNoWrite counts writes through the row: after the
+// first request the row is changed behind the router's back, so a later request that writes
+// puts the backend's address back.
+func (s *AuthorizationsSuite) TestABackendSayingTheSameEmailAgainCostsNoWrite() {
+	alice := s.data.createUser()
+	backend := s.serverClient.actingFor(alice).withEmail("alice@fake.example")
+	s.Require().Equal(http.StatusOK, backend.do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+	s.Require().Equal("alice@fake.example", s.userEmail(alice))
+	s.Require().NoError(s.store.SetUserEmail(context.Background(), s.customerID(), alice.userID, "behind@fake.example"))
+
+	for range 3 {
+		s.Require().Equal(http.StatusOK, backend.do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+	}
+	// A request saying no email between them is not a change of address.
+	s.Require().Equal(http.StatusOK, backend.withEmail("").do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+	s.Require().Equal(http.StatusOK, backend.do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+
+	s.Equal("behind@fake.example", s.userEmail(alice), "no request after the first wrote")
+}
+
+func (s *AuthorizationsSuite) TestAnEmailChangedBackIsWrittenAgain() {
+	alice := s.data.createUser()
+	backend := s.serverClient.actingFor(alice)
+	for _, email := range []string{"alice@fake.example", "alice@other.example", "alice@fake.example"} {
+		s.Require().Equal(http.StatusOK, backend.withEmail(email).do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+		s.Equal(email, s.userEmail(alice))
+	}
+}
+
+func (s *AuthorizationsSuite) TestTheSameEmailForTwoUsersIsWrittenForEach() {
+	alice, bob := s.data.createUser(), s.data.createUser()
+	for _, user := range []*testClient{alice, bob} {
+		s.Require().Equal(http.StatusOK, s.serverClient.actingFor(user).withEmail("shared@fake.example").do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+		s.Equal("shared@fake.example", s.userEmail(user))
+	}
+}
+
+// TestABackendSayingNoEmailWritesNone is the control: its expected answer is base's
+// (2c083b25), probed on the base build.
+func (s *AuthorizationsSuite) TestABackendSayingNoEmailWritesNone() {
+	alice := s.data.createUser()
+	for _, email := range []string{"", "   "} {
+		s.Require().Equal(http.StatusOK, s.serverClient.actingFor(alice).withEmail(email).do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+		s.Equal("", s.userEmail(alice))
+	}
+}
+
 // TestAPendingConnectionMadeBeforeAFixConnectsOnTheFixedRevision is Slack's revisions 4 and 5
 // (AI-816): a connection made on a revision whose capture rule reads a path the provider does
 // not send stays pending; its next consent runs on the revision that reads the right one, and

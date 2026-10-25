@@ -222,6 +222,36 @@ func (s *SandboxGrantsSuite) TestARequiredBindingSavedBeforeTheSandboxBlockRefus
 	s.ErrorContains(err, fmt.Sprintf("required connector %q cannot be used: %s", "crm", unavailableSandbox))
 }
 
+// TestABindingOpenedWithoutADriftedToolStillGivesTheSandboxAccess: secret's schema changed
+// since the config granted it, so the binding opens with whoami alone, and its sandbox still
+// gets the connection's grant.
+func (s *SandboxGrantsSuite) TestABindingOpenedWithoutADriftedToolStillGivesTheSandboxAccess() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	binding := sandboxed(s.fixed("crm", id, "whoami", "secret"))
+	binding.Tools[1].SchemaDigest = staleDigest
+
+	d, tools, unavailable, err := s.attach(s.spec(s.config(binding), "", nil))
+
+	s.Require().NoError(err)
+	s.Equal([]string{"crm__whoami"}, names(tools))
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+	s.Len(d.grants, 1)
+}
+
+// TestARequiredBindingWithADriftedToolSavedBeforeTheSandboxBlockRefusesTheSession: the
+// sandbox the binding needs is why it fails, before a tool it is used without.
+func (s *SandboxGrantsSuite) TestARequiredBindingWithADriftedToolSavedBeforeTheSandboxBlockRefusesTheSession() {
+	id := s.connection("", "primary")
+	s.sandboxRevision()
+	binding := required(sandboxed(s.fixed("crm", id, "whoami", "secret")))
+	binding.Tools[1].SchemaDigest = staleDigest
+
+	_, _, _, err := s.attach(s.spec(s.config(binding), "", nil))
+
+	s.ErrorContains(err, fmt.Sprintf("required connector %q cannot be used: %s", "crm", unavailableSandbox))
+}
+
 // boxed is the error of making a daytona session's sandbox of options for a sandbox binding.
 func (s *SandboxGrantsSuite) boxed(options sandbox.Config) error {
 	s.sandboxRevision()
