@@ -462,7 +462,9 @@ public sealed class AgentTests : IDisposable
         using var client = Fixtures.Client(router);
         await using var agent = new Agent(new AgentOptions
         {
-            Name = "jean", Client = client, CostTracking = new Dictionary<string, string> { ["team"] = "sales" },
+            Name = "jean",
+            Client = client,
+            CostTracking = new Dictionary<string, string> { ["team"] = "sales" },
         });
 
         await agent.OutboundCallAsync("+15550001111", "+15552223333", cancellationToken: TestContext.Current.CancellationToken);
@@ -485,8 +487,13 @@ public sealed class AgentTests : IDisposable
         {
             await peer.SendAsync(new
             {
-                type = "call", work_id = "w1", call_id = "rung-1", call_type = "agent", session_id = "rung-1",
-                called_number = "+15552223333", caller_number = "+15550001111",
+                type = "call",
+                work_id = "w1",
+                call_id = "rung-1",
+                call_type = "agent",
+                session_id = "rung-1",
+                called_number = "+15552223333",
+                caller_number = "+15550001111",
             });
             await peer.Closed;
         });
@@ -739,7 +746,8 @@ public sealed class AgentTests : IDisposable
         // Guard: asked.Add(cursor) returns false when "next" is already in the set → exits after 2 GETs
         await using var router = await TestRouter.StartAsync();
         var gets = 0;
-        router.On("GET", "/v1/agents/connections", seen => {
+        router.On("GET", "/v1/agents/connections", seen =>
+        {
             gets++;
             // Cap at 4 to make the test fail fast when the guard is removed (while true)
             if (gets > 3) return new Reply(500, new { message = "too many pages" });
@@ -877,8 +885,13 @@ public sealed class AgentTests : IDisposable
 
     private static object Page(string state, int passages) => new
     {
-        id = "k1", @namespace = "support", url = "https://example.com/plans", state, passages,
-        created_at = "2026-09-24T10:00:00Z", updated_at = "2026-09-24T10:00:00Z",
+        id = "k1",
+        @namespace = "support",
+        url = "https://example.com/plans",
+        state,
+        passages,
+        created_at = "2026-09-24T10:00:00Z",
+        updated_at = "2026-09-24T10:00:00Z",
     };
 
     private static async Task<SessionEvent> FirstAsync(Session session)
