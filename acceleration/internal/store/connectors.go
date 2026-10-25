@@ -742,6 +742,28 @@ func (s *Store) ConnectorConnectionClients(ctx context.Context, connectionIDs []
 	return byConnection, nil
 }
 
+// GrantedConnectorConnectionsOfClient is every live connection of the customer's to the
+// connector that holds credentials its consent got from the client of registration with
+// clientID (ConnectorConnectionClient), oldest first: the grants that client's secret revokes.
+func (s *Store) GrantedConnectorConnectionsOfClient(ctx context.Context, customerID, connectorID string,
+	registration core.ClientRegistrationMethod, clientID string) ([]ConnectorConnection, error) {
+	var connections []ConnectorConnection
+	err := s.db.NewSelect().Model(&connections).
+		Join("JOIN connector_connection_clients AS ccc ON ccc.connection_id = cc.id").
+		Where("cc.customer_id = ?", customerID).
+		Where("cc.connector_id = ?", connectorID).
+		Where("cc.deleted_at IS NULL").
+		Where("cc.credentials_sealed <> ''::bytea").
+		Where("ccc.registration = ?", registration).
+		Where("ccc.client_id = ?", clientID).
+		Order("cc.created_at", "cc.id").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: list a client's granted connector connections: %w", err))
+	}
+	return connections, nil
+}
+
 // ConnectorConnectionValidation is the last validate of a connection (AI-1052), kept in
 // connector_connection_validations (20261016120000_connector_connection_validations.sql): its
 // status, its code (a stable reason, or the provider's HTTP status), its error and when it ran,

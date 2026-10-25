@@ -22,7 +22,9 @@ import (
 // TokenError is an error the token endpoint answered with (RFC 6749 section 5.2).
 type TokenError struct {
 	Status int
-	Code   string
+	// Code is its error member as a log line may hold it (ErrorCode), since a provider may
+	// echo what the request carried there too.
+	Code string
 	// Description is its error_description for a log line (ErrorDescription), "" when it gave
 	// none. Error leaves it out, so the text a caller or the model reads is the same with it.
 	Description string
@@ -47,6 +49,14 @@ func ErrorDescription(raw []byte, secrets ...string) string {
 	}
 	description, _ := object["error_description"].(string)
 	return core.LoggedDescription(description, secrets...)
+}
+
+// ErrorCode is the error member of raw, a token or revocation endpoint's JSON object answer
+// (RFC 6749 section 5.2, RFC 7009 section 2.2.1), as ErrorDescription keeps the description:
+// each of secrets redacted, its URLs kept to their host, at most core.DescriptionBytes. ""
+// when it has none.
+func ErrorCode(raw []byte, secrets ...string) string {
+	return core.LoggedDescription(errorCode(raw), secrets...)
 }
 
 // tokenResponse is the part of a token response (RFC 6749 section 5.1) the scheme reads
@@ -90,7 +100,8 @@ func (s *Scheme) exchange(ctx context.Context, m core.ResolvedManifest, a attemp
 	// RFC 6749 section 5.2: an error member is an error, whatever the status: some
 	// servers answer errors with 200, and a body with error is never a token.
 	if code, ok := body["error"].(string); ok && code != "" {
-		return tokenResponse{}, nil, &TokenError{Status: response.StatusCode, Code: code}
+		return tokenResponse{}, nil, &TokenError{Status: response.StatusCode,
+			Code: core.LoggedDescription(code, form.Get("code"), form.Get("code_verifier"), c.Secret)}
 	}
 	if response.StatusCode != http.StatusOK {
 		// RFC 6749 section 5.1: success is 200 OK.

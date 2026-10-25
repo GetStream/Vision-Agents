@@ -890,6 +890,11 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		s.logger.Error("could not store a consent's credentials", "connection", row.ConnectionID, "error", err)
 		return consentFailed
 	}
+	if notOwner || switched {
+		// Nothing stores the tokens the provider just issued, so nothing could revoke them later.
+		s.revokeAtProvider(ctx, connection, core.CredentialState{Credentials: credentials, Metadata: account.Metadata,
+			DefinitionRevision: sealed.DefinitionRevision}, "refused_consent")
+	}
 	if notOwner {
 		s.logger.Info("a consent was refused for another account than its connection's owner", "connection", row.ConnectionID,
 			"connector", sealed.ConnectorID, "reason", refusal)

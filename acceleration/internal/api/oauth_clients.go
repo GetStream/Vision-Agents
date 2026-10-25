@@ -200,7 +200,9 @@ func (s *Server) registerOAuthClients(api huma.API) {
 		Summary:       "Remove the app's own OAuth client for a connector",
 		DefaultStatus: http.StatusNoContent,
 		Description: "Drops the client and its secret. Connections consented with it stop " +
-			"refreshing and need a reconnect with another client.\n\n" +
+			"refreshing and need a reconnect with another client. Where the connector's manifest " +
+			"says revoke_on_delete (Nessy), the provider is first asked to revoke the grant of " +
+			"each, and a refusal is logged; the connections stay.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		Responses: map[string]*huma.Response{"204": {Description: "The client is removed"}},
@@ -338,6 +340,9 @@ func (s *Server) deleteConnectorOAuthClient(ctx context.Context, request *delete
 	if s.store == nil {
 		return nil, errNoConnectors
 	}
+	if err := s.revokeClientGrants(ctx, customerID, request.ID); err != nil {
+		return nil, err
+	}
 	err := s.store.DeleteConnectorOAuthClient(ctx, customerID, request.ID, core.ClientCustomer)
 	if errors.Is(err, store.ErrNoConnectorOAuthClient) {
 		return nil, notFound(noOAuthClient)
@@ -346,6 +351,31 @@ func (s *Server) deleteConnectorOAuthClient(ctx context.Context, request *delete
 		return nil, err
 	}
 	return nil, nil
+}
+
+// revokeClientGrants revokes at the provider the grants the app's own client for the connector
+// issued, for a manifest that opts in (revocableGrants). It runs before the client goes, since
+// the revoke authenticates with its secret (oauth2code's clientSecret answers ClientRemovedError
+// once it is gone). The connections stay, as the delete leaves them: they need a reconnect, and
+// the agent configs that bind them still name them.
+func (s *Server) revokeClientGrants(ctx context.Context, customerID, connectorID string) error {
+	record, err := s.store.ConnectorOAuthClient(ctx, customerID, connectorID)
+	if errors.Is(err, store.ErrNoConnectorOAuthClient) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// A provider app's record holds no client, so no grant was issued to it.
+	if record.ClientID == "" {
+		return nil
+	}
+	granted, err := s.store.GrantedConnectorConnectionsOfClient(ctx, customerID, connectorID, core.ClientCustomer, record.ClientID)
+	if err != nil {
+		return err
+	}
+	s.revokeGrants(ctx, granted, s.revocableGrants(ctx, granted), "client_delete")
+	return nil
 }
 
 // checkOAuthClient is why the connector cannot use the client sent, or nil. The method checked

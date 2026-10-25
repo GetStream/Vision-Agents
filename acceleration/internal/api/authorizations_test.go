@@ -1415,6 +1415,8 @@ sources:
     endpoint: mcp
 ` + extra))
 	s.Require().NoError(err)
+	// Where a refused consent's tokens are revoked, for a manifest that opts in.
+	manifest.Endpoints["revoke"] = s.provider.URL + fakeprovider.PathRevoke
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
 	s.Require().NoError(err)
 	return id

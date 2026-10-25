@@ -89,7 +89,8 @@ type Manifest struct {
 	// stored before it stays as it was.
 	OwnerEmail bool `yaml:"owner_email,omitempty" json:"owner_email,omitempty"`
 	// RevokeOnDelete has a connection's delete ask the provider to revoke its grant
-	// (Scheme.Revoke) once the row is gone. A failure is logged and the delete stands. Opt-in
+	// (Scheme.Revoke) once the row is gone, as do its user's delete, a refused consent and the
+	// removal of the client that issued it. A failure is logged and the change stands. Opt-in
 	// (AI-1544), and left out of the JSON when false, so the JSON of every manifest stored
 	// before it stays as it was.
 	RevokeOnDelete bool `yaml:"revoke_on_delete,omitempty" json:"revoke_on_delete,omitempty"`
