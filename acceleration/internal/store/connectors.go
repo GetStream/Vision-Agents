@@ -651,11 +651,19 @@ func latestDefinition(ctx context.Context, db bun.IDB, scope func(*bun.SelectQue
 // ones unless the app's settings say internal_connectors. customer_id is the app's id, so the
 // flag is read in the same query. The JSON is compared as jsonb, so a setting that is not a
 // boolean hides the internal definitions rather than failing every read.
+//
+// A built-in is internal at every revision when its latest revision says so, so making a
+// public built-in internal hides the revisions before it too, and making it public shows them.
+// A custom definition is internal revision by revision, as it was before.
 func visibleTo(customerID string) func(*bun.SelectQuery) *bun.SelectQuery {
 	return func(q *bun.SelectQuery) *bun.SelectQuery {
 		return q.Where("cd.customer_id IN (?, ?)", BuiltinCustomer, customerID).
-			Where("(cd.manifest->'internal' IS DISTINCT FROM 'true'::jsonb OR EXISTS ("+
-				"SELECT 1 FROM apps AS ap WHERE ap.id = ? AND ap.settings->'internal_connectors' = 'true'::jsonb))", customerID)
+			Where("(CASE WHEN cd.customer_id = ? THEN ("+
+				"SELECT lr.manifest->'internal' FROM connector_definitions AS lr "+
+				"WHERE lr.customer_id = cd.customer_id AND lr.id = cd.id ORDER BY lr.revision DESC LIMIT 1"+
+				") ELSE cd.manifest->'internal' END IS DISTINCT FROM 'true'::jsonb OR EXISTS ("+
+				"SELECT 1 FROM apps AS ap WHERE ap.id = ? AND ap.settings->'internal_connectors' = 'true'::jsonb))",
+				BuiltinCustomer, customerID)
 	}
 }
 
