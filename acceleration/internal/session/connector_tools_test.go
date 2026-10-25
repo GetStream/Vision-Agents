@@ -256,27 +256,73 @@ func (s *AttachConnectorsSuite) TestWithConnectorsOffNoSelectionImpliesNothing()
 func (s *AttachConnectorsSuite) TestAToolNotInTheGrantIsNotOffered() {
 	app := s.connection("", "primary")
 
-	_, tools, unavailable, err := s.attach(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
-
+	d, tools, unavailable, err := s.attach(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
 	s.Require().NoError(err)
+	_, ungranted := s.call(d, "crm__secret", "{}")
+
 	s.Empty(unavailable)
 	s.Equal([]string{"crm__whoami"}, names(tools), "secret and slow are the provider's, and not granted")
+	s.ErrorContains(ungranted, "is not a tool this session can run", "a tool never granted is not one left out")
 }
 
-// TestAToolWhoseSchemaChangedIsNotOffered: a grant pins a digest the provider's tool no
-// longer has. The required binding fails; the optional one keeps the tools that still match.
+// TestAToolWhoseSchemaChangedIsNotOffered: a grant names a digest the provider's tool no
+// longer has. The binding keeps the tools that still match, required or not, and says so in
+// unavailable; a call of the one left out says to save the config at the new schema, since a
+// schema the config names is no pin to approve (Athena's case).
 func (s *AttachConnectorsSuite) TestAToolWhoseSchemaChangedIsNotOffered() {
 	app := s.connection("", "primary")
-	stale := s.fixed("crm", app, "whoami", "secret")
-	stale.Tools[1].SchemaDigest = "0000000000000000000000000000000000000000000000000000000000000000"
+	stale := s.fixed("crm", app, "secret", "whoami")
+	stale.Tools[1].SchemaDigest = staleDigest
 
-	_, _, _, err := s.attach(s.spec(s.config(required(stale)), "", nil))
-	_, tools, unavailable, optional := s.attach(s.spec(s.config(stale), "", nil))
+	for _, binding := range []store.ConnectorBinding{stale, required(stale)} {
+		d, tools, unavailable, err := s.attach(s.spec(s.config(binding), "", nil))
+		s.Require().NoError(err, "required: %v", binding.Required)
+		drifted, err := s.call(d, "crm__whoami", "{}")
+		s.Require().NoError(err)
+		kept, err := s.call(d, "crm__secret", "{}")
+		s.Require().NoError(err)
 
-	s.ErrorContains(err, "tool_unavailable")
-	s.Require().NoError(optional)
-	s.Equal([]string{"crm__whoami"}, names(tools))
+		s.Equal([]string{"crm__secret"}, names(tools))
+		s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+		s.JSONEq(configWhoami, drifted)
+		s.Equal("the secret", kept)
+	}
+}
+
+// TestABindingWhoseEveryToolChangedOpensOnlyWhenOptional: with no tool left to offer a required
+// binding fails with tool_unavailable, as on base; an optional one opens empty and says so.
+func (s *AttachConnectorsSuite) TestABindingWhoseEveryToolChangedOpensOnlyWhenOptional() {
+	app := s.connection("", "primary")
+	all := s.fixed("crm", app, "whoami", "secret")
+	all.Tools[0].SchemaDigest = staleDigest
+	all.Tools[1].SchemaDigest = staleDigest
+
+	_, _, _, failed := s.attach(s.spec(s.config(required(all)), "", nil))
+	_, tools, unavailable, err := s.attach(s.spec(s.config(all), "", nil))
+
+	s.ErrorContains(failed, `required connector "crm" cannot be used: tool_unavailable`)
+	s.Require().NoError(err)
+	s.Empty(tools)
 	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+}
+
+// TestAGrantedToolTheProviderNoLongerListsIsNotLeftOut: gone is granted and the provider lists
+// no such tool, so no schema changed: a call of it is a tool this session cannot run, as on
+// base, and a required binding granting it still fails.
+func (s *AttachConnectorsSuite) TestAGrantedToolTheProviderNoLongerListsIsNotLeftOut() {
+	app := s.connection("", "primary")
+	binding := s.fixed("crm", app, "secret")
+	binding.Tools = append(binding.Tools, store.ToolGrant{Name: "gone", SchemaDigest: staleDigest})
+
+	d, tools, unavailable, err := s.attach(s.spec(s.config(binding), "", nil))
+	s.Require().NoError(err)
+	_, gone := s.call(d, "crm__gone", "{}")
+	_, _, _, failed := s.attach(s.spec(s.config(required(binding)), "", nil))
+
+	s.Equal([]string{"crm__secret"}, names(tools))
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+	s.ErrorContains(gone, "is not a tool this session can run")
+	s.ErrorContains(failed, `required connector "crm" cannot be used: tool_unavailable`)
 }
 
 // TestAGrantedToolTheConnectorLeavesOutSaysSo (AI-1394): whoami needs a scope the manifest's
@@ -294,9 +340,13 @@ func (s *AttachConnectorsSuite) TestAGrantedToolTheConnectorLeavesOutSaysSo() {
 	app := s.connection("", "primary")
 
 	_, _, _, err = s.attach(s.spec(s.config(required(s.fixed("crm", app, "whoami"))), "", nil))
+	d, _, _, optional := s.attach(s.spec(s.config(s.fixed("crm", app, "whoami", "secret")), "", nil))
+	s.Require().NoError(optional)
+	_, hidden := s.call(d, "crm__whoami", "{}")
 
 	s.ErrorContains(err, "tool_unavailable")
 	s.ErrorContains(err, "needs a scope the connector never asks for")
+	s.ErrorContains(hidden, "is not a tool this session can run", "no schema changed, so nothing says an admin must approve one")
 }
 
 func (s *AttachConnectorsSuite) TestAFixedAliasCannotBeGivenAConnection() {
@@ -411,6 +461,27 @@ func (s *AttachConnectorsSuite) TestAToolGrantedByNameWhoseSchemaChangedSinceIts
 	s.Equal([]string{"crm__secret"}, names(tools))
 	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
 	s.Equal(grants("whoami")[0].SchemaDigest, s.pinOf(alice, "whoami").SchemaDigest)
+}
+
+// TestADriftedPinSaysAnAdminMustApproveIt: whoami's schema changed after its pin, so a session
+// leaves it out and a call of it says an admin must approve it. That the approve
+// (POST .../tools/approve) gives it back to the next session is
+// api.SessionConnectorsSuite.TestAToolApprovedAgainIsOfferedToTheNextSession.
+func (s *AttachConnectorsSuite) TestADriftedPinSaysAnAdminMustApproveIt() {
+	alice := s.connection("alice", "primary")
+	config := s.config(byName(s.chosen("crm", "whoami", "secret")))
+	spec := s.spec(config, "alice", map[string]string{"crm": alice})
+	_, _, _, err := s.attach(spec)
+	s.Require().NoError(err)
+	s.provider.redescribe("primary", "Says which account this is, and now something else too.")
+
+	d, tools, _, err := s.attach(spec)
+	s.Require().NoError(err)
+	refused, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().NoError(err)
+	s.JSONEq(driftedWhoami, refused)
+	s.Equal([]string{"crm__secret"}, names(tools))
 }
 
 // TestAReconnectPinsAToolGrantedByNameAgain: a consent connects Alice's connection anew, a
@@ -572,6 +643,84 @@ func (s *AttachConnectorsSuite) TestAPatternMatchedToolWhoseSchemaChangedIsNotOf
 	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
 	s.Equal(grants("whoami")[0].SchemaDigest, s.pinOf(alice, "whoami").SchemaDigest)
 	s.Equal(1, strings.Count(logged.String(), "schema it was pinned at"))
+	drifted, err := s.call(d, "crm__whoami", "{}")
+	s.Require().NoError(err)
+	s.JSONEq(driftedWhoami, drifted)
+}
+
+// TestARequiredPatternBindingKeepsItsOtherToolsWhenOneChanged: a binding granting a pattern
+// lists no tool by name, so a required one with a single drifted match opens with the rest and
+// says so in unavailable, as an optional one does.
+func (s *AttachConnectorsSuite) TestARequiredPatternBindingKeepsItsOtherToolsWhenOneChanged() {
+	alice := s.connection("alice", "primary")
+	app := s.connection("", "primary")
+	chosen, fixed := withPatterns(s.chosen("crm"), "*"), withPatterns(s.fixed("crm", app), "*")
+	selections := func(binding store.ConnectorBinding) map[string]string {
+		if binding.Connection.Type == selectionFixed {
+			return nil
+		}
+		return map[string]string{"crm": alice}
+	}
+	for _, binding := range []store.ConnectorBinding{chosen, fixed} {
+		_, _, _, err := s.attach(s.spec(s.config(binding), "alice", selections(binding)))
+		s.Require().NoError(err, binding.Connection.Type)
+	}
+	s.provider.redescribe("primary", "Says which account this is, and now something else too.")
+
+	for _, binding := range []store.ConnectorBinding{chosen, fixed} {
+		selection := selections(binding)
+		_, tools, unavailable, err := s.attach(s.spec(s.config(required(binding)), "alice", selection))
+
+		s.Require().NoError(err, binding.Connection.Type)
+		s.NotContains(names(tools), "crm__whoami", binding.Connection.Type)
+		s.Contains(names(tools), "crm__secret", binding.Connection.Type)
+		s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable, binding.Connection.Type)
+	}
+}
+
+// TestAPatternBindingWhoseEveryMatchChangedOpensOnlyWhenOptional: with no match left to offer
+// a required pattern binding fails with tool_unavailable; an optional one opens empty.
+func (s *AttachConnectorsSuite) TestAPatternBindingWhoseEveryMatchChangedOpensOnlyWhenOptional() {
+	alice := s.connection("alice", "primary")
+	config := s.config(withPatterns(s.chosen("crm"), "whoami"))
+	_, _, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	s.provider.redescribe("primary", "Says which account this is, and now something else too.")
+	chosen := map[string]string{"crm": alice}
+
+	// Another binding's tools are no tools of this one: the required binding still fails.
+	chosen["other"] = alice
+	_, _, _, failed := s.attach(s.spec(s.config(withPatterns(s.chosen("other"), "secret"),
+		required(withPatterns(s.chosen("crm"), "whoami"))), "alice", chosen))
+	_, tools, unavailable, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+
+	s.ErrorContains(failed, `required connector "crm" cannot be used: tool_unavailable`)
+	s.Require().NoError(err)
+	s.Empty(tools)
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+}
+
+// TestARequiredPinnedBindingFailsOnlyWhenEveryToolChanged: a tool granted by name and pinned in
+// the connection opens a required binding with the rest when one drifted, and fails it when
+// all did.
+func (s *AttachConnectorsSuite) TestARequiredPinnedBindingFailsOnlyWhenEveryToolChanged() {
+	alice := s.connection("alice", "primary")
+	chosen := map[string]string{"crm": alice}
+	_, _, _, err := s.attach(s.spec(s.config(byName(s.chosen("crm", "whoami", "secret"))), "alice", chosen))
+	s.Require().NoError(err)
+	s.provider.redescribe("primary", "Says which account this is, and now something else too.")
+
+	_, tools, unavailable, err := s.attach(s.spec(s.config(required(byName(s.chosen("crm", "whoami", "secret")))), "alice", chosen))
+	s.Require().NoError(err)
+	s.Equal([]string{"crm__secret"}, names(tools))
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+
+	_, _, _, failed := s.attach(s.spec(s.config(required(byName(s.chosen("crm", "whoami")))), "alice", chosen))
+	_, noTools, noneUnavailable, err := s.attach(s.spec(s.config(byName(s.chosen("crm", "whoami"))), "alice", chosen))
+	s.ErrorContains(failed, `required connector "crm" cannot be used: tool_unavailable`)
+	s.Require().NoError(err)
+	s.Empty(noTools)
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, noneUnavailable)
 }
 
 // TestPatternPinsArePerConnection: Alice's pin is not Bob's. His provider lists whoami with
@@ -658,6 +807,24 @@ func (s *AttachConnectorsSuite) TestABindingWithOnlyToolsOpensAsOnBase() {
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
 		"SELECT count(*) FROM connector_tool_pins WHERE connection_id = ?", alice).Scan(&pins))
 	s.Zero(pins)
+}
+
+// TestABindingWhoseToolsAllMatchWarnsNothing: every granted tool is listed at its digest, so
+// the binding opens whole, leaves nothing out and warns about nothing.
+func (s *AttachConnectorsSuite) TestABindingWhoseToolsAllMatchWarnsNothing() {
+	alice := s.connection("alice", "primary")
+	manager := s.managerWith(fixtureRequestTimeout)
+	var logged bytes.Buffer
+	manager.logger = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	spec := s.spec(s.config(s.chosen("crm", "whoami", "secret")), "alice", map[string]string{"crm": alice})
+
+	d, tools, unavailable, err := manager.attachConnectors(s.ctx, &spec)
+
+	s.Require().NoError(err)
+	s.T().Cleanup(d.Close)
+	s.ElementsMatch([]string{"crm__whoami", "crm__secret"}, names(tools))
+	s.Empty(unavailable)
+	s.Empty(logged.String())
 }
 
 // pinOf is connection's pin of tool, as stored.
