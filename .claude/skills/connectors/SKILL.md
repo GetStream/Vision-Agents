@@ -173,7 +173,14 @@ Beside a sensitive connector (Nessy), a binding's write tool needs `require_appr
 config is refused unless each tool it grants only reads (`read_only_tools`) or is held, and a
 `tool_patterns` binding needs an entry such as `*` that matches each pattern as written
 (`api/configs.go`, `sensitiveBindingsComplaint`). In agent.yaml it is `require_approval:` on
-the connector entry.
+the connector entry. Tools a caller declares at createSession are not checked. The caller runs
+them, or a person's device does (`executor: client`). The router sends a client tool's
+arguments to the caller on the events socket (`api/sessionws.go`). Every channel member can
+also read them in the conversation's tool part, but only when they are 512 bytes or fewer
+(`conversation/parts.go`, `maxClientArguments`) (AI-1642). If one of them
+sends data on to anyone else, declare it with `approval`. On a voice call the router then asks
+the user and sends the call only on yes. In text the router does not ask: the caller's client
+must wait for `tool_approval` before it runs the tool.
 
 For a session your backend creates, pass the end user's connection in
 `connector_bindings: [{"name": "linear", "connection_id": "…"}]`. Leave it out and the
