@@ -135,6 +135,13 @@ func (s *ForgetUserSuite) emptyDatabase(name string) string {
 // recorded writes one billable row of app's user on a shard and ships its event, as the router
 // would, and answers its usage id.
 func (s *ForgetUserSuite) recorded(shard int, app, user string, cost int64) uuid.UUID {
+	id := s.written(shard, app, user, cost)
+	s.shipped(id, app, user, cost)
+	return id
+}
+
+// written writes one billable row of app's user on a shard, not shipped yet.
+func (s *ForgetUserSuite) written(shard int, app, user string, cost int64) uuid.UUID {
 	id := uuid.Must(uuid.NewV7())
 	_, err := s.shards[shard].RecordRequests(s.ctx, []store.Request{{
 		UsageID: id, Modality: "llm", CustomerID: app, OrganizationID: s.organization, OrganizationTier: usageservice.DefaultTier,
@@ -142,8 +149,23 @@ func (s *ForgetUserSuite) recorded(shard int, app, user string, cost int64) uuid
 		CostMicros: cost, BaseCostMicros: cost, Billable: true, Success: true,
 	}})
 	s.Require().NoError(err)
-	s.service.Spend(s.T(), s.organization, cost, func(e *usageservice.Event) { e.UsageID, e.AppID, e.UserID = id, app, user })
 	return id
+}
+
+// shipped ships a row's event as the router's shipper does, carrying the user it read.
+func (s *ForgetUserSuite) shipped(id uuid.UUID, app, user string, cost int64) {
+	s.service.Spend(s.T(), s.organization, cost, func(e *usageservice.Event) { e.UsageID, e.AppID, e.UserID = id, app, user })
+}
+
+// stopped is what a run that stopped after its first call to the usage service left: every
+// shard and the service rewritten to replacement, and nothing after.
+func (s *ForgetUserSuite) stopped(replacement string) {
+	_, err := s.shards[0].RenameUserRequests(s.ctx, s.app, person, replacement)
+	s.Require().NoError(err)
+	manage, err := usageservice.NewClient(usageservice.ClientOptions{URL: s.service.URL, ManageKey: s.service.ManageKey})
+	s.Require().NoError(err)
+	_, err = manage.ForgetUser(s.ctx, "staff@example.com", usageservice.ForgetUser{AppID: s.app, UserID: person, Replacement: replacement})
+	s.Require().NoError(err)
 }
 
 // forget runs the command with --settle 0 and the args, and answers what it printed.
@@ -401,6 +423,64 @@ func (s *ForgetUserSuite) TestADryRunChangesNothing() {
 	entries, err := s.shards[0].AuditEntries(s.ctx, s.app, store.AuditEntryFilter{ResourceType: store.AuditEndUser})
 	s.Require().NoError(err)
 	s.Empty(entries)
+}
+
+func (s *ForgetUserSuite) TestARunThatStoppedIsFinishedWithItsReplacement() {
+	ids := []uuid.UUID{s.recorded(0, s.app, person, 300), s.recorded(1, s.app, person, 200)}
+	late := s.written(1, s.app, person, 50)
+	routers, counters := s.userKeys(s.app, person)
+	s.settingsOf(s.app, person)
+	replacement := usageservice.NewReplacement()
+	s.stopped(replacement)
+	// A batch the shipper read before the shards were rewritten, landing after the run stopped.
+	s.shipped(late, s.app, person, 50)
+
+	out := s.forget(s.app, person, "--replacement", replacement)
+
+	s.Equal(replacement, s.forgottenAs(out))
+	s.Contains(out, "requests: 0 rows rewritten", "the rows the stopped run rewrote are not matched again")
+	s.Contains(out, "usage service: 1 events, 4 windows rewritten")
+	requests, events := s.requests(), s.events()
+	for _, id := range append(ids, late) {
+		s.Equal(replacement, requests[id].UserID)
+		s.Equal(replacement, events[id].UserID)
+	}
+	s.Zero(s.windows(s.app, person))
+	s.Equal(len(usageservice.Intervals), s.windows(s.app, replacement), "the late window is merged into the replacement's")
+	s.Equal([4]int64{3, 550, 3, 550}, s.spendOf(s.app))
+	s.Zero(s.present(s.routers, routers))
+	s.Zero(s.present(s.counters, counters))
+	s.Equal(userRows{appLimits: 1, resetUsers: []string{replacement}, grantUsers: []string{replacement},
+		campaignUser: []string{replacement}}, s.userRows(s.app, person))
+	entries, err := s.shards[0].AuditEntries(s.ctx, s.app, store.AuditEntryFilter{ResourceType: store.AuditEndUser})
+	s.Require().NoError(err)
+	s.Require().Len(entries, 1, "one audit row, for the run that completed")
+	s.Equal(replacement, entries[0].ResourceID)
+}
+
+func (s *ForgetUserSuite) TestAFinishingRunFindsTheCountersOfRowsAlreadyRewritten() {
+	s.recorded(0, s.app, person, 100)
+	_, counters := s.userKeys(s.app, person)
+	replacement := usageservice.NewReplacement()
+	s.stopped(replacement)
+
+	out := s.forget(s.app, person, "--replacement", replacement)
+
+	s.Contains(out, "usage service: 0 events, 0 windows rewritten")
+	s.Zero(s.present(s.counters, counters), "found through the organization of the rows that carry the replacement")
+}
+
+func (s *ForgetUserSuite) TestAReplacementNoRunPrintedIsRefused() {
+	id := s.recorded(0, s.app, person, 100)
+
+	for _, replacement := range []string{"grace", "forgotten:ada", usageservice.ForgottenPrefix + strings.Repeat("A", 32)} {
+		err := runUsage([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com",
+			"--replacement", replacement}, s.settings, &bytes.Buffer{})
+		s.ErrorContains(err, "--replacement", replacement)
+	}
+
+	s.Equal(person, s.requests()[id].UserID)
+	s.Equal(person, s.events()[id].UserID)
 }
 
 func (s *ForgetUserSuite) TestForgettingAUserNeedsTheManageKey() {

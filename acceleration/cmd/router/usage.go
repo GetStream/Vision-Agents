@@ -42,7 +42,7 @@ const usageCommands = `usage: router usage <command>
                              it refused instead, once the producer is fixed. A row it never had
                              nor refused is never queued: one written before the router shipped,
                              or carried in by a data move. Writes the database
-  forget-user --app id --user id --actor who [--dry-run] [--settle 2m]
+  forget-user --app id --user id --actor who [--dry-run] [--settle 2m] [--replacement id]
                              replace an app's end user id in the usage records with forgotten:
                              and 32 random hex characters, in order: the requests of every shard;
                              the usage service's events and windows, and again after --settle
@@ -53,7 +53,10 @@ const usageCommands = `usage: router usage <command>
                              Usage and cost stay where they were, under the app. Prints each
                              step's count and writes one audit row (end_user, source cli) that
                              names the replacement and --actor, never the id. --dry-run prints
-                             the counts and changes nothing. It covers usage records only:
+                             the counts and changes nothing. Every step is safe to repeat: to
+                             finish a run that stopped, pass the replacement it printed as
+                             --replacement, and only what still names the id is rewritten,
+                             under that one replacement. It covers usage records only:
                              sessions, conversation history and agent_logs have their own
                              retention. Needs ROUTER_USAGE_URL and ROUTER_USAGE_MANAGE_KEY.
                              Writes the database
@@ -376,11 +379,18 @@ func runUsageForgetUser(ctx context.Context, args []string, settings config.Conf
 	actor := flags.String("actor", "", "who asked for it, recorded in the audit row: a staff member's email")
 	dryRun := flags.Bool("dry-run", false, "print the counts and change nothing")
 	settle := flags.Duration("settle", forgetSettle, "how long to wait before rewriting the usage service's events again")
+	replacement := flags.String("replacement", "", "the replacement a run that stopped printed, to finish it; empty picks a new one")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *app == "" || *user == "" || *actor == "" {
 		return errors.New("usage forget-user needs --app, --user and --actor")
+	}
+	if *replacement == "" {
+		*replacement = usageservice.NewReplacement()
+	} else if !usageservice.IsReplacement(*replacement) || *replacement == *user {
+		return fmt.Errorf("usage forget-user: --replacement is %s and 32 lowercase hex characters, as a run printed it, "+
+			"and not the id forgotten", usageservice.ForgottenPrefix)
 	}
 	if settings.Usage.URL == "" || settings.Usage.ManageKey == "" {
 		return errors.New("usage forget-user needs the usage service (usage.url, ROUTER_USAGE_URL) and its manage key " +
@@ -406,7 +416,7 @@ func runUsageForgetUser(ctx context.Context, args []string, settings config.Conf
 	}()
 	run := forgetting{
 		store: pgStore, usage: client, redis: redis, app: *app, user: *user, actor: *actor,
-		replacement: usageservice.NewReplacement(), out: out,
+		replacement: *replacement, out: out,
 	}
 	if *dryRun {
 		return run.count(ctx)
@@ -449,7 +459,7 @@ func forgetRedis(settings config.Config) ([]rueidis.Client, error) {
 
 // count prints what forget would change, and changes nothing.
 func (f forgetting) count(ctx context.Context) error {
-	organizations, err := f.store.UserOrganizations(ctx, f.app, f.user)
+	organizations, err := f.store.UserOrganizations(ctx, f.app, f.user, f.replacement)
 	if err != nil {
 		return err
 	}
@@ -490,7 +500,7 @@ func (f forgetting) forget(ctx context.Context, settle time.Duration) error {
 	if _, err := fmt.Fprintf(f.out, "replacing the user's id with %s\n", f.replacement); err != nil {
 		return err
 	}
-	organizations, err := f.store.UserOrganizations(ctx, f.app, f.user)
+	organizations, err := f.store.UserOrganizations(ctx, f.app, f.user, f.replacement)
 	if err != nil {
 		return err
 	}

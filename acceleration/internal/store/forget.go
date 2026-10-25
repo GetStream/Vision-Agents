@@ -60,25 +60,27 @@ func (s *Store) RenameUserRequests(ctx context.Context, appID, userID, replaceme
 }
 
 // UserOrganizations are the organizations an app's end user may have counters and holds under:
-// those of their requests on every shard, the app's own, and those of their limits, resets and
-// grants.
-func (s *Store) UserOrganizations(ctx context.Context, appID, userID string) ([]string, error) {
+// those of the requests on every shard, and of the limits, resets and grants, naming any of
+// userIDs, and the app's own. A run finishing one that stopped names the replacement too, since
+// the rows it already rewrote no longer name the user.
+func (s *Store) UserOrganizations(ctx context.Context, appID string, userIDs ...string) ([]string, error) {
 	shards, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]string, error) {
 		var found []string
-		err := db.NewRaw(`SELECT DISTINCT organization_id FROM requests WHERE customer_id = ? AND user_id = ?`,
-			appID, userID).Scan(ctx, &found)
+		err := db.NewRaw(`SELECT DISTINCT organization_id FROM requests WHERE customer_id = ? AND user_id IN (?)`,
+			appID, bun.In(userIDs)).Scan(ctx, &found)
 		return found, err
 	})
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: user organizations: %w", err))
 	}
 	var shared []string
+	users := bun.In(userIDs)
 	if err := s.db.NewRaw(`SELECT organization_id FROM app_organizations WHERE app_id = ?
 		UNION SELECT organization_id FROM apps WHERE id = ?
-		UNION SELECT organization_id FROM limits WHERE level = ? AND app_id = ? AND user_id = ?
-		UNION SELECT organization_id FROM usage_resets WHERE app_id = ? AND user_id = ?
-		UNION SELECT organization_id FROM limit_grants WHERE app_id = ? AND user_id = ?`,
-		appID, appID, LevelUser, appID, userID, appID, userID, appID, userID).Scan(ctx, &shared); err != nil {
+		UNION SELECT organization_id FROM limits WHERE level = ? AND app_id = ? AND user_id IN (?)
+		UNION SELECT organization_id FROM usage_resets WHERE app_id = ? AND user_id IN (?)
+		UNION SELECT organization_id FROM limit_grants WHERE app_id = ? AND user_id IN (?)`,
+		appID, appID, LevelUser, appID, users, appID, users, appID, users).Scan(ctx, &shared); err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: user organizations: %w", err))
 	}
 	organizations := map[string]bool{}
