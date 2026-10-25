@@ -449,16 +449,19 @@ func (m *Manager) listedDigests(ctx context.Context, alias string, resolved core
 // a schema the provider changed (leftOut) and the binding still offers one tool, so it is used
 // with the rest. A binding that offers none has nothing to use: a required one fails.
 func (d *dispatcher) onlyLeftOut(binding store.ConnectorBinding) bool {
-	offers := false
 	for _, grant := range binding.Tools {
 		name := binding.Name + mcp.Separator + grant.Name
-		if _, offered := d.routes[name]; offered {
-			offers = true
-		} else if d.leftOut[name] == "" {
+		if _, offered := d.routes[name]; !offered && d.leftOut[name] == "" {
 			return false
 		}
 	}
-	return offers
+	// A pattern binding grants no tool by name, so what it offers is read from the routes.
+	for _, found := range d.routes {
+		if found.binding.Name == binding.Name {
+			return true
+		}
+	}
+	return false
 }
 
 // toolLeftOut is what the model reads of a call of a granted tool the binding left out, why
