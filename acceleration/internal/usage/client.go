@@ -35,9 +35,10 @@ const (
 
 // Client calls the usage service. It is safe for concurrent use.
 type Client struct {
-	url   string
-	token string
-	http  *http.Client
+	url       string
+	token     string
+	manageKey string
+	http      *http.Client
 }
 
 // ClientOptions configure a Client.
@@ -46,19 +47,22 @@ type ClientOptions struct {
 	URL string
 	// Token is the service's ingest token.
 	Token string
+	// ManageKey is the service's manage key, for the management calls; a client may have it
+	// in place of the token.
+	ManageKey string
 	// HTTP makes the calls; nil is http.DefaultClient. Bound each call with its context.
 	HTTP *http.Client
 }
 
 // NewClient returns a client of the service at options.URL.
 func NewClient(options ClientOptions) (*Client, error) {
-	if options.URL == "" || options.Token == "" {
-		return nil, errors.New("usage: a client needs the service's URL and its ingest token")
+	if options.URL == "" || (options.Token == "" && options.ManageKey == "") {
+		return nil, errors.New("usage: a client needs the service's URL and its ingest token or manage key")
 	}
 	if options.HTTP == nil {
 		options.HTTP = http.DefaultClient
 	}
-	return &Client{url: strings.TrimRight(options.URL, "/"), token: options.Token, http: options.HTTP}, nil
+	return &Client{url: strings.TrimRight(options.URL, "/"), token: options.Token, manageKey: options.ManageKey, http: options.HTTP}, nil
 }
 
 // StatusError is an answer of the service other than 200. A 5xx is the service failing, and
@@ -164,6 +168,25 @@ func (c *Client) Standings(ctx context.Context, query StandingQuery) ([]Standing
 	return standings, nil
 }
 
+// ForgetUser replaces an end user's id in the service's events and windows, as actor, with the
+// manage key, or with forget.DryRun counts what it would replace. Making it again is safe: it
+// rewrites what still names the id, to the same replacement.
+func (c *Client) ForgetUser(ctx context.Context, actor string, forget ForgetUser) (ForgottenUser, error) {
+	if c.manageKey == "" {
+		return ForgottenUser{}, errors.New("usage: forgetting a user needs the service's manage key")
+	}
+	payload, err := json.Marshal(forget)
+	if err != nil {
+		return ForgottenUser{}, fmt.Errorf("usage: encode %s: %w", PathForgetUser, err)
+	}
+	var answer ForgottenUser
+	err = c.send(ctx, PathForgetUser, payload, &answer, func(header http.Header) {
+		header.Set("X-Manage-Key", c.manageKey)
+		header.Set("X-Stream-Actor-Id", actor)
+	})
+	return answer, err
+}
+
 // call posts body to path and decodes a 200 into answer.
 func (c *Client) call(ctx context.Context, path string, body, answer any) error {
 	payload, err := json.Marshal(body)
@@ -173,14 +196,21 @@ func (c *Client) call(ctx context.Context, path string, body, answer any) error 
 	return c.post(ctx, path, payload, answer)
 }
 
-// post posts payload to path and decodes a 200 into answer.
+// post posts payload to path with the ingest token and decodes a 200 into answer.
 func (c *Client) post(ctx context.Context, path string, payload []byte, answer any) error {
+	return c.send(ctx, path, payload, answer, func(header http.Header) {
+		header.Set("Authorization", "Bearer "+c.token)
+	})
+}
+
+// send posts payload to path with the credentials authorize sets and decodes a 200 into answer.
+func (c *Client) send(ctx context.Context, path string, payload []byte, answer any, authorize func(http.Header)) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+path, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("usage: %s: %w", path, err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	authorize(request.Header)
 	response, err := c.http.Do(request)
 	if err != nil {
 		return fmt.Errorf("usage: %s: %w", path, err)
