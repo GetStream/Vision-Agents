@@ -688,8 +688,11 @@ func (s *AttachConnectorsSuite) TestAPatternBindingWhoseEveryMatchChangedOpensOn
 	s.provider.redescribe("primary", "Says which account this is, and now something else too.")
 	chosen := map[string]string{"crm": alice}
 
-	_, _, _, failed := s.attach(s.spec(s.config(required(withPatterns(s.chosen("crm"), "whoami"))), "alice", chosen))
-	_, tools, unavailable, err := s.attach(s.spec(config, "alice", chosen))
+	// Another binding's tools are no tools of this one: the required binding still fails.
+	chosen["other"] = alice
+	_, _, _, failed := s.attach(s.spec(s.config(withPatterns(s.chosen("other"), "secret"),
+		required(withPatterns(s.chosen("crm"), "whoami"))), "alice", chosen))
+	_, tools, unavailable, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
 
 	s.ErrorContains(failed, `required connector "crm" cannot be used: tool_unavailable`)
 	s.Require().NoError(err)
