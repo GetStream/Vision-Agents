@@ -51,8 +51,8 @@ func (s *schedulingScript) failScheduled(times int) {
 	s.failing = times
 }
 
-// holdScheduled keeps every model's scheduled turns running, saying nothing, until release:
-// holdScheduled of schedulingModel for a session the test cannot reach before it opens.
+// holdScheduled keeps every model's scheduled turns running, saying nothing, until release,
+// as schedulingModel.holdScheduled does, for models the test cannot reach before the delivery opens them.
 func (s *schedulingScript) holdScheduled() (release func()) {
 	held := make(chan struct{})
 	s.mu.Lock()
