@@ -1,8 +1,8 @@
 // Package openrouter asks the decision models OpenRouter serves for typed judgements.
 //
 // OpenRouter's Decisions API takes the System One protocol as is, and it is the one key
-// that reaches every vendor's decision model: Jev, GPT-6 Luna Decisions, Clef, Decider,
-// Mercury Decide and the rest. A model is named the way OpenRouter names it, with the
+// that reaches most vendors' decision models: Jev, GPT-6 Luna Decisions, Clef, Mercury
+// Decide and the rest. Perplexity's Deciders are reached on Perplexity's own API. A model is named the way OpenRouter names it, with the
 // maker in front, e.g. "cloudflare/clef-flash".
 package openrouter
 

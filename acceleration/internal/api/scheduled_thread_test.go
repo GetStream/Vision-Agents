@@ -197,7 +197,7 @@ func (s *TelnyxChannelSuite) TestSomeoneElseWritingInAPersonsThreadIsNotOfferedT
 	channel := s.smsTurn(person, "remind me to stretch in two hours")
 	s.customersTasks(1)
 	next := time.Now().Add(2 * time.Hour).UTC()
-	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: "alice", CallerKind: "server",
+	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: "alice", CallerKind: "server", APIKey: s.RouterSuite.app.key,
 		Title: "Alice private review", Instructions: "x", StartLocal: next, Timezone: "Europe/Amsterdam",
 		NextRunAt: &next, Channels: []string{"conversation"}}
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))

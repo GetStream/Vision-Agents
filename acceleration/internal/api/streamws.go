@@ -173,7 +173,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	}
 	defer connection.Close()
 	connection.SetReadLimit(maxSocketMessage)
-	out := &socket{connection: connection}
+	out := &socket{connection: connection, started: make(chan struct{})}
 
 	opening, err := readStart(connection, modality)
 	if err != nil {
@@ -208,6 +208,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	stopWatching := s.watchBalance(ctx, out, customerID, OrganizationFrom(r.Context()))
 	switch modality {
 	case routing.STT:
 		err = s.streamSTT(ctx, out, request, targeted(speech))
@@ -229,6 +230,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	default:
 		err = unknownModality(Modality(modality))
 	}
+	stopWatching()
 	if err != nil {
 		out.failed(err)
 	}
@@ -299,6 +301,7 @@ func (s *Server) streamSTT(
 
 	// The two directions run at once: audio keeps arriving while transcripts come back,
 	// and a reader that waited for each would transcribe at the speed of the answers.
+	cost := unitCostOf(ctx)
 	var writing sync.WaitGroup
 	writing.Add(1)
 	go func() {
@@ -311,6 +314,10 @@ func (s *Server) streamSTT(
 					"provider", failover.Provider, "model", failover.Model, "error", failover.Err)
 			}
 			if encoded, ok := sttFrame(event); ok {
+				// A settled transcript ends a turn, which is the unit a transcriber bills.
+				if transcript, settled := event.(stt.Transcript); settled && transcript.Final() {
+					cost.stamp(encoded)
+				}
 				if err := out.frame(encoded); err != nil {
 					return
 				}
@@ -381,12 +388,13 @@ func (s *Server) streamTTS(
 	}
 	out.frame(started)
 
+	cost := unitCostOf(ctx)
 	var writing sync.WaitGroup
 	writing.Add(1)
 	go func() {
 		defer writing.Done()
 		for event := range session.Events() {
-			if err := writeTTS(out, event); err != nil {
+			if err := writeTTS(out, event, cost); err != nil {
 				return
 			}
 		}
@@ -487,7 +495,13 @@ func (s *Server) streamLLM(
 					session.Model(), llm.ModalityImage))
 				continue
 			}
-			stream, err := session.Create(ctx, params)
+			// Responses overlap, so a backend's each add up what they cost apart.
+			asked := ctx
+			var spent *routing.Spent
+			if unitCostOf(ctx) != nil {
+				asked, spent = routing.WithSpent(ctx)
+			}
+			stream, err := session.Create(asked, params)
 			if err != nil {
 				out.failed(err)
 				continue
@@ -503,9 +517,13 @@ func (s *Server) streamLLM(
 				defer stream.Close()
 
 				for stream.Next() {
-					encoded, ok := llmFrame(stream.Current())
+					event := stream.Current()
+					encoded, ok := llmFrame(event)
 					if !ok {
 						continue
+					}
+					if _, done := event.(llm.ResponseCompleted); done {
+						stampSpent(encoded, spent)
 					}
 					if err := out.frame(encoded); err != nil {
 						break
@@ -1050,12 +1068,12 @@ func audioMessage(pcm audio.PcmData) []byte {
 // writeTTS sends one synthesis event, which is binary for audio and JSON for everything
 // else. Audio goes out as raw little-endian PCM16 behind a small header rather than base64
 // in a JSON field, because a voice is the one thing here worth not doubling in size.
-func writeTTS(out *socket, event tts.Event) error {
+func writeTTS(out *socket, event tts.Event, cost *unitCost) error {
 	switch typed := event.(type) {
 	case tts.AudioChunk:
 		return out.binary(audioMessage(typed.Audio))
 	case tts.SynthesisComplete:
-		return out.frame(frame{
+		complete := frame{
 			"type":                  "synthesis_complete",
 			"id":                    typed.SynthesisID,
 			"provider":              typed.Provider,
@@ -1065,7 +1083,10 @@ func writeTTS(out *socket, event tts.Event) error {
 			"time_to_first_byte_ms": typed.TimeToFirstByteMs,
 			"synthesis_time_ms":     typed.SynthesisTimeMs,
 			"interrupted":           typed.Interrupted,
-		})
+		}
+		// One utterance is the unit a voice bills.
+		cost.stamp(complete)
+		return out.frame(complete)
 	case tts.Error:
 		return out.frame(frame{
 			"type":    "error",
@@ -1135,6 +1156,10 @@ func llmFrame(event llm.Event) (frame, bool) {
 type socket struct {
 	connection *websocket.Conn
 	mu         sync.Mutex
+	// started closes once the started frame has gone out, for what must not be said before
+	// it. Nil when nothing waits on it.
+	started   chan struct{}
+	startOnce sync.Once
 }
 
 // frame sends one JSON message under the write deadline.
@@ -1143,7 +1168,11 @@ func (s *socket) frame(encoded frame) error {
 	defer s.mu.Unlock()
 
 	s.connection.SetWriteDeadline(time.Now().Add(writeWait))
-	return s.connection.WriteJSON(encoded)
+	err := s.connection.WriteJSON(encoded)
+	if s.started != nil && encoded["type"] == "started" {
+		s.startOnce.Do(func() { close(s.started) })
+	}
+	return err
 }
 
 // binary sends one binary message under the write deadline.
@@ -1163,14 +1192,20 @@ func (s *socket) ping() error {
 	return s.connection.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait))
 }
 
-// failed reports a failure to the caller, which is all that can be done about one here.
+// failed reports a failure to the caller, which is all that can be done about one here. A
+// refusal about money also carries the code and type an HTTP request is refused with, so a
+// caller can send its user to top up.
 func (s *socket) failed(err error) {
+	if answer, ok := moneyError(err); ok {
+		s.frame(frame{"type": "error", "error": answer.Message, "code": answer.Code, "error_type": answer.Type})
+		return
+	}
 	s.frame(frame{"type": "error", "error": err.Error()})
 }
 
 // end sends the close frame after the last frame: 1000, or a failure code with the failure
-// as the reason. A request the router refused (routing.ErrRequest) is the caller's to change,
-// so it ends with 1008, policy violation; any other failure, as often a provider's as a
+// as the reason. A request the router refused (routing.ErrRequest), or refused for money, is
+// the caller's to change, so it ends with 1008, policy violation; any other failure, as often a provider's as a
 // caller's, with 1011, an unexpected condition (RFC 6455 section 7.4.1,
 // https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1).
 func (s *socket) end(failure error) {
@@ -1179,6 +1214,9 @@ func (s *socket) end(failure error) {
 		code, reason = websocket.CloseInternalServerErr, failure.Error()
 		if errors.Is(failure, routing.ErrRequest) {
 			code = websocket.ClosePolicyViolation
+		}
+		if answer, refused := moneyError(failure); refused {
+			code, reason = websocket.ClosePolicyViolation, closeReason(answer.Message)
 		}
 	}
 	closeSocket(s.connection, code, reason)

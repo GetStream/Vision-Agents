@@ -487,7 +487,7 @@ func (s *TelnyxChannelSuite) TestAThreadTasksDeliverToCannotChange() {
 func (s *TelnyxChannelSuite) TestATaskWithoutAThreadIsDeliveredAsBefore() {
 	s.schedulingOn(&s.config)
 	next := time.Now().Add(2 * time.Hour).UTC()
-	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: "alice", CallerKind: "server",
+	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: "alice", CallerKind: "server", APIKey: s.RouterSuite.app.key,
 		Title: "Stretch", Instructions: "Remind them to stretch.", StartLocal: next, Timezone: "Europe/Amsterdam",
 		NextRunAt: &next, Channels: []string{"conversation"}}
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
@@ -510,7 +510,7 @@ func (s *TelnyxSandboxSuite) TestATaskPastTheSandboxsDailyLimitIsHeldBack() {
 	s.took(1)
 	next := time.Now().Add(2 * time.Hour).UTC()
 	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: stored[0]["user_id"].(string),
-		CallerKind: "server", ChannelThread: channel, Title: "Stretch", Instructions: "Remind them to stretch.",
+		CallerKind: "server", APIKey: s.RouterSuite.app.key, ChannelThread: channel, Title: "Stretch", Instructions: "Remind them to stretch.",
 		StartLocal: next, Timezone: "Europe/Amsterdam", NextRunAt: &next, Channels: []string{"conversation"}}
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
 

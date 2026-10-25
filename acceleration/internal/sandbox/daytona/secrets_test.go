@@ -105,7 +105,7 @@ func (s *SecretsSuite) granted(prefix string, config sandbox.Config, grants ...s
 
 // TestDaytonasBrokerSendsDaytonaWhatItDidBefore is the control: no per-run env and no proxy.
 // The expected bodies are a probe of base 98410fe9b; the network-only configs after the first,
-// of base 4588e625d.
+// of base 4588e625d; each with the auto-stop interval every sandbox is now created with.
 func (s *SecretsSuite) TestDaytonasBrokerSendsDaytonaWhatItDidBefore() {
 	box := s.granted("stg", sandbox.Config{AllowedDomains: []string{"pypi.org"}}, github)
 	s.Require().NoError(box.Write(s.ctx, "dir/f.txt", []byte("x")))
@@ -118,10 +118,10 @@ func (s *SecretsSuite) TestDaytonasBrokerSendsDaytonaWhatItDidBefore() {
 	}
 	created, err := json.Marshal(s.platform.requests()[1:])
 	s.Require().NoError(err)
-	s.Equal(`[{"domainAllowList":"api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},`+
+	s.Equal(`[{"autoStopInterval":15,"domainAllowList":"api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},`+
 		`"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false},`+
-		`{"labels":{"code-toolbox-language":"python"},"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false},`+
-		`{"labels":{"code-toolbox-language":"python"},"networkAllowList":"10.0.0.0/8","networkBlockAll":false,"public":false,`+
+		`{"autoStopInterval":15,"labels":{"code-toolbox-language":"python"},"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false},`+
+		`{"autoStopInterval":15,"labels":{"code-toolbox-language":"python"},"networkAllowList":"10.0.0.0/8","networkBlockAll":false,"public":false,`+
 		`"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}]`,
 		regexp.MustCompile(`va_stg_session-1_github_[0-9a-f]{8}`).ReplaceAllString(string(created), "SECRET"))
 
@@ -129,7 +129,7 @@ func (s *SecretsSuite) TestDaytonasBrokerSendsDaytonaWhatItDidBefore() {
 	s.Require().NoError(err)
 	ran, err := json.Marshal(s.platform.executed()[:1])
 	s.Require().NoError(err)
-	s.Equal(`[{"domainAllowList":"pypi.org,api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},`+
+	s.Equal(`[{"autoStopInterval":15,"domainAllowList":"pypi.org,api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},`+
 		`"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}]`,
 		regexp.MustCompile(`va_stg_session-1_github_[0-9a-f]{8}`).ReplaceAllString(string(created), "SECRET"))
 	s.Equal(`[{"authorization":"Bearer key-1","code":"print(1)","language":"python","path":"/toolbox/sandbox-2/process/code-run","timeout":30}]`,
@@ -466,7 +466,8 @@ func (s *SecretsSuite) TestRunCodeOffersNoBearerForAGrantWhoseOnlyHostIsGithub()
 // TestASandboxWithoutGrantsIsCreatedAsOnBase is the control: a sandbox no binding gives
 // access asks Daytona for what it asked before the broker existed, and run_code says what it
 // said. Both expected values are from a probe on origin/accelerate 87fc7922e (a temporary
-// DaytonaSuite test printing requests()[0] and sandbox.Tool().Description).
+// DaytonaSuite test printing requests()[0] and sandbox.Tool().Description), with the auto-stop
+// interval every sandbox is now created with.
 func (s *SecretsSuite) TestASandboxWithoutGrantsIsCreatedAsOnBase() {
 	box := s.granted("stg", sandbox.Config{})
 
@@ -475,7 +476,7 @@ func (s *SecretsSuite) TestASandboxWithoutGrantsIsCreatedAsOnBase() {
 	s.Require().NoError(err)
 	raw, err := json.Marshal(s.platform.requests()[0])
 	s.Require().NoError(err)
-	s.JSONEq(`{"labels":{"code-toolbox-language":"python"},"networkBlockAll":true,"public":false,"spot":false}`, string(raw))
+	s.JSONEq(`{"autoStopInterval":15,"labels":{"code-toolbox-language":"python"},"networkBlockAll":true,"public":false,"spot":false}`, string(raw))
 	s.Equal([]string{"POST /api/sandbox"}, s.platform.history(), "no secret is asked for")
 	s.Equal("Run a short Python program and read back what it printed. Use it for anything you would otherwise have "+
 		"to work out in your head, such as arithmetic, dates or parsing, and for making files such as images. Print what "+
@@ -503,12 +504,13 @@ func (p *platform) history() []string {
 // TestAGrantedSandboxIsCreatedAsOnBase is the control for the proxy broker: with Daytona's
 // broker, the default, a granted sandbox is asked for as before it, and nothing is written
 // into it. The expected requests are from a probe on origin/accelerate a103c19ab (a temporary
-// SecretsSuite test printing requests()[0] and history() for these three configs).
+// SecretsSuite test printing requests()[0] and history() for these three configs), with the
+// auto-stop interval every sandbox is now created with.
 func (s *SecretsSuite) TestAGrantedSandboxIsCreatedAsOnBase() {
 	expected := []string{
-		`{"domainAllowList":"api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}`,
-		`{"domainAllowList":"pypi.org,api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}`,
-		`{"labels":{"code-toolbox-language":"python"},"networkAllowList":"10.0.0.0/8","networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}`,
+		`{"autoStopInterval":15,"domainAllowList":"api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}`,
+		`{"autoStopInterval":15,"domainAllowList":"pypi.org,api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}`,
+		`{"autoStopInterval":15,"labels":{"code-toolbox-language":"python"},"networkAllowList":"10.0.0.0/8","networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}`,
 	}
 	for i, config := range []sandbox.Config{{}, {Network: true, AllowedDomains: []string{"pypi.org"}}, {NetworkAllowList: []string{"10.0.0.0/8"}}} {
 		s.platform = newPlatform()

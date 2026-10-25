@@ -32,7 +32,7 @@ func (s *StoreSuite) TestSpendCoversEveryModalityAtOnce() {
 	s.spent("acme", "llm", s.base.Add(26*time.Hour), 400, nil)
 
 	buckets, err := s.store.CustomerSpend(
-		s.ctx, "acme", "modality", Daily, s.base, s.base.Add(48*time.Hour), 6, nil)
+		s.ctx, "acme", "modality", Daily, s.base, s.base.Add(48*time.Hour), 6, nil, UsageFilter{})
 	s.Require().NoError(err)
 	s.Require().Len(buckets, 3)
 
@@ -57,7 +57,7 @@ func (s *StoreSuite) TestSpendKeepsTheBiggestGroupsAndSumsTheRestIntoOther() {
 	s.spent("acme", "llm", s.base.Add(10*time.Minute), 900, nil)
 
 	buckets, err := s.store.CustomerSpend(
-		s.ctx, "acme", "customer_id", Daily, s.base, s.base.Add(24*time.Hour), 2, nil)
+		s.ctx, "acme", "customer_id", Daily, s.base, s.base.Add(24*time.Hour), 2, nil, UsageFilter{})
 	s.Require().NoError(err)
 
 	byValue := map[string]int64{}
@@ -68,6 +68,44 @@ func (s *StoreSuite) TestSpendKeepsTheBiggestGroupsAndSumsTheRestIntoOther() {
 		"the two biggest keep a group, the rest are other, and the unlabelled spend is its own")
 }
 
+func (s *StoreSuite) TestRuntimeIsSpendAndNotRequests() {
+	support := map[string]string{"product": "support"}
+	s.spent("acme", "llm", s.base.Add(time.Minute), 1000, support)
+	s.spent("acme", RuntimeModality, s.base.Add(2*time.Minute), 600, support)
+	s.spent("acme", RuntimeModality, s.base.Add(3*time.Minute), 600, nil)
+
+	buckets, err := s.store.CustomerSpend(
+		s.ctx, "acme", "modality", Daily, s.base, s.base.Add(24*time.Hour), 6, nil, UsageFilter{})
+	s.Require().NoError(err)
+	byModality := map[string]SpendBucket{}
+	for _, bucket := range buckets {
+		byModality[bucket.Value] = bucket
+	}
+	s.EqualValues(1200, byModality[RuntimeModality].CostMicrosTotal, "a session's time is spend")
+	s.Zero(byModality[RuntimeModality].RequestCount, "and asks no provider anything")
+	s.EqualValues(1, byModality["llm"].RequestCount)
+
+	keys, err := s.store.CustomerTagKeys(s.ctx, "acme", s.base, s.base.Add(24*time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(keys, 1)
+	s.EqualValues(1600, keys[0].CostMicrosTotal)
+	s.EqualValues(1, keys[0].RequestCount)
+	s.InDelta(1.0, keys[0].Coverage, 0.001, "the one request carries the label; runtime is not a request")
+}
+
+func (s *StoreSuite) TestTagKeysOfRuntimeAloneAreSpendWithNoRequests() {
+	s.spent("acme", RuntimeModality, s.base.Add(time.Minute), 600, map[string]string{"product": "support"})
+
+	keys, err := s.store.CustomerTagKeys(s.ctx, "acme", s.base, s.base.Add(24*time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(keys, 1)
+	s.EqualValues(600, keys[0].CostMicrosTotal)
+	s.Zero(keys[0].RequestCount)
+	s.Zero(keys[0].Coverage)
+	s.Require().Len(keys[0].TopValues, 1)
+	s.InDelta(1.0, keys[0].TopValues[0].Share, 0.001)
+}
+
 func (s *StoreSuite) TestSpendCanBeNarrowedToOneLabel() {
 	s.spent("acme", "llm", s.base.Add(time.Minute), 1000,
 		map[string]string{"product": "support", "environment": "production"})
@@ -75,7 +113,7 @@ func (s *StoreSuite) TestSpendCanBeNarrowedToOneLabel() {
 		map[string]string{"product": "support", "environment": "staging"})
 
 	buckets, err := s.store.CustomerSpend(s.ctx, "acme", "product", Daily,
-		s.base, s.base.Add(24*time.Hour), 6, map[string]string{"environment": "production"})
+		s.base, s.base.Add(24*time.Hour), 6, map[string]string{"environment": "production"}, UsageFilter{})
 	s.Require().NoError(err)
 
 	s.Require().Len(buckets, 1)
@@ -88,7 +126,7 @@ func (s *StoreSuite) TestSpendIsOnlyTheCallingCustomers() {
 	s.spent("globex", "llm", s.base.Add(time.Minute), 9000, nil)
 
 	buckets, err := s.store.CustomerSpend(
-		s.ctx, "acme", "modality", Daily, s.base, s.base.Add(24*time.Hour), 6, nil)
+		s.ctx, "acme", "modality", Daily, s.base, s.base.Add(24*time.Hour), 6, nil, UsageFilter{})
 	s.Require().NoError(err)
 	s.Require().Len(buckets, 1)
 	s.EqualValues(1000, buckets[0].CostMicrosTotal)
@@ -375,14 +413,14 @@ func (s *StoreSuite) TestToolUsageIsOnlyTheCallingCustomers() {
 }
 
 func (s *StoreSuite) TestUsageQueriesRejectBadArguments() {
-	_, err := s.store.CustomerSpend(s.ctx, "", "modality", Daily, s.base, s.base.Add(time.Hour), 6, nil)
+	_, err := s.store.CustomerSpend(s.ctx, "", "modality", Daily, s.base, s.base.Add(time.Hour), 6, nil, UsageFilter{})
 	s.ErrorContains(err, "customer id is required")
 
 	_, err = s.store.CustomerSpend(
-		s.ctx, "acme", "modality", Granularity("weekly"), s.base, s.base.Add(time.Hour), 6, nil)
+		s.ctx, "acme", "modality", Granularity("weekly"), s.base, s.base.Add(time.Hour), 6, nil, UsageFilter{})
 	s.ErrorContains(err, "unknown granularity")
 
-	_, err = s.store.CustomerSpend(s.ctx, "acme", "modality", Daily, s.base, s.base.Add(time.Hour), 0, nil)
+	_, err = s.store.CustomerSpend(s.ctx, "acme", "modality", Daily, s.base, s.base.Add(time.Hour), 0, nil, UsageFilter{})
 	s.ErrorContains(err, "limit must be at least 1")
 
 	_, err = s.store.CustomerTagKeys(s.ctx, "", s.base, s.base.Add(time.Hour), nil)

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -320,6 +321,9 @@ type serverEvent struct {
 	Response   *response   `json:"response"`
 	Item       *serverItem `json:"item"`
 	Error      *apiError   `json:"error"`
+	// Usage is where xAI reports what a reply cost: on response.done beside the response,
+	// whose own usage it leaves empty.
+	Usage *usage `json:"usage"`
 }
 
 type response struct {
@@ -357,16 +361,34 @@ func (d *statusDetails) UnmarshalJSON(raw []byte) error {
 }
 
 type usage struct {
+	// Type is "tokens" on a transcription's usage, and "duration" for a transcriber billed
+	// by the second, which reports no tokens.
+	Type               string        `json:"type"`
 	InputTokens        int64         `json:"input_tokens"`
 	OutputTokens       int64         `json:"output_tokens"`
 	InputTokenDetails  *tokenDetails `json:"input_token_details"`
 	OutputTokenDetails *tokenDetails `json:"output_token_details"`
+	// Seconds is the audio a transcriber billed by the second heard, on a "duration" usage.
+	Seconds float64 `json:"seconds"`
+	// BillableAudioSeconds is xAI's running total of the audio it bills the session for,
+	// rounded to the second: the audio sent and received, or the wall clock on a line that
+	// streams all the time. Nil where the vendor keeps none.
+	BillableAudioSeconds *float64 `json:"billable_audio_seconds"`
 }
 
 type tokenDetails struct {
-	CachedTokens int64 `json:"cached_tokens"`
-	TextTokens   int64 `json:"text_tokens"`
-	AudioTokens  int64 `json:"audio_tokens"`
+	CachedTokens        int64          `json:"cached_tokens"`
+	CachedTokensDetails *modalityCount `json:"cached_tokens_details"`
+	TextTokens          int64          `json:"text_tokens"`
+	AudioTokens         int64          `json:"audio_tokens"`
+	ImageTokens         int64          `json:"image_tokens"`
+	ReasoningTokens     int64          `json:"reasoning_tokens"`
+}
+
+type modalityCount struct {
+	TextTokens  int64 `json:"text_tokens"`
+	AudioTokens int64 `json:"audio_tokens"`
+	ImageTokens int64 `json:"image_tokens"`
 }
 
 type serverItem struct {
@@ -431,6 +453,9 @@ type STS struct {
 	asked   clientEvent
 	started bool
 	closed  bool
+	// billedSeconds is the last running total of billable audio xAI reported, which each
+	// reply reports the growth since.
+	billedSeconds float64
 }
 
 // New validates the settings and returns an unstarted provider.
@@ -515,6 +540,8 @@ func CapabilitiesFor(vendor Vendor, model string) sts.Capabilities {
 			Endpointing:            true,
 			InstructionsMidSession: true,
 			ToolsMidSession:        true,
+			Usage:                  true,
+			BilledAudio:            true,
 		}
 	case DialectQwen:
 		// Qwen's realtime models take neither a typed turn nor a tool, and a session is
@@ -1112,6 +1139,7 @@ func (s *STS) handleMessage(event serverEvent) {
 
 	case eventInputCompleted:
 		s.heardTranscript(strings.TrimSpace(event.Transcript))
+		s.transcribed(event)
 
 	case eventResponseCreated:
 		s.startTurn(event)
@@ -1196,6 +1224,36 @@ func (s *STS) heardTranscript(text string) {
 	s.emitter.Send(sts.InputTranscript{Participant: participant, Mode: mode, Text: text})
 }
 
+// transcribed reports what writing down a caller turn cost, where OpenAI bills its transcriber
+// on top of the conversation: by the tokens it read and wrote, or by the seconds it heard for
+// a transcriber billed that way, such as whisper-1.
+func (s *STS) transcribed(event serverEvent) {
+	used := event.Usage
+	if s.dialect != DialectOpenAI || used == nil || event.ItemID == "" {
+		return
+	}
+	model := openaiTranscriber
+	if configured := s.transcription(); configured != nil && configured.Model != "" {
+		model = configured.Model
+	}
+	if used.Type == "duration" {
+		if used.Seconds > 0 {
+			s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: model, AudioMs: int64(math.Round(used.Seconds * 1000))})
+		}
+		return
+	}
+	cost := sts.Usage{InputTokens: used.InputTokens, OutputTokens: used.OutputTokens, OutputTextTokens: used.OutputTokens}
+	if input := used.InputTokenDetails; input != nil {
+		cost.InputTextTokens, cost.InputAudioTokens = input.TextTokens, input.AudioTokens
+	} else {
+		cost.InputAudioTokens = used.InputTokens
+	}
+	if cost.InputTokens == 0 && cost.OutputTokens == 0 {
+		return
+	}
+	s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: model, Usage: cost})
+}
+
 // settleHeard settles a restatement nothing followed. The reply beginning to speak is the
 // latest moment the caller's turn can still be open, so what was heard by then is what
 // was said.
@@ -1268,14 +1326,30 @@ func (s *STS) finishTurn(event serverEvent) {
 	var status, reason string
 	var cost sts.Usage
 	var failure *apiError
+	reported := event.Usage
 	if event.Response != nil {
 		status = event.Response.Status
-		cost = usageOf(event.Response.Usage)
+		if event.Response.Usage != nil && *event.Response.Usage != (usage{}) {
+			reported = event.Response.Usage
+		}
 		if event.Response.StatusDetails != nil {
 			reason = event.Response.StatusDetails.Reason
 			failure = event.Response.StatusDetails.Error
 		}
 	}
+	cost = usageOf(reported)
+	s.mu.Lock()
+	// A done for a reply already settled, one a newer reply superseded, settles nothing: the
+	// reply open now is not the one it is about.
+	late := s.turn != nil && event.Response != nil && event.Response.ID != "" && event.Response.ID != s.turn.ID
+	// The growth is billed by the reply it settles, so with none in flight, or for a reply
+	// settled already, it is left for the next one, which the vendor's next total includes.
+	if reported != nil && reported.BillableAudioSeconds != nil && s.turn != nil && !late {
+		grown := max(*reported.BillableAudioSeconds-s.billedSeconds, 0)
+		s.billedSeconds = max(*reported.BillableAudioSeconds, s.billedSeconds)
+		cost.BilledAudioMs, cost.AudioBilled = int64(math.Round(grown*1000)), true
+	}
+	s.mu.Unlock()
 
 	if status == "failed" {
 		err := error(failure)
@@ -1292,7 +1366,9 @@ func (s *STS) finishTurn(event serverEvent) {
 	}
 
 	interrupted := status == "cancelled" || reason == "turn_detected" || reason == "client_cancelled"
-	s.settleTurn(interrupted, cost)
+	if !late {
+		s.settleTurn(interrupted, cost)
+	}
 
 	s.mu.Lock()
 	owed := s.owed
@@ -1405,18 +1481,32 @@ func (s *STS) speaker() sts.Participant {
 	return s.participant
 }
 
-// usageOf is what a reply cost in this package's words.
+// usageOf is what a reply cost in this package's words. OpenAI bills each modality at its
+// own rate, text far below audio, so the split is kept; the reasoning is inside the output
+// text.
 func usageOf(reported *usage) sts.Usage {
 	if reported == nil {
 		return sts.Usage{}
 	}
 	cost := sts.Usage{InputTokens: reported.InputTokens, OutputTokens: reported.OutputTokens}
-	if reported.InputTokenDetails != nil {
-		cost.CachedInputTokens = reported.InputTokenDetails.CachedTokens
-		cost.InputAudioTokens = reported.InputTokenDetails.AudioTokens
+	if input := reported.InputTokenDetails; input != nil {
+		cost.CachedInputTokens = input.CachedTokens
+		cost.InputTextTokens = input.TextTokens
+		cost.InputAudioTokens = input.AudioTokens
+		cost.InputImageTokens = input.ImageTokens
+		if cached := input.CachedTokensDetails; cached != nil {
+			cost.CachedInputTextTokens = cached.TextTokens
+			cost.CachedInputAudioTokens = cached.AudioTokens
+			cost.CachedInputImageTokens = cached.ImageTokens
+		}
 	}
-	if reported.OutputTokenDetails != nil {
-		cost.OutputAudioTokens = reported.OutputTokenDetails.AudioTokens
+	if output := reported.OutputTokenDetails; output != nil {
+		cost.OutputTextTokens = output.TextTokens
+		cost.OutputAudioTokens = output.AudioTokens
+		cost.ReasoningTokens = output.ReasoningTokens
+		// The split replaces the output total in the price, so whatever the details leave
+		// out is billed as text rather than not at all.
+		cost.OutputTextTokens += max(reported.OutputTokens-output.TextTokens-output.AudioTokens, 0)
 	}
 	return cost
 }

@@ -101,7 +101,7 @@ type ConnectorEventDestinationPage struct {
 }
 
 type createEventDestinationRequest struct {
-	ID   string `path:"id" doc:"The connector, such as slack_bot."`
+	ID   string `path:"id" doc:"The connector, such as slack_bot, or stream for the router's own events."`
 	Body ConnectorEventDestinationRequest
 }
 
@@ -139,6 +139,16 @@ func (s *Server) registerEventDestinations(api huma.API) {
 			"deliveries of the app's own provider app, such as its Slack app. A connector takes " +
 			fmt.Sprint(store.MaxEventDestinations) + " destinations at most. The response carries " +
 			"the destination's signing secret, once.\n\n" +
+			"The id `stream` is the router's own events, which need no provider app: " +
+			"`account.balance_low` once the organization's balance is at or below its warning " +
+			"threshold, and `account.balance_exhausted` once it is at or below nothing, each sent " +
+			"once per crossing to every `stream` destination of every app of the organization, " +
+			"whatever its forward. The balance they go by is what was spent: work under way that " +
+			"has not finished does not count, so it can be above X-Stream-Balance-Micros. Any change " +
+			"to the organization's credit re-arms them, a refund or an adjustment as much as a " +
+			"top-up or a grant. The body is " +
+			"`{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, " +
+			"and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		Responses: map[string]*huma.Response{"201": {Description: "The destination and its secret"}},
@@ -193,22 +203,27 @@ func (s *Server) createEventDestination(ctx context.Context, request *createEven
 	if s.store == nil || s.eventForwarder == nil {
 		return nil, errNoEventForwarding
 	}
-	definition, err := s.store.LatestConnectorDefinition(ctx, customerID, request.ID)
-	if errors.Is(err, store.ErrNoConnectorDefinition) {
-		return nil, notFound("no such connector")
-	}
-	if err != nil {
-		return nil, err
-	}
-	if definition.Manifest.Channel == nil {
-		return nil, invalidRequest(fmt.Sprintf("%s takes no provider events: its manifest has no channel block", definition.ID))
+	// The router's own events need no provider app.
+	connectorID := store.StreamSource
+	if request.ID != store.StreamSource {
+		definition, err := s.store.LatestConnectorDefinition(ctx, customerID, request.ID)
+		if errors.Is(err, store.ErrNoConnectorDefinition) {
+			return nil, notFound("no such connector")
+		}
+		if err != nil {
+			return nil, err
+		}
+		if definition.Manifest.Channel == nil {
+			return nil, invalidRequest(fmt.Sprintf("%s takes no provider events: its manifest has no channel block", definition.ID))
+		}
+		connectorID = definition.ID
 	}
 	sent := request.Body
 	if err := s.eventForwarder.CheckURL(ctx, sent.URL); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
 	destination := store.EventDestination{
-		ID: uuid.NewString(), CustomerID: customerID, ConnectorID: definition.ID, URL: sent.URL, Forward: string(sent.Forward),
+		ID: uuid.NewString(), CustomerID: customerID, ConnectorID: connectorID, URL: sent.URL, Forward: string(sent.Forward),
 	}
 	secret, err := s.eventForwarder.NewSecret(customerID, destination.ConnectorID, destination.ID)
 	if err != nil {

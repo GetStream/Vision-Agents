@@ -30,6 +30,8 @@ type stubTTS struct {
 	prompt   string
 	// perSentence is a voice that takes each sentence as its own request.
 	perSentence bool
+	// refuse, when set, is what Synthesize answers instead of taking the text.
+	refuse error
 }
 
 func newStubTTS() *stubTTS {
@@ -39,6 +41,9 @@ func newStubTTS() *stubTTS {
 func (s *stubTTS) Start(context.Context) error { return nil }
 
 func (s *stubTTS) Synthesize(request tts.Request) error {
+	if s.refuse != nil {
+		return s.refuse
+	}
 	s.said = append(s.said, request)
 	return nil
 }
@@ -156,8 +161,10 @@ func (s *TTSRouterSuite) sessionFor(config routing.ProviderConfig) (*Session, *s
 }
 
 func (s *TTSRouterSuite) sessionOver(provider *stubTTS, config routing.ProviderConfig) (*Session, *stubTTS) {
-	recorder := routing.NewRecorder(routing.TTS, nil, nil, slog.Default())
-	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder)
+	prices, err := routing.Prices(routing.Config{routing.TTS: {Providers: []routing.ProviderConfig{config}}}, slog.Default())
+	s.Require().NoError(err)
+	recorder := routing.NewRecorder(routing.TTS, nil, nil, prices, slog.Default())
+	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder, slog.Default())
 
 	s.T().Cleanup(func() {
 		_ = session.Close()
@@ -1268,6 +1275,6 @@ func (s *TTSRouterSuite) TestAFatalErrorIsGradedWorseThanAContextualOne() {
 func (s *TTSRouterSuite) TestSessionExposesThePriceItWillBeBilledAt() {
 	session, _ := s.newSession()
 
-	s.EqualValues(50_000, session.Price().CostMicros(routing.Usage{Characters: 1_000}),
+	s.EqualValues(50_000, session.Quote(routing.Usage{Characters: 1_000}).CostMicros,
 		"a thousand characters is five cents")
 }

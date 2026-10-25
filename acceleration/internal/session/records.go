@@ -368,6 +368,7 @@ func sessionRow(created *Session) store.AgentSession {
 	// would make every session look like it belonged to the agent.
 	row.UserID = spec.Caller.UserID
 	row.CallerKind = string(spec.CallerKind)
+	row.APIKey, row.UsageCategories = spec.Attribution.APIKey, spec.Attribution.UsageCategories
 	// What opens the session's memory (Manager.Create), so a delete knows whether there is
 	// anything in the memory store to forget.
 	row.Remembers = new(spec.Memory.UserID != "")

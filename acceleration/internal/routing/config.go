@@ -13,7 +13,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // defaultConfigFS carries the built-in capability config so the router works without an
@@ -65,6 +67,14 @@ const (
 	Memory    Modality = "memory"
 	Knowledge Modality = "knowledge"
 	Phone     Modality = "phone"
+	// Runtime is the time an agent session is open, recorded a slice at a time (Slices) and
+	// priced by what holds it: text, voice or video. It is the deployment's own work rather
+	// than a vendor's, so it is recorded but never routed.
+	Runtime Modality = store.RuntimeModality
+	// Sandbox is the time a sandbox holds its provider's vCPUs, memory and disk, recorded a
+	// slice at a time by the state it is in and checked daily against the provider's records.
+	// There is one provider, so it is recorded but not routed.
+	Sandbox Modality = store.SandboxModality
 )
 
 // Tier separates models tuned for latency from models tuned for output quality. It is
@@ -113,15 +123,13 @@ type Price struct {
 	// PerMillionCachedInputTokens prices prompt tokens served from the provider's cache,
 	// which is cheaper than reading them afresh.
 	PerMillionCachedInputTokens float64 `yaml:"per_million_cached_input_tokens"`
-	// PerMillionCacheWriteInputTokens prices prompt tokens written into the provider's cache,
-	// which Anthropic bill above the fresh rate. Zero bills them as fresh input.
+	// PerMillionCacheWriteInputTokens prices prompt tokens written into the provider's cache
+	// for a later turn to read (OpenAI: 1.25× input). Zero prices them as fresh input.
 	PerMillionCacheWriteInputTokens float64 `yaml:"per_million_cache_write_input_tokens"`
 	// PerMillionOutputTokens prices what the model generated.
 	PerMillionOutputTokens float64 `yaml:"per_million_output_tokens"`
 	// PerThousandRequests prices work a provider bills by the call rather than by what it
-	// read or wrote, which is how a search API charges. The rate is not applied here,
-	// because nothing in Usage counts calls: a caller billed this way sets Stat.CostMicros
-	// from it, the way a phone number's monthly charge is set outright.
+	// read or wrote, which is how a search API charges.
 	PerThousandRequests float64 `yaml:"per_thousand_requests"`
 	// PerImage prices each picture a model drew.
 	PerImage float64 `yaml:"per_image"`
@@ -131,12 +139,25 @@ type Price struct {
 	// Free says the vendor charges nothing for this model. It is written out rather than
 	// left as no rates at all, so a price somebody forgot still reads as a mistake.
 	Free bool `yaml:"free"`
+	// Rates prices meters the per_* fields do not name, such as speech to speech's tokens by
+	// modality, in the price list's own shape.
+	Rates map[pricing.Meter]pricing.Rate `yaml:"rates"`
+	// ContextTiers price a long prompt at other rates, for the whole request.
+	ContextTiers []ContextTier `yaml:"context_tiers"`
+	// ServiceTiers multiply every rate for a request the vendor says it served at that tier,
+	// by the name it answers with (OpenAI's response.service_tier: flex, batch, fast,
+	// ultrafast). The default tier is the rates above.
+	ServiceTiers map[string]float64 `yaml:"service_tiers"`
 }
 
-// RequestMicros is what one call to a provider billed by the call costs, in millionths of
-// a dollar.
-func (p Price) RequestMicros() int64 {
-	return int64(p.PerThousandRequests * 1_000)
+// ContextTier is a prompt size past which the vendor charges more for the whole request.
+type ContextTier struct {
+	// AboveInputTokens is the prompt, cached tokens included, past which the tier applies.
+	AboveInputTokens int64 `yaml:"above_input_tokens"`
+	// Input multiplies every input rate (fresh, cached, cache write); Output every output
+	// rate. Zero leaves the rate as it is.
+	Input  float64 `yaml:"input"`
+	Output float64 `yaml:"output"`
 }
 
 // Usage is what one unit of work consumed. A modality fills in the units it bills by and
@@ -160,35 +181,11 @@ type Usage struct {
 	// Images is how many pictures were drawn.
 	Images int64
 	// Pixels is how many pixels those pictures hold between them, counted on what came
-	// back rather than what was asked for. It prices a model billed by the megapixel and
-	// is not stored: the picture count is what a customer reads.
+	// back rather than what was asked for. It prices a model billed by the megapixel. It
+	// has no column of its own: the picture count is what a customer reads.
 	Pixels int64
-}
-
-// CostMicros returns what one request cost in millionths of a dollar. Micros keep the
-// arithmetic in integers, since a fraction of a cent per request is normal.
-func (p Price) CostMicros(usage Usage) int64 {
-	// Cached tokens are a subset of the prompt, so they are billed once at their own rate
-	// rather than twice.
-	freshInputTokens := usage.InputTokens - usage.CachedInputTokens
-	writtenInputTokens := int64(0)
-	if p.PerMillionCacheWriteInputTokens > 0 {
-		writtenInputTokens = min(usage.CacheWriteInputTokens, max(freshInputTokens, 0))
-		freshInputTokens -= writtenInputTokens
-	}
-	if freshInputTokens < 0 {
-		freshInputTokens = 0
-	}
-
-	dollars := p.PerMillionChars*float64(usage.Characters)/1_000_000 +
-		p.PerAudioHour*float64(usage.AudioMs)/3_600_000 +
-		p.PerMillionInputTokens*float64(freshInputTokens)/1_000_000 +
-		p.PerMillionCachedInputTokens*float64(usage.CachedInputTokens)/1_000_000 +
-		p.PerMillionCacheWriteInputTokens*float64(writtenInputTokens)/1_000_000 +
-		p.PerMillionOutputTokens*float64(usage.OutputTokens)/1_000_000 +
-		p.PerImage*float64(usage.Images) +
-		p.PerMegapixel*float64(usage.Pixels)/1_000_000
-	return int64(dollars * 1_000_000)
+	// Requests is how many calls a provider billed by the call was asked.
+	Requests int64
 }
 
 // tagLimit caps how many labels one request may carry, and tagValueLimit how long each
@@ -253,7 +250,10 @@ type ProviderConfig struct {
 	// admin switched zero retention on. A request naming a data policy is only routed to
 	// a model that meets it.
 	DataPolicy options.DataHandling `yaml:"data_policy"`
-	Price      Price                `yaml:"price"`
+	// Price is what a customer's own model costs, which its stored config carries. The router
+	// prices every other model from its price list, so it ignores a price: block in its
+	// routing config, with a warning; router prices export moves one into a price file.
+	Price Price `yaml:"price"`
 	// Benchmark is what Artificial Analysis measured, for someone choosing a model.
 	// Routing never reads it.
 	Benchmark Benchmark `yaml:"benchmark"`
@@ -263,6 +263,9 @@ type ProviderConfig struct {
 	// ContextWindow is how many tokens of prompt this host serves the model with, which
 	// can be less than its maker's. Compaction reads it; routing does not.
 	ContextWindow int64 `yaml:"context_window"`
+	// Local is a model this deployment runs itself. With no price it is free rather than
+	// unpriced.
+	Local bool `yaml:"local"`
 }
 
 // Supports reports whether this model can express every term a request named.
@@ -598,6 +601,11 @@ func (c ModalityConfig) validate() error {
 		if provider.DataPolicy != (options.DataHandling{}) && !provider.DataPolicy.Valid() {
 			return fmt.Errorf("%s declares a data policy of %q and %q, which a request cannot be compared against",
 				provider.Name(), provider.DataPolicy.TrainsOnData, provider.DataPolicy.Retention)
+		}
+		for _, tier := range slices.Sorted(maps.Keys(provider.Price.ServiceTiers)) {
+			if factor := provider.Price.ServiceTiers[tier]; factor <= 0 {
+				return fmt.Errorf("%s prices service tier %s at %v times its rates, which must be above zero", provider.Name(), tier, factor)
+			}
 		}
 		if _, duplicate := seen[provider.Name()]; duplicate {
 			return fmt.Errorf("%s is declared twice", provider.Name())

@@ -17,11 +17,11 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/detection"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -41,7 +41,10 @@ type Options struct {
 	Store    *store.Store
 	Live     *live.Client
 	Gate     routing.Gate
-	Logger   *slog.Logger
+	Writer   *routing.Writer
+	// Pricer prices every row recorded. Nil is routing.Prices of Config.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
 }
 
 // Request is an image to look at and who pays for it.
@@ -88,6 +91,8 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -107,11 +112,13 @@ func New(options Options) (*Router, error) {
 // router can send it.
 func (r *Router) Detect(ctx context.Context, request Request) (Found, error) {
 	core := routing.Request{
-		CustomerID: request.CustomerID,
-		Tags:       request.Tags,
-		Target:     request.Target,
-		Providers:  request.Providers,
-		Terms:      request.Detection.Terms(),
+		CustomerID:  request.CustomerID,
+		Attribution: routing.AttributionFrom(ctx),
+		Spent:       routing.SpentFrom(ctx),
+		Tags:        request.Tags,
+		Target:      request.Target,
+		Providers:   request.Providers,
+		Terms:       request.Detection.Terms(),
 	}
 	if core.Target == "" && len(core.Providers) == 0 {
 		core.Target = DefaultTarget
@@ -158,7 +165,7 @@ func (r *Router) Detect(ctx context.Context, request Request) (Found, error) {
 		if err == nil {
 			return found, nil
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || routing.ReservationRefused(err) {
 			return found, err
 		}
 		failures = append(failures, fmt.Errorf("%s: %w", config.Name(), err))
@@ -185,26 +192,13 @@ func (r *Router) look(
 ) (Found, error) {
 	defer provider.Close()
 
-	started := time.Now()
-	result, err := provider.Detect(ctx, request)
-
-	var usage routing.Usage
-	if err == nil {
-		usage.Images = int64(max(result.Billed, 1))
-	}
-	stat := routing.Stat{
-		Owner:     owner,
-		StartedAt: started.UTC(),
-		LatencyMs: routing.MsSince(started),
-		Usage:     usage,
-		Success:   err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = string(detection.CodeOf(err))
-		stat.ErrorMessage = err.Error()
-	}
-	r.Recorder().Record(config, stat)
-
+	result, err := routing.Call(ctx, routing.Meter{
+		Recorder: r.Recorder(), Config: config, Owner: owner,
+		Code:     func(err error) string { return string(detection.CodeOf(err)) },
+		Estimate: pricing.Quantities{pricing.Images: 1},
+	}, func(ctx context.Context) (detection.Result, error) {
+		return provider.Detect(ctx, request)
+	})
 	found := Found{Provider: config.Provider, Model: config.Model}
 	if err != nil {
 		return found, err
@@ -222,7 +216,7 @@ func (r *Router) look(
 		detected.Box = detected.Box.Clamped()
 		found.Detections = append(found.Detections, detected)
 	}
-	found.CostMicros = config.Price.CostMicros(usage)
+	found.CostMicros = r.Quote(config, result.Used()).CostMicros
 	return found, nil
 }
 

@@ -42,6 +42,13 @@ func (s *CartesiaSuite) transcripts(provider *STT) []stt.Transcript {
 	}
 }
 
+func (s *CartesiaSuite) TestInkIsBilledTheAudioItIsSent() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	s.Equal(stt.MeteredByRouter, stt.MeteringOf(provider))
+}
+
 func (s *CartesiaSuite) TestNewRequiresAPIKey() {
 	s.T().Setenv(apiKeyEnvVar, "")
 

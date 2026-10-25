@@ -163,7 +163,7 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 		return nil, err
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, refusedRequest(err)
 	}
 	return &forkSessionResponse{Body: sessionOf(ctx, created)}, nil
 }
@@ -501,7 +501,7 @@ func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Sessi
 		return nil, nil, err
 	}
 	if err != nil {
-		return nil, nil, invalidRequest(err.Error())
+		return nil, nil, refusedRequest(err)
 	}
 	events, detach := reopened.Watch()
 	return reopened, func() { go holdUntilAnswered(reopened, events, detach) }, nil
@@ -541,6 +541,12 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	spec.ConnectorSelections = selectionsOf(*row)
 	// And so do their consents, back to the page the chat was opened with.
 	spec.ReturnURL = row.ReturnURL
+	// Its usage stays under the key and categories it was opened with. The user is the one
+	// asking, who is the row's own; the organization and its tier are as they are now.
+	if row.APIKey != "" {
+		spec.Attribution = routing.AttributionFrom(ctx)
+		spec.Attribution.APIKey, spec.Attribution.UsageCategories = row.APIKey, row.UsageCategories
+	}
 	// The row keeps the call voice was last on, which voice goes back to once started.
 	return spec.Holding(session.Call{Type: row.CallType, ID: row.CallID}), nil
 }

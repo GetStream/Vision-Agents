@@ -59,6 +59,10 @@ func (s *DeprecatedPluginsSuite) TestNoOtherOperationIsDeprecated() {
 	}
 }
 
+// movedFields are deprecated for another reason than plugins: a policy's budget is kept in the
+// schema only so that one sent is refused, naming where spend limits went.
+var movedFields = []string{"Policy.budget"}
+
 func (s *DeprecatedPluginsSuite) TestOnlyThePluginFieldsOfAConfigAreDeprecated() {
 	var deprecated []string
 	schemas := s.spec["components"].(map[string]any)["schemas"].(map[string]any)
@@ -71,7 +75,7 @@ func (s *DeprecatedPluginsSuite) TestOnlyThePluginFieldsOfAConfigAreDeprecated()
 		}
 	}
 
-	s.ElementsMatch(pluginFields, deprecated)
+	s.ElementsMatch(append(slices.Clone(pluginFields), movedFields...), deprecated)
 }
 
 // operations are whether each operation in the spec is deprecated, by its id.

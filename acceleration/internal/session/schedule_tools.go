@@ -223,6 +223,8 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 		ConfigID:        r.spec.ConfigID,
 		UserID:          r.user,
 		CallerKind:      string(r.kind),
+		APIKey:          r.spec.Attribution.APIKey,
+		UsageCategories: r.spec.Attribution.UsageCategories,
 		OriginSessionID: r.sessionID,
 		SessionID:       r.sessionID,
 		ConversationID:  r.spec.ConversationID,

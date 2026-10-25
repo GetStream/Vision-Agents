@@ -111,7 +111,7 @@ func (s *Server) startSessionVoice(ctx context.Context, request *startSessionVoi
 		if errors.Is(err, socketedge.ErrLeft) {
 			return nil, errSocketVoiceEnded
 		}
-		return nil, invalidRequest(err.Error())
+		return nil, refusedRequest(err)
 	}
 	return &sessionVoiceResponse{Body: sessionOf(ctx, found)}, nil
 }

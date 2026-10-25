@@ -213,7 +213,7 @@ func (s *RecordingsSuite) speakingWith(
 // allowing is a policy that allows only its models.
 type allowing []string
 
-func (a allowing) Admit(context.Context, string) (routing.Admission, error) {
+func (a allowing) Admit(context.Context, routing.Owner) (routing.Admission, error) {
 	return routing.Admission{Models: a}, nil
 }
 

@@ -34,9 +34,9 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
+ * The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
  *
- * Values: invalid_request,authentication,permission,not_found,method_not_allowed,not_acceptable,conflict,gone,payload_too_large,unsupported_media_type,rate_limited,`internal`,unavailable,timeout,unknown_default_open_api
+ * Values: invalid_request,authentication,permission,payment_required,not_found,method_not_allowed,not_acceptable,conflict,gone,payload_too_large,unsupported_media_type,rate_limited,`internal`,unavailable,timeout,unknown_default_open_api
  */
 @Serializable(with = ErrorTypeSerializer::class)
 internal enum class ErrorType(val value: kotlin.String) {
@@ -49,6 +49,9 @@ internal enum class ErrorType(val value: kotlin.String) {
 
     @SerialName(value = "permission")
     permission("permission"),
+
+    @SerialName(value = "payment_required")
+    payment_required("payment_required"),
 
     @SerialName(value = "not_found")
     not_found("not_found"),

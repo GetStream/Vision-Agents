@@ -1,8 +1,8 @@
 // Package cerebras reaches models on Cerebras' OpenAI-compatible inference API.
 //
-// Gemma 4 31B is what this is for: a live-path voice model that does not need a Baseten
-// deployment. The existing gemma provider talks to that deployment and prepends google/;
-// Cerebras serves the bare id, so the two stay separate rather than sharing a name.
+// Cerebras serves the bare model id, unlike the gemma provider, which prepends google/, so
+// the two stay separate rather than sharing a name. There is no default model: Gemma 4 31B,
+// the one this was added for, has been archived by Cerebras, so a model is always named.
 package cerebras
 
 import (
@@ -28,9 +28,6 @@ const baseURLEnvVar = "CEREBRAS_BASE_URL"
 // defaultBaseURL is Cerebras' public OpenAI-compatible endpoint.
 const defaultBaseURL = "https://api.cerebras.ai/v1"
 
-// defaultModel is Gemma 4 31B, the only Gemma 4 Cerebras currently hosts.
-const defaultModel = "gemma-4-31b"
-
 // Options configures the provider.
 type Options struct {
 	APIKey  string
@@ -46,9 +43,6 @@ func New(options Options) (*openaicompat.LLM, error) {
 	}
 	if options.APIKey == "" {
 		return nil, stack.Wrap(errors.New("cerebras: " + apiKeyEnvVar + " is required"))
-	}
-	if options.Model == "" {
-		options.Model = defaultModel
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = os.Getenv(baseURLEnvVar)

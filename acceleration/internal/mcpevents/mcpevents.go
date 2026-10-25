@@ -27,6 +27,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -690,6 +691,7 @@ func (s *Service) run(config store.AgentConfig, declared store.BindingEvent, sub
 	spec.CallID = ""
 	spec.STSTarget = ""
 	spec.Greeting = ""
+	spec.Attribution = routing.Attribution{APIKey: routing.OriginHookConnector}
 	if declared.Instructions != "" {
 		spec.Instructions = strings.TrimSpace(spec.Instructions + "\n\n" + declared.Instructions)
 	}

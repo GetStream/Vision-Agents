@@ -16,6 +16,7 @@ import (
 	"fmt"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -78,7 +79,35 @@ type Memory struct {
 	Score float64
 }
 
-// Store is a memory provider.
+// Billed is what one call to a memory provider was billed: the requests it made, which is
+// what a memory product counts.
+type Billed struct {
+	Requests int64
+}
+
+// Used is what the call is priced by.
+func (b Billed) Used() pricing.Quantities { return pricing.Quantities{pricing.Requests: b.Requests} }
+
+// Recalled is what a recall found and what it was billed.
+type Recalled struct {
+	Memories []Memory
+	Billed
+}
+
+// Backend is what a memory provider implements. Every call says what it was billed, and only
+// internal/metered holds one: everything else is handed a Store, which records each call for
+// whoever it is owned by.
+type Backend interface {
+	Recall(ctx context.Context, query Query) (Recalled, error)
+	Remember(ctx context.Context, scope Scope, messages []llm.Message) (Billed, error)
+	Truncate(ctx context.Context, appID, userID string) (Billed, error)
+	ForgetRun(ctx context.Context, appID, runID string) (Billed, error)
+	Provider() string
+	Close() error
+}
+
+// Store is a memory provider as one owner uses it. It comes only from metered.Memory.For,
+// which records every call for that owner, so a Backend does not fit where a Store is wanted.
 //
 // Remember is fire-and-forget by design: extraction happens on the provider's side and
 // takes longer than a turn, so a conversation neither waits for it nor sees its result.

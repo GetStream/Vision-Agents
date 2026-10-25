@@ -131,6 +131,7 @@ func (s *Server) taskThreadSession(ctx context.Context, delivery scheduledDelive
 	}
 	spec := threadSpec(config, thread)
 	spec.ThreadPerson, spec.ThreadChannel, spec.ThreadDelivery = delivery.UserID, thread.ChannelID, personalThreads[thread.ConnectorID]
+	spec.Attribution = delivery.attribution()
 	created, err := s.sessions.Create(conversation.RouterOpensThread(ctx, cid), spec)
 	if err != nil {
 		return nil, false, err

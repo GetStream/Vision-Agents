@@ -16,11 +16,11 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -40,7 +40,10 @@ type Options struct {
 	Store    *store.Store
 	Live     *live.Client
 	Gate     routing.Gate
-	Logger   *slog.Logger
+	Writer   *routing.Writer
+	// Pricer prices every row recorded. Nil is routing.Prices of Config.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
 }
 
 // Request is a prompt to draw and who pays for it.
@@ -86,6 +89,8 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -107,11 +112,13 @@ func New(options Options) (*Router, error) {
 // router can send it.
 func (r *Router) Generate(ctx context.Context, request Request) (Generation, error) {
 	core := routing.Request{
-		CustomerID: request.CustomerID,
-		Tags:       request.Tags,
-		Target:     request.Target,
-		Providers:  request.Providers,
-		Terms:      request.Image.Terms(),
+		CustomerID:  request.CustomerID,
+		Attribution: routing.AttributionFrom(ctx),
+		Spent:       routing.SpentFrom(ctx),
+		Tags:        request.Tags,
+		Target:      request.Target,
+		Providers:   request.Providers,
+		Terms:       request.Image.Terms(),
 	}
 	if core.Target == "" && len(core.Providers) == 0 {
 		core.Target = DefaultTarget
@@ -150,7 +157,7 @@ func (r *Router) Generate(ctx context.Context, request Request) (Generation, err
 		if err == nil {
 			return generation, nil
 		}
-		if imagegen.Accepted(err) || imagegen.CodeOf(err) == imagegen.ContentFiltered || ctx.Err() != nil {
+		if imagegen.Accepted(err) || imagegen.CodeOf(err) == imagegen.ContentFiltered || ctx.Err() != nil || routing.ReservationRefused(err) {
 			return generation, err
 		}
 		failures = append(failures, fmt.Errorf("%s: %w", config.Name(), err))
@@ -177,37 +184,23 @@ func (r *Router) draw(
 ) (Generation, error) {
 	defer provider.Close()
 
-	started := time.Now()
-	result, err := provider.Generate(ctx, request)
-
-	// A failed generation is not billed, so the row records what was waited for without
-	// charging for it.
-	var usage routing.Usage
-	if err == nil {
-		usage.Images = int64(len(result.Images))
-		for _, picture := range result.Images {
-			usage.Pixels += int64(picture.Width) * int64(picture.Height)
-		}
-	}
-	stat := routing.Stat{
-		Owner:     owner,
-		StartedAt: started.UTC(),
-		LatencyMs: routing.MsSince(started),
-		Usage:     usage,
-		Success:   err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = string(imagegen.CodeOf(err))
-		stat.ErrorMessage = err.Error()
-	}
-	r.Recorder().Record(config, stat)
-
+	result, err := routing.Call(ctx, routing.Meter{
+		Recorder: r.Recorder(), Config: config, Owner: owner,
+		Code:     func(err error) string { return string(imagegen.CodeOf(err)) },
+		Estimate: pricing.Quantities{pricing.Images: int64(max(request.N, 1))},
+	}, func(ctx context.Context) (imagegen.Result, error) {
+		return provider.Generate(ctx, request)
+	})
 	generation := Generation{Provider: config.Provider, Model: config.Model}
 	if err != nil {
 		return generation, err
 	}
 	generation.Images = result.Images
-	generation.CostMicros = config.Price.CostMicros(usage)
+	// Priced as its row is, size included.
+	var stat routing.Stat
+	stat.Use(result.Used())
+	stat.Describe(result)
+	generation.CostMicros = r.Recorder().QuoteStat(config, stat).CostMicros
 	return generation, nil
 }
 

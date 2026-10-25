@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -39,7 +40,10 @@ type Options struct {
 	Store    *store.Store
 	Live     *live.Client
 	Gate     routing.Gate
-	Logger   *slog.Logger
+	Writer   *routing.Writer
+	// Pricer prices every row recorded. Nil is routing.Prices of Config.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
 }
 
 // Request is what a caller wants a conversation held by.
@@ -68,6 +72,9 @@ type Request struct {
 // Router selects a speech-to-speech provider and opens conversations.
 type Router struct {
 	*routing.Router[sts.STS]
+	// backend records the text models voices hand their reasoning to. It is one for the
+	// router, so what it logs at most once in a while is logged that seldom.
+	backend *routing.Recorder
 }
 
 // New validates the options and returns a Router.
@@ -97,12 +104,14 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Router{Router: core}, nil
+	return &Router{Router: core, backend: core.Recorder().For(routing.LLM)}, nil
 }
 
 // Start selects a provider and opens a conversation, falling back to the next candidate
@@ -110,6 +119,8 @@ func New(options Options) (*Router, error) {
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	core := routing.Request{
 		CustomerID:      request.CustomerID,
+		Attribution:     routing.AttributionFrom(ctx),
+		Spent:           routing.SpentFrom(ctx),
 		AgentID:         request.AgentID,
 		CallID:          request.CallID,
 		Tags:            request.Tags,
@@ -128,7 +139,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSession(provider, config, core.Owner(), r.Recorder()), nil
+	return newSession(provider, config, core.Owner(), r.Recorder(), r.backend), nil
 }
 
 // declared reports the first thing a config promises of a model that the code behind it

@@ -28,6 +28,18 @@ type stubSandbox struct {
 	// written are the files put into it, in order, by path.
 	written []string
 	files   map[string]string
+	// remakeAfter, when set, has the sandbox made again once that many runs have run, as its
+	// provider deleting it would.
+	remakeAfter int
+}
+
+func (s *stubSandbox) Ready(context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.remakeAfter > 0 && len(s.ran) >= s.remakeAfter {
+		return 2, nil
+	}
+	return 1, nil
 }
 
 func (s *stubSandbox) Write(_ context.Context, path string, data []byte) error {
@@ -480,4 +492,20 @@ func (s *HarnessSuite) TestASkillsFilesAreWrittenToTheSandboxOnceBeforeItsCodeRu
 	s.Equal("print('filled')", s.box.files["skills/pdf/scripts/fill.py"])
 	s.Len(s.box.code(), 2)
 	s.Contains(s.slow.requests()[0].Instructions, "under skills/pdf/")
+}
+
+func (s *HarnessSuite) TestASandboxMadeAgainGetsTheSkillsFilesAgain() {
+	s.box = &stubSandbox{result: sandbox.Result{Output: "filled"}, remakeAfter: 1}
+	s.skills = pdfSkills()
+	s.build(true)
+	s.slow.calls = append(runCode("call-1", "import subprocess"), runCode("call-2", "import subprocess")...)
+	s.slow.automatic = "Filled."
+	s.respond("turn-1", "fill in my form")
+
+	s.reply("turn-1", `<ask skill="pdf">fill in my form</ask>`)
+
+	s.Equal(Done, s.awaitSettled(1)[0].State)
+	s.Equal([]string{"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py",
+		"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py"}, s.box.writes(),
+		"the new sandbox holds nothing written into the last")
 }

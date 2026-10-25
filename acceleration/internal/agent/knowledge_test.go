@@ -11,34 +11,55 @@ import (
 )
 
 // stubKnowledge is a knowledge base with no search engine in it: it answers with whatever
-// the test wrote down, and records what it was asked.
+// the test wrote down, billed as one request returning the passages' bytes, and records what
+// it was asked. The agent only ever searches it.
 type stubKnowledge struct {
 	documents []knowledge.Document
 	err       error
 
-	mu     sync.Mutex
-	asked  []knowledge.Query
-	closed bool
+	mu    sync.Mutex
+	asked []knowledge.Query
 }
 
-func (k *stubKnowledge) Search(_ context.Context, query knowledge.Query) ([]knowledge.Document, error) {
+func (k *stubKnowledge) Search(_ context.Context, query knowledge.Query) (knowledge.Found, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.asked = append(k.asked, query)
 	if k.err != nil {
-		return nil, k.err
+		return knowledge.Found{}, k.err
 	}
-	return k.documents, nil
+	billed := knowledge.Billed{Requests: 1, BytesQueried: stubQueried, Results: int64(len(k.documents))}
+	for _, document := range k.documents {
+		billed.BytesReturned += int64(len(document.Text) + len(document.Source))
+	}
+	return knowledge.Found{Documents: k.documents, Billed: billed}, nil
+}
+
+// stubQueried is what the stub bills a search as having queried: the least a small namespace
+// is billed at turbopuffer.
+const stubQueried = 1_280_000_000
+
+func (k *stubKnowledge) Fetch(context.Context, string, []string) (knowledge.Found, error) {
+	return knowledge.Found{}, errors.New("the agent does not fetch")
+}
+
+func (k *stubKnowledge) Upsert(context.Context, string, []knowledge.Document) (knowledge.Billed, error) {
+	return knowledge.Billed{}, errors.New("the agent does not write")
+}
+
+func (k *stubKnowledge) Delete(context.Context, string, []string) (knowledge.Billed, error) {
+	return knowledge.Billed{}, errors.New("the agent does not delete")
+}
+
+func (k *stubKnowledge) Namespaces(context.Context, string) ([]string, error) { return nil, nil }
+
+func (k *stubKnowledge) Stored(context.Context, string) (knowledge.Billed, error) {
+	return knowledge.Billed{}, knowledge.ErrNoNamespace
 }
 
 func (k *stubKnowledge) Provider() string { return "stub" }
 
-func (k *stubKnowledge) Close() error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.closed = true
-	return nil
-}
+func (k *stubKnowledge) Close() error { return nil }
 
 func (k *stubKnowledge) queries() []knowledge.Query {
 	k.mu.Lock()

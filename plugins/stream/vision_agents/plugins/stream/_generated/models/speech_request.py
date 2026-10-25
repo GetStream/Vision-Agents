@@ -29,8 +29,9 @@ class SpeechRequest:
             storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000
             characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A
             model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202,
-            with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required.
-            Default false keeps the stored, asynchronous job. Default: False.
+            with status failed and the reason in error, unless it was refused for money, which is answered 402 or 403 as any
+            request is. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored,
+            asynchronous job. Default: False.
         options (TtsOptions | Unset): How this config speaks. A provider that cannot express a term refuses the request
             rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that
             says it cannot.

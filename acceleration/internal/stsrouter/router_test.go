@@ -124,9 +124,9 @@ func (s *STSRouterSuite) newStubbedRouter(built *[]routing.Spec) *Router {
 // under test.
 func (s *STSRouterSuite) newSession() (*Session, *stubSTS) {
 	provider := newStubSTS()
-	recorder := routing.NewRecorder(routing.STS, nil, nil, slog.Default())
+	recorder := routing.NewRecorder(routing.STS, nil, nil, nil, slog.Default())
 	config := routing.ProviderConfig{Provider: "stub", Model: "stub-model"}
-	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder)
+	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder, recorder.For(routing.LLM))
 
 	s.T().Cleanup(func() {
 		_ = session.Close()

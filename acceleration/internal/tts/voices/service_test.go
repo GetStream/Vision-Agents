@@ -5,9 +5,11 @@ package voices
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,9 +18,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 // dsnEnvVar is where the tests look for a Postgres to run against.
@@ -32,6 +36,7 @@ type ServiceSuite struct {
 	bucket   *blob.Bucket
 	service  *Service
 	resolver *Resolver
+	recorder *routing.Recorder
 	// reply is what the fake provider hands back when asked to clone.
 	reply  string
 	status int
@@ -95,9 +100,71 @@ func (s *ServiceSuite) SetupTest() {
 	cloners := NewRegistry()
 	cloners.Register("elevenlabs", cloner)
 
-	service, err := NewService(Options{Store: s.configs, Bucket: bucket, Cloners: cloners})
+	_, err = s.store.ShardDB().ExecContext(s.ctx, "DELETE FROM requests WHERE customer_id = 'acme'")
+	s.Require().NoError(err)
+	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.recorder = routing.NewRecorder(routing.TTS, s.store, nil, list, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(s.recorder.Close)
+
+	service, err := NewService(Options{Store: s.configs, Bucket: bucket, Cloners: cloners, Recorder: s.recorder})
 	s.Require().NoError(err)
 	s.service = service
+}
+
+// billed drains the recorder and returns the rows of what the service asked a provider for.
+func (s *ServiceSuite) billed() []store.Request {
+	s.recorder.Close()
+	var rows []store.Request
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = 'acme'").
+		Order("started_at").Scan(s.ctx))
+	return rows
+}
+
+func (s *ServiceSuite) TestPreparingAVoiceAgainBillsOnlyANewCloneUpstream() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil), "the provider hands back the clone it has")
+	s.reply = `{"voice_id":"el-2"}`
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil), "the provider makes a new clone")
+
+	rows := s.billed()
+	s.Require().Len(rows, 2, "el-1 once, however often it came back, and el-2")
+	for i, external := range []string{"el-1", "el-2"} {
+		s.Equal(VoiceClone, rows[i].Model)
+		s.Equal(pricing.Quantities{pricing.Clones: 1}, rows[i].Quantities())
+		s.Equal(routing.UsageID(VoiceClone, "elevenlabs", "acme", voice.ID, external), rows[i].UsageID)
+	}
+}
+
+func (s *ServiceSuite) TestHearingAVoiceIsBilledTheCharactersItSays() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+	s.reply = "spoken"
+
+	_, err := s.service.Speak(s.ctx, "acme", voice.ID, "elevenlabs", "Hello, how can I help?")
+	s.Require().NoError(err)
+
+	rows := s.billed()
+	s.Require().Len(rows, 2, "the clone and the line")
+	line := rows[1]
+	s.Equal("tts", line.Modality)
+	s.Equal("eleven_flash_v2_5", line.Model, "the model the provider speaks the line with")
+	s.EqualValues(22, line.Characters)
+	s.EqualValues(1_100, line.CostMicros, "22 characters at ElevenLabs' $50 a million")
+}
+
+func (s *ServiceSuite) TestALineTooLongToHearIsRefusedBeforeTheProvider() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+	asked := len(s.requests)
+
+	_, err := s.service.Speak(s.ctx, "acme", voice.ID, "elevenlabs", strings.Repeat("é", MaxLine+1))
+
+	s.ErrorIs(err, ErrLineTooLong)
+	s.Len(s.requests, asked, "the provider is not asked to say it")
+	_, err = s.service.Speak(s.ctx, "acme", voice.ID, "elevenlabs", strings.Repeat("é", MaxLine))
+	s.Require().NoError(err, "the cap counts characters, not bytes")
 }
 
 // recorded is a voice with one recording already stored, which is the state every

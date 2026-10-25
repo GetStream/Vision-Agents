@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -54,14 +55,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -70,6 +70,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -92,6 +93,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 // release is the version this binary was built from, set with -X main.release
@@ -126,6 +128,12 @@ const (
 	// first, and the HTTP drain gets the rest of shutdownGrace, so both fit inside the
 	// orchestrator's termination grace period.
 	phoneHangupGrace = 5 * time.Second
+	// usageDrainTimeout is how long the usage writer has to write what is queued once
+	// everything that records has stopped: it starts after the HTTP drain, any session drain
+	// and sessions.Shutdown, and counts none of them. What is still queued after it is lost,
+	// and logged in full; what a kill at the end of the pod's termination grace period finds
+	// queued first is lost without a log line.
+	usageDrainTimeout = 15 * time.Second
 )
 
 // usage is what the binary does besides serving.
@@ -136,6 +144,10 @@ const usage = `usage: router [--config path] [command]
   replicate             copy another deployment's data here and follow its changes
   stream-apps           look after the Stream apps customers registered in app mode
   plugins migrate       move the plugin rows onto connectors, by hand; --apply writes
+  prices                read and check the price list (router prices for its commands)
+  usage replay          write the usage rows a log says were lost, once each (--from path)
+  usage reship          send this shard's shipped or refused rows to the usage service again (--since, --rejected)
+  usage storage         record the last hour of every knowledge base's size, once each (hourly, one job per turbopuffer key)
 `
 
 func main() {
@@ -219,6 +231,10 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runStreamApps(args, settings, logger)
 	case "plugins":
 		return runPlugins(args, settings, logger)
+	case "prices":
+		return runPrices(args, settings, logger)
+	case "usage":
+		return runUsage(args, settings, os.Stdout)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -503,6 +519,20 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
+	if err != nil {
+		return err
+	}
+	priceFiles, err := loadPriceFiles(settings)
+	if err != nil {
+		return err
+	}
+	fallbackPrices, err := newPrices(capabilities, priceFiles, pricesVersion(settings), logger)
+	if err != nil {
+		return err
+	}
+	// Without a database the price files are the price list; with one they only seed it.
+	var prices pricing.Pricer = fallbackPrices
 
 	// Traces go nowhere unless the deployment names a collector in the environment, so
 	// this is a no-op on a laptop and on every deployment that has not asked for them.
@@ -533,12 +563,16 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Postgres and Redis are optional so the API can be brought up for inspection before
 	// the data stores exist. /health reports what is missing.
 	var pgStore *store.Store
+	var activePrices *pricing.Active
 	if settings.Postgres.DSN != "" {
 		pgStore, err = openStore(ctx, settings)
 		if err != nil {
 			return err
 		}
 		defer pgStore.Close()
+		activePrices = startPrices(ctx, pgStore, capabilities, fallbackPrices, priceFiles, settings.PricesFile != "",
+			priceRetry, priceReload, logger)
+		prices = activePrices
 	} else {
 		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
 	}
@@ -577,6 +611,20 @@ func run(settings config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
+	usageClient, err := newUsageClient(settings, pgStore, logger)
+	if err != nil {
+		return err
+	}
+	shard := cmp.Or(settings.Shard, routing.Unsharded)
+	host, _ := os.Hostname()
+	source := routing.Source(shard, host)
+	// Started before the writer, so they stop after the writer has closed and still send what
+	// the shutdown lost, and what the rows recorded while it drained said, before Sentry is
+	// flushed.
+	stopAlerts := startUsageAlerts(ctx, source, shard, logger)
+	defer stopAlerts()
+	stopMeteringAlerts := startMeteringAlerts(ctx, source, shard, logger)
+	defer stopMeteringAlerts()
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
 	sandboxProxy, err := newSandboxProxy(settings.CodeSandbox, liveClient, connectorResolver, pgStore, connectors.Schemes, logger)
 	if err != nil {
@@ -620,15 +668,53 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer endUsers.Close()
 	}
 
-	// Budgets, data policies and prompt injection screening are stored per organization
-	// and app, so a deployment without a database enforces none of them.
-	var policies *policy.Enforcer
-	var gate routing.Gate
-	if configs != nil {
-		if policies, err = policy.New(configs, logger); err != nil {
-			return err
+	// Spend limits, data policies and prompt injection screening are stored per organization
+	// and app, so a deployment without a database enforces none of them, and may run only
+	// with limits off. Money is read from the usage service, and from Postgres without one.
+	warnLimits(settings, logger)
+	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
+		return err
+	}
+	var holds rueidis.Client
+	if liveClient != nil {
+		holds = liveClient.Redis()
+	}
+	// The forwarder that sends the policies' warnings is made after them, once connectors are.
+	var warned atomic.Pointer[eventforward.Forwarder]
+	notified := func() {
+		if forwarder := warned.Load(); forwarder != nil {
+			forwarder.Wake()
 		}
-		gate = policies
+	}
+	policies, closeCounters, err := newPolicies(settings, configs, usageClient, holds, notified, logger)
+	if err != nil {
+		return err
+	}
+	defer closeCounters()
+	var gate routing.Gate
+	var shipped, written, counted func([]routing.Acked)
+	if policies != nil {
+		defer policies.Close()
+		gate, shipped, written, counted = policies, policies.Acked, policies.Written, policies.Counted
+	}
+
+	// Every recorder of the process writes through this one writer, so there is one queue to
+	// drain at shutdown. Deferred here, it closes after everything that records and before
+	// the policies it asks, the store and Redis. The policies say whose a row is, and its
+	// organization's tier, for a recorder with no gate of its own, and are told which rows the
+	// ledger has, which lets go of what they held for them.
+	usageWriter := routing.NewWriter(routing.WriterOptions{
+		Store: pgStore, Live: liveClient, Logger: logger, Gate: gate, Usage: usageClient, Source: source,
+		Shipped: shipped, Written: written, Counted: counted,
+	})
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), usageDrainTimeout)
+		defer cancel()
+		usageWriter.Close(ctx)
+	}()
+	if usageClient != nil {
+		stopSweeper := startUsageSweeper(ctx, routing.SweeperOptions{Store: pgStore, Usage: usageClient, Source: source, Logger: logger, Shipped: shipped})
+		defer stopSweeper()
 	}
 
 	limiter, err := newDailyLimiter(liveClient, quota.Limits{
@@ -686,6 +772,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -704,6 +792,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:        pgStore,
 			Live:         liveClient,
 			Gate:         gate,
+			Pricer:       prices,
+			Writer:       usageWriter,
 			Logger:       logger,
 		})
 		if err != nil {
@@ -725,6 +815,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:     liveClient,
 			Voices:   resolver,
 			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -741,6 +833,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:      liveClient,
 			Voices:    resolver,
 			Gate:      gate,
+			Pricer:    prices,
+			Writer:    usageWriter,
 			Logger:    logger,
 		})
 		if err != nil {
@@ -762,6 +856,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -792,10 +888,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:       liveClient,
 			Quota:      limiter,
 			Gate:       gate,
+			Pricer:     prices,
 			Models:     models,
 			Screen:     screen,
 			ReplyHedge: settings.Agent.ReplyHedge,
 			FlowHedge:  settings.Agent.FlowHedge,
+			Writer:     usageWriter,
 			Logger:     logger,
 		})
 		if err != nil {
@@ -813,6 +911,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -834,6 +934,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -854,6 +956,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -873,6 +977,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -902,26 +1008,40 @@ func run(settings config.Config, logger *slog.Logger) error {
 	go learnDeploymentApp(ctx, streamClients, logger)
 	go warnWithoutMessageHook(ctx, settings, streamClients, logger)
 
-	registrations, dlcGate, err := buildDLC(settings, pgStore, liveClient, logger)
+	// Texts, call minutes, numbers and 10DLC fees are all telephony rows, through one recorder.
+	var phoneRecorder *routing.Recorder
+	if pgStore != nil || liveClient != nil {
+		phoneRecorder = routing.NewRecorderOn(routing.Phone, usageWriter, prices, logger)
+	}
+	registrations, dlcGate, err := buildDLC(settings, pgStore, liveClient, phoneRecorder, logger)
 	if err != nil {
 		return err
 	}
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
 	}
-	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, dlcGate, secrets, logger)
+	// Every text, call and number a customer pays for asks the same admission as a model, and
+	// is kept to the channel limits of its organization's tier, in the same mode as money.
+	if policies != nil {
+		dlcGate.Charging(policies).Limiting(settings.Limits.Mode)
+	}
+	telephony, err := buildPhone(settings, vendorConfig, pgStore, phoneRecorder, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
 	defer closePhone(telephony, logger)
+	if pgStore != nil {
+		// A call whose end was never announced is ended at the longest a call may last, and a
+		// leg whose row was lost is recorded again. Months of numbers and of 10DLC campaigns are
+		// billed by jobs of their own (router usage numbers, router usage dlc).
+		go telephony.RunLegSweep(ctx, phone.LegSweepEvery)
+		go checkCallHook(ctx, settings, logger)
+	}
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
-	var base *turbopuffer.Store
-	if search, err := turbopuffer.New(turbopuffer.Options{Logger: logger}); err != nil {
-		logger.Debug("nothing will be looked up or written down", "error", err)
-	} else {
-		base = search
+	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), logger)
+	if base != nil {
 		defer base.Close()
 	}
 
@@ -959,8 +1079,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
-		sessionConnectors, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+		sessionConnectors, prices, policies, logger)
 	if err != nil {
 		return err
 	}
@@ -1030,7 +1150,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Bringing a voice needs somewhere to keep the recordings, a place to record them and
 	// at least one provider willing to be taught. Missing any of those, the voice paths
 	// say so rather than half-working.
-	voiceService, err := buildVoices(configs, bucket, logger)
+	voiceService, err := buildVoices(configs, bucket, routing.NewRecorderOn(routing.TTS, usageWriter, prices, logger), logger)
 	if err != nil {
 		return err
 	}
@@ -1132,9 +1252,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 				"TELNYX_CONNECTION_ID is set", "setting", "TELNYX_CONNECTION_ID")
 		}
 	}
+	logger.Info("management API, /v1/manage", "on", settings.Auth.ManageKey != "", "setting", "ROUTER_AUTH_MANAGE_KEY")
 
 	options := api.Options{
 		Routers:               routers,
+		Pricer:                prices,
+		Prices:                activePrices,
 		Voices:                voiceService,
 		VoiceLibrary:          library,
 		KnowledgeURLs:         pages,
@@ -1159,6 +1282,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		DLC:                   registrations,
 		Gate:                  dlcGate,
 		OpsKey:                settings.Auth.OpsKey,
+		ManageKey:             settings.Auth.ManageKey,
 		Dispatch:              workers,
 		Quota:                 limiter,
 		RunsPerApp:            settings.Runs.ConcurrentPerApp,
@@ -1222,6 +1346,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		forwarder.Start()
 		defer forwarder.Close()
 		options.EventForwarder = forwarder
+		warned.Store(forwarder)
 	}
 	// A connection's MCP events are subscribed to on its server, signed with secrets sealed
 	// under the connector keyring, and each opens a conversation, so they need connectors on,
@@ -1275,11 +1400,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 				"endpoint", "POST /v1/agents/calls/{id}/token")
 		}
 	}
-	// A nil *turbopuffer.Store in an interface is not a nil interface, so the absence has
-	// to stay absent rather than becoming a value that says it is there.
-	if base != nil {
-		options.Knowledge = base
-	}
+	options.Knowledge = base
 	// A channel's provider credentials are sealed under the same keyring as the other
 	// secrets the router holds. Without one the channel paths refuse to hold them, which is
 	// better than keeping a WhatsApp token in the clear, and nothing is delivered because
@@ -1293,6 +1414,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 				Sessions: sessions,
 				Secrets:  options.Secrets,
 				Gate:     dlcGate,
+				Recorder: phoneRecorder,
 				Logger:   logger,
 			})
 			if err != nil {
@@ -1371,7 +1493,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if settings.PprofAddr != "" {
 		go servePprof(settings.PprofAddr, logger)
 	}
-	stopMetrics := serveMetrics(settings.MetricsAddr, logger)
+	stopMetrics, handOverMetrics := serveMetrics(settings.MetricsAddr, logger)
 	defer stopMetrics()
 
 	select {
@@ -1380,13 +1502,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 	case <-ctx.Done():
 		logger.Info("shutting down", "drain", settings.Shutdown.Drain)
 		return stopServing(stopping{
-			public:    httpServer,
-			peers:     peerServer,
-			drainWork: server.Drain,
-			held:      func() int { return running(sessions, scheduler) },
-			telephony: telephony,
-			drain:     settings.Shutdown.Drain,
-			logger:    logger,
+			public:          httpServer,
+			peers:           peerServer,
+			drainWork:       server.Drain,
+			held:            func() int { return running(sessions, scheduler) },
+			telephony:       telephony,
+			handOverMetrics: handOverMetrics,
+			drain:           settings.Shutdown.Drain,
+			logger:          logger,
 		})
 	}
 }
@@ -1416,7 +1539,11 @@ type stopping struct {
 	// still running.
 	held      func() int
 	telephony *phone.Service
-	drain     time.Duration
+	// handOverMetrics stops the metrics listener when a drain starts, so the router taking
+	// over on the same address is the one scraped. Without a drain the caller stops it at
+	// exit.
+	handOverMetrics func()
+	drain           time.Duration
 	// grace is how long the requests still open on a closing listener get to finish; zero
 	// means shutdownGrace.
 	grace  time.Duration
@@ -1429,11 +1556,11 @@ const drainPoll = 250 * time.Millisecond
 // stopServing stops taking work, then lets what is running finish.
 //
 // Without a drain it hangs up the calls through customers' own SIP trunks, then drains HTTP,
-// both inside the grace: the drain gets whatever the hangup left of it. With one, the
-// public listener closes first and the sessions this process holds, phone calls included,
-// keep going until they end or the drain runs out, still answering their peers' requests.
-// A second signal stops waiting. The sessions left are ended by the caller's
-// sessions.Shutdown either way.
+// both inside the grace: the drain gets whatever the hangup left of it, and metrics are
+// served until the process exits. With one, the metrics and public listeners close first
+// and the sessions this process holds, phone calls included, keep going until they end or
+// the drain runs out, still answering their peers' requests. A second signal stops
+// waiting. The sessions left are ended by the caller's sessions.Shutdown either way.
 func stopServing(s stopping) error {
 	s.drainWork()
 	grace := cmp.Or(s.grace, shutdownGrace)
@@ -1451,6 +1578,9 @@ func stopServing(s stopping) error {
 	timeout := time.NewTimer(s.drain)
 	defer timeout.Stop()
 
+	if s.handOverMetrics != nil {
+		s.handOverMetrics()
+	}
 	httpCtx, cancel := context.WithTimeout(context.Background(), grace)
 	if err := s.public.Shutdown(httpCtx); err != nil {
 		s.logger.Warn("requests were still running when the public listener closed", "error", err)
@@ -1530,8 +1660,8 @@ func shutdown(ctx context.Context, server *http.Server, listener string, grace t
 	return err
 }
 
-// pruneDataChanges drops the recorded changes nobody can resume from any more, hourly
-// until the process stops.
+// pruneDataChanges drops the recorded changes nobody can resume from any more, and which rows
+// counted toward grants long ended, hourly until the process stops.
 func pruneDataChanges(ctx context.Context, pgStore *store.Store, retention time.Duration, logger *slog.Logger) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
@@ -1541,6 +1671,11 @@ func pruneDataChanges(ctx context.Context, pgStore *store.Store, retention time.
 			logger.Error("could not prune recorded changes", "error", err)
 		} else if removed > 0 {
 			logger.Debug("pruned recorded changes", "rows", removed)
+		}
+		if removed, err := pgStore.PruneGrantUses(ctx); err != nil {
+			logger.Error("could not prune the uses of ended grants", "error", err)
+		} else if removed > 0 {
+			logger.Debug("pruned the uses of ended grants", "rows", removed)
 		}
 		select {
 		case <-ctx.Done():
@@ -1636,14 +1771,17 @@ func buildSessions(
 	pgStore *store.Store,
 	configs *appconfig.Store,
 	liveClient *live.Client,
+	usageWriter *routing.Writer,
 	directory *node.Directory,
 	telephony *phone.Service,
-	base *turbopuffer.Store,
+	base *metered.Knowledge,
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
 	stream *streamapp.Clients,
 	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
+	prices pricing.Pricer,
+	policies *policy.Enforcer,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1653,16 +1791,11 @@ func buildSessions(
 
 	// Without a mem0 key a session starts every call knowing nothing but its
 	// instructions, which is the behaviour before memory existed.
-	var remembering memory.Store
+	var remembering *metered.Memory
 	if recall, err := mem0.New(mem0.Options{Logger: logger}); err != nil {
 		logger.Debug("sessions will not remember anything between calls", "error", err)
 	} else {
-		remembering = recall
-	}
-
-	var reading knowledge.Store
-	if base != nil {
-		reading = base
+		remembering = metered.NewMemory(recall, routing.NewRecorderOn(routing.Memory, usageWriter, prices, logger))
 	}
 
 	options := session.ManagerOptions{
@@ -1671,7 +1804,8 @@ func buildSessions(
 		TTS:        streams.TTS,
 		STS:        streams.STS,
 		Memory:     remembering,
-		Knowledge:  reading,
+		Knowledge:  base,
+		Pricer:     prices,
 		Search:     finding,
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
@@ -1683,6 +1817,7 @@ func buildSessions(
 		Stream:             stream,
 		Store:              pgStore,
 		Live:               liveClient,
+		Writer:             usageWriter,
 		Logger:             logger,
 		Edge:               edgeFor(stream),
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
@@ -1696,6 +1831,8 @@ func buildSessions(
 	if err := sandboxBroker(settings.CodeSandbox, liveClient, &options); err != nil {
 		return nil, err
 	}
+	options.Sandboxes = newSandboxes(settings, usageWriter, prices, logger)
+	options.SandboxLimits = policies
 	return session.NewManager(options)
 }
 
@@ -1713,7 +1850,7 @@ func buildSessions(
 func buildKnowledgeURLs(
 	pgStore *store.Store,
 	redisAddress string,
-	base *turbopuffer.Store,
+	base *metered.Knowledge,
 	logger *slog.Logger,
 ) (*urls.Service, error) {
 	if pgStore == nil || redisAddress == "" || base == nil {
@@ -1729,12 +1866,32 @@ func buildKnowledgeURLs(
 	}
 
 	return urls.New(urls.Options{
-		Store:  pgStore,
-		Redis:  asynq.RedisClientOpt{Addr: redisAddress},
-		Reader: reader,
-		Writer: base,
-		Logger: logger,
+		Store:     pgStore,
+		Redis:     asynq.RedisClientOpt{Addr: redisAddress},
+		Reader:    reader,
+		Knowledge: base,
+		Logger:    logger,
 	})
+}
+
+// newKnowledge is the knowledge base every lookup and write goes through, recorded by
+// recorder, or nil without a turbopuffer key.
+func newKnowledge(settings config.Config, recorder *routing.Recorder, logger *slog.Logger) *metered.Knowledge {
+	backend, err := turbopuffer.New(turbopuffer.Options{Cost: knowledgeCost(settings.Knowledge), Logger: logger})
+	if err != nil {
+		logger.Debug("nothing will be looked up or written down", "error", err)
+		return nil
+	}
+	return metered.NewKnowledge(backend, recorder)
+}
+
+// knowledgeCost is the knowledge provider's rates as the settings name them.
+func knowledgeCost(settings config.Knowledge) turbopuffer.Cost {
+	cost := turbopuffer.Cost{}
+	for meter, rate := range settings.StreamCost {
+		cost[pricing.Meter(meter)] = rate
+	}
+	return cost
 }
 
 // buildLibrary wires the catalogues the speech providers publish, so a voice can be picked
@@ -1772,6 +1929,7 @@ func buildLibrary(logger *slog.Logger) *voices.Catalogue {
 func buildVoices(
 	configs *appconfig.Store,
 	bucket *blob.Bucket,
+	recorder *routing.Recorder,
 	logger *slog.Logger,
 ) (*voices.Service, error) {
 	if configs == nil || bucket == nil {
@@ -1795,10 +1953,50 @@ func buildVoices(
 	}
 
 	return voices.NewService(voices.Options{
-		Store:   configs,
-		Bucket:  bucket,
-		Cloners: cloners,
-		Logger:  logger,
+		Store:    configs,
+		Bucket:   bucket,
+		Cloners:  cloners,
+		Recorder: recorder,
+		Logger:   logger,
+	})
+}
+
+// newPrices is the price list of the price files the router loads (the deployment's own over
+// the embedded vendor.json), at the vendors' rates with no markup, with the models the
+// routing config runs itself marked local: every row is priced by it on a router with no
+// database, and until the database is read on one with. A price: block in the
+// routing config is no longer read, which is said at start, and so is billable work the
+// list has no price for, so it can be priced before a row of it is recorded at nothing.
+func newPrices(capabilities routing.Config, files store.PriceLoad, version string, logger *slog.Logger) (*pricing.List, error) {
+	if ignored := pricedProviders(capabilities); len(ignored) > 0 {
+		logger.Warn("price: in the routing config is ignored; prices come from prices/vendor.json and "+
+			"ROUTER_PRICES_FILE. router prices export --from <config> --out <file> moves them into a file for ROUTER_PRICES_FILE",
+			"providers", ignored)
+	}
+	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), 0, logger)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range list.Unpriced(routing.Items(capabilities)) {
+		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model)
+	}
+	return list, nil
+}
+
+// newActivePrices is the price list every row is priced by on a router with a database: the
+// one in force in it, read every interval and at each scheduled change, with the models the
+// routing config runs itself marked local. Until a read answers any entry it prices with
+// fallback, which has no markup, so a deployment with its own price file (requireEntries)
+// reports not ready until then rather than serve on it.
+func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities routing.Config, fallback *pricing.List,
+	requireEntries bool, interval time.Duration, logger *slog.Logger) *pricing.Active {
+	return pricing.NewActive(ctx, pricing.ActiveOptions{
+		Source:         pgStore.PriceSource(),
+		Fallback:       fallback,
+		Local:          routing.LocalItems(capabilities),
+		Interval:       interval,
+		RequireEntries: requireEntries,
+		Logger:         logger,
 	})
 }
 
@@ -1807,24 +2005,16 @@ func buildVoices(
 // the operations that need them say so.
 func buildPhone(
 	settings config.Config,
+	vendorConfig phone.Config,
 	pgStore *store.Store,
-	liveClient *live.Client,
+	recorder *routing.Recorder,
 	stream *streamapp.Clients,
 	gate *dlc.Gate,
 	secrets *auth.Sealer,
 	logger *slog.Logger,
 ) (*phone.Service, error) {
-	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
-	if err != nil {
-		return nil, err
-	}
 	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" {
 		logger.Warn("no stream credentials, numbers cannot be attached to a call in the deployment's app")
-	}
-
-	var recorder *routing.Recorder
-	if pgStore != nil || liveClient != nil {
-		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, logger)
 	}
 
 	// Passwords of customers' own SIP trunks are sealed under the router's keyring. Without
@@ -1849,6 +2039,38 @@ func buildPhone(
 	})
 }
 
+// callHookCheckTimeout bounds the one read of the deployment's app hooks at boot.
+const callHookCheckTimeout = 30 * time.Second
+
+// checkCallHook reads the hooks of the deployment's own app once, and logs at ERROR a hook to
+// this router's call events that does not ask for every one of them: one pointed before the
+// participant events were added, whose placed calls and transfers never connect and are not
+// billed until cmd/phone hooks is run again. Registered apps are not read here, which would be
+// a Stream request per app at every boot; the phone service logs theirs when a placed call ends
+// with no participant event delivered.
+func checkCallHook(ctx context.Context, settings config.Config, logger *slog.Logger) {
+	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" || settings.PublicURL == "" {
+		return
+	}
+	stream, err := phone.NewStream(phone.StreamOptions{APIKey: settings.Stream.APIKey, APISecret: settings.Stream.APISecret})
+	if err != nil {
+		logger.Warn("could not check the deployment's call hook", "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, callHookCheckTimeout)
+	defer cancel()
+	hooks, err := stream.CallHooks(ctx)
+	if err != nil {
+		logger.Warn("could not check the deployment's call hook", "error", err)
+		return
+	}
+	missing, found := phone.MissingCallHookEvents(hooks, strings.TrimSuffix(settings.PublicURL, "/")+phone.CallHookPath)
+	if found && len(missing) > 0 {
+		logger.Error("call hook does not deliver participant events; re-run cmd/phone hooks",
+			"stream_app", "deployment", "missing", missing)
+	}
+}
+
 // closePhone hangs up the calls this node holds through customers' own SIP trunks. Their
 // signalling runs through this process, so stopping without a BYE would leave both ends of
 // each call connected to nothing.
@@ -1871,6 +2093,7 @@ func buildDLC(
 	settings config.Config,
 	pgStore *store.Store,
 	liveClient *live.Client,
+	recorder *routing.Recorder,
 	logger *slog.Logger,
 ) (*dlc.Service, *dlc.Gate, error) {
 	if pgStore == nil {
@@ -1892,7 +2115,7 @@ func buildDLC(
 			"audio_minutes", settings.Sandbox.AudioMinutesPerDay)
 	}
 
-	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Logger: logger}
+	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Logger: logger}
 	if registrar, err := dlctelnyx.New(dlctelnyx.Options{}); err == nil {
 		options.Registrar = registrar
 	} else {

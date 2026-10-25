@@ -122,13 +122,13 @@ func (s *OpenAILiveSocketSuite) nextFrame(conn *websocket.Conn) map[string]any {
 func (s *OpenAILiveSocketSuite) TestSessionStartNamesTheModelTheAudioAndTheBackend() {
 	fake := newFakeLive("")
 	defer fake.close()
-	provider, _ := s.connect(fake, Options{
+	provider, conn := s.connect(fake, Options{
 		Voice:        "quartz",
 		Instructions: "Be brief.",
 		Tools:        []llm.Tool{{Name: "get_weather", Description: "Weather.", Parameters: map[string]any{"type": "object"}}},
 		Backend:      "gpt-5.6-luna",
 	})
-	defer func() { _ = provider.Close() }()
+	defer s.hangUp(provider, conn)
 
 	s.Equal("Bearer test-key", <-fake.auth)
 	start := <-fake.starts
@@ -190,7 +190,7 @@ func (s *OpenAILiveSocketSuite) TestABackendToolsOptionalArgumentsStayOptional()
 	fake := newFakeLive("")
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{Tools: []llm.Tool{sendMessage}})
-	defer func() { _ = provider.Close() }()
+	defer s.hangUp(provider, conn)
 
 	started := backendTools(<-fake.starts)[0].(map[string]any)
 	s.Equal(false, started["strict"], "an omitted strict is strict mode on the Responses API")
@@ -206,12 +206,12 @@ func (s *OpenAILiveSocketSuite) TestABackendToolsOptionalArgumentsStayOptional()
 func (s *OpenAILiveSocketSuite) TestABackendToolWithEveryPropertyRequiredIsSentAsBefore() {
 	fake := newFakeLive("")
 	defer fake.close()
-	provider, _ := s.connect(fake, Options{Tools: []llm.Tool{{Name: "get_weather", Parameters: map[string]any{
+	provider, conn := s.connect(fake, Options{Tools: []llm.Tool{{Name: "get_weather", Parameters: map[string]any{
 		"type":       "object",
 		"properties": map[string]any{"city": map[string]any{"type": "string"}},
 		"required":   []string{"city"},
 	}}}})
-	defer func() { _ = provider.Close() }()
+	defer s.hangUp(provider, conn)
 
 	s.NotContains(backendTools(<-fake.starts)[0].(map[string]any), "strict")
 }
@@ -221,12 +221,12 @@ func (s *OpenAILiveSocketSuite) TestABackendToolWithEveryPropertyRequiredIsSentA
 func (s *OpenAILiveSocketSuite) TestABackendToolDecodedFromJSONWithEveryPropertyRequiredIsSentAsBefore() {
 	fake := newFakeLive("")
 	defer fake.close()
-	provider, _ := s.connect(fake, Options{Tools: []llm.Tool{{Name: "get_weather", Parameters: map[string]any{
+	provider, conn := s.connect(fake, Options{Tools: []llm.Tool{{Name: "get_weather", Parameters: map[string]any{
 		"type":       "object",
 		"properties": map[string]any{"city": map[string]any{"type": "string"}},
 		"required":   []any{"city"},
 	}}}})
-	defer func() { _ = provider.Close() }()
+	defer s.hangUp(provider, conn)
 
 	s.NotContains(backendTools(<-fake.starts)[0].(map[string]any), "strict")
 }
@@ -234,8 +234,8 @@ func (s *OpenAILiveSocketSuite) TestABackendToolDecodedFromJSONWithEveryProperty
 func (s *OpenAILiveSocketSuite) TestASessionAskingForNothingExtraSendsNothingExtra() {
 	fake := newFakeLive("")
 	defer fake.close()
-	provider, _ := s.connect(fake, Options{})
-	defer func() { _ = provider.Close() }()
+	provider, conn := s.connect(fake, Options{})
+	defer s.hangUp(provider, conn)
 
 	session := (<-fake.starts)["session"].(map[string]any)
 	s.NotContains(session, "instructions")
@@ -259,7 +259,7 @@ func (s *OpenAILiveSocketSuite) TestTheCallersAudioGoesUpAtTheSessionRate() {
 	fake := newFakeLive("")
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{})
-	defer func() { _ = provider.Close() }()
+	defer s.hangUp(provider, conn)
 
 	pcm := sts.PcmData{Samples: make([]int16, 1600), SampleRate: sts.InputSampleRate, Channels: 1}
 	s.Require().NoError(provider.ProcessAudio(pcm, sts.Participant{ID: "alice"}))
@@ -346,7 +346,7 @@ func (s *OpenAILiveSocketSuite) TestAToolAnswerContinuesTheBackend() {
 	fake := newFakeLive("")
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{})
-	defer func() { _ = provider.Close() }()
+	defer s.hangUp(provider, conn)
 
 	s.Require().NoError(provider.Answer("call_1", `{"forecast":"sunny"}`, nil))
 	result := s.nextFrame(conn)
@@ -359,7 +359,7 @@ func (s *OpenAILiveSocketSuite) TestATypedTurnGoesToTheBackendAndAPromptToTheLiv
 	fake := newFakeLive("")
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{})
-	defer func() { _ = provider.Close() }()
+	defer s.hangUp(provider, conn)
 
 	s.Require().NoError(provider.SendText("My order number is A0042.", sts.Participant{ID: "alice"}))
 	typed := s.nextFrame(conn)
@@ -392,7 +392,7 @@ func (s *OpenAILiveSocketSuite) TestSilenceCarriesTheSessionClockUntilTheModelSp
 	fake := newFakeLive("")
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{})
-	defer func() { _ = provider.Close() }()
+	defer s.hangUp(provider, conn)
 
 	s.Require().NoError(provider.Prompt("Greet the caller."))
 	s.Equal("session.instructions.append", s.spokenTo(conn)["type"])
@@ -442,7 +442,7 @@ func (s *OpenAILiveSocketSuite) TestNewToolsReplaceTheWholeDelegation() {
 	fake := newFakeLive("")
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{Instructions: "Be brief."})
-	defer func() { _ = provider.Close() }()
+	defer s.hangUp(provider, conn)
 
 	s.Require().NoError(provider.SetTools([]llm.Tool{{Name: "get_time"}}))
 	update := s.nextFrame(conn)
@@ -455,13 +455,113 @@ func (s *OpenAILiveSocketSuite) TestNewToolsReplaceTheWholeDelegation() {
 	s.Equal("get_time", responses["tools"].([]any)[0].(map[string]any)["name"])
 }
 
-func (s *OpenAILiveSocketSuite) TestCloseAsksTheServerToFinishTheSession() {
+// TestCloseWaitsForSessionClosed: session.closed carries the session's final billed seconds
+// and comes after session.close, so Close reads it before dropping the socket.
+func (s *OpenAILiveSocketSuite) TestCloseWaitsForSessionClosed() {
 	fake := newFakeLive("")
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{})
 
-	s.Require().NoError(provider.Close())
+	closed := make(chan error, 1)
+	go func() { closed <- provider.Close() }()
 	s.Equal(map[string]any{"type": "session.close"}, s.nextFrame(conn))
+	time.Sleep(500 * time.Millisecond)
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage,
+		[]byte(`{"type":"session.closed","reason":"close_requested","usage":{"seconds":29}}`)))
+	select {
+	case err := <-closed:
+		s.Require().NoError(err)
+	case <-time.After(closeGrace):
+		s.FailNow("Close kept waiting after session.closed arrived")
+	}
+
+	var disconnected []sts.Disconnected
+	for event := range provider.Events() {
+		if typed, ok := event.(sts.Disconnected); ok {
+			disconnected = append(disconnected, typed)
+		}
+	}
+	s.Require().Len(disconnected, 1, "session.closed is read before the socket is dropped")
+	s.Equal("close_requested", disconnected[0].Reason)
+	s.True(disconnected[0].Clean)
+}
+
+// TestTheSessionsSecondsAndItsBackendAreReported uses what a recorded 30-second session on
+// a gpt-5.6-luna backend was sent: a backend response of 890 tokens in and 31 out, 10 of them
+// thinking, the session's seconds at 13 and 28, and 29 as it closed. The seconds are sent as
+// numbers with a fraction, as the Live API sent "seconds":2.0 when probed on 2026-10-23.
+func (s *OpenAILiveSocketSuite) TestTheSessionsSecondsAndItsBackendAreReported() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Backend: "gpt-5.6-luna"})
+
+	for _, frame := range []string{
+		`{"type":"session.usage.updated","usage":{"seconds":13.0},"context_window":{"usage_ratio":0.0096}}`,
+		`{"type":"response.event","event":{"type":"response.completed","response":{"id":"resp_1",` +
+			`"model":"gpt-5.6-luna-2026-09-30","status":"completed","service_tier":"default","usage":{"input_tokens":890,` +
+			`"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":31,` +
+			`"output_tokens_details":{"reasoning_tokens":10},"total_tokens":921}}}}`,
+		`{"type":"session.usage.updated","usage":{"seconds":27.6}}`,
+	} {
+		s.Require().NoError(conn.WriteMessage(websocket.TextMessage, []byte(frame)))
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- provider.Close() }()
+	s.Equal(map[string]any{"type": "session.close"}, s.nextFrame(conn))
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage,
+		[]byte(`{"type":"session.closed","reason":"close_requested","usage":{"seconds":29.0}}`)))
+	s.Require().NoError(<-closed)
+
+	var seconds []int64
+	var backend []sts.BackendUsage
+	var disconnected int
+	for event := range provider.Events() {
+		switch typed := event.(type) {
+		case sts.SessionUsage:
+			seconds = append(seconds, typed.Seconds)
+		case sts.BackendUsage:
+			backend = append(backend, typed)
+		case sts.Disconnected:
+			disconnected++
+		}
+	}
+	s.Equal([]int64{13, 28, 29}, seconds, "each running total as the vendor counts it, rounded, the last as it closed")
+	s.Equal(1, disconnected, "session.closed is read, seconds and all")
+	s.Equal([]sts.BackendUsage{{
+		ResponseID:  "resp_1",
+		Model:       "gpt-5.6-luna",
+		ServiceTier: "default",
+		Usage: llm.Usage{
+			InputTokens:         890,
+			OutputTokens:        31,
+			OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: 10},
+			TotalTokens:         921,
+		},
+	}}, backend, "reported as the model the session delegated to")
+	s.True(CapabilitiesFor(DefaultModel).SessionBilled)
+}
+
+// TestCloseGivesUpAfterTwoSeconds: a server that never answers session.close holds Close
+// for closeGrace and no longer.
+func (s *OpenAILiveSocketSuite) TestCloseGivesUpAfterTwoSeconds() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+
+	began := time.Now()
+	s.Require().NoError(provider.Close())
+	waited := time.Since(began)
+
+	s.Equal(map[string]any{"type": "session.close"}, s.nextFrame(conn))
+	s.GreaterOrEqual(waited, closeGrace)
+	s.Less(waited, closeGrace+time.Second)
+}
+
+// hangUp drops the server's side before closing the provider. A test that is not about
+// closing has no server answering session.close, and would otherwise wait out closeGrace.
+func (s *OpenAILiveSocketSuite) hangUp(provider *STS, conn *websocket.Conn) {
+	_ = conn.Close()
+	_ = provider.Close()
 }
 
 func keys(object map[string]any) []string {

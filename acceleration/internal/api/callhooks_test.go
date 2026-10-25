@@ -79,7 +79,7 @@ func (s *CallHooksSuite) TestAnArrivingCallReachesTheWorkerOfWhoeverHoldsTheNumb
 	}
 }
 
-func (s *CallHooksSuite) TestACallToASuspendedAppIsNotAnswered() {
+func (s *CallHooksSuite) TestACallToASuspendedAppIsNotAnsweredAndIsEnded() {
 	s.hold("default", s.callID)
 	s.Require().NoError(s.store.SuspendTelephony(context.Background(), &store.TelephonySuspension{
 		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
@@ -90,6 +90,9 @@ func (s *CallHooksSuite) TestACallToASuspendedAppIsNotAnswered() {
 	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
 
 	s.nothingReaches(worker.Calls(), "a suspended app's agent answered a call")
+	s.Contains(s.logged.String(), "refused an arriving call to a suspended app; ending it")
+	s.Eventually(func() bool { return strings.Contains(s.logged.String(), "could not end a refused arriving call") },
+		5*time.Second, 20*time.Millisecond, "ended at Stream, which the suite's phone service has no credentials for")
 }
 
 func (s *CallHooksSuite) TestACallOnACustomNamedLineStillFindsItsOwner() {
@@ -401,13 +404,18 @@ func (s *CallHooksSuite) arriving(cid string) string {
 }
 
 func arrivingCall(cid string) string {
+	return arrivingCallAt(cid, time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC))
+}
+
+// arrivingCallAt is arrivingCall made by Stream at at.
+func arrivingCallAt(cid string, at time.Time) string {
 	id := cid[strings.Index(cid, ":")+1:]
 	callType := cid[:strings.Index(cid, ":")]
 	return fmt.Sprintf(`{
   "type": "call.session_started",
   "call_cid": %q,
   "session_id": "session-1",
-  "created_at": "2026-08-27T12:00:00Z",
+  "created_at": %q,
   "call": {
     "cid": %q,
     "id": %q,
@@ -421,7 +429,7 @@ func arrivingCall(cid string) string {
       ]
     }
   }
-}`, cid, cid, id, callType)
+}`, cid, at.UTC().Format(time.RFC3339Nano), cid, id, callType)
 }
 
 // nothingReaches fails when a call arrives on a channel that should stay empty.

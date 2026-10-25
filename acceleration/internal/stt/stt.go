@@ -76,6 +76,37 @@ type STT interface {
 	Model() string
 }
 
+// Metering is how a transcriber's work is measured for its bill.
+type Metering int
+
+const (
+	// MeteredByVendor is a transcriber whose vendor reports on every settled turn exactly
+	// what it bills for it, so the turns it reports are the whole bill: audio it took after
+	// its last turn, before a refusal or the end of the session, is billed by no row. A turn
+	// it says nothing for is billed on the router's count of the audio streamed since the
+	// last turn, marked as an estimate, and raises the alarm, since that vendor's adapter is
+	// what needs fixing.
+	MeteredByVendor Metering = iota
+	// MeteredByRouter is a transcriber whose vendor bills every second of audio it is sent and
+	// reports none of it, so the audio the router streams to it is the bill: every
+	// millisecond, between turns and after the last one included, and never an estimate.
+	MeteredByRouter
+)
+
+// Metered is a transcriber that says how it is measured. One that does not is
+// MeteredByVendor.
+type Metered interface {
+	Metering() Metering
+}
+
+// MeteringOf is how the provider is measured.
+func MeteringOf(provider STT) Metering {
+	if metered, ok := provider.(Metered); ok {
+		return metered.Metering()
+	}
+	return MeteredByVendor
+}
+
 // Retuner is a provider whose vocabulary can change on a stream already open. One that
 // cannot be retuned keeps the keyterms it started with.
 type Retuner interface {

@@ -44,8 +44,12 @@ func NewFish(options FishOptions) (*Fish, error) {
 	return &Fish{options: options, client: client(options.Timeout)}, nil
 }
 
-// Prepare creates the model and returns the reference id sessions ask for.
-func (f *Fish) Prepare(ctx context.Context, request Request) (string, error) {
+// Prepare creates the model and returns the reference id sessions ask for: one clone.
+func (f *Fish) Prepare(ctx context.Context, request Request) (Prepared, error) {
+	return cloned(f.clone(ctx, request))
+}
+
+func (f *Fish) clone(ctx context.Context, request Request) (string, error) {
 	if err := request.Validate(); err != nil {
 		return "", stack.Wrap(err)
 	}
@@ -143,6 +147,9 @@ func (f *Fish) Delete(ctx context.Context, externalID string) error {
 	}
 	return nil
 }
+
+// SpeechModel is the model Speak says a line with.
+func (f *Fish) SpeechModel() string { return fish.DefaultModel }
 
 // Speak says a line in the voice with the model a call would use.
 func (f *Fish) Speak(ctx context.Context, externalID, text string) (Speech, error) {

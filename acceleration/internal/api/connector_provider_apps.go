@@ -196,6 +196,7 @@ func (s *Server) registerConnectorProviderApps(api huma.API) {
 			"customer. One customer per app: another customer's record of it is a conflict.\n\n" +
 			messageHookNote + "\n\n" +
 			"Stream staff only: it needs the ops key.",
+		Tags:     []string{staffTag},
 		Security: opsSecurity,
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The record was replaced"},
@@ -212,6 +213,7 @@ func (s *Server) registerConnectorProviderApps(api huma.API) {
 		Summary:       "Stop Stream's own app being a customer's provider app",
 		DefaultStatus: http.StatusNoContent,
 		Description:   "Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.\n\nStream staff only: it needs the ops key.",
+		Tags:          []string{staffTag},
 		Security:      opsSecurity,
 		Responses:     map[string]*huma.Response{"204": {Description: "The record is removed"}},
 		Errors:        staffErrors,

@@ -11,6 +11,7 @@ class ErrorType(StrEnum):
     NOT_ACCEPTABLE = "not_acceptable"
     NOT_FOUND = "not_found"
     PAYLOAD_TOO_LARGE = "payload_too_large"
+    PAYMENT_REQUIRED = "payment_required"
     PERMISSION = "permission"
     RATE_LIMITED = "rate_limited"
     TIMEOUT = "timeout"

@@ -4,11 +4,17 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
 
@@ -126,7 +132,8 @@ func (s *StoreSuite) SetupTest() {
 				" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
 				" connection_event_subscriptions, connection_event_deliveries,"+
 				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases,"+
-				" scheduled_tasks, scheduled_task_runs CASCADE",
+				" scheduled_tasks, scheduled_task_runs, price_entries, price_changes,"+
+				" limits, usage_resets, limit_grants, limit_grant_reconciles CASCADE",
 		)
 		s.Require().NoError(err)
 	}
@@ -558,7 +565,7 @@ func (s *StoreSuite) TestACallAddsUpWhatEveryOneOfItsRequestsSpent() {
 		InputTokens: 9000, OutputTokens: 9000, CostMicros: 90000, Success: true,
 	}))
 
-	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", s.base, nil)
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", "session-1", s.base, nil)
 
 	s.Require().NoError(err)
 	s.Equal(CallUsage{
@@ -567,8 +574,36 @@ func (s *StoreSuite) TestACallAddsUpWhatEveryOneOfItsRequestsSpent() {
 	}, spent)
 }
 
+func (s *StoreSuite) TestACallsRuntimeIsItsOwnSessionsAndNoRequest() {
+	// Two sessions of one agent at once: the call's models are keyed by agent and window, but
+	// its time is its own session's.
+	for _, row := range []Request{
+		{Modality: "llm", SessionID: "session-1", Provider: "openai", Model: "gpt-5.6-sol", InputTokens: 100, CostMicros: 50},
+		{Modality: RuntimeModality, SessionID: "session-1", Provider: "stream", Model: "voice", CostMicros: 600},
+		{Modality: RuntimeModality, SessionID: "session-2", Provider: "stream", Model: "voice", CostMicros: 900},
+	} {
+		row.CustomerID, row.AgentID, row.StartedAt, row.Success = "acme", "agent-1", s.base.Add(time.Second), true
+		s.Require().NoError(s.store.RecordRequest(s.ctx, &row))
+	}
+
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", "session-1", s.base, nil)
+	s.Require().NoError(err)
+	s.EqualValues(650, spent.CostMicros, "the model's and this session's time, not the other session's")
+	s.EqualValues(1, spent.Requests, "runtime is no request")
+
+	used, err := s.store.CallTokens(s.ctx, "acme", "agent-1", "session-1", s.base, nil)
+	s.Require().NoError(err)
+	var cost, requests int64
+	for _, model := range used {
+		cost += model.CostMicros
+		requests += model.Requests
+	}
+	s.EqualValues(650, cost)
+	s.EqualValues(1, requests)
+}
+
 func (s *StoreSuite) TestACallThatMadeNoRequestsSpentNothing() {
-	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-with-no-work", s.base, nil)
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-with-no-work", "session-1", s.base, nil)
 
 	s.Require().NoError(err)
 	s.Equal(CallUsage{}, spent)
@@ -587,7 +622,7 @@ func (s *StoreSuite) TestWhatWasSpentAfterACallEndedIsNotTheCallsToPayFor() {
 		InputTokens: 7000, CostMicros: 8000, Success: true,
 	}))
 
-	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", s.base, &ended)
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", "session-1", s.base, &ended)
 
 	s.Require().NoError(err)
 	s.Equal(int64(300), spent.InputTokens)
@@ -958,6 +993,35 @@ func (s *StoreSuite) TestAgentLogProviderFailureDetails() {
 	s.Require().Error(err)
 }
 
+func (s *StoreSuite) TestAMovedLogRowNeverShowsTheErrorOfTheRequestHoldingItsNumberHere() {
+	// The destination's own failed request, which a moved log row's number happens to name.
+	own := &Request{Modality: "llm", CustomerID: "moved-logs", AgentID: "agent", Provider: "openai", Model: "gpt",
+		StartedAt: s.base, Success: false, ErrorCode: "upstream_error", ErrorMessage: "the destination's own failure"}
+	s.Require().NoError(s.store.RecordRequest(s.ctx, own))
+	// A row written as an import writes it, details as they came, naming own's number.
+	logged := func(at time.Time, details map[string]any) *AgentLog {
+		details["request_id"] = strconv.FormatInt(own.ID, 10)
+		entry := &AgentLog{CustomerID: "moved-logs", AgentID: "agent", Source: "system", Severity: "info",
+			EventType: "provider_request", Message: "llm request completed", OccurredAt: at, IngestedAt: at, Details: details}
+		_, err := s.store.DB().NewInsert().Model(entry).Exec(s.ctx)
+		s.Require().NoError(err)
+		read, err := s.store.AgentLog(s.ctx, "moved-logs", entry.ID)
+		s.Require().NoError(err)
+		return read
+	}
+
+	carried := logged(s.base.Add(time.Hour), map[string]any{"error_code": nil, "error_message": nil})
+	older := logged(s.base.Add(time.Hour), map[string]any{})
+	ownOlder := logged(s.base, map[string]any{})
+
+	s.Contains(carried.Details, "error_code")
+	s.Nil(carried.Details["error_code"], "a row carrying its error is its own answer")
+	s.NotContains(older.Details, "error_code", "an older row's number names a request that started at another time")
+	if !s.store.Sharded() {
+		s.Equal("upstream_error", ownOlder.Details["error_code"], "an older row of this deployment still finds its request")
+	}
+}
+
 // recordCancelled stores a request its caller gave up on after it had generated something.
 func (s *StoreSuite) recordCancelled(at time.Time, latencyMs *float64) {
 	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
@@ -1025,4 +1089,420 @@ func (s *StoreSuite) TestACancelledRequestIsSpendButNeitherAnErrorNorALatency() 
 	bucket = filtered[0]
 	check("raw rows", bucket.RequestCount, bucket.ErrorCount, bucket.AudioMsTotal, bucket.CostMicrosTotal,
 		bucket.LatencyP50Ms, bucket.Uptime)
+}
+
+// usageRow is a request with a usage id of its own, defaulting what a test does not care about.
+func (s *StoreSuite) usageRow(customerID string, change func(*Request)) Request {
+	request := Request{
+		UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: customerID,
+		Provider: "openai", Model: "gpt", StartedAt: s.base, OutputTokens: 10, CostMicros: 25, Success: true,
+	}
+	if change != nil {
+		change(&request)
+	}
+	return request
+}
+
+// tooBigToIndex is an id longer than a btree index row may be, even compressed.
+func tooBigToIndex() string {
+	raw := make([]byte, 10_000)
+	_, _ = rand.Read(raw)
+	return hex.EncodeToString(raw)
+}
+
+// requestsOf is every row a customer has in this shard, by usage id.
+func (s *StoreSuite) requestsOf(customerID string) map[uuid.UUID]Request {
+	var rows []Request
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", customerID).Scan(s.ctx))
+	byUsage := map[uuid.UUID]Request{}
+	for _, row := range rows {
+		byUsage[row.UsageID] = row
+	}
+	return byUsage
+}
+
+func (s *StoreSuite) TestRecordRequestsSkipsWrittenUsageIDs() {
+	first, second := s.usageRow("batch", nil), s.usageRow("batch", nil)
+	written, err := s.store.RecordRequests(s.ctx, []Request{first})
+	s.Require().NoError(err)
+	s.Equal([]uuid.UUID{first.UsageID}, written)
+
+	written, err = s.store.RecordRequests(s.ctx, []Request{first, second})
+
+	s.Require().NoError(err)
+	s.Equal([]uuid.UUID{second.UsageID}, written, "a row already written is not written again")
+	s.Len(s.requestsOf("batch"), 2)
+}
+
+func (s *StoreSuite) TestTwoRowsWithOneUsageIDInOneBatchWriteOne() {
+	first := s.usageRow("twice", nil)
+	second := s.usageRow("twice", func(request *Request) { request.UsageID = first.UsageID })
+
+	written, err := s.store.RecordRequests(s.ctx, []Request{first, second})
+
+	s.Require().NoError(err)
+	s.Equal([]uuid.UUID{first.UsageID}, written)
+	s.Len(s.requestsOf("twice"), 1)
+}
+
+func (s *StoreSuite) TestARowWithoutAUsageIDIsRefused() {
+	written, err := s.store.RecordRequests(s.ctx, []Request{
+		s.usageRow("refused", nil),
+		s.usageRow("refused", func(request *Request) { request.UsageID = uuid.Nil }),
+	})
+
+	s.ErrorIs(err, ErrInvalidRequest)
+	s.True(Unwritable(err), "a row with no usage id never becomes writable")
+	s.Empty(written)
+	s.Empty(s.requestsOf("refused"), "the batch is one transaction")
+}
+
+func (s *StoreSuite) TestTheTableRefusesARowWhoseUsageIDIsNull() {
+	_, err := s.store.ShardDB().ExecContext(s.ctx, `INSERT INTO requests (usage_id, modality, customer_id, provider, model, started_at, success)
+VALUES (NULL, 'llm', 'bare', 'openai', 'gpt', now(), true)`)
+
+	s.Require().Error(err, "a writer that skips RecordRequests still cannot write a row with no usage id")
+	s.True(Unwritable(err))
+}
+
+func (s *StoreSuite) TestARowWrittenWithoutAUsageIDGetsOneFromTheTable() {
+	request := s.usageRow("bare", func(request *Request) { request.UsageID = uuid.Nil })
+
+	_, err := s.store.ShardDB().NewInsert().Model(&request).Exec(s.ctx)
+
+	s.Require().NoError(err, "as the router from before usage ids writes")
+	s.Require().Len(s.requestsOf("bare"), 1)
+	for usageID := range s.requestsOf("bare") {
+		s.NotEqual(uuid.Nil, usageID)
+	}
+}
+
+func (s *StoreSuite) TestARowPostgresRefusesIsUnwritable() {
+	_, err := s.store.RecordRequests(s.ctx, []Request{
+		s.usageRow("too-big", func(request *Request) { request.AgentID = tooBigToIndex() }),
+	})
+
+	s.Require().Error(err)
+	s.True(Unwritable(err), "an id too big for its index is refused however often it is sent: %v", err)
+}
+
+func (s *StoreSuite) TestAShardedBatchWritesOneLogRowPerNewRow() {
+	s.Require().NoError(s.store.StartCall(s.ctx, &Call{ID: "call", CustomerID: "batch-log", AgentID: "agent", ConfigID: "cfg", StartedAt: s.base}))
+	batch := []Request{
+		s.usageRow("batch-log", func(request *Request) { request.AgentID = "agent" }),
+		s.usageRow("batch-log", func(request *Request) { request.AgentID = "agent" }),
+		s.usageRow("batch-log", nil),
+	}
+
+	_, err := s.store.RecordRequests(s.ctx, batch)
+	s.Require().NoError(err)
+	_, err = s.store.RecordRequests(s.ctx, batch)
+	s.Require().NoError(err)
+
+	logs, err := s.store.AgentLogs(s.ctx, LogFilter{CustomerID: "batch-log", Limit: 10})
+	s.Require().NoError(err)
+	s.Len(logs, 2, "one log row per agent row, and none for a row written again")
+	for _, log := range logs {
+		s.Equal("call", log.SessionID)
+	}
+}
+
+func (s *StoreSuite) TestABatchLogsEachRowInItsOwnCall() {
+	for _, call := range []*Call{
+		{ID: "first", CallID: "stream-1", CustomerID: "calls-a", AgentID: "agent", ConfigID: "cfg-1", StartedAt: s.base},
+		{ID: "second", CallID: "stream-2", CustomerID: "calls-a", AgentID: "agent", ConfigID: "cfg-2", StartedAt: s.base.Add(time.Minute)},
+		{ID: "other", CallID: "stream-3", CustomerID: "calls-b", AgentID: "agent", ConfigID: "cfg-3", StartedAt: s.base},
+	} {
+		s.Require().NoError(s.store.StartCall(s.ctx, call))
+	}
+	at := func(customer, callID string, after time.Duration) Request {
+		return s.usageRow(customer, func(request *Request) {
+			request.AgentID, request.CallID, request.StartedAt = "agent", callID, s.base.Add(after)
+		})
+	}
+	batch := []Request{
+		at("calls-a", "stream-1", 2*time.Minute),
+		at("calls-b", "", time.Second),
+		at("calls-a", "", 2*time.Minute),
+		at("calls-a", "", 30*time.Second),
+	}
+
+	_, err := s.store.RecordRequests(s.ctx, batch)
+	s.Require().NoError(err)
+
+	sessions := func(customer string) map[string]string {
+		logs, err := s.store.AgentLogs(s.ctx, LogFilter{CustomerID: customer, Limit: 10})
+		s.Require().NoError(err)
+		byRequest := map[string]string{}
+		for _, log := range logs {
+			logged, err := s.store.AgentLog(s.ctx, customer, log.ID)
+			s.Require().NoError(err)
+			byRequest[logged.Details["request_id"].(string)] = logged.SessionID + "/" + logged.ConfigID
+		}
+		return byRequest
+	}
+	id := func(request Request) string { return strconv.FormatInt(request.ID, 10) }
+	s.Equal(map[string]string{
+		id(batch[0]): "first/cfg-1",
+		id(batch[2]): "second/cfg-2",
+		id(batch[3]): "first/cfg-1",
+	}, sessions("calls-a"), "the call a row names, else the agent's latest call started by it")
+	s.Equal(map[string]string{id(batch[1]): "other/cfg-3"}, sessions("calls-b"))
+}
+
+// onShard runs a statement on this shard's database, failing the test if it fails.
+func (s *StoreSuite) onShard(query string, args ...any) {
+	_, err := s.store.ShardDB().ExecContext(s.ctx, query, args...)
+	s.Require().NoError(err)
+}
+
+// usageIndex reports whether requests_usage_id_idx is in this shard's database, and if it
+// is, whether it is valid.
+func (s *StoreSuite) usageIndex() (valid, found bool) {
+	var state sql.NullBool
+	s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
+		"SELECT (SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('requests_usage_id_idx'))").Scan(&state))
+	return state.Bool, state.Valid
+}
+
+// restoreUsageIndex puts requests_usage_id_idx back as the migration leaves it once the test
+// ends, whatever the test got to.
+func (s *StoreSuite) restoreUsageIndex() {
+	s.T().Cleanup(func() {
+		s.onShard("TRUNCATE requests")
+		s.onShard("DROP INDEX CONCURRENTLY IF EXISTS requests_usage_id_idx")
+		s.onShard("CREATE UNIQUE INDEX CONCURRENTLY requests_usage_id_idx ON requests (usage_id)")
+	})
+}
+
+func (s *StoreSuite) TestMigrateBuildsAUsageIndexSomebodyDropped() {
+	s.restoreUsageIndex()
+	s.onShard("DROP INDEX CONCURRENTLY requests_usage_id_idx")
+	row := s.usageRow("dropped-index", nil)
+	_, err := s.store.RecordRequests(s.ctx, []Request{row})
+	s.Require().ErrorContains(err, "ON CONFLICT", "nothing to infer the conflict from without the index")
+
+	s.Require().NoError(s.store.Migrate(s.ctx), "the migration is applied already, and Migrate builds the index itself")
+
+	valid, found := s.usageIndex()
+	s.True(found)
+	s.True(valid)
+	written, err := s.store.RecordRequests(s.ctx, []Request{row, row})
+	s.Require().NoError(err)
+	s.Equal([]uuid.UUID{row.UsageID}, written)
+}
+
+func (s *StoreSuite) TestMigrateRebuildsAUsageIndexThatDidNotBuild() {
+	s.restoreUsageIndex()
+	s.onShard("DROP INDEX CONCURRENTLY requests_usage_id_idx")
+	twice := s.usageRow("invalid-index", nil)
+	_, err := s.store.ShardDB().NewInsert().Model(&[]Request{twice, twice}).Exec(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.store.ShardDB().ExecContext(s.ctx, "CREATE UNIQUE INDEX CONCURRENTLY requests_usage_id_idx ON requests (usage_id)")
+	s.Require().Error(err, "two rows with one usage id fail the build")
+	valid, found := s.usageIndex()
+	s.Require().True(found, "a failed concurrent build leaves its index behind")
+	s.Require().False(valid)
+
+	err = s.store.Migrate(s.ctx)
+	s.Require().Error(err, "the router does not start while the index cannot be built")
+	s.Contains(err.Error(), "requests_usage_id_idx")
+
+	s.onShard("DELETE FROM requests WHERE id = (SELECT max(id) FROM requests WHERE usage_id = ?)", twice.UsageID)
+	s.Require().NoError(s.store.Migrate(s.ctx))
+
+	valid, found = s.usageIndex()
+	s.True(found)
+	s.True(valid, "the invalid index is dropped and built again")
+}
+
+func (s *StoreSuite) TestMigrateRebuildsAGrantsIndexLeftInvalid() {
+	// As a CONCURRENTLY build that failed leaves it.
+	s.onShard("UPDATE pg_index SET indisvalid = false WHERE indexrelid = to_regclass('requests_limit_grants_started_idx')")
+	var valid bool
+	read := func() {
+		s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
+			"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('requests_limit_grants_started_idx')").Scan(&valid))
+	}
+	read()
+	s.Require().False(valid)
+
+	s.Require().NoError(s.store.Migrate(s.ctx))
+
+	read()
+	s.True(valid, "dropped and built again")
+}
+
+// The reconcile reads every shard every few minutes, so it reads only the rows naming a grant,
+// by the partial index, rather than every request.
+func (s *StoreSuite) TestTheGrantReconcileReadsByTheGrantsIndex() {
+	var plan []string
+	err := s.store.ShardDB().RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+			return err
+		}
+		return tx.NewRaw("EXPLAIN "+reconcileGrantsQuery, time.Now(), 0, grantReconcilePage).Scan(ctx, &plan)
+	})
+
+	s.Require().NoError(err)
+	s.Contains(strings.Join(plan, "\n"), "requests_limit_grants_started_idx")
+}
+
+func (s *StoreSuite) TestARouterWaitingToMigrateDoesNotHoldUpTheOneMigrating() {
+	// The router migrating holds the lock on a connection of its own, as Migrate does.
+	holder, err := s.store.DB().DB.Conn(s.ctx)
+	s.Require().NoError(err)
+	defer holder.Close()
+	_, err = holder.ExecContext(s.ctx, "SELECT pg_advisory_lock(hashtextextended('router.migrate', 0))")
+	s.Require().NoError(err)
+	unlock := sync.OnceFunc(func() {
+		_, err := holder.ExecContext(s.ctx, "SELECT pg_advisory_unlock(hashtextextended('router.migrate', 0))")
+		s.Require().NoError(err)
+	})
+	defer unlock()
+
+	waiter, err := Open(s.dsn)
+	s.Require().NoError(err)
+	defer waiter.Close()
+	migrated := make(chan error, 1)
+	go func() { migrated <- waiter.Migrate(s.ctx) }()
+	select {
+	case err := <-migrated:
+		s.FailNow("migrated while another router held the lock", "%v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// A concurrent build waits for every snapshot older than its own to end. goose runs the
+	// usage migration's on another connection of the pool than the one holding the lock, so
+	// Postgres sees no deadlock to break.
+	s.T().Cleanup(func() {
+		_, err := s.store.DB().ExecContext(s.ctx, "DROP INDEX CONCURRENTLY IF EXISTS requests_lock_wait_idx")
+		s.Require().NoError(err)
+	})
+	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+	defer cancel()
+	_, err = s.store.DB().ExecContext(ctx, "CREATE INDEX CONCURRENTLY requests_lock_wait_idx ON requests (customer_id)")
+	s.Require().NoError(err, "a router waiting for the lock holds no snapshot the build waits on")
+	unlock()
+
+	select {
+	case err := <-migrated:
+		s.NoError(err)
+	case <-time.After(30 * time.Second):
+		s.FailNow("the waiting router never migrated once the lock was free")
+	}
+}
+
+func (s *StoreSuite) TestBatchesNamingTheSameCustomersInAnotherOrderDoNotDeadlock() {
+	// The agent log trigger locks each customer it logs a row for until the batch commits.
+	batch := func(first, second string) []Request {
+		var rows []Request
+		for range 50 {
+			rows = append(rows, s.usageRow(first, func(request *Request) { request.AgentID = "agent" }))
+		}
+		return append(rows, s.usageRow(second, func(request *Request) { request.AgentID = "agent" }))
+	}
+
+	for range 5 {
+		one, other := batch("order-a", "order-b"), batch("order-b", "order-a")
+		failed := make(chan error, 2)
+		go func() { _, err := s.store.RecordRequests(s.ctx, one); failed <- err }()
+		go func() { _, err := s.store.RecordRequests(s.ctx, other); failed <- err }()
+		s.Require().NoError(<-failed)
+		s.Require().NoError(<-failed)
+	}
+
+	s.Len(s.requestsOf("order-a"), 5*51)
+	s.Len(s.requestsOf("order-b"), 5*51)
+}
+
+func (s *StoreSuite) TestARequestIDADataMoveTookIsWrittenOnTheNextTry() {
+	var next int64
+	s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
+		"SELECT nextval(pg_get_serial_sequence('requests', 'id'))").Scan(&next))
+	// What a data move does: a row carried in with its own id, ahead of the sequence.
+	moved := s.usageRow("moved-id", func(request *Request) { request.ID = next + 1 })
+	_, err := s.store.ShardDB().NewInsert().Model(&moved).Exec(s.ctx)
+	s.Require().NoError(err)
+	row := s.usageRow("moved-id", nil)
+
+	_, err = s.store.RecordRequests(s.ctx, []Request{row})
+	s.Require().Error(err, "the sequence's next id is the moved row's")
+	s.True(IDTaken(err), "%v", err)
+	s.False(Unwritable(err), "the next try draws another id: %v", err)
+
+	written, err := s.store.RecordRequests(s.ctx, []Request{row})
+	s.Require().NoError(err)
+	s.Equal([]uuid.UUID{row.UsageID}, written)
+}
+
+func (s *StoreSuite) TestManyMovedRequestIDsCostOneTry() {
+	var next int64
+	s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
+		"SELECT nextval(pg_get_serial_sequence('requests', 'id'))").Scan(&next))
+	moved := make([]Request, 500)
+	for i := range moved {
+		moved[i] = s.usageRow("many-moved-ids", func(request *Request) { request.ID = next + 1 + int64(i) })
+	}
+	_, err := s.store.ShardDB().NewInsert().Model(&moved).Exec(s.ctx)
+	s.Require().NoError(err)
+	rows := []Request{s.usageRow("many-moved-ids", nil), s.usageRow("many-moved-ids", nil)}
+
+	_, err = s.store.RecordRequests(s.ctx, rows)
+	s.Require().True(IDTaken(err), "%v", err)
+	written, err := s.store.RecordRequests(s.ctx, rows)
+
+	s.Require().NoError(err, "the failed try moved the sequence past every moved id")
+	s.Len(written, 2)
+	s.Greater(rows[0].ID, next+500)
+}
+
+func (s *StoreSuite) TestTheRequestIDSequenceIsNeverMovedBack() {
+	var ahead int64
+	s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
+		"SELECT setval(pg_get_serial_sequence('requests', 'id'), nextval(pg_get_serial_sequence('requests', 'id')) + 1000)").Scan(&ahead))
+
+	s.Require().NoError(s.store.advanceRequestIDs(s.ctx))
+
+	rows := []Request{s.usageRow("sequence-ahead", nil)}
+	_, err := s.store.RecordRequests(s.ctx, rows)
+	s.Require().NoError(err)
+	s.Equal(ahead+1, rows[0].ID, "a sequence ahead of every row is left where it is")
+}
+
+func (s *StoreSuite) TestABatchLeavesItsRowsInTheOrderSentWithTheirIDs() {
+	sent := []Request{s.usageRow("order-z", nil), s.usageRow("order-y", nil), s.usageRow("order-z", nil)}
+
+	_, err := s.store.RecordRequests(s.ctx, sent)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"order-z", "order-y", "order-z"}, []string{sent[0].CustomerID, sent[1].CustomerID, sent[2].CustomerID})
+	stored := s.requestsOf("order-z")
+	s.Equal(sent[0].ID, stored[sent[0].UsageID].ID, "each row sent has the id it was written under")
+	s.Equal(sent[2].ID, stored[sent[2].UsageID].ID)
+	s.Less(sent[0].ID, sent[2].ID, "one customer's rows are written in the order they were sent")
+}
+
+func (s *StoreSuite) TestTheIdentityAndShippingColumnsAreStored() {
+	shipped := s.base.Add(time.Minute)
+	request := s.usageRow("identity", func(request *Request) {
+		request.OrganizationID, request.OrganizationTier, request.APIKey = "org", "tier-a", "key"
+		request.UserID, request.UsageCategories, request.SessionID = "ada", []string{"support", "team:core"}, "session"
+		request.ToShip, request.ShippedAt, request.ShipError = true, &shipped, "refused"
+	})
+	_, err := s.store.RecordRequests(s.ctx, []Request{request})
+	s.Require().NoError(err)
+
+	stored := s.requestsOf("identity")[request.UsageID]
+
+	s.Equal("org", stored.OrganizationID)
+	s.Equal("tier-a", stored.OrganizationTier)
+	s.Equal("key", stored.APIKey)
+	s.Equal("ada", stored.UserID)
+	s.Equal([]string{"support", "team:core"}, stored.UsageCategories)
+	s.Equal("session", stored.SessionID)
+	s.True(stored.ToShip)
+	s.Require().NotNil(stored.ShippedAt)
+	s.True(shipped.Equal(*stored.ShippedAt))
+	s.Equal("refused", stored.ShipError)
 }

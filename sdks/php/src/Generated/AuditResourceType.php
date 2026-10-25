@@ -8,7 +8,12 @@ namespace GetStream\VisionAgents\Generated;
 
 /**
  * What the change was made to. All of them are configuration: what an agent does while it runs
- * is traffic, and is read from the sessions and the logs instead.
+ * is traffic, and is read from the sessions and the logs instead. price_list is the
+ * deployment's own, changed through the management API, and is never listed for an app.
+ * end_user is one of the app's end users whose id was forgotten in the usage records, named by
+ * the id that replaced it. limit is one of the organization's spend limits, named by its id, a
+ * reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through
+ * the management API is kept under the organization's id.
  */
 enum AuditResourceType: string
 {
@@ -19,4 +24,7 @@ enum AuditResourceType: string
     case RouterConfig = 'router_config';
     case Plugin = 'plugin';
     case Policy = 'policy';
+    case PriceList = 'price_list';
+    case EndUser = 'end_user';
+    case Limit = 'limit';
 }

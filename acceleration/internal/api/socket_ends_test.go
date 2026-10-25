@@ -168,7 +168,8 @@ func (s *SocketHangUpSuite) TestACallerHangingUpMidGreetingIsNoFailure() {
 	}, settleFor, 20*time.Millisecond, "the agent never published into the call that was left")
 	var failures []string
 	for line := range strings.Lines(s.logged.String()) {
-		if strings.Contains(line, "level=ERROR") {
+		// The suite's stub voice and runtime have no price, which pricing reports on its own.
+		if strings.Contains(line, "level=ERROR") && !strings.Contains(line, "billable work has no price") {
 			failures = append(failures, line)
 		}
 	}

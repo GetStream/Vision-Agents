@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 type ConfigSuite struct {
@@ -38,6 +40,28 @@ func (s *ConfigSuite) TestEveryEnvironmentLoads() {
 		s.Equal(name, from)
 		s.Equal(":8080", config.Addr, "the default fills in what no file sets")
 	}
+}
+
+func (s *ConfigSuite) TestTheKnowledgeProvidersCostIsConfigThatAFileReplaces() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("knowledge:\n  stream_cost:\n    bytes_written:\n      usd: 2.6\n      per: 1000000000\n      minimum: 10000\n"), 0o600))
+
+	config, _, err := Load(path)
+
+	s.Require().NoError(err)
+	s.Equal(pricing.Rate{USD: 2.6, Per: 1_000_000_000, Minimum: 10_000}, config.Knowledge.StreamCost["bytes_written"],
+		"a price change of the provider's is a line of config")
+	s.Equal(pricing.Rate{USD: 0.33, Per: 730_000_000_000}, config.Knowledge.StreamCost["byte_hours"],
+		"what the file does not name keeps the provider's list price")
+}
+
+func (s *ConfigSuite) TestAKnowledgeCostWithNoUnitIsRefused() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("knowledge:\n  stream_cost:\n    bytes_written:\n      usd: 2.6\n"), 0o600))
+
+	_, _, err := Load(path)
+
+	s.ErrorContains(err, "knowledge.stream_cost.bytes_written")
 }
 
 func (s *ConfigSuite) TestTestingUsesItsOwnDatabase() {
@@ -203,16 +227,57 @@ func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
 func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
-	s.Equal(CodeSandbox{Broker: "daytona"}, config.CodeSandbox)
+	s.Equal(CodeSandbox{Broker: "daytona", IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, config.CodeSandbox)
 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_SECRET_PREFIX", "stg")
 	config, _, err = Load("")
 	s.Require().NoError(err)
-	s.Equal(CodeSandbox{Broker: "daytona", SecretPrefix: "stg"}, config.CodeSandbox)
+	s.Equal(CodeSandbox{Broker: "daytona", SecretPrefix: "stg", IdleStop: 15 * time.Minute, StoppedDelete: time.Hour},
+		config.CodeSandbox)
 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "vault")
 	_, _, err = Load("")
 	s.ErrorContains(err, "code_sandbox.broker is daytona or proxy")
+}
+
+// TestASandboxStopsAfter15IdleMinutesAndIsDeletedAnHourLater: the defaults, the variables that
+// set them, and intervals Daytona cannot take refused.
+func (s *ConfigSuite) TestASandboxStopsAfter15IdleMinutesAndIsDeletedAnHourLater() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_IDLE_STOP", "5m")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_STOPPED_DELETE", "2h")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(5*time.Minute, config.CodeSandbox.IdleStop)
+	s.Equal(2*time.Hour, config.CodeSandbox.StoppedDelete)
+
+	for _, interval := range []string{"0s", "30s", "90s"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_STOPPED_DELETE", interval)
+		_, _, err = Load("")
+		s.ErrorContains(err, "code_sandbox.stopped_delete (ROUTER_CODE_SANDBOX_STOPPED_DELETE) is a whole number of minutes", interval)
+	}
+	s.T().Setenv("ROUTER_CODE_SANDBOX_STOPPED_DELETE", "1h")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_IDLE_STOP", "-1m")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.idle_stop (ROUTER_CODE_SANDBOX_IDLE_STOP)")
+}
+
+// TestASandboxNamesItsDeploymentOnlyWhenAskedTo: empty by default, set by its variable, and a
+// value Daytona could not take as a label refused.
+func (s *ConfigSuite) TestASandboxNamesItsDeploymentOnlyWhenAskedTo() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.CodeSandbox.Deployment)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_DEPLOYMENT", "eu-west.blue")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal("eu-west.blue", config.CodeSandbox.Deployment)
+
+	for _, refused := range []string{"Blue", "-blue", "blue deployment"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_DEPLOYMENT", refused)
+		_, _, err = Load("")
+		s.ErrorContains(err, "code_sandbox.deployment (ROUTER_CODE_SANDBOX_DEPLOYMENT)", refused)
+	}
 }
 
 // TestTheProxyBrokerNeedsTheProxysURLAndCA: a sandbox must reach the proxy and trust it, its
@@ -237,7 +302,7 @@ func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
 	s.Equal(CodeSandbox{Broker: "proxy", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
-		ProxyPublicURL: "http://203.0.113.7:8091"}, config.CodeSandbox)
+		ProxyPublicURL: "http://203.0.113.7:8091", IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, config.CodeSandbox)
 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "")
 	_, _, err = Load("")
@@ -300,7 +365,7 @@ func (s *ConfigSuite) TestTheProxyBrokerTakesAnHTTPSProxyURL() {
 
 	s.Require().NoError(err)
 	s.Equal(CodeSandbox{Broker: "proxy", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
-		ProxyPublicURL: "https://203.0.113.7:8091"}, config.CodeSandbox)
+		ProxyPublicURL: "https://203.0.113.7:8091", IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, config.CodeSandbox)
 }
 
 // TestAnHTTPSProxyURLTheListenerCannotServeIsRefused: the daytona broker with a proxy address
@@ -410,7 +475,8 @@ func (s *ConfigSuite) TestTheSandboxProxyIsOffUnlessAskedForAndThenNeedsItsCA() 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
 	config, _, err = Load("")
 	s.Require().NoError(err)
-	s.Equal(CodeSandbox{Broker: "daytona", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key"}, config.CodeSandbox)
+	s.Equal(CodeSandbox{Broker: "daytona", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
+		IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, config.CodeSandbox)
 }
 
 // TestTheSecretPrefixHoldsNoUnderscore: a router named stg_dev would be swept by one named stg.
@@ -458,6 +524,111 @@ func (s *ConfigSuite) TestTheProxyDeclaresNoKindUnlessAskedFor() {
 	config, _, err = Load("")
 	s.Require().NoError(err)
 	s.True(config.Auth.ProxyDeclaresKind)
+}
+
+func (s *ConfigSuite) TestTheManageKeyIsNeverTheOpsKey() {
+	s.T().Setenv("ROUTER_AUTH_OPS_KEY", "one-staff-key")
+	s.T().Setenv("ROUTER_AUTH_MANAGE_KEY", "one-staff-key")
+
+	_, _, err := Load("")
+
+	s.Require().ErrorContains(err, "auth.manage_key")
+	s.ErrorContains(err, "auth.ops_key")
+	s.NotContains(err.Error(), "one-staff-key", "the error names the settings, never the key")
+}
+
+func (s *ConfigSuite) TestAManageKeyOfItsOwnIsTaken() {
+	s.T().Setenv("ROUTER_AUTH_OPS_KEY", "the-ops-key")
+	s.T().Setenv("ROUTER_AUTH_MANAGE_KEY", "the-manage-key")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal("the-manage-key", config.Auth.ManageKey)
+}
+
+func (s *ConfigSuite) TestAUsageServiceWithoutItsTokenIsRefused() {
+	s.T().Setenv("ROUTER_USAGE_URL", "http://usage:8070")
+
+	_, _, err := Load("")
+
+	s.Require().ErrorContains(err, "usage.url")
+	s.ErrorContains(err, "ROUTER_USAGE_TOKEN")
+}
+
+func (s *ConfigSuite) TestAUsageURLThatNamesNoServiceIsRefused() {
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "token")
+	for _, address := range []string{"usage:8070", "http://", "ftp://usage:8070"} {
+		s.T().Setenv("ROUTER_USAGE_URL", address)
+
+		_, _, err := Load("")
+
+		s.ErrorContains(err, "usage.url", address)
+	}
+}
+
+func (s *ConfigSuite) TestAUsageTokenWithoutTheServiceIsAllowed() {
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "the-ingest-token")
+
+	settings, _, err := Load("")
+
+	s.Require().NoError(err, "unsetting the URL alone stops shipping")
+	s.Empty(settings.Usage.URL)
+}
+
+func (s *ConfigSuite) TestTheUsageServicesRedisNeedsTheService() {
+	s.T().Setenv("ROUTER_USAGE_REDIS_URL", "redis://redis:6379")
+
+	_, _, err := Load("")
+
+	s.Require().ErrorContains(err, "ROUTER_USAGE_REDIS_URL")
+	s.ErrorContains(err, "ROUTER_USAGE_URL")
+
+	s.T().Setenv("ROUTER_USAGE_URL", "http://usage:8070")
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "token")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("redis://redis:6379", settings.Usage.RedisURL)
+}
+
+func (s *ConfigSuite) TestTheUsageServiceIsReadAndExported() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("usage:\n  url: http://usage:8070\n  token: from-the-file\n"), 0o600))
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "from-the-environment")
+
+	config, _, err := Load(path)
+
+	s.Require().NoError(err)
+	s.Equal(Usage{URL: "http://usage:8070", Token: "from-the-environment"}, config.Usage)
+	s.Equal("http://usage:8070", os.Getenv("ROUTER_USAGE_URL"), "what a file sets reaches the environment")
+}
+
+func (s *ConfigSuite) TestNoUsageServiceIsTheDefault() {
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Empty(config.Usage.URL)
+}
+
+func (s *ConfigSuite) TestLimitsModeMustBeKnown() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(LimitsEnforce, config.Limits.Mode, "a deployment that says nothing enforces")
+
+	for _, mode := range []LimitsMode{LimitsEnforce, LimitsShadow, LimitsOff} {
+		s.T().Setenv("ROUTER_LIMITS_MODE", string(mode))
+		config, _, err := Load("")
+		s.Require().NoError(err, mode)
+		s.Equal(mode, config.Limits.Mode)
+		s.Equal(string(mode), os.Getenv("ROUTER_LIMITS_MODE"), "exported")
+	}
+
+	for _, mode := range []string{"Enforce", "disabled", "true"} {
+		s.T().Setenv("ROUTER_LIMITS_MODE", mode)
+		_, _, err := Load("")
+		s.Require().ErrorContains(err, "ROUTER_LIMITS_MODE", mode)
+		s.ErrorContains(err, "enforce, shadow or off")
+	}
 }
 
 func (s *ConfigSuite) TestTheKMSKeyIsReadFromTheEnvironment() {

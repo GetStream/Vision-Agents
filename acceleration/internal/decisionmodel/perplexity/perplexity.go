@@ -1,8 +1,8 @@
 // Package perplexity asks Perplexity's Decider models for typed judgements.
 //
 // Perplexity's Decisions API takes the System One protocol, and it is the only place
-// Decider V1 is served now that OpenRouter has moved to V1.1. It refuses a field it does
-// not know, which systemone already never sends.
+// either Decider is served: OpenRouter lists V1 and V1.1 but has no endpoint behind them.
+// It refuses a field it does not know, which systemone already never sends.
 package perplexity
 
 import (

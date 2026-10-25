@@ -59,9 +59,15 @@ type AuditResourceType string
 func (AuditResourceType) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "AuditResourceType",
 		"What the change was made to. All of them are configuration: what an agent does while "+
-			"it runs is traffic, and is read from the sessions and the logs instead.",
+			"it runs is traffic, and is read from the sessions and the logs instead. price_list "+
+			"is the deployment's own, changed through the management API, and is never listed "+
+			"for an app. end_user is one of the app's end users whose id was forgotten in the "+
+			"usage records, named by the id that replaced it. limit is one of the organization's "+
+			"spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff "+
+			"made through the management API is kept under the organization's id.",
 		store.AuditAgentConfig, store.AuditSkill, store.AuditKnowledge, store.AuditKnowledgeURL,
-		store.AuditRouterConfig, store.AuditPlugin, store.AuditPolicy)
+		store.AuditRouterConfig, store.AuditPlugin, store.AuditPolicy, store.AuditResourcePriceList,
+		store.AuditEndUser, store.AuditSpendLimit)
 }
 
 // AuditAction is what happened to it.
@@ -81,8 +87,10 @@ type AuditSource string
 func (AuditSource) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "AuditSource",
 		"Which client made it, from the X-Stream-Client header. api is a caller that named no "+
-			"client: it reached the API directly, which is all that can be said about it.",
-		store.AuditSourceDashboard, store.AuditSourceCLI, store.AuditSourceSDK, store.AuditSourceAPI)
+			"client: it reached the API directly, which is all that can be said about it. manage "+
+			"is the management API, called with the manage key, which no header can claim.",
+		store.AuditSourceDashboard, store.AuditSourceCLI, store.AuditSourceSDK, store.AuditSourceAPI,
+		store.AuditSourceManage)
 }
 
 // AuditQuery is which of the app's changes to list.
@@ -352,11 +360,17 @@ type auditRecord struct {
 // the wrong trade. A record with no changes writes nothing: a save that moved nothing is
 // not a change, and a log full of them is a log nobody reads.
 func (s *Server) audit(ctx context.Context, record auditRecord) {
-	if s.store == nil || (len(record.Changes) == 0 && record.Action != store.AuditSynced) {
-		return
-	}
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
+		return
+	}
+	s.auditAs(ctx, customerID, record)
+}
+
+// auditAs is audit under customerID, for a change no customer's own request made, as staff's
+// through the management API.
+func (s *Server) auditAs(ctx context.Context, customerID string, record auditRecord) {
+	if s.store == nil || customerID == "" || (len(record.Changes) == 0 && record.Action != store.AuditSynced) {
 		return
 	}
 	agentID := record.AgentID

@@ -230,7 +230,10 @@ func documentHandWritten(api huma.API) {
 			"every other event go over the session's events socket, as they do for a call.\n" +
 			"A refused start is an `error` frame with `error`, the message, and the socket closes. " +
 			"An `error` frame for a field refused from a device also carries `code` and " +
-			"`error_type`, the `code` and `type` that `createSession` answers the same field with.\n" +
+			"`error_type`, the `code` and `type` that `createSession` answers the same field with, " +
+			"and so does a session refused for money: `account_suspended` (`permission`), or " +
+			"`insufficient_credits`, `system_limit_reached` or `spend_limit_reached` " +
+			"(`payment_required`).\n" +
 			"The session lasts as long as the socket. Closing the socket, or sending `stop`, ends " +
 			"the conversation. A conversation that ends closes the socket.",
 		Responses: map[string]*huma.Response{
@@ -293,7 +296,21 @@ func documentHandWritten(api huma.API) {
 			"`tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an " +
 			"optional `played_ms` saying how much of the reply the listener heard. What the routed " +
 			"model cannot do is refused with an `error` frame rather than dropped. All four report " +
-			"failures as `error` frames and end with `closed`.\n" +
+			"failures as `error` frames and end with `closed`. A refusal about money also carries " +
+			"`code` and `error_type`, as an HTTP request is refused: `account_suspended` " +
+			"(`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or " +
+			"`spend_limit_reached` (`payment_required`) for a model that costs money, while one that " +
+			"costs nothing is still served; the socket then closes with 1008.\n" +
+			"A server-side caller is told what each unit cost and when its organization's credit " +
+			"runs low; an end user's device is told neither. A settled `transcript`, a " +
+			"`synthesis_complete` and a `complete` carry `cost_micros`, what that turn, utterance " +
+			"or response cost in millionths of a dollar. What is recorded as the socket closes, such " +
+			"as a transcriber's last audio or a voice's failed utterance, comes on no frame. A " +
+			"`balance` frame, with `balance_micros` " +
+			"and `warning` (`low` or `exhausted`), says the organization's balance went down into " +
+			"that state while the socket was open, the values X-Stream-Balance-Micros and " +
+			"X-Stream-Balance-Warning carry on an answer: once per crossing, and at once after " +
+			"`started` when it already is.\n" +
 			"Search is answered at `/v1/search` rather than here: one question and its answer need " +
 			"no socket held open between them. Memory and phone are recorded rather than routed, so " +
 			"they are not served either.",

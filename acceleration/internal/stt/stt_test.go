@@ -25,6 +25,19 @@ func (s *STTSuite) TestAListOfNothingButBlanksIsNoKeytermsAtAll() {
 	s.Nil(CleanKeyterms(nil))
 }
 
+func (s *STTSuite) TestATranscriberThatSaysNothingIsMeasuredByItsVendor() {
+	s.Equal(MeteredByVendor, MeteringOf(silent{}))
+	s.Equal(MeteredByRouter, MeteringOf(measured{}))
+}
+
+// silent says nothing of how it is measured, and measured is billed the audio it is sent.
+type (
+	silent   struct{ STT }
+	measured struct{ STT }
+)
+
+func (measured) Metering() Metering { return MeteredByRouter }
+
 func (s *STTSuite) TestOnlyFinalModeIsFinal() {
 	s.True(Transcript{Mode: ModeFinal}.Final())
 	s.False(Transcript{Mode: ModeReplacement}.Final())

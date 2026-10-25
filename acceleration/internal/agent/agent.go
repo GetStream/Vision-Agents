@@ -34,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -83,6 +84,10 @@ type Options struct {
 	Instructions string
 	// CustomerID owns every request the agent makes. It is what the usage is billed to.
 	CustomerID string
+	// Attribution is who beside the customer every request the agent makes is billed to and
+	// asked for by: the key and the usage categories the session was opened with, its user
+	// and its id.
+	Attribution routing.Attribution
 	// Caller is the end user who asked for this conversation, which is who its daily
 	// limits are counted against. Empty for one a customer's own backend started, which is
 	// not limited.
@@ -189,9 +194,10 @@ type Options struct {
 	// randomness, verbosity -- because instructions and tools belong to the agent and a
 	// caller able to rewrite those could make a session impersonate a different agent.
 	Overwrites options.LLM
-	// Memory carries what earlier conversations established into this one. Without it
-	// the agent starts every call knowing nothing but its instructions.
-	Memory memory.Store
+	// Memory carries what earlier conversations established into this one, each call
+	// recorded for the agent's owner. Without it the agent starts every call knowing nothing
+	// but its instructions.
+	Memory *metered.Memory
 	// AppID narrows memories within the customer, so two deployments of one customer do
 	// not read each other's. It is kept as a label rather than as the app id, which is
 	// always the customer, so it can never reach another customer's.
@@ -210,10 +216,11 @@ type Options struct {
 	// RecallLimit caps how many memories are recalled on joining. Zero leaves the
 	// store's own default.
 	RecallLimit int
-	// Knowledge is what the agent may look up mid-conversation. Without it, or without a
-	// namespace to read, the lookup tool is not offered: a model told it can search and
-	// then refused would promise the caller an answer it cannot get.
-	Knowledge knowledge.Store
+	// Knowledge is what the agent may look up mid-conversation, each lookup recorded for the
+	// agent's owner. Without it, or without a namespace to read, the lookup tool is not
+	// offered: a model told it can search and then refused would promise the caller an answer
+	// it cannot get.
+	Knowledge *metered.Knowledge
 	// KnowledgeNamespace is which body of knowledge this agent reads.
 	KnowledgeNamespace string
 	// KnowledgeLimit caps how many passages one lookup returns. Zero leaves the store's
@@ -289,12 +296,16 @@ type Agent struct {
 	toolHolds map[string]*toolHold
 	// skillFiles are the files of each skill a written conversation loaded, by skill, and
 	// writtenFiles the ones already put in the sandbox, so run_code writes a skill's
-	// scripts once and again only when the skill has changed.
-	skillFiles   map[string]map[string]string
-	writtenFiles map[string]map[string]string
+	// scripts once and again only when the skill has changed, or the sandbox has: they were
+	// written into sandboxGeneration.
+	skillFiles        map[string]map[string]string
+	writtenFiles      map[string]map[string]string
+	sandboxGeneration int
 	// speculations are replies started before the flow controller ruled on their words,
-	// held until it does, by candidate.
+	// held until it does, by candidate. speculating is the id their rows share, kept from the
+	// first speculative reply to a turn of the caller's until the turn is answered.
 	speculations map[string]*speculation
+	speculating  string
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -638,11 +649,12 @@ func New(options Options) (*Agent, error) {
 
 	logger := options.Logger.With("customer", options.CustomerID, "session", options.SessionID, "call", options.CallID)
 	owner := routing.Owner{
-		CustomerID: options.CustomerID,
-		Caller:     options.Caller,
-		AgentID:    options.AgentID,
-		CallID:     options.CallID,
-		Tags:       options.Tags,
+		CustomerID:  options.CustomerID,
+		Attribution: options.Attribution,
+		Caller:      options.Caller,
+		AgentID:     options.AgentID,
+		CallID:      options.CallID,
+		Tags:        options.Tags,
 	}
 
 	settling := newCadence(cadenceGapFromEnv(logger), 0, 0, logger)
@@ -686,28 +698,18 @@ func New(options Options) (*Agent, error) {
 	agent.nativeMode.Store(native)
 
 	if options.Memory != nil {
-		// Memory is recorded as a modality of its own so what remembering costs is
-		// reported alongside what the models cost.
-		agent.memory = newMemoryWriter(
-			options.Memory,
-			scope,
-			options.Incognito,
-			owner,
-			routing.NewRecorder(routing.Memory, options.Store, options.Live, logger),
-			logger,
-		)
+		// Each call is recorded as a memory row of the agent's owner, so what remembering
+		// costs is reported alongside what the models cost.
+		agent.memory = newMemoryWriter(options.Memory.For(owner), scope, options.Incognito, logger)
 	}
 
 	// A knowledge store without a namespace reads nothing, so the agent is treated as
 	// having none rather than being offered a search that would always fail.
 	if options.Knowledge != nil && options.KnowledgeNamespace != "" {
 		agent.knowledge = newKnowledgeReader(
-			options.Knowledge,
+			options.Knowledge.For(owner),
 			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
 			options.KnowledgeLimit,
-			owner,
-			routing.NewRecorder(routing.Knowledge, options.Store, options.Live, logger),
-			logger,
 		)
 	}
 
@@ -747,7 +749,9 @@ func (a *Agent) Join(ctx context.Context) error {
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: already joined"))
 	}
-	a.ctx, a.cancel = context.WithCancel(ctx)
+	// Everything the agent opens from here on is owned by the session's attribution, whoever's
+	// context it joined with.
+	a.ctx, a.cancel = context.WithCancel(routing.WithAttribution(ctx, a.options.Attribution))
 	a.joined = true
 	a.mu.Unlock()
 
@@ -892,17 +896,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender, scheduled)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender, scheduled, "")
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender, scheduled)
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender, scheduled, "")
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -1318,9 +1322,6 @@ func (a *Agent) close() error {
 	if a.memory != nil {
 		a.memory.Close()
 	}
-	if a.knowledge != nil {
-		a.knowledge.Close()
-	}
 	if a.searcher != nil {
 		failures = append(failures, a.searcher.Close())
 	}
@@ -1733,10 +1734,11 @@ func (a *Agent) perform(action Action) {
 			decidedAt: time.Now(), said: newestWords(strings.TrimSpace(missed+" "+action.Candidate.Said()), missedWords)}
 		a.mu.Unlock()
 		note := joinNotes(action.Clarify, missedNote(missed))
-		if a.adoptSpeculation(action.Candidate, note) {
+		adopted, speculated := a.adoptSpeculation(action.Candidate, note)
+		if adopted {
 			return
 		}
-		if err := a.respondCandidate(action.Candidate, note); err != nil {
+		if err := a.respondCandidate(action.Candidate, note, speculated); err != nil {
 			a.fail(err, "llm")
 		}
 
@@ -1890,18 +1892,19 @@ func turnStamp() string { return strconv.FormatInt(time.Now().UnixNano(), 10) }
 
 // respond asks the harness to reply to a turn.
 func (a *Agent) respond(participant stt.Participant, text string, listened heard, images []llm.ImagePart) error {
-	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{}, routing.Caller{}, false)
+	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{}, routing.Caller{}, false, "")
 }
 
 // respondCandidate answers a settled turn. The note is what the conversation decided the
 // model should know beyond the words, and is empty on a turn that is simply answered.
-func (a *Agent) respondCandidate(ready candidate, note string) error {
+// speculated is respondTurn's.
+func (a *Agent) respondCandidate(ready candidate, note, speculated string) error {
 	return a.respondTurn(ready.ID, ready.Participant, ready.Said(), heard{
 		at:           ready.ReadyAt,
 		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
 		confidence:   ready.Confidence,
-	}, note, nil, options.LLM{}, routing.Caller{}, false)
+	}, note, nil, options.LLM{}, routing.Caller{}, false, speculated)
 }
 
 // noteToolDone records that one of the tools the current turn asked for has returned. A
@@ -1980,6 +1983,9 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	}, "")
 }
 
+// respondTurn answers a turn of the caller's. speculated is the id of the speculative replies
+// to the turn that were thrown away, which this answer is kept in place of, and empty when
+// there were none.
 func (a *Agent) respondTurn(
 	turnID string,
 	participant stt.Participant,
@@ -1990,6 +1996,7 @@ func (a *Agent) respondTurn(
 	asked options.LLM,
 	sender routing.Caller,
 	scheduled bool,
+	speculated string,
 ) error {
 	a.mu.Lock()
 	if a.harness == nil {
@@ -1998,6 +2005,9 @@ func (a *Agent) respondTurn(
 	}
 	a.keepTurnLocked(participant, text)
 	history := a.replayLocked()
+	// This turn is answered, however it was asked, so what is speculated on next is a turn
+	// of its own.
+	a.speculating = ""
 
 	a.speakingTurn = turnID
 	a.generating = true
@@ -2027,7 +2037,7 @@ func (a *Agent) respondTurn(
 	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 
-	return a.generate(harness.Turn{
+	turn := harness.Turn{
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
@@ -2035,7 +2045,12 @@ func (a *Agent) respondTurn(
 		Images:       images,
 		Asked:        asked,
 		NoTools:      noTools,
-	}, text)
+	}
+	if speculated != "" {
+		kept := map[string]string{routing.AttributeSpeculation: speculated, routing.AttributeKept: "true"}
+		turn.Attributes = func() map[string]string { return kept }
+	}
+	return a.generate(turn, text)
 }
 
 // typedCaller is the participant RespondTo answers as. Typed words are the caller's own,
@@ -3705,6 +3720,9 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 			// An answer took the reply started for these words; any other ruling leaves it
 			// unwanted.
 			a.dropSpeculation(typed.CandidateID)
+			if typed.Disposition == harness.Ignore {
+				a.stopSpeculating()
+			}
 
 		case harness.Compacted:
 			a.applyCompaction(typed)
@@ -4371,7 +4389,7 @@ func (a *Agent) openSubagent(target string) func(context.Context) (*llmrouter.Se
 		}
 	}
 	return func(ctx context.Context) (*llmrouter.Session, error) {
-		return a.options.LLM.Start(ctx, llmrouter.Request{
+		return a.options.LLM.Start(routing.WithAttribution(ctx, a.options.Attribution), llmrouter.Request{
 			CustomerID: a.options.CustomerID, Caller: a.options.Caller,
 			AgentID: a.options.AgentID, CallID: a.options.CallID,
 			Tags: a.options.Tags, Target: target,

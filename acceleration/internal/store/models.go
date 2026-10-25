@@ -6,9 +6,11 @@ import (
 	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -17,12 +19,32 @@ import (
 type Request struct {
 	bun.BaseModel `bun:"table:requests,alias:r"`
 
-	ID       int64  `bun:"id,pk,autoincrement"`
-	Modality string `bun:"modality,notnull"`
+	ID int64 `bun:"id,pk,autoincrement"`
+	// UsageID is the unit of work, chosen before the row is first written, so writing it
+	// again is a no-op rather than a second charge. Rows from before it was kept have none.
+	// RecordRequests refuses a row without one; nullzero leaves a missing one to the column's
+	// random default, which is what a router from before it gets.
+	UsageID  uuid.UUID `bun:"usage_id,type:uuid,nullzero"`
+	Modality string    `bun:"modality,notnull"`
 	// CustomerID owns the request. Every statistic is keyed by it.
 	CustomerID string `bun:"customer_id,notnull"`
+	// OrganizationID is who is billed for it. The rest say who asked: OrganizationTier as
+	// Stream sent it, APIKey the key or the origin of work no key started, UserID empty when
+	// there is none, and UsageCategories what the customer counts the work under (nil
+	// writes none). APIKey names a key, never holds its secret: a row the writer loses is
+	// logged in full.
+	OrganizationID   string   `bun:"organization_id,notnull"`
+	OrganizationTier string   `bun:"organization_tier,notnull"`
+	APIKey           string   `bun:"api_key,notnull"`
+	UserID           string   `bun:"user_id,notnull"`
+	UsageCategories  []string `bun:"usage_categories,array,nullzero"`
+	// LimitGrants are the grants the work was admitted on past a spent limit, which its
+	// billable cost is drawn from (20261112121000_requests_limit_grants.sql).
+	LimitGrants []int64 `bun:"limit_grants,array,nullzero"`
 	// AgentID is the agent the work was done for. Empty outside a conversation.
 	AgentID string `bun:"agent_id,nullzero"`
+	// SessionID is the agent session the work ran in, empty outside one.
+	SessionID string `bun:"session_id,notnull"`
 	// CallID is the call the work happened in. Empty outside a conversation.
 	CallID string `bun:"call_id,nullzero"`
 	// Tags are the customer's own cost labels, aggregated into the tag rollups so spend
@@ -50,15 +72,59 @@ type Request struct {
 	// InputParts is what the prompt was made of, estimated and scaled to InputTokens.
 	InputParts InputParts `bun:"embed:input_"`
 	// Images is how many pictures were drawn.
-	Images    int64    `bun:"images,notnull"`
-	LatencyMs *float64 `bun:"latency_ms"`
-	// CostMicros is millionths of a dollar, priced from the provider's configured rates.
+	Images int64 `bun:"images,notnull"`
+	// Meters are the priced quantities with no column of their own: cache writes, speech to
+	// speech by modality, requests, pixels.
+	Meters pricing.Quantities `bun:"meters,type:jsonb,nullzero"`
+	// Attributes chose the price (a service tier, a country) or explain the row.
+	Attributes map[string]string `bun:"attributes,type:jsonb,nullzero"`
+	LatencyMs  *float64          `bun:"latency_ms"`
+	// CostMicros is millionths of a dollar: the cost at the vendor's rates plus the markup in
+	// force.
 	CostMicros int64 `bun:"cost_micros,notnull"`
 	// OutputCostMicros is the part of CostMicros the generated tokens were priced at.
-	OutputCostMicros int64  `bun:"output_cost_micros,notnull"`
-	Success          bool   `bun:"success,notnull"`
-	ErrorCode        string `bun:"error_code,nullzero"`
-	ErrorMessage     string `bun:"error_message,nullzero"`
+	OutputCostMicros int64 `bun:"output_cost_micros,notnull"`
+	// PriceVersion names what priced the row: the price change that wrote its entry, the
+	// embedded or file list a router prices with before it reads the database, "quoted" for
+	// an amount the vendor quoted outright, and empty for local or unpriced work.
+	PriceVersion string `bun:"price_version,notnull"`
+	// BaseCostMicros is the cost at the vendor's rates, before the markup, so the margin on
+	// the row is CostMicros - BaseCostMicros.
+	BaseCostMicros int64 `bun:"base_cost_micros,notnull"`
+	// Billable is false for free and local work, which counts toward no spend.
+	Billable     bool   `bun:"billable,notnull"`
+	Success      bool   `bun:"success,notnull"`
+	ErrorCode    string `bun:"error_code,nullzero"`
+	ErrorMessage string `bun:"error_message,nullzero"`
+	// ToShip is true until the usage service has the row; ShipError is why it refused it.
+	ToShip    bool       `bun:"to_ship,notnull"`
+	ShippedAt *time.Time `bun:"shipped_at"`
+	ShipError string     `bun:"ship_error,notnull"`
+}
+
+// Quantities is what the row is priced by: the typed columns as pricing meters, the prompt
+// split into tokens read fresh, read from cache and written to it, then Meters. Zero
+// quantities are left out.
+func (r Request) Quantities() pricing.Quantities {
+	used := pricing.Quantities{}
+	add := func(meter pricing.Meter, quantity int64) {
+		if quantity != 0 {
+			used[meter] += quantity
+		}
+	}
+	// Cached and cache-written tokens are part of the prompt, so they are billed once at
+	// their own rate rather than twice.
+	fresh := max(r.InputTokens-r.CachedInputTokens-r.Meters[pricing.CacheWriteInputTokens], 0)
+	add(pricing.AudioMs, r.AudioMs)
+	add(pricing.Characters, r.Characters)
+	add(pricing.InputTokens, fresh)
+	add(pricing.CachedInputTokens, r.CachedInputTokens)
+	add(pricing.OutputTokens, r.OutputTokens)
+	add(pricing.Images, r.Images)
+	for meter, quantity := range r.Meters {
+		add(meter, quantity)
+	}
+	return used
 }
 
 // InputParts splits an LLM prompt by what it carried. No provider reports this, so it is
@@ -313,6 +379,97 @@ type CallResource struct {
 	// stored as NULL, is the deployment's own app.
 	StreamAppPK int64     `bun:"stream_app_pk,nullzero"`
 	CreatedAt   time.Time `bun:"created_at,notnull"`
+}
+
+// What ended a call leg.
+const (
+	// LegLeft is the leg's phone leaving the call.
+	LegLeft = "left"
+	// LegEnded is the call ending with the leg still on it.
+	LegEnded = "ended"
+	// LegSwept is the sweep ending a leg nothing said had ended.
+	LegSwept = "swept"
+	// LegUnanswered is a leg that ended without its phone ever joining.
+	LegUnanswered = "unanswered"
+)
+
+// CallLeg is one leg of a phone call, from when its phone joined the call until it left or the
+// call ended, which is what its minutes are billed by. Who it is billed to is kept from when
+// it opened, so the minutes of a placed call stay with the key that placed it.
+type CallLeg struct {
+	bun.BaseModel `bun:"table:call_legs,alias:cl"`
+
+	ID               int64    `bun:"id,pk,autoincrement"`
+	CustomerID       string   `bun:"customer_id,notnull"`
+	OrganizationID   string   `bun:"organization_id,notnull"`
+	OrganizationTier string   `bun:"organization_tier,notnull"`
+	APIKey           string   `bun:"api_key,notnull"`
+	UserID           string   `bun:"user_id,notnull"`
+	UsageCategories  []string `bun:"usage_categories,array,nullzero"`
+	// StreamAppPK is the Stream app the call is in. Zero, stored as NULL, is the
+	// deployment's own app.
+	StreamAppPK int64  `bun:"stream_app_pk,nullzero"`
+	CallType    string `bun:"call_type,notnull"`
+	CallID      string `bun:"call_id,notnull"`
+	// StreamSessionID is Stream's session of the call, and ParticipantSession the user session
+	// of the leg's phone in it. Empty until known.
+	StreamSessionID    string `bun:"stream_session_id,notnull"`
+	ParticipantSession string `bun:"participant_session,notnull"`
+	Vendor             string `bun:"vendor,notnull"`
+	// Direction is Inbound or Outbound.
+	Direction    string `bun:"direction,notnull"`
+	LocalNumber  string `bun:"local_number,notnull"`
+	RemoteNumber string `bun:"remote_number,notnull"`
+	// Country is what the leg's minutes are priced by: where an outbound leg rang, and the
+	// country of the number an inbound one rang. Empty when unknown.
+	Country string            `bun:"country,notnull"`
+	AgentID string            `bun:"agent_id,notnull"`
+	Tags    map[string]string `bun:"tags,type:jsonb,nullzero"`
+	// DialedAt is when the vendor took the dial, or the call arrived. StartedAt is when the
+	// leg's phone joined, nil while it rings; EndedAt nil while the leg is open; EndReason
+	// what ended it (LegLeft and the rest).
+	DialedAt  time.Time  `bun:"dialed_at,notnull"`
+	StartedAt *time.Time `bun:"started_at"`
+	EndedAt   *time.Time `bun:"ended_at"`
+	EndReason string     `bun:"end_reason,notnull"`
+}
+
+// Connected reports whether the leg's phone ever joined the call, which is what makes it billed.
+func (l CallLeg) Connected() bool { return l.StartedAt != nil }
+
+// Used is how long an ended leg was connected, in seconds, a started second counting whole:
+// what a vendor bills its minutes from. A leg still open, or never connected, has used nothing.
+func (l CallLeg) Used() pricing.Quantities {
+	if l.StartedAt == nil || l.EndedAt == nil || !l.EndedAt.After(*l.StartedAt) {
+		return pricing.Quantities{pricing.CallSeconds: 0}
+	}
+	lasted := l.EndedAt.Sub(*l.StartedAt)
+	seconds := int64(lasted / time.Second)
+	if lasted%time.Second != 0 {
+		seconds++
+	}
+	return pricing.Quantities{pricing.CallSeconds: seconds}
+}
+
+// CallParticipant is a phone's join or leave of a call that no leg was waiting for when it
+// was delivered, kept for the leg that opens later (OpenCallLeg) and for the phone's join
+// that comes after its leave (ConnectCallLeg). One with no participant session is the call
+// hook having delivered a participant event of the call (HeardCall).
+type CallParticipant struct {
+	bun.BaseModel `bun:"table:call_participants,alias:cp"`
+
+	ID int64 `bun:"id,pk,autoincrement"`
+	// StreamAppPK and Unpinned are the scope of the hook that delivered it.
+	StreamAppPK        int64  `bun:"stream_app_pk,nullzero"`
+	Unpinned           bool   `bun:"unpinned,notnull"`
+	CallType           string `bun:"call_type,notnull"`
+	CallID             string `bun:"call_id,notnull"`
+	ParticipantSession string `bun:"participant_session,notnull"`
+	// Number is off the phone's participant id, empty when it named none.
+	Number     string     `bun:"number,notnull"`
+	JoinedAt   *time.Time `bun:"joined_at"`
+	LeftAt     *time.Time `bun:"left_at"`
+	RecordedAt time.Time  `bun:"recorded_at,notnull"`
 }
 
 // AgentConfig is a named set of the decisions a session is created with.
@@ -1084,7 +1241,7 @@ type VoiceBinding struct {
 	SyncedAt *time.Time `bun:"synced_at,nullzero"`
 }
 
-// Which way a call went.
+// Which way a call, a leg of one or a text went.
 const (
 	// Inbound is somebody ringing the agent.
 	Inbound = "inbound"
@@ -1194,6 +1351,15 @@ type Campaign struct {
 	CreatedAt   time.Time         `bun:"created_at,notnull"`
 	StartedAt   *time.Time        `bun:"started_at"`
 	FinishedAt  *time.Time        `bun:"finished_at"`
+	// PausedReason is the code of what refused a call when the router paused the campaign
+	// itself, as telephony_suspended or insufficient_credits; empty otherwise.
+	PausedReason string `bun:"paused_reason,nullzero"`
+
+	// APIKey, UserID and UsageCategories are who scheduled the campaign, as the request that
+	// created it named them: the calls it places later are owned by them.
+	APIKey          string   `bun:"api_key,notnull"`
+	UserID          string   `bun:"user_id,notnull"`
+	UsageCategories []string `bun:"usage_categories,array,nullzero"`
 }
 
 // Contact is one person to ring, and what became of ringing them.
@@ -1605,10 +1771,15 @@ type AgentSession struct {
 	AgentID        string `bun:"agent_id,notnull"`
 	ConversationID string `bun:"conversation_id,notnull"`
 	// UserID is whose session it is; CallerKind says what that name is worth.
-	UserID      string `bun:"user_id,notnull"`
-	CallerKind  string `bun:"caller_kind,notnull"`
-	Title       string `bun:"title,notnull"`
-	Description string `bun:"description,notnull"`
+	UserID     string `bun:"user_id,notnull"`
+	CallerKind string `bun:"caller_kind,notnull"`
+	// APIKey and UsageCategories are the key, or origin, and the categories the session was
+	// opened with, which its usage is recorded under for its whole life. A session carried on
+	// from its row keeps them; one from before they were kept has no key.
+	APIKey          string   `bun:"api_key,notnull"`
+	UsageCategories []string `bun:"usage_categories,array,nullzero"`
+	Title           string   `bun:"title,notnull"`
+	Description     string   `bun:"description,notnull"`
 	// Project is what the conversation belongs to, a column as well as a cost tag so a
 	// list grouped by project needs no JSON unpacking.
 	Project string `bun:"project,notnull"`

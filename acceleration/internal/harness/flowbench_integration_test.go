@@ -27,6 +27,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/typesafe"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -36,7 +37,7 @@ import (
 const benchmarkEnvVar = "FLOW_BENCHMARK"
 
 // modelsEnvVar names the router targets to compare, comma separated: an alias such as
-// llm-flow, a provider and model such as cerebras/gemma-4-31b, all for every LLM the router is
+// llm-flow, a provider and model such as gemma/gemma-4-26B-A4B-it, all for every LLM the router is
 // configured with, or none to run only the Jev arms. Each is asked the production prompt and read with the
 // production parser.
 const modelsEnvVar = "FLOW_BENCHMARK_MODELS"
@@ -287,7 +288,7 @@ func (s *FlowBenchmarkSuite) modelArms() []arm {
 			continue
 		}
 		s.T().Cleanup(func() { _ = session.Close() })
-		arms = append(arms, modelArm(target, session, session.Price().CostMicros))
+		arms = append(arms, modelArm(target, session, func(usage routing.Usage) int64 { return session.Quote(usage).CostMicros }))
 	}
 	return arms
 }
@@ -506,8 +507,9 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 	})
 	s.Require().NoError(err)
 
+	jev := pricing.Entry{Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: {USD: jevInputPerMillion, Per: 1_000_000}}}
 	price := func(used routing.Usage) int64 {
-		return routing.Price{PerMillionInputTokens: jevInputPerMillion}.CostMicros(used)
+		return jev.Quote(pricing.Quantities{pricing.InputTokens: used.InputTokens}).CostMicros
 	}
 
 	return []arm{

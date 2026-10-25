@@ -131,9 +131,10 @@ func (s *Mem0Suite) TestRecallReturnsWhatIsKnownMostRelevantFirst() {
 	recalled, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "anything"})
 	s.Require().NoError(err)
 
-	s.Require().Len(recalled, 2)
-	s.Equal(memory.Memory{ID: "m1", Text: "Lives in Austin", Score: 0.9}, recalled[0])
-	s.Equal("Allergic to nuts", recalled[1].Text)
+	s.Require().Len(recalled.Memories, 2)
+	s.Equal(memory.Memory{ID: "m1", Text: "Lives in Austin", Score: 0.9}, recalled.Memories[0])
+	s.Equal("Allergic to nuts", recalled.Memories[1].Text)
+	s.Equal(memory.Billed{Requests: 1}, recalled.Billed, "a search is one retrieval request")
 }
 
 func (s *Mem0Suite) TestJoiningWithoutAQuestionUsesANonemptyRecallQuery() {
@@ -143,8 +144,8 @@ func (s *Mem0Suite) TestJoiningWithoutAQuestionUsesANonemptyRecallQuery() {
 		s.Require().NoError(err)
 		s.NotEmpty(s.platform.body["query"])
 		s.Equal(map[string]any{"user_id": "acme", "app_id": "router"}, s.platform.body["filters"])
-		s.Require().Len(recalled, 1)
-		s.Equal("Building a social network for cats", recalled[0].Text)
+		s.Require().Len(recalled.Memories, 1)
+		s.Equal("Building a social network for cats", recalled.Memories[0].Text)
 	}
 }
 
@@ -156,11 +157,12 @@ func (s *Mem0Suite) TestRecallWithoutAUserIsRejectedBeforeTheNetwork() {
 }
 
 func (s *Mem0Suite) TestRememberHandsTheConversationOver() {
-	err := s.store.Remember(s.ctx, s.scope, []llm.Message{
+	billed, err := s.store.Remember(s.ctx, s.scope, []llm.Message{
 		{Role: llm.User, Content: "I moved to Austin"},
 		{Role: llm.Assistant, Content: "Noted."},
 	})
 	s.Require().NoError(err)
+	s.Equal(memory.Billed{Requests: 1}, billed, "an exchange is one add request")
 
 	s.Equal("/v3/memories/add/", s.platform.path)
 	s.Equal("acme", s.platform.body["user_id"])
@@ -177,7 +179,7 @@ func (s *Mem0Suite) TestRememberHandsTheConversationOver() {
 func (s *Mem0Suite) TestRememberLabelsWhatItWritesSoRecallCanFilterOnIt() {
 	s.scope.Extra = map[string]string{"company_id": "12312"}
 
-	err := s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved to Austin"}})
+	_, err := s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved to Austin"}})
 	s.Require().NoError(err)
 
 	s.Equal(map[string]any{"company_id": "12312"}, s.platform.body["metadata"])
@@ -186,15 +188,18 @@ func (s *Mem0Suite) TestRememberLabelsWhatItWritesSoRecallCanFilterOnIt() {
 func (s *Mem0Suite) TestRememberWithoutARunIsRejectedBeforeTheNetwork() {
 	s.scope.RunID = ""
 
-	err := s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved to Austin"}})
+	_, err := s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved to Austin"}})
 
 	s.ErrorContains(err, "run id")
 	s.Empty(s.platform.path)
 }
 
 func (s *Mem0Suite) TestRememberingNothingIsNotACall() {
-	s.Require().NoError(s.store.Remember(s.ctx, s.scope, nil))
-	s.Require().NoError(s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User}}))
+	for _, messages := range [][]llm.Message{nil, {{Role: llm.User}}} {
+		billed, err := s.store.Remember(s.ctx, s.scope, messages)
+		s.Require().NoError(err)
+		s.Zero(billed.Requests)
+	}
 
 	s.Empty(s.platform.path, "an empty conversation has nothing to learn from")
 }
@@ -206,8 +211,10 @@ func (s *Mem0Suite) TestForgettingASessionDeletesExactlyWhatItsFiltersList() {
 		`{"results":[]}`,
 	}
 
-	s.Require().NoError(s.store.ForgetRun(s.ctx, "acme", "session-1"))
+	billed, err := s.store.ForgetRun(s.ctx, "acme", "session-1")
+	s.Require().NoError(err)
 
+	s.Equal(memory.Billed{Requests: 3}, billed, "two listings and a delete")
 	s.Equal([]string{
 		"POST /v3/memories/?page=1&page_size=100",
 		"DELETE /v1/batch/",
@@ -223,9 +230,11 @@ func (s *Mem0Suite) TestTruncatingDeletesEveryPageOfTheUsersMemories() {
 		`{"results":[]}`,
 	}
 
-	s.Require().NoError(s.store.Truncate(s.ctx, "acme", "222"))
+	billed, err := s.store.Truncate(s.ctx, "acme", "222")
+	s.Require().NoError(err)
 
 	s.Len(s.platform.requests, 5, "each page is deleted before the next is read")
+	s.EqualValues(5, billed.Requests)
 	s.Equal(map[string]any{"filters": map[string]any{"app_id": "acme", "user_id": "222"}}, s.platform.body)
 }
 
@@ -233,14 +242,16 @@ func (s *Mem0Suite) TestAMemoryStillListedAfterDeletingStopsTheLoop() {
 	s.platform.replies = []string{`{"results":[{"id":"m1"}]}`, `{"message":"ok"}`}
 	s.platform.respond = `{"results":[{"id":"m1"}]}`
 
-	err := s.store.ForgetRun(s.ctx, "acme", "session-1")
+	_, err := s.store.ForgetRun(s.ctx, "acme", "session-1")
 
 	s.ErrorContains(err, "still listed")
 }
 
 func (s *Mem0Suite) TestForgettingWithoutAnAppIsRejectedBeforeTheNetwork() {
-	s.ErrorContains(s.store.Truncate(s.ctx, "", "222"), "app id")
-	s.ErrorContains(s.store.ForgetRun(s.ctx, "acme", ""), "run id")
+	_, err := s.store.Truncate(s.ctx, "", "222")
+	s.ErrorContains(err, "app id")
+	_, err = s.store.ForgetRun(s.ctx, "acme", "")
+	s.ErrorContains(err, "run id")
 	s.Empty(s.platform.requests, "an unscoped delete would take somebody else's memories")
 }
 

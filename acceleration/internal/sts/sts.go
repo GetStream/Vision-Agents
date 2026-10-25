@@ -74,6 +74,15 @@ type Capabilities struct {
 	ToolsMidSession        bool
 	// Usage reports whether the model says what a response cost in tokens.
 	Usage bool
+	// SessionBilled reports a vendor that bills every second the session is open, which it
+	// reports in SessionUsage, rather than its replies. The replies are then recorded unbilled,
+	// for their timing, and the seconds are the bill.
+	SessionBilled bool
+	// BilledAudio reports a vendor that keeps a running count of the audio it bills, and
+	// reports its growth on every reply it settles (Usage.AudioBilled). A reply settled
+	// without it, cut off before the vendor said, bills no audio: the vendor's next count
+	// includes what was heard, or the session's last row does.
+	BilledAudio bool
 	// Resumable reports whether a session survives its connection, so the provider can
 	// reconnect without the conversation starting over.
 	Resumable bool
