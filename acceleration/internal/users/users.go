@@ -203,12 +203,7 @@ func (r *Recorder) Email(ctx context.Context, customerID, userID, email string) 
 	lock := r.emailLock(customerID, userID)
 	lock.Lock()
 	defer lock.Unlock()
-	// Asked again under the lock: a request for the same address may have written it while
-	// this one waited.
 	now := time.Now()
-	if r.emails.Holds(customerID, userID, email, now) {
-		return nil
-	}
 	if err := r.db.SetUserEmail(ctx, customerID, userID, email); err != nil {
 		return err
 	}
