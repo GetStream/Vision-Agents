@@ -831,9 +831,10 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		// Any other error the provider sent back: its description is kept as the denied line
 		// keeps it, not as AuthorizationError.Error carries it, raw and whole.
 		description := core.LoggedDescription(refused.Description, query.Get("state"), query.Get("code"))
-		s.logger.Info("a consent did not complete", "connection", row.ConnectionID, "provider_code", refused.Code,
+		code := core.LoggedDescription(refused.Code, query.Get("state"), query.Get("code"))
+		s.logger.Info("a consent did not complete", "connection", row.ConnectionID, "provider_code", code,
 			"error_description", description)
-		s.recordRefusal(ctx, connection, core.LoggedDescription(refused.Code, query.Get("state"), query.Get("code")), description)
+		s.recordRefusal(ctx, connection, code, description)
 		return consentFailed
 	}
 	if err != nil {
@@ -889,6 +890,11 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	if err != nil {
 		s.logger.Error("could not store a consent's credentials", "connection", row.ConnectionID, "error", err)
 		return consentFailed
+	}
+	if notOwner || switched {
+		// Nothing stores the tokens the provider just issued, so nothing could revoke them later.
+		s.revokeAtProvider(ctx, connection, core.CredentialState{Credentials: credentials, Metadata: account.Metadata,
+			DefinitionRevision: sealed.DefinitionRevision}, "refused_consent")
 	}
 	if notOwner {
 		s.logger.Info("a consent was refused for another account than its connection's owner", "connection", row.ConnectionID,

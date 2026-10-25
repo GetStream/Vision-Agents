@@ -91,7 +91,8 @@ def sync_detailed(
     """Remove the app's own OAuth client for a connector
 
      Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect
-    with another client.
+    with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is
+    first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -125,7 +126,8 @@ def sync(
     """Remove the app's own OAuth client for a connector
 
      Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect
-    with another client.
+    with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is
+    first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -154,7 +156,8 @@ async def asyncio_detailed(
     """Remove the app's own OAuth client for a connector
 
      Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect
-    with another client.
+    with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is
+    first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -186,7 +189,8 @@ async def asyncio(
     """Remove the app's own OAuth client for a connector
 
      Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect
-    with another client.
+    with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is
+    first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

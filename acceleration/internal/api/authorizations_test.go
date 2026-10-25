@@ -325,7 +325,7 @@ func (s *AuthorizationsSuite) TestAConsentTheProviderRefusedOtherwiseIsLoggedWit
 
 // TestAProviderErrorCodeThatEchoesTheCallbackIsKeptCutInTheReason (R1.2): the provider's
 // error code is cut as its description is, so a code that echoes the state, or one past 256
-// bytes, does not reach the connection's last validation whole.
+// bytes, does not reach the connection's last validation whole, nor the log line.
 func (s *AuthorizationsSuite) TestAProviderErrorCodeThatEchoesTheCallbackIsKeptCutInTheReason() {
 	id := s.connection("")
 	alice := s.browser()
@@ -342,6 +342,8 @@ func (s *AuthorizationsSuite) TestAProviderErrorCodeThatEchoesTheCallbackIsKeptC
 	s.NotContains(reason, state)
 	s.True(strings.HasPrefix(reason, "The provider refused the consent with bad_[redacted]_xxx"), reason)
 	s.Less(len(reason), len("The provider refused the consent with : no.")+core.DescriptionBytes+8)
+	s.Contains(s.logged.line(s.T(), "a consent did not complete", id), " provider_code=bad_[redacted]_xxx")
+	s.False(strings.Contains(s.logged.String(), state), "the state is not logged")
 }
 
 // TestARefusedReconnectOfAConnectionThatNeedsReauthorizationStoresTheReason (R1.3): only a
@@ -1462,6 +1464,8 @@ sources:
     endpoint: mcp
 ` + extra))
 	s.Require().NoError(err)
+	// Where a refused consent's tokens are revoked, for a manifest that opts in.
+	manifest.Endpoints["revoke"] = s.provider.URL + fakeprovider.PathRevoke
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
 	s.Require().NoError(err)
 	return id

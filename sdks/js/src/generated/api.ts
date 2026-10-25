@@ -1157,7 +1157,7 @@ export type paths = {
         readonly post?: never;
         /**
          * Remove the app's own OAuth client for a connector
-         * @description Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+         * @description Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is first asked to revoke the grant of each, and a refusal is logged; the connections stay.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -2531,7 +2531,7 @@ export type paths = {
         readonly post?: never;
         /**
          * Delete every connection of one user
-         * @description For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+         * @description For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. Where the connector's manifest says revoke_on_delete (Nessy), the provider is asked to revoke each grant once the connections are gone, and a refusal is logged; for every other connector it is not asked. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
          *
          *     It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
          *

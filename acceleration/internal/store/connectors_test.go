@@ -1254,3 +1254,35 @@ func (s *StoreSuite) TestWithoutTheFlagEveryAppSeesTheCatalogItSawBefore() {
 		}
 	}
 }
+
+// TestAClientsGrantedConnectionsAreTheLiveOnesItIssuedAGrantTo: what removing the app's client
+// revokes is the connector's live connections with a grant from that client, not one from an
+// earlier client or another registration, another connector's, another customer's, a pending
+// one or a deleted one.
+func (s *StoreSuite) TestAClientsGrantedConnectionsAreTheLiveOnesItIssuedAGrantTo() {
+	issued := func(connection ConnectorConnection, registration core.ClientRegistrationMethod, clientID string, grant bool) {
+		s.Require().NoError(s.store.PutConnectorConnectionClient(s.ctx, &ConnectorConnectionClient{
+			ConnectionID: connection.ID, Registration: registration, ClientID: clientID,
+		}))
+		if grant {
+			s.granted(connection)
+		}
+	}
+	first := s.connection("acme-app", nil)
+	issued(first, core.ClientCustomer, "client-1", true)
+	second := s.connection("acme-app", nil)
+	issued(second, core.ClientCustomer, "client-1", true)
+	issued(s.connection("acme-app", nil), core.ClientCustomer, "client-1", false)
+	gone := s.connection("acme-app", nil)
+	issued(gone, core.ClientCustomer, "client-1", true)
+	s.deletedKeepingCredentials(gone)
+	issued(s.connection("acme-app", nil), core.ClientCustomer, "client-0", true)
+	issued(s.connection("acme-app", nil), core.ClientOperator, "client-1", true)
+	issued(s.connection("other-app", nil), core.ClientCustomer, "client-1", true)
+	issued(s.lineConnection("acme-app", lineManifest), core.ClientCustomer, "client-1", true)
+
+	found, err := s.store.GrantedConnectorConnectionsOfClient(s.ctx, "acme-app", "acme", core.ClientCustomer, "client-1")
+
+	s.Require().NoError(err)
+	s.Equal([]string{first.ID, second.ID}, connectionIDs(found))
+}
