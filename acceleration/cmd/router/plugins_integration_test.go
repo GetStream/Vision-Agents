@@ -144,16 +144,15 @@ func (s *PluginsMigrateSuite) TestTheComplaintRuleIsTheAPIs() {
 	s.Require().NoError(s.db.CreateOrganization(s.ctx, &organization))
 	app := store.App{OrganizationID: organization.ID, Name: "app-" + store.NewID(), Settings: store.AppSettings{InternalConnectors: new(true)}}
 	s.Require().NoError(s.db.CreateApp(s.ctx, &app))
-	complaint := sensitiveComplaint(s.db)
 	nessy := store.ConnectorBinding{Name: "customers", ConnectorID: "nessy", Connection: store.ConnectionBinding{Type: "session"}}
 	slack := store.ConnectorBinding{Name: "chat", ConnectorID: "slack", Connection: store.ConnectionBinding{Type: "session"}, Sandbox: true}
 
-	message, ok, err := complaint(s.ctx, app.ID, store.AgentConfig{Connectors: []store.ConnectorBinding{nessy, slack}})
+	message, ok, err := api.SensitiveBindingsComplaint(s.ctx, s.db, app.ID, store.AgentConfig{Connectors: []store.ConnectorBinding{nessy, slack}})
 	s.Require().NoError(err)
 	s.False(ok)
 	s.Contains(message, `connector binding "customers" binds "nessy"`)
 
-	message, ok, err = complaint(s.ctx, app.ID, store.AgentConfig{Connectors: []store.ConnectorBinding{slack}})
+	message, ok, err = api.SensitiveBindingsComplaint(s.ctx, s.db, app.ID, store.AgentConfig{Connectors: []store.ConnectorBinding{slack}})
 	s.Require().NoError(err)
 	s.True(ok, message)
 }

@@ -70,7 +70,7 @@ func (s *StoreSuite) TestADeletedPluginClientIsGoneAndDeletingItAgainSaysSo() {
 }
 
 // allowAll is an AddConfigPlugin check that allows every config.
-func allowAll(context.Context, AgentConfig) error { return nil }
+func allowAll(context.Context, AgentConfig, Definitions) error { return nil }
 
 // TestAnEditCommittedWhileAPluginIsNamedIsWhatItsCheckSees: another writer holds the config
 // row with an uncommitted edit; AddConfigPlugin waits for its lock, and once the edit commits,
@@ -87,7 +87,7 @@ func (s *StoreSuite) TestAnEditCommittedWhileAPluginIsNamedIsWhatItsCheckSees() 
 	checked := make(chan string, 1)
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", func(_ context.Context, seen AgentConfig) error {
+		_, err := s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", func(_ context.Context, seen AgentConfig, _ Definitions) error {
 			checked <- seen.Instructions
 			return nil
 		})
@@ -115,7 +115,7 @@ func (s *StoreSuite) TestAPluginItsCheckRefusesIsNotNamed() {
 	config := s.boundConfig("acme-app")
 	refused := errors.New("not beside a sensitive connector")
 
-	_, err := s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", func(context.Context, AgentConfig) error { return refused })
+	_, err := s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", func(context.Context, AgentConfig, Definitions) error { return refused })
 
 	s.ErrorIs(err, refused)
 	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
@@ -130,7 +130,7 @@ func (s *StoreSuite) TestAPluginIsNamedOnceAndAnEndUsersBecomesTheApps() {
 		Plugins: []PluginEntry{{Name: "google_calendar", User: true, Scopes: []string{"calendar.readonly"}}}}
 	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, config))
 	var seen []PluginEntry
-	check := func(_ context.Context, config AgentConfig) error {
+	check := func(_ context.Context, config AgentConfig, _ Definitions) error {
 		seen = config.Plugins
 		return nil
 	}

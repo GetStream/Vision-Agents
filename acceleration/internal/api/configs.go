@@ -882,7 +882,7 @@ func sandboxOfConfig(config store.AgentConfig) *savedSandbox {
 // Only a binding's require_approval asks a person before a call is sent; the others ask
 // nobody. It reads the config as it is about to be stored. router plugins migrate asks it
 // of a binding it adds (pluginmigrate.Options.Complaint).
-func SensitiveBindingsComplaint(ctx context.Context, definitions *store.Store, customerID string, config store.AgentConfig) (string, bool, error) {
+func SensitiveBindingsComplaint(ctx context.Context, definitions store.Definitions, customerID string, config store.AgentConfig) (string, bool, error) {
 	var sensitive *store.ConnectorBinding
 	var outbound, unheld []string
 	for i, binding := range config.Connectors {
@@ -935,6 +935,19 @@ func SensitiveBindingsComplaint(ctx context.Context, definitions *store.Store, c
 // sensitiveBindingsComplaint is SensitiveBindingsComplaint over the server's store.
 func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
 	return SensitiveBindingsComplaint(ctx, s.store, customerID, config)
+}
+
+// sensitiveCheck is SensitiveBindingsComplaint as a store write asks it, under the config's
+// row lock: a refusal is the 400 an API write answers with.
+func sensitiveCheck(customerID string) store.ConfigCheck {
+	return func(ctx context.Context, config store.AgentConfig, definitions store.Definitions) error {
+		if message, ok, err := SensitiveBindingsComplaint(ctx, definitions, customerID, config); err != nil {
+			return err
+		} else if !ok {
+			return invalidRequest(message)
+		}
+		return nil
+	}
 }
 
 // bindingSendsOut reports whether a binding offers a tool that may send data out with nobody
