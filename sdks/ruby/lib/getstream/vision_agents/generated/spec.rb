@@ -1414,7 +1414,7 @@ module GetStream
         }.freeze,
         "watchSession" => {
           method: :get, path: "/v1/agents/sessions/{id}/events",
-          path_params: %w[id].freeze, query: %w[interim decisions replay_pending_tools].freeze,
+          path_params: %w[id].freeze, query: %w[interim decisions replay_pending_tools tools].freeze,
           body: nil, body_required: false,
           socket: true, client_accessible: true
         }.freeze,
@@ -1450,7 +1450,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
-          properties: %w[connection connector_id events name policy required sandbox timeout_ms tool_patterns tools].freeze,
+          properties: %w[connection connector_id events name policy require_approval required sandbox timeout_ms tool_patterns tools].freeze,
           required: %w[name connector_id connection tools].freeze, open: false
         }.freeze,
         "AgentConnectorSelection" => {
@@ -2310,7 +2310,7 @@ module GetStream
           required: %w[field].freeze, open: false
         }.freeze,
         "SessionTool" => {
-          properties: %w[approval description display_title executor name parameters].freeze,
+          properties: %w[approval description display_title executor interruptible name parameters timeout_ms].freeze,
           required: %w[description name].freeze, open: false
         }.freeze,
         "SessionToolApproval" => {
@@ -2451,7 +2451,7 @@ module GetStream
         }.freeze,
         "ToolApprovalCommand" => {
           properties: %w[allowed request_id summary tool_call_id turn_id type].freeze,
-          required: %w[allowed request_id tool_call_id turn_id type].freeze, open: false
+          required: %w[allowed request_id tool_call_id type].freeze, open: false
         }.freeze,
         "ToolResultCommand" => {
           properties: %w[error output request_id tool_call_id turn_id type].freeze,
