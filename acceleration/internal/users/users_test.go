@@ -252,8 +252,23 @@ func (s *UsersSuite) TestAnEmailForNoUserIsNotHeld() {
 
 	s.Require().NoError(recorder.Email(s.ctx, app, "", "jim@fake.example"))
 	s.Require().NoError(recorder.Email(s.ctx, "", "jlahey", "jim@fake.example"))
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", ""))
 
 	s.Zero(recorder.emails.Len())
+}
+
+func (s *UsersSuite) TestAnEmailThatFailedToBeWrittenIsTriedAgain() {
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	recorder, app := s.plain(time.Hour), s.app()
+	recorder.db = closed
+	s.Require().Error(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+
+	recorder.db = s.db
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+
+	s.Equal("jim@fake.example", s.email(app, "jlahey"))
 }
 
 // TestTwoAddressesSaidAtOnceLeaveTheHeldOneTheRows: requests saying A and B for one user at
