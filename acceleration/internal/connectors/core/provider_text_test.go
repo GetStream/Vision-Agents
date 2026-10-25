@@ -27,6 +27,14 @@ func (s *LoggedDescriptionSuite) TestAnEchoedSecretIsRedactedAndAURLKeepsItsHost
 		core.LoggedDescription(text, "rt-secret-1", "cs-2"))
 }
 
+// TestAURLEscapedEchoOfASecretIsRedacted (AI-1649): a token request's form body and basic auth
+// carry a secret QueryEscaped, and a provider may echo it so, or PathEscaped.
+func (s *LoggedDescriptionSuite) TestAURLEscapedEchoOfASecretIsRedacted() {
+	text := "bad s3cr%2Fet%2Btok%3Den%26x, path s3cr%2Fet+tok=en&x, raw s3cr/et+tok=en&x"
+
+	s.Equal("bad [redacted], path [redacted], raw [redacted]", core.LoggedDescription(text, "s3cr/et+tok=en&x"))
+}
+
 // TestASecretOfOneByteIsLeftAlone: a byte alone names nothing, and taking it out would take
 // out every such byte, as the Exchange's redaction leaves it.
 func (s *LoggedDescriptionSuite) TestASecretOfOneByteIsLeftAlone() {
