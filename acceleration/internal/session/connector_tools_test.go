@@ -289,6 +289,23 @@ func (s *AttachConnectorsSuite) TestAToolWhoseSchemaChangedIsNotOffered() {
 	}
 }
 
+// TestABindingWhoseEveryToolChangedOpensOnlyWhenOptional: with no tool left to offer a required
+// binding fails with tool_unavailable, as on base; an optional one opens empty and says so.
+func (s *AttachConnectorsSuite) TestABindingWhoseEveryToolChangedOpensOnlyWhenOptional() {
+	app := s.connection("", "primary")
+	all := s.fixed("crm", app, "whoami", "secret")
+	all.Tools[0].SchemaDigest = staleDigest
+	all.Tools[1].SchemaDigest = staleDigest
+
+	_, _, _, failed := s.attach(s.spec(s.config(required(all)), "", nil))
+	_, tools, unavailable, err := s.attach(s.spec(s.config(all), "", nil))
+
+	s.ErrorContains(failed, `required connector "crm" cannot be used: tool_unavailable`)
+	s.Require().NoError(err)
+	s.Empty(tools)
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+}
+
 // TestAGrantedToolTheProviderNoLongerListsIsNotLeftOut: gone is granted and the provider lists
 // no such tool, so no schema changed: a call of it is a tool this session cannot run, as on
 // base, and a required binding granting it still fails.
