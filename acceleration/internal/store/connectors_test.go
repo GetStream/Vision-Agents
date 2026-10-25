@@ -1153,6 +1153,70 @@ func (s *StoreSuite) TestOneAppsFlagDoesNotShowAnInternalBuiltInToAnother() {
 	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{})))
 }
 
+// seedAcmeRevisions stores internalAcme at revisions 1 and 2, each internal or not as given.
+func (s *StoreSuite) seedAcmeRevisions(firstInternal, secondInternal bool) {
+	revision := func(n string, internal bool) string {
+		raw := strings.Replace(internalAcme, "revision: 1", "revision: "+n, 1)
+		if !internal {
+			raw = strings.Replace(raw, "internal: true\n", "", 1)
+		}
+		return raw
+	}
+	s.seed(revision("1", firstInternal))
+	s.seed(revision("2", secondInternal))
+}
+
+func (s *StoreSuite) TestABuiltInMadeInternalLaterIsHiddenAtEveryRevision() {
+	s.seedAcmeRevisions(false, true)
+	on := true
+
+	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{})), "revision 1 is public, but the latest says internal")
+	s.Equal(acmeNowhere, s.acmeSeenBy("no-app-row"))
+	flagged := s.appWith(AppSettings{InternalConnectors: &on})
+	s.Equal(acmeEverywhere, s.acmeSeenBy(flagged))
+	latest, err := s.store.LatestConnectorDefinition(s.ctx, flagged, "acme")
+	s.Require().NoError(err)
+	s.Equal(2, latest.Revision)
+}
+
+func (s *StoreSuite) TestABuiltInMadePublicLaterIsSeenAtEveryRevision() {
+	s.seedAcmeRevisions(true, false)
+
+	s.Equal(acmeEverywhere, s.acmeSeenBy(s.appWith(AppSettings{})), "revision 1 is internal, but the latest says public")
+}
+
+// The expected value is what 2c083b25 answers, before internal was read from the latest
+// revision.
+func (s *StoreSuite) TestAPublicBuiltInIsSeenByEveryApp() {
+	s.seedAcmeRevisions(false, false)
+
+	s.Equal(acmeEverywhere, s.acmeSeenBy(s.appWith(AppSettings{})))
+	s.Equal(acmeEverywhere, s.acmeSeenBy("no-app-row"))
+}
+
+// A custom definition is internal revision by revision, as on 2c083b25, where this test's
+// expected values were read: only built-ins take internal from their latest revision.
+func (s *StoreSuite) TestACustomDefinitionIsInternalRevisionByRevision() {
+	app := s.appWith(AppSettings{})
+	public := strings.Replace(acmeManifest, "id: acme", "id: custom_crm", 1)
+	_, err := s.store.CreateConnectorDefinition(s.ctx, app, parsed(s.T(), public))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(s.ctx, app, parsed(s.T(), strings.Replace(public, "name: Acme", "name: Acme Two\ninternal: true", 1)))
+	s.Require().NoError(err)
+
+	list, err := s.store.ListConnectorDefinitions(s.ctx, app, ConnectorDefinitionFilter{})
+	s.Require().NoError(err)
+	s.Equal([]string{"custom_crm"}, definitionIDs(list))
+	s.Equal(1, list[0].Revision, "the list shows the public revision")
+	latest, err := s.store.LatestConnectorDefinition(s.ctx, app, "custom_crm")
+	s.Require().NoError(err)
+	s.Equal(1, latest.Revision)
+	_, err = s.store.ConnectorDefinition(s.ctx, app, "custom_crm", 1)
+	s.True(s.found(err), "revision 1 is public")
+	_, err = s.store.ConnectorDefinition(s.ctx, app, "custom_crm", 2)
+	s.False(s.found(err), "revision 2 is internal")
+}
+
 // An app without the flag, or a customer with no app row, sees the catalog it saw before the flag
 // existed: every embedded built-in that is not internal, each found by LatestConnectorDefinition
 // and ConnectorDefinition at its latest revision. An app with the flag sees the internal ones too.
