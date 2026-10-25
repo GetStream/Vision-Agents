@@ -561,14 +561,17 @@ const revokeTimeout = 30 * time.Second
 // refused consent's, or one whose client is about to go. A delete runs it after the store
 // deleted the row, so a delete the store refuses revokes nothing. The change stands whatever
 // the provider answers, so a failure is logged. Detached: once the router drops the tokens
-// it can never revoke them later, so a caller that hangs up must not cancel it.
-func (s *Server) revokeAtProvider(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState, after string) {
+// it can never revoke them later, so a caller that hangs up must not cancel it. It says
+// whether the provider revoked the grant.
+func (s *Server) revokeAtProvider(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState, after string) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revokeTimeout)
 	defer cancel()
-	if err := s.revokeHeld(ctx, connection, held); err != nil {
+	revoked, err := s.revokeHeld(ctx, connection, held)
+	if err != nil {
 		s.logger.Error("could not revoke a grant at the provider", "after", after, "connection", connection.ID,
 			"connector", connection.ConnectorID, "error", err)
 	}
+	return revoked
 }
 
 // revocableGrants is the credential state of each of connections whose manifest revision says
@@ -604,32 +607,40 @@ func (s *Server) revocableGrants(ctx context.Context, connections []store.Connec
 }
 
 // revokeGrants revokes at the provider each of connections revocableGrants read, as
-// revokeAtProvider, one after another. One it did not read holds nothing to revoke.
-func (s *Server) revokeGrants(ctx context.Context, connections []store.ConnectorConnection, held map[string]core.CredentialState, after string) {
+// revokeAtProvider, one after another, and is those the provider revoked. One it did not read
+// holds nothing to revoke.
+func (s *Server) revokeGrants(ctx context.Context, connections []store.ConnectorConnection, held map[string]core.CredentialState, after string) []store.ConnectorConnection {
+	var revoked []store.ConnectorConnection
 	for _, connection := range connections {
-		s.revokeAtProvider(ctx, connection, held[connection.ID], after)
+		if s.revokeAtProvider(ctx, connection, held[connection.ID], after) {
+			revoked = append(revoked, connection)
+		}
 	}
+	return revoked
 }
 
-// revokeHeld is revokeAtProvider's revoke, nil when there is nothing to revoke or the
-// manifest does not opt in.
-func (s *Server) revokeHeld(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState) error {
+// revokeHeld is revokeAtProvider's revoke, and whether the provider revoked the grant: false
+// with a nil error when there is nothing to revoke or the manifest does not opt in.
+func (s *Server) revokeHeld(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState) (bool, error) {
 	if held.Credentials.Scheme == "" {
-		return nil
+		return false, nil
 	}
 	definition, err := s.store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, held.DefinitionRevision)
 	if err != nil || !definition.Manifest.RevokeOnDelete {
-		return err
+		return false, err
 	}
 	scheme, found := s.connectors.Schemes[connection.AuthScheme]
 	if !found {
-		return stack.Wrap(fmt.Errorf("%w: %q", store.ErrUnregisteredScheme, connection.AuthScheme))
+		return false, stack.Wrap(fmt.Errorf("%w: %q", store.ErrUnregisteredScheme, connection.AuthScheme))
 	}
 	manifest, err := definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, held.Metadata)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return scheme.Revoke(ctx, held.Credentials, manifest)
+	if err := scheme.Revoke(ctx, held.Credentials, manifest); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // connectionDeleted lets go of what a connection the store just soft deleted still has

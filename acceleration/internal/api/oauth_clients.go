@@ -357,7 +357,9 @@ func (s *Server) deleteConnectorOAuthClient(ctx context.Context, request *delete
 // issued, for a manifest that opts in (revocableGrants). It runs before the client goes, since
 // the revoke authenticates with its secret (oauth2code's clientSecret answers ClientRemovedError
 // once it is gone). The connections stay, as the delete leaves them: they need a reconnect, and
-// the agent configs that bind them still name them.
+// the agent configs that bind them still name them. Each one revoked is marked so at once, as a
+// refused refresh would mark it later, so its export and its use answer the reconnect error, not
+// the access token the provider just revoked.
 func (s *Server) revokeClientGrants(ctx context.Context, customerID, connectorID string) error {
 	record, err := s.store.ConnectorOAuthClient(ctx, customerID, connectorID)
 	if errors.Is(err, store.ErrNoConnectorOAuthClient) {
@@ -374,7 +376,18 @@ func (s *Server) revokeClientGrants(ctx context.Context, customerID, connectorID
 	if err != nil {
 		return err
 	}
-	s.revokeGrants(ctx, granted, s.revocableGrants(ctx, granted), "client_delete")
+	revoked := s.revokeGrants(ctx, granted, s.revocableGrants(ctx, granted), "client_delete")
+	if s.connectorResolver == nil {
+		return nil
+	}
+	// Detached as the revoke is: the grant is gone at the provider whatever the caller does.
+	ctx = context.WithoutCancel(ctx)
+	for _, connection := range revoked {
+		ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
+		if err := s.connectorResolver.Revoke(ctx, ref, core.SignalRevoked, time.Time{}); err != nil {
+			s.logger.Error("could not mark a revoked connection as needing a reconnect", "connection", connection.ID, "error", err)
+		}
+	}
 	return nil
 }
 

@@ -142,7 +142,8 @@ func (s *AuthorizationsSuite) TestAReconnectForAnotherAccountEndsOnlyTheTokensIt
 
 // TestRemovingTheAppsClientEndsTheGrantsIssuedToItFirst (AI-1648): the revoke needs the
 // client's secret, so it runs before the client goes. The connection stays, and needs a
-// reconnect; its grant is refused at the provider even once the same client is put back.
+// reconnect: it says so at once, and its export answers that rather than the revoked access
+// token. Its grant is refused at the provider even once the same client is put back.
 func (s *AuthorizationsSuite) TestRemovingTheAppsClientEndsTheGrantsIssuedToItFirst() {
 	connector, id := s.clientConnection(s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
 	stored, manifest := s.held(id)
@@ -153,8 +154,11 @@ func (s *AuthorizationsSuite) TestRemovingTheAppsClientEndsTheGrantsIssuedToItFi
 	s.Equal(before+1, s.provider.Hits(fakeprovider.PathRevoke))
 	s.Equal([]string{"refresh_token"}, s.provider.Revoked()[revoked:])
 	s.Empty(s.logged.lines(revokeFailed, id))
-	s.Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id, nil, nil), "the connection stays")
+	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status, "the connection stays, needing a reconnect")
 	s.putClient(connector, s.provider.ClientSecret)
+	status, exported := s.serverClient.call(http.MethodPost, tokenPath(id), nil)
+	s.Equal(http.StatusConflict, status, string(exported))
+	s.Contains(string(exported), "reconnect")
 	err := s.renew(stored, manifest)
 	var refused *core.OutcomeError
 	s.Require().ErrorAs(err, &refused)
@@ -258,6 +262,7 @@ func (s *AuthorizationsSuite) TestARevokeTheProviderRefusesStillRemovesTheClient
 
 	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/"+connector+"/oauth-client", nil, nil))
 	s.Contains(s.logged.line(s.T(), revokeFailed, id), "HTTP 404")
+	s.Equal(ConnectionStatus(store.ConnectionConnected), s.get(id).Status, "nothing was revoked")
 }
 
 // usersConnection is owner's connected connection to a connector at the fake with its revoke
