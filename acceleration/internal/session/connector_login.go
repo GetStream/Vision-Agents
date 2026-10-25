@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -244,8 +245,8 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 	}
 	name := l.binding.Name + mcp.Separator + asked.Tool
 	found, ok := opened.routes[name]
-	if !ok && slices.Contains(opened.leftOut, name) {
-		return llm.TextParts(toolLeftOut(l.binding.Name, asked.Tool)), nil
+	if why, left := opened.leftOut[name]; !ok && left {
+		return llm.TextParts(toolLeftOut(why)), nil
 	}
 	if !ok {
 		return nil, errUnknownTool(name)
@@ -607,7 +608,7 @@ func loginUnavailable(alias string) string {
 // listed is the tools of an opened binding as the model reads them through list_tools: each
 // one's name at the provider, what it does and its input schema, and each granted tool left
 // out (leftOut) with why.
-func listed(tools []harness.Tool, leftOut []string, alias string) string {
+func listed(tools []harness.Tool, leftOut map[string]string, alias string) string {
 	type entry struct {
 		Name        string         `json:"name"`
 		Description string         `json:"description,omitempty"`
@@ -623,9 +624,8 @@ func listed(tools []harness.Tool, leftOut []string, alias string) string {
 			Description: tool.Description, InputSchema: tool.Parameters})
 	}
 	var absents []absent
-	for _, name := range leftOut {
-		tool := strings.TrimPrefix(name, alias+mcp.Separator)
-		absents = append(absents, absent{Name: tool, Message: toolLeftOutWhy(alias, tool)})
+	for _, name := range slices.Sorted(maps.Keys(leftOut)) {
+		absents = append(absents, absent{Name: strings.TrimPrefix(name, alias+mcp.Separator), Message: leftOut[name]})
 	}
 	raw, _ := json.Marshal(struct {
 		Tools   []entry  `json:"tools"`

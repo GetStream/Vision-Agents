@@ -846,11 +846,15 @@ func (s *ConnectorLoginSuite) TestALoginFinishedOnAnotherRouterIsPickedUpWhileTh
 	s.False(handedBack, "a hand-back that arrives after is not run again")
 }
 
-// driftedWhy is what the model is told of crm's whoami once the provider changed its schema, and
-// driftedWhoami the answer to a call of it.
+// driftedWhy is what the model is told of crm's whoami once the provider changed the schema it
+// was pinned at, and driftedWhoami the answer to a call of it; configWhy and configWhoami the
+// same for a schema the agent config names. staleDigest is a digest no tool has.
 const (
 	driftedWhy    = "crm's whoami cannot be used: the provider changed its schema since it was approved, so an admin must approve the new schema first. Tell the user that; do not offer to connect it."
 	driftedWhoami = `{"status":"tool_unavailable","message":"` + driftedWhy + `"}`
+	configWhy     = "crm's whoami cannot be used: the provider changed its schema since the agent config granted it, so an admin must save the agent config again with the new schema first. Tell the user that; do not offer to connect it."
+	configWhoami  = `{"status":"tool_unavailable","message":"` + configWhy + `"}`
+	staleDigest   = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
 // TestALoginOnADriftedToolOpensWithTheOtherTools: the config granted whoami at a schema the
@@ -882,10 +886,10 @@ func (s *ConnectorLoginSuite) TestALoginOnADriftedToolOpensWithTheOtherTools() {
 	s.Require().NoError(got.err)
 	s.Equal("you said hi", got.said)
 	s.Equal(persistent.AuthorizationConnected, s.endedOf("call-1"))
-	s.JSONEq(driftedWhoami, drifted)
+	s.JSONEq(configWhoami, drifted)
 	s.JSONEq(`{"tools":[{"name":"echo","description":"Answers with the note it was sent.",`+
 		`"input_schema":{"type":"object","properties":{"note":{"type":"string"}}}}],`+
-		`"left_out":[{"name":"whoami","message":"`+driftedWhy+`"}]}`, listed)
+		`"left_out":[{"name":"whoami","message":"`+configWhy+`"}]}`, listed)
 	s.Error(ungranted, "a tool the grant does not name is still unknown")
 	s.Equal(1, strings.Count(logged.String(), "a granted tool is not offered"), logged.String())
 	s.NotContains(logged.String(), "a login in the conversation is on a connection the session cannot use")
@@ -910,7 +914,7 @@ func (s *ConnectorLoginSuite) TestALoginOnADriftedToolPickedUpWhileTheCallWaitsS
 	time.Sleep(loginPoll + time.Second)
 
 	s.Require().NoError(got.err)
-	s.JSONEq(driftedWhoami, got.said)
+	s.JSONEq(configWhoami, got.said)
 	s.Equal(persistent.AuthorizationConnected, s.endedOf("call-1"))
 	s.Equal(1, strings.Count(logged.String(), "a granted tool is not offered"), logged.String())
 	s.NotContains(logged.String(), "a login in the conversation is on a connection the session cannot use")

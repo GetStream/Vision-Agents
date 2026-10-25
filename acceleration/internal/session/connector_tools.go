@@ -172,7 +172,8 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 		if reason == "" {
 			continue
 		}
-		if binding.Required {
+		// A required binding is used without a tool whose schema changed, as an optional one is.
+		if binding.Required && (reason != unavailableTool || !d.onlyLeftOut(binding)) {
 			d.Close()
 			return nil, nil, nil, stack.Wrap(fmt.Errorf("session: required connector %q cannot be used: %s: %s",
 				binding.Name, reason, unavailableWhy[reason]))
@@ -398,29 +399,84 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 			"granted against or pinned at, and approving it (POST .../tools/approve), a reconnect or a config "+
 			"saved at its new schema gives it back", "connector", binding.Name, "connection", connection.ID, "tools", changed)
 	}
-	if len(patternMiss) == 0 && len(changed) == 0 {
-		return m.sandboxGrant(binding, connection, manifest, scheme, d), nil
+	if reason := m.sandboxGrant(binding, connection, manifest, scheme, d); reason != "" || (len(patternMiss) == 0 && len(changed) == 0) {
+		return reason, nil
 	}
 	// The binding keeps the tools that still match; a call of one left out says why (Run).
-	for _, name := range slices.Concat(patternMiss, changed) {
-		d.leftOut = append(d.leftOut, binding.Name+mcp.Separator+name)
+	if d.leftOut == nil {
+		d.leftOut = map[string]string{}
+	}
+	for _, name := range patternMiss {
+		d.leftOut[binding.Name+mcp.Separator+name] = toolLeftOutWhy(binding.Name, name, true)
+	}
+	if len(changed) > 0 {
+		// Only a tool the provider still lists, at another schema, is left out with a why: one
+		// it no longer lists, or that the connector leaves out for a scope it never asks for
+		// (AI-1394), stays a tool this session cannot run, as before. A second tools/list, only
+		// when a granted tool is not offered.
+		listed := m.listedDigests(ctx, binding.Name, resolved)
+		for _, grant := range binding.Tools {
+			if _, found := listed[grant.Name]; found && slices.Contains(changed, grant.Name) {
+				d.leftOut[binding.Name+mcp.Separator+grant.Name] = toolLeftOutWhy(binding.Name, grant.Name, grant.SchemaDigest == "")
+			}
+		}
 	}
 	return unavailableTool, nil
 }
 
-// toolLeftOut is what the model reads of a call of alias's granted tool that the binding left
-// out, since the provider no longer lists it with the schema it was approved at
-// (unavailableTool): only an admin's approval gives it back, never a login.
-func toolLeftOut(alias, tool string) string {
+// listedDigests is the digest of each tool the binding's connection lists, by name; nil when the
+// provider cannot list them, which is logged.
+func (m *Manager) listedDigests(ctx context.Context, alias string, resolved core.ResolvedBinding) map[string]string {
+	listed := map[string]string{}
+	for _, kind := range sourceKinds(resolved.Manifest) {
+		source, found := m.options.Connectors.Registry.ToolSources[kind]
+		if !found {
+			return nil
+		}
+		specs, err := source.Discover(ctx, resolved)
+		if err != nil {
+			m.logger.Warn("a connector binding's tools could not be listed again", "connector", alias, "error", err)
+			return nil
+		}
+		for _, spec := range specs {
+			listed[spec.Name] = spec.SchemaDigest
+		}
+	}
+	return listed
+}
+
+// onlyLeftOut reports whether every granted tool binding does not offer is one left out for
+// a schema the provider changed (leftOut), so the binding is used with the rest.
+func (d *dispatcher) onlyLeftOut(binding store.ConnectorBinding) bool {
+	for _, grant := range binding.Tools {
+		name := binding.Name + mcp.Separator + grant.Name
+		if _, offered := d.routes[name]; !offered && d.leftOut[name] == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// toolLeftOut is what the model reads of a call of a granted tool the binding left out, why
+// being toolLeftOutWhy's.
+func toolLeftOut(why string) string {
 	raw, _ := json.Marshal(struct {
 		Status  string `json:"status"`
 		Message string `json:"message"`
-	}{Status: unavailableTool, Message: toolLeftOutWhy(alias, tool)})
+	}{Status: unavailableTool, Message: why})
 	return string(raw)
 }
 
-// toolLeftOutWhy is why alias's tool was left out, in words for the model.
-func toolLeftOutWhy(alias, tool string) string {
+// toolLeftOutWhy is why alias's tool was left out, in words for the model: the provider lists
+// it with another schema than the one approved. A pin (a grant by name or a pattern match) is
+// given back by an admin's approval (POST .../tools/approve); a schema the agent config names
+// is not a pin, and only saving the config at the new one gives it back
+// (api connection_tool_approvals.go). Never a login.
+func toolLeftOutWhy(alias, tool string, pinned bool) string {
+	if !pinned {
+		return fmt.Sprintf("%s's %s cannot be used: the provider changed its schema since the agent config granted it, "+
+			"so an admin must save the agent config again with the new schema first. Tell the user that; do not offer to connect it.", alias, tool)
+	}
 	return fmt.Sprintf("%s's %s cannot be used: the provider changed its schema since it was approved, so an admin "+
 		"must approve the new schema first. Tell the user that; do not offer to connect it.", alias, tool)
 }
