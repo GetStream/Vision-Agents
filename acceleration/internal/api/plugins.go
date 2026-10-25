@@ -474,7 +474,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	// an update that bound a sensitive connector during the exchange passed its own check, as
 	// the config did not name the plugin yet.
 	if conn.UserID == "" && listed {
-		err := s.store.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID,
+		err := s.configs.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID,
 			func(ctx context.Context, config store.AgentConfig) error {
 				if message, ok, err := s.sensitiveBindingsComplaint(ctx, conn.CustomerID, config); err != nil {
 					return err

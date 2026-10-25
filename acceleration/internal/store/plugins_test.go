@@ -87,10 +87,11 @@ func (s *StoreSuite) TestAnEditCommittedWhileAPluginIsNamedIsWhatItsCheckSees() 
 	checked := make(chan string, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", func(_ context.Context, seen AgentConfig) error {
+		_, err := s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", func(_ context.Context, seen AgentConfig) error {
 			checked <- seen.Instructions
 			return nil
 		})
+		done <- err
 	}()
 	s.Require().Eventually(func() bool {
 		var waiting int
@@ -114,7 +115,7 @@ func (s *StoreSuite) TestAPluginItsCheckRefusesIsNotNamed() {
 	config := s.boundConfig("acme-app")
 	refused := errors.New("not beside a sensitive connector")
 
-	err := s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", func(context.Context, AgentConfig) error { return refused })
+	_, err := s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", func(context.Context, AgentConfig) error { return refused })
 
 	s.ErrorIs(err, refused)
 	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
@@ -134,10 +135,13 @@ func (s *StoreSuite) TestAPluginIsNamedOnceAndAnEndUsersBecomesTheApps() {
 		return nil
 	}
 
-	s.Require().NoError(s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "google_calendar", check))
+	_, err := s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "google_calendar", check)
+	s.Require().NoError(err)
 	s.Equal([]PluginEntry{{Name: "google_calendar", Scopes: []string{"calendar.readonly"}}}, seen)
-	s.Require().NoError(s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", check))
-	s.Require().NoError(s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", allowAll))
+	_, err = s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", check)
+	s.Require().NoError(err)
+	_, err = s.store.AddConfigPlugin(s.ctx, "acme-app", config.ID, "linear", allowAll)
+	s.Require().NoError(err)
 
 	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
 	s.Require().NoError(err)
@@ -153,7 +157,7 @@ func (s *StoreSuite) TestAPluginIsNamedOnlyOnALiveConfigOfItsCustomer() {
 	others := s.boundConfig("other-app")
 
 	for _, id := range []string{deleted.ID, others.ID, newID()} {
-		err := s.store.AddConfigPlugin(s.ctx, "acme-app", id, "linear", allowAll)
+		_, err := s.store.AddConfigPlugin(s.ctx, "acme-app", id, "linear", allowAll)
 		s.ErrorIs(err, ErrNoAgentConfig, "deleted, another customer's, never made")
 	}
 	read, err := s.store.AgentConfig(s.ctx, "other-app", others.ID)

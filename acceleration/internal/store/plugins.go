@@ -183,10 +183,10 @@ func (s *Store) DeletePluginConnection(ctx context.Context, customerID, configID
 // to the write, so a rule it checks holds against an edit made meanwhile: an update that
 // lands first is read here, and one that comes second waits and then writes over this one.
 // Nothing is written when allow fails, and its error is returned as is. Only the plugins
-// column is written, with updated_at.
-func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, pluginID string, allow func(context.Context, AgentConfig) error) error {
-	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		var config AgentConfig
+// column is written, with updated_at. The config is returned as it is after, for a caller
+// that forgets a cached copy.
+func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, pluginID string, allow func(context.Context, AgentConfig) error) (config AgentConfig, err error) {
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		err := tx.NewSelect().Model(&config).
 			Where("id = ?", configID).
 			Where("customer_id = ?", customerID).
@@ -221,7 +221,8 @@ func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, plugi
 			return fmt.Errorf("store: add config plugin: %w", err)
 		}
 		return nil
-	}))
+	})
+	return config, stack.Wrap(err)
 }
 
 // ErrUnknownPluginClient is a plugin no OAuth client was set for on the config.

@@ -692,6 +692,27 @@ func (s *PluginsSuite) TestAnAppLoginAndANessyUpdateAtOnceNeverLeaveBoth() {
 	}
 }
 
+// An app login names its plugin on a config the API had already read and cached: a read
+// after the login shows the plugin, and an edit of another field keeps it. The base,
+// 59153e02a, answered no plugins from the cache and the edit wrote the stale row over it.
+func (s *PluginsSuite) TestAnAppLoginIsSeenByTheNextReadAndKeptByTheNextEdit() {
+	agent := s.data.createAgentConfig()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id, nil, nil))
+	exchanged := false
+	tokens := s.tokenServer(&exchanged)
+	status, _ := s.callback(s.pendingLogin(agent.Id, "linear", "", tokens.URL))
+	s.Require().Equal(http.StatusFound, status)
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id, nil, &read))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+agent.Id,
+		map[string]any{"instructions": "edited after the login"}, nil))
+
+	s.Require().NotNil(read.Plugins)
+	s.Equal("linear", (*read.Plugins)[0].Name)
+	s.Equal([]string{"linear"}, s.storedPlugins(agent.Id))
+}
+
 // tokenServer answers a code with a token, and records that it was asked.
 func (s *PluginsSuite) tokenServer(exchanged *bool) *httptest.Server {
 	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
