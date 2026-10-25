@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
@@ -640,6 +641,55 @@ func (s *PluginsSuite) TestAnAppLoginOnAConfigThatIsGoneExchangesNoCode() {
 
 	s.Equal(http.StatusInternalServerError, status)
 	s.False(exchanged)
+}
+
+// A config update that binds nessy while the app's login exchanges its code passes its own
+// check, as the config does not name the plugin yet, so the login's naming of the plugin is
+// checked again on the config it writes: it is refused as before the exchange, and no token is
+// stored. The base, a3bc2a3cc, answered 302 and left linear named beside nessy.
+func (s *PluginsSuite) TestAnAppLoginIsRefusedWhenNessyIsBoundDuringItsExchange() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	agent := s.data.createAgentConfig()
+	bound := make(chan int, 1)
+	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		bound <- s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+agent.Id,
+			map[string]any{"connectors": []map[string]any{sessionNessy("customers")}}, nil)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "a-token", "expires_in": 3600})
+	}))
+	s.T().Cleanup(tokens.Close)
+
+	status, failure := s.callback(s.pendingLogin(agent.Id, "linear", "", tokens.URL))
+
+	s.Equal(http.StatusOK, <-bound)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `and plugin "linear" can send data out`)
+	s.Nil(s.storedPlugins(agent.Id))
+	conn := s.appLogin(agent.Id, "linear")
+	s.Equal(store.PluginFailed, conn.Status)
+	s.Empty(conn.AccessToken)
+}
+
+// An app login and a config update that binds nessy, sent at once, never leave the plugin
+// named beside nessy, whichever of them writes first.
+func (s *PluginsSuite) TestAnAppLoginAndANessyUpdateAtOnceNeverLeaveBoth() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	exchanged := false
+	tokens := s.tokenServer(&exchanged)
+	for range 10 {
+		agent := s.data.createAgentConfig()
+		state := s.pendingLogin(agent.Id, "linear", "", tokens.URL)
+		var wg sync.WaitGroup
+		wg.Go(func() { s.callback(state) })
+		wg.Go(func() {
+			s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+agent.Id,
+				map[string]any{"connectors": []map[string]any{sessionNessy("customers")}}, nil)
+		})
+		wg.Wait()
+
+		config, err := s.store.AgentConfig(s.T().Context(), s.customerID(), agent.Id)
+		s.Require().NoError(err)
+		s.False(len(config.Connectors) > 0 && store.NamesPlugin(config.Plugins, "linear"), agent.Id)
+	}
 }
 
 // tokenServer answers a code with a token, and records that it was asked.

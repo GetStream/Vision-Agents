@@ -469,6 +469,31 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A server the config names by URL is named there already, under mcp_servers. The plugin
+	// is named before the token is stored, and checked again on the config it is written to:
+	// an update that bound a sensitive connector during the exchange passed its own check, as
+	// the config did not name the plugin yet.
+	if conn.UserID == "" && listed {
+		err := s.store.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID,
+			func(ctx context.Context, config store.AgentConfig) error {
+				if message, ok, err := s.sensitiveBindingsComplaint(ctx, conn.CustomerID, config); err != nil {
+					return err
+				} else if !ok {
+					return invalidRequest(message)
+				}
+				return nil
+			})
+		if refused, ok := errors.AsType[APIError](err); ok {
+			failed()
+			writeError(w, refused)
+			return
+		}
+		if err != nil {
+			writeFailure(w, r, err)
+			return
+		}
+	}
+
 	conn.AccessToken = token.AccessToken
 	conn.RefreshToken = token.RefreshToken
 	conn.ExpiresAt = token.ExpiresAt
@@ -493,13 +518,6 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprintf(w, connectedPage, html.EscapeString(name))
 		return
-	}
-	// A server the config names by URL is named there already, under mcp_servers.
-	if listed {
-		if err := s.store.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID); err != nil {
-			writeFailure(w, r, err)
-			return
-		}
 	}
 	http.Redirect(w, r, auth.DashboardRedirect(conn.ConfigID, conn.PluginID), http.StatusFound)
 }
