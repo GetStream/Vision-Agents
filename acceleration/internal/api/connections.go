@@ -575,16 +575,28 @@ func (s *Server) revokeAtProvider(ctx context.Context, connection store.Connecto
 // revoke_on_delete, by connection id, read before a change drops it or the client its revoke
 // needs. A connection that does not opt in is not read, so its row is left as it was: a read
 // may write (pgsealed rewraps a blob under an old key). A definition that cannot be read
-// leaves its connection out: the change is never refused over a revoke.
+// leaves its connection out: the change is never refused over a revoke. Each revision is read
+// once, as a client's connections are mostly of one.
 func (s *Server) revocableGrants(ctx context.Context, connections []store.ConnectorConnection) map[string]core.CredentialState {
+	type revision struct {
+		connector string
+		revision  int
+	}
+	optsIn := map[revision]bool{}
 	held := map[string]core.CredentialState{}
 	for _, connection := range connections {
-		definition, err := s.store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
-		if err != nil {
-			s.logger.Warn("could not read whether a connection's grant is revoked", "connection", connection.ID, "error", err)
-			continue
+		key := revision{connection.ConnectorID, connection.DefinitionRevision}
+		revokes, read := optsIn[key]
+		if !read {
+			definition, err := s.store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
+			if err != nil {
+				s.logger.Warn("could not read whether a connection's grant is revoked", "connection", connection.ID, "error", err)
+				continue
+			}
+			revokes = definition.Manifest.RevokeOnDelete
+			optsIn[key] = revokes
 		}
-		if definition.Manifest.RevokeOnDelete {
+		if revokes {
 			held[connection.ID] = s.heldCredentials(ctx, connection)
 		}
 	}

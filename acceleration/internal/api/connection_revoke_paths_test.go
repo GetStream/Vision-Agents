@@ -6,6 +6,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
+	"sync/atomic"
+
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
@@ -44,6 +48,23 @@ func (s *AuthorizationsSuite) TestDeletingAUsersConnectionsWithoutTheOptInLeaves
 
 	s.Equal(before, s.provider.Hits(fakeprovider.PathRevoke))
 	s.NoError(s.renew(stored, manifest))
+}
+
+// Each of the user's grants is revoked, not only the first.
+func (s *AuthorizationsSuite) TestDeletingAUsersConnectionsEndsEachOfTheirGrants() {
+	alice := s.data.createUser()
+	first := s.usersConnection(alice, s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
+	second := s.usersConnection(alice, s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
+	firstStored, firstManifest := s.held(first)
+	secondStored, secondManifest := s.held(second)
+	before, revoked := s.provider.Hits(fakeprovider.PathRevoke), len(s.provider.Revoked())
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/users/"+alice.userID+"/connections", nil, nil))
+
+	s.Equal(before+2, s.provider.Hits(fakeprovider.PathRevoke))
+	s.Equal([]string{"refresh_token", "refresh_token"}, s.provider.Revoked()[revoked:])
+	s.assertRefusedAtTheProvider(firstStored, firstManifest)
+	s.assertRefusedAtTheProvider(secondStored, secondManifest)
 }
 
 // A revoke the provider refuses is logged, and the user's connections are deleted all the same.
@@ -142,6 +163,39 @@ func (s *AuthorizationsSuite) TestRemovingTheAppsClientEndsTheGrantsIssuedToItFi
 	s.False(errors.As(err, &removed), "the provider refused it, not the router: %v", err)
 }
 
+// Each grant the client issued is revoked, not only the first.
+func (s *AuthorizationsSuite) TestRemovingTheAppsClientEndsEachGrantIssuedToIt() {
+	connector, first := s.clientConnection(s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
+	second := s.clientUsersConnection(connector)
+	firstStored, firstManifest := s.held(first)
+	secondStored, secondManifest := s.held(second)
+	before, revoked := s.provider.Hits(fakeprovider.PathRevoke), len(s.provider.Revoked())
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/connectors/"+connector+"/oauth-client", nil, nil))
+
+	s.Equal(before+2, s.provider.Hits(fakeprovider.PathRevoke))
+	s.Equal([]string{"refresh_token", "refresh_token"}, s.provider.Revoked()[revoked:])
+	s.putClient(connector, s.provider.ClientSecret)
+	s.assertRefusedAtTheProvider(firstStored, firstManifest)
+	s.assertRefusedAtTheProvider(secondStored, secondManifest)
+}
+
+// The client's connections of one revision read it once, not once each (R1.3): a client delete
+// reads every connection the client issued, opted in or not.
+func (s *AuthorizationsSuite) TestRemovingTheAppsClientReadsEachRevisionOnce() {
+	connector, _ := s.clientConnection(s.provider.URL+fakeprovider.PathRevoke, "")
+	s.clientUsersConnection(connector)
+	reads := &definitionReads{connector: connector}
+	s.store.DB().AddQueryHook(reads)
+
+	reads.on.Store(true)
+	status := s.serverClient.do(http.MethodDelete, "/v1/agents/connectors/"+connector+"/oauth-client", nil, nil)
+	reads.on.Store(false)
+
+	s.Require().Equal(http.StatusNoContent, status)
+	s.Equal(int64(1), reads.reads.Load())
+}
+
 // TestRemovingTheAppsClientWithoutTheOptInRevokesNothing is the control: as on the base
 // (2c083b25b, probed there), nothing is sent, and with the client put back the grant renews.
 func (s *AuthorizationsSuite) TestRemovingTheAppsClientWithoutTheOptInRevokesNothing() {
@@ -194,6 +248,40 @@ func (s *AuthorizationsSuite) usersConnection(owner *testClient, revoke, extra s
 	id := s.ownersConnection(s.revokingConnector("operator", revoke, extra), owner, "")
 	s.Require().Equal(s.landing(id, consentConnected), s.finishAs(owner, id))
 	return id
+}
+
+// clientUsersConnection is a new user's connection to connector, connected with the app's
+// client clientConnection put.
+func (s *AuthorizationsSuite) clientUsersConnection(connector string) string {
+	bob := s.data.createUser()
+	id := s.ownersConnection(connector, bob, "")
+	s.Require().Equal(s.landing(id, consentConnected), s.finishAs(bob, id))
+	return id
+}
+
+// assertRefusedAtTheProvider is stored's refresh token refused by the provider: its grant was
+// revoked.
+func (s *AuthorizationsSuite) assertRefusedAtTheProvider(stored core.StoredCredentials, manifest core.ResolvedManifest) {
+	var refused *core.OutcomeError
+	s.Require().ErrorAs(s.renew(stored, manifest), &refused)
+	s.Equal(core.OutcomeInvalidGrant, refused.Outcome.Kind)
+}
+
+// definitionReads counts the reads of connector's definitions a pool sends while on.
+type definitionReads struct {
+	connector string
+	on        atomic.Bool
+	reads     atomic.Int64
+}
+
+func (*definitionReads) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (r *definitionReads) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	if r.on.Load() && strings.Contains(event.Query, "connector_definitions") && strings.Contains(event.Query, r.connector) {
+		r.reads.Add(1)
+	}
 }
 
 // clientConnection is a connector whose client is the app's own, put as the fake's, with its
