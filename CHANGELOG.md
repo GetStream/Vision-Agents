@@ -18,6 +18,12 @@
 
 Before billable work starts the router now reserves what it may cost: a search, an image, a detection, a knowledge or memory call or a text its estimate, an LLM response its prompt and its `max_output_tokens` (4,096 when unset), renewed while it streams, a TTS utterance its characters, and a stream (STT, STS, runtime, a sandbox) a minute at a time, renewed while it runs. A speech-to-speech conversation whose renewal is refused because its money ran out refuses its next turn with that 402 (or 403 `account_suspended`) and closes, since nothing else stops a voice model replying; one refused because its money could not be checked (the 503 `spend_check_unavailable` below, or a balance unread for too long) refuses that turn and stays open, taking turns again once a renewal lands. A transcription keeps running. The reservation is checked against credit, the spend hard limit, spend limits and grants as admission is, answered from memory, and settled at what the work cost once it is recorded. Routers share what they hold through the deployment's Redis (`ROUTER_REDIS_ADDR`), so an organization spending on several routers at once is stopped on all of them within about a second. When a router cannot write to that Redis for 10 s, work that costs money is refused with `503 unavailable` and the new code `spend_check_unavailable`, with `Retry-After: 5`, until it can; a model that costs nothing is still served, and a router with no Redis keeps its holds to itself and never refuses for this. The router's alerts loop pages `holds_flush_failing` once a change has waited over 10 s unshared (`router_holds_unflushed_oldest_seconds`): customers' billable work is being refused, so restore the router's connection to `ROUTER_REDIS_ADDR`; it clears with the first write that lands. Every operation that declares the 402 now declares the 503 (`#/components/responses/Unavailable`) (AI-1884).
 
+## Bug Fixes
+
+### A connector tool whose schema changed no longer breaks its whole binding
+
+When the provider lists a granted tool with another schema than the one approved, a session's binding now opens with its other tools, also when the person connects it in the conversation: that login no longer waits until its consent expires. A call of the left-out tool answers `tool_unavailable`, saying an admin must approve the new schema (`POST /v1/agents/connections/{id}/tools/approve`, or a config saved at it), and a login's `list_tools` names it under `left_out` (AI-1932).
+
 ## Breaking Changes
 
 ### A hosted tool that names no timeout has 30 seconds
