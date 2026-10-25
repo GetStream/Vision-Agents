@@ -51,8 +51,9 @@ The tools also need (`Manager.schedulingRunner`, `internal/session/schedule_tool
 A task made in an SMS or WhatsApp thread comes back in that thread: the router opens the
 thread's conversation, the agent answers the task there, and the reply is texted to the
 person from the line. Its run says `delivered_to` `sms` or `whatsapp` once the line took the
-reply; a reply the line refused is `delivery_failed`, and the retry sends the same reply
-without a second turn (`internal/api/scheduled_thread_delivery.go`). Such a task's
+reply; a reply the line refused is `delivery_failed`, and the retry sends the same reply,
+files included, without a second turn; a thread removed while the turn ran is `thread_gone`,
+final (`internal/api/scheduled_thread_delivery.go`). Such a task's
 `deliver_to` reads `sms` or `whatsapp` and cannot be changed.
 
 The REST create does not need `scheduling.enabled` (`internal/api/scheduled_tasks.go:752`).

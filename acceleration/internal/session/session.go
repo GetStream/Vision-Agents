@@ -706,13 +706,13 @@ func (s *Session) FollowUpReply(id string) (state, text string, known bool) {
 	return s.persisted.FollowUpReply(id)
 }
 
-// FollowUpMessage is the id of the reply to the follow-up under id, or "" when the
-// conversation holds no such follow-up.
-func (s *Session) FollowUpMessage(id string) string {
+// FollowUpFinished is the reply to the follow-up under id as the conversation told it once it
+// finished, with its files (persistent.Conversation.FollowUpFinished).
+func (s *Session) FollowUpFinished(id string) persistent.FinishedReply {
 	if s.persisted == nil {
-		return ""
+		return persistent.FinishedReply{}
 	}
-	return s.persisted.FollowUpMessage(id)
+	return s.persisted.FollowUpFinished(id)
 }
 
 // AwaitCommand accepts a durable submission the way RespondCommand does without answering

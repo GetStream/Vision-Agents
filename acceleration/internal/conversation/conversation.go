@@ -124,6 +124,8 @@ type commandRecord struct {
 	// Reply is what a follow-up's reply said when it finished, for the follow-up delivered
 	// again to carry rather than run twice (FollowUpReply).
 	Reply string `json:",omitempty"`
+	// Files are that reply's files, which a reply carried again carries too (FollowUpFinished).
+	Files []sandbox.Attachment `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
@@ -851,6 +853,7 @@ func commandsIn(messages []Message) map[string]commandRecord {
 			commands[m.CommandID] = commandRecord{
 				CommandReceipt: CommandReceipt{CommandID: m.CommandID, AssistantMessageID: m.ID, State: m.State},
 				Reply:          m.Text,
+				Files:          m.Files,
 			}
 			continue
 		}
@@ -859,7 +862,7 @@ func commandsIn(messages []Message) map[string]commandRecord {
 		// Only a follow-up, which has no message of a person's, is read back; its
 		// latest message is the one a retry after an abandoned turn answered with.
 		if record.UserMessageID == "" {
-			record.Reply = m.Text
+			record.Reply, record.Files = m.Text, m.Files
 		}
 		commands[m.CommandID] = record
 	}
@@ -1712,7 +1715,7 @@ func (c *Conversation) finish(state string) {
 	c.state(state)
 	// Only a follow-up, which has no message of a person's, is read back this way.
 	if record, ok := c.data.Commands[m.CommandID]; ok && record.UserMessageID == "" {
-		record.Reply = m.Text
+		record.Reply, record.Files = m.Text, append([]sandbox.Attachment(nil), m.Files...)
 		c.data.Commands[m.CommandID] = record
 	}
 	c.stopParts(m, now)
