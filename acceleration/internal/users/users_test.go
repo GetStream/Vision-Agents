@@ -179,11 +179,12 @@ func (s *UsersSuite) email(customerID, userID string) string {
 	return email
 }
 
-// plain is a recorder with no Redis, holding an email for ttl.
-func (s *UsersSuite) plain(ttl time.Duration) *Recorder {
-	recorder, err := New(Options{Store: s.db, TTL: ttl, Logger: slog.New(slog.DiscardHandler)})
+// plain is a recorder with no Redis, holding an email for emailTTL.
+func (s *UsersSuite) plain(emailTTL time.Duration) *Recorder {
+	recorder, err := New(Options{Store: s.db, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 	s.T().Cleanup(recorder.Close)
+	recorder.emailTTL = emailTTL
 	return recorder
 }
 
@@ -201,6 +202,78 @@ func (s *UsersSuite) TestAnEmailIsWrittenAgainOnceItsTTLEnds() {
 		return recorder.Email(s.ctx, app, "jlahey", "jim@fake.example") == nil &&
 			s.email(app, "jlahey") == "jim@fake.example"
 	}, settleFor, 10*time.Millisecond, "the hold outlived its ttl")
+}
+
+// TestAnEmailIsHeldForAMinuteWhateverTheTTL: the row an email hold may leave stale is what
+// a first owner_email consent is checked against, so the hold is a minute even where the
+// users' Redis key lives an hour.
+func (s *UsersSuite) TestAnEmailIsHeldForAMinuteWhateverTheTTL() {
+	recorder, err := New(Options{Store: s.db, TTL: time.Hour, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	defer recorder.Close()
+	app, start := s.app(), time.Now()
+
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+
+	s.True(recorder.emails.Holds(app, "jlahey", "jim@fake.example", start))
+	s.False(recorder.emails.Holds(app, "jlahey", "jim@fake.example", time.Now().Add(time.Minute)))
+}
+
+// TestAnAddressAnotherReplicaReplacedIsPutBackOnceTheHoldEnds is the reviewer's probe
+// (R1.1): one replica writes A, the other writes B, the first hears A again. Until the hold
+// ends the row stays B, which the first consent would admit; after it, A is written again.
+func (s *UsersSuite) TestAnAddressAnotherReplicaReplacedIsPutBackOnceTheHoldEnds() {
+	first, other, app := s.plain(500*time.Millisecond), s.plain(500*time.Millisecond), s.app()
+	s.Require().NoError(first.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	s.Require().NoError(other.Email(s.ctx, app, "jlahey", "randy@fake.example"))
+
+	s.Require().NoError(first.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	s.Equal("randy@fake.example", s.email(app, "jlahey"), "the window the hold leaves")
+
+	s.Eventually(func() bool {
+		return first.Email(s.ctx, app, "jlahey", "jim@fake.example") == nil &&
+			s.email(app, "jlahey") == "jim@fake.example"
+	}, settleFor, 10*time.Millisecond, "the replaced address outlived the hold")
+}
+
+func (s *UsersSuite) TestTheSameUserAndEmailUnderTwoAppsIsWrittenForEach() {
+	recorder, app := s.plain(time.Hour), s.app()
+	one, two := app+"-one", app+"-two"
+
+	s.Require().NoError(recorder.Email(s.ctx, one, "jlahey", "jim@fake.example"))
+	s.Require().NoError(recorder.Email(s.ctx, two, "jlahey", "jim@fake.example"))
+
+	s.Equal("jim@fake.example", s.email(one, "jlahey"))
+	s.Equal("jim@fake.example", s.email(two, "jlahey"), "the same id under two apps is two people")
+}
+
+func (s *UsersSuite) TestAnEmailForNoUserIsNotHeld() {
+	recorder, app := s.plain(time.Hour), s.app()
+
+	s.Require().NoError(recorder.Email(s.ctx, app, "", "jim@fake.example"))
+	s.Require().NoError(recorder.Email(s.ctx, "", "jlahey", "jim@fake.example"))
+
+	s.Zero(recorder.emails.Len())
+}
+
+// TestTwoAddressesSaidAtOnceLeaveTheHeldOneTheRows: requests saying A and B for one user at
+// the same time end with the row and the hold on the same address, whichever it is, so a
+// later request for the row's address is not written while one for the other is.
+func (s *UsersSuite) TestTwoAddressesSaidAtOnceLeaveTheHeldOneTheRows() {
+	recorder, app := s.plain(time.Hour), s.app()
+	addresses := []string{"jim@fake.example", "randy@fake.example"}
+	for round := range 100 {
+		user := fmt.Sprintf("user-%d", round)
+		var group sync.WaitGroup
+		for _, address := range addresses {
+			group.Go(func() { s.NoError(recorder.Email(s.ctx, app, user, address)) })
+		}
+		group.Wait()
+
+		row := s.email(app, user)
+		s.Require().True(recorder.emails.Holds(app, user, row, time.Now()),
+			"round %d: the row holds %s and the cache does not", round, row)
+	}
 }
 
 func (s *UsersSuite) TestAnEmailThatFailedToBeWrittenIsTriedAgain() {
