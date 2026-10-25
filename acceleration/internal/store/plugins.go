@@ -195,9 +195,10 @@ func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, plugi
 }
 
 // EditConfigPlugins writes edit's change to a config's plugins. edit is handed the plugins as
-// stored and says whether it changed them; nothing is written when it did not. The config's row is locked FOR UPDATE from the read to the write, so a rule allow
-// checks holds against an edit made meanwhile: an update that lands first is read here, and
-// one that comes second waits and then writes over this one, or keeps these plugins
+// stored and says whether it changed them; nothing is written when it did not. The config's
+// row is locked FOR UPDATE from the read to the write, so a rule allow checks holds against
+// an edit made meanwhile: an update that lands first is read here, and one that comes second
+// waits and then writes over this one, or keeps these plugins
 // (UpdateAgentConfigButPlugins). allow, when not nil, is asked about the config as it is about
 // to be written; nothing is written when it fails, and its error is returned as is. Only the
 // plugins column is written, with updated_at. The config is returned as it is after, for a

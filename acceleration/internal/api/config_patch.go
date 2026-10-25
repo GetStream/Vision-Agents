@@ -266,6 +266,10 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
 	stored := agentConfigOf(config)
+	if patch.Plugins == nil {
+		// The plugins were kept as stored, so a login named since the read is not this patch's change.
+		existing.Plugins = stored.Plugins
+	}
 	s.audit(ctx, auditRecord{
 		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
 		Action: store.AuditUpdated, Changes: auditDiff(existing, stored),

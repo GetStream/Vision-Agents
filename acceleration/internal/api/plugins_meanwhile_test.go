@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -31,6 +32,24 @@ func (s *PluginsSuite) meanwhile(configID string, first, then func() int) (int, 
 	s.waitForLockWaiters(2, "the second write waits behind the first")
 	s.Require().NoError(tx.Commit())
 	return <-firsts, <-thens
+}
+
+// auditedFields are the fields the config's audit entries of action record as changed, sorted.
+func (s *PluginsSuite) auditedFields(configID, action string) []string {
+	entries, err := s.store.AuditEntries(s.T().Context(), s.customerID(),
+		store.AuditEntryFilter{AgentID: configID, ResourceType: store.AuditAgentConfig, Limit: 100})
+	s.Require().NoError(err)
+	var fields []string
+	for _, entry := range entries {
+		if entry.Action != action {
+			continue
+		}
+		for _, change := range entry.Changes {
+			fields = append(fields, change.Field)
+		}
+	}
+	slices.Sort(fields)
+	return fields
 }
 
 // waitForLockWaiters waits until n statements of the suite's database wait on a lock.
@@ -71,6 +90,8 @@ func (s *PluginsSuite) TestAPatchOfAnotherFieldKeepsAPluginALoginNamedMeanwhile(
 	s.Require().NoError(err)
 	s.Equal("be kind", config.Instructions)
 	s.Equal([]store.PluginEntry{{Name: "linear"}}, config.Plugins)
+	s.Equal([]string{"instructions"}, s.auditedFields(agent.Id, store.AuditUpdated),
+		"the login's plugin is no change of the patch")
 }
 
 // A PATCH that binds nessy passed its own check on the config it read, without the plugin a
@@ -116,6 +137,8 @@ func (s *PluginsSuite) TestASyncWithoutPluginsKeepsAPluginALoginNamedMeanwhile()
 	s.Require().NoError(err)
 	s.Equal("be kind", config.Instructions)
 	s.Equal([]store.PluginEntry{{Name: "linear"}}, config.Plugins)
+	s.NotContains(s.auditedFields(synced.Config.Id, store.AuditSynced), "plugins",
+		"the login's plugin is no change of the sync")
 }
 
 // A client set with user names its plugin beside the ones stored then. The base, bb0ccea76,
@@ -131,6 +154,21 @@ func (s *PluginsSuite) TestAUserPluginsClientKeepsAPluginALoginNamedMeanwhile() 
 	s.Equal(http.StatusFound, logged)
 	s.Equal(http.StatusOK, set)
 	s.Equal([]string{"linear", "google_calendar"}, s.storedPlugins(agent.Id))
+}
+
+// A client set with user for a plugin a login named since the config was read leaves it named
+// once, as the write finds it named and adds nothing.
+func (s *PluginsSuite) TestAUserPluginsClientForAPluginALoginNamedMeanwhileLeavesItNamedOnce() {
+	agent := s.data.createAgentConfig()
+
+	logged, set := s.meanwhile(agent.Id, s.appLoginOf(agent.Id, "google_calendar"), func() int {
+		return s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+agent.Id+"/plugins/google_calendar/client",
+			SetPluginClientRequest{ClientId: "acme-client", User: pointerTo(true)}, nil)
+	})
+
+	s.Equal(http.StatusFound, logged)
+	s.Equal(http.StatusOK, set)
+	s.Equal([]string{"google_calendar"}, s.storedPlugins(agent.Id))
 }
 
 // A client set with user names a plugin that may send data out, so beside nessy, bound since

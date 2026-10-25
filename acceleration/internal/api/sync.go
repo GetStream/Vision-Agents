@@ -364,6 +364,10 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	}
 	var was any
 	if found {
+		if body.Plugins == nil {
+			// The plugins were kept as stored, so a login named since the read is not this sync's change.
+			existing.Plugins = config.Plugins
+		}
 		was = agentConfigOf(existing)
 	}
 	synced := auditDiff(was, agentConfigOf(config))
