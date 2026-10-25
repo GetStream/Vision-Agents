@@ -320,6 +320,61 @@ func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsGoneFailsFinally() {
 	s.Zero(s.scheduledTurns())
 }
 
+// removeThread takes the thread channel's link away, as if its thread were gone.
+func (s *RouterSuite) removeThread(channel string) error {
+	ctx := context.Background()
+	if _, err := s.store.DB().ExecContext(ctx, "DELETE FROM channel_thread_messages WHERE channel_id = ?", channel); err != nil {
+		return err
+	}
+	_, err := s.store.DB().ExecContext(ctx, "DELETE FROM channel_threads WHERE channel_id = ?", channel)
+	return err
+}
+
+// A thread removed while the task's turn runs fails the run for good, and nothing is texted:
+// the reply has no thread left to go to (AI-1883).
+func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFinally() {
+	task, channel := s.scheduledInThread("+13125550001")
+	sent := len(s.telnyx.sent())
+	release := s.schedulingScript.holdScheduled()
+	defer release()
+	removed := make(chan error, 1)
+	go func() {
+		for deadline := time.Now().Add(settleFor); s.scheduledTurns() == 0 && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
+		removed <- s.removeThread(channel)
+		release()
+	}()
+
+	run := s.deliveredByTheWorker(task)
+
+	s.Require().NoError(<-removed)
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(scheduling.ReasonThreadGone, *run.Error)
+	s.Equal(1, run.Attempts, "a gone thread is not tried again")
+	s.Equal(1, s.scheduledTurns())
+	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+}
+
+// A reply the conversation finished on a thread that is gone, as a person's turn on a thread
+// removed meanwhile, is sent nowhere and logged as no failure: there is nobody to tell.
+func (s *TelnyxChannelSuite) TestAReplyOnARemovedThreadIsSentNowhereAndLogsNothing() {
+	person := "+13125550001"
+	channel := s.smsTurn(person, "hello")
+	sent := len(s.telnyx.sent())
+	s.Require().NoError(s.removeThread(channel))
+
+	s.bridge.(*channelbridge.Bridge).Reply(conversation.FinishedReply{
+		Customer: s.customerID(), CID: "agent:" + channel, MessageID: s.utils.uuid(), Text: "Too late.",
+	})
+
+	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	for line := range strings.Lines(s.logged.String()) {
+		s.False(strings.Contains(line, "could not send a reply to its external thread") && strings.Contains(line, channel), "logged: %s", line)
+	}
+}
+
 // One person's task never reaches another person's thread on the same line.
 func (s *TelnyxChannelSuite) TestATaskNeverReachesAnotherPersonsThread() {
 	task, _ := s.scheduledInThread("+13125550001")
