@@ -101,6 +101,7 @@ func (s *StoreSuite) TestAnEditCommittedWhileAPluginIsNamedIsWhatItsCheckSees() 
 	s.Require().NoError(tx.Commit())
 	s.Require().NoError(<-done)
 
+	s.Require().Len(checked, 1, "the naming asks its check")
 	s.Equal("edited meanwhile", <-checked)
 	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
 	s.Require().NoError(err)
