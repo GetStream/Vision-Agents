@@ -125,6 +125,7 @@ the other commands that read them there.
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
 | `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
+| `ROUTER_USAGE_MANAGE_KEY` | The usage service's manage key (its `USAGE_MANAGE_KEY`), for `router usage forget-user` alone; the router never sends it. Unset, that command refuses to run. See [The usage service](#the-usage-service) |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user's devices may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user's devices may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`) |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
@@ -1734,6 +1735,21 @@ sent again cannot make its change a second time: a replay with the same organiza
 changes nothing, writes no audit row and answers the standing as it is now. The key is one
 space across the four writes: a key already used for another operation, organization or body
 is a 409 `idempotency_key_reused`. Keys are kept in `manage_requests`, for good.
+
+**Forgetting an end user.** A user id is often an email, so an erasure request for one of a
+customer's users reaches the usage records. `router usage forget-user --app <app> --user <id>
+--actor <who>` replaces the id with `forgotten:` and 32 random hex characters (random, since a
+hash of an email can be recomputed from it), in order: the requests of every shard; the usage
+service's events and the user's windows (`POST /v1/manage/users/forget`, one transaction, a
+window the replacement already has taking the forgotten one's spend), and again after
+`--settle` (2 minutes) for a batch a shipper read before the shards were rewritten; the user's
+`usage:` counter, `hold:` key and `quota:` buckets in Redis, deleted by name; and in the shared
+database their own policy and user-level limits, deleted, so the app's defaults apply, and the
+id on their resets, grants and campaigns. Usage and cost stay under the app. It writes one
+`end_user` audit row naming the replacement and the actor, never the id, and the service one
+`forget_user` row per organization. `--dry-run` prints the counts and changes nothing. It covers
+the usage records only: sessions, conversation history and `agent_logs` have their own
+retention, and work recorded for the id afterwards carries it again.
 
 The service checks its own alerts, sends them to Sentry (`usage_alert:<name>`) and logs them.
 A rejected event, a batch refused whole for what it holds (`batch_refused`: a 400, 413 or 422,
