@@ -40,6 +40,7 @@ func (s *AgentSuite) TestAYesRunsTheCallOnceWithItsOwnID() {
 	s.Equal("call-1", ran.ID, "the call runs under the id the model gave it")
 	s.Equal("lookup_order", ran.Name)
 	s.Equal(`{"order":"12"}`, ran.Arguments)
+	// Read once the result is back: the stub records a call before it runs it.
 	s.eventually(func() bool { return strings.Contains(s.historyWith(llm.ToolResult), "order 12 booked") },
 		"the call's result never answered the confirmation")
 	s.True(approved.Load(), "the call is marked approved for whoever runs it")

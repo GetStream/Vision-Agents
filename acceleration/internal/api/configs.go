@@ -880,12 +880,13 @@ func sandboxOfConfig(config store.AgentConfig) *savedSandbox {
 //   - a sandbox that may reach the network.
 //
 // Only a binding's require_approval asks a person before a call is sent; the others ask
-// nobody. It reads the config as it is about to be stored.
-func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+// nobody. It reads the config as it is about to be stored. router plugins migrate asks it
+// of a binding it adds (pluginmigrate.Options.Complaint).
+func SensitiveBindingsComplaint(ctx context.Context, definitions *store.Store, customerID string, config store.AgentConfig) (string, bool, error) {
 	var sensitive *store.ConnectorBinding
 	var outbound, unheld []string
 	for i, binding := range config.Connectors {
-		definition, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorID)
+		definition, err := definitions.LatestConnectorDefinition(ctx, customerID, binding.ConnectorID)
 		// A forced connector delete leaves its bindings behind (store.refuseUndefined), and
 		// a binding to a connector with no definition opens nothing.
 		if errors.Is(err, store.ErrNoConnectorDefinition) {
@@ -929,6 +930,11 @@ func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID stri
 			strings.Join(unheld, "; ")
 	}
 	return message, false, nil
+}
+
+// sensitiveBindingsComplaint is SensitiveBindingsComplaint over the server's store.
+func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+	return SensitiveBindingsComplaint(ctx, s.store, customerID, config)
 }
 
 // bindingSendsOut reports whether a binding offers a tool that may send data out with nobody

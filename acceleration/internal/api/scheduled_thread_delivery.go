@@ -29,6 +29,7 @@ import (
 //	the session on the channel, else threadSpec on the task's config
 //	Session.FollowUp("st_<run>"), wait for its reply            no_reply, reply_failed
 //	Bridge.Send the reply, held from Bridge.Reply                opted out: channel_unreachable, final
+//	                                                            thread removed meanwhile: thread_gone, final
 //	                                                            refused: delivery_failed
 //	close the session it opened; let go of the lease
 //	delivered_to sms | whatsapp
@@ -91,14 +92,13 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 	if err := followUpWithin(turn, found, delivery); err != nil {
 		return "", "", err
 	}
-	text, err := readBackReply(turn, found, delivery.CommandID)
-	if err != nil {
+	if _, err := readBackReply(turn, found, delivery.CommandID); err != nil {
 		return "", "", err
 	}
-	reply := conversation.FinishedReply{Customer: delivery.CustomerID, CID: chatlog.ChannelType + ":" + thread.ChannelID,
-		MessageID: found.FollowUpMessage(delivery.CommandID), CommandID: delivery.CommandID, Text: text}
+	// The reply as the conversation stored it, with its files: as it finished, or read back
+	// for a follow-up that finished on an earlier attempt.
+	reply := found.FollowUpFinished(delivery.CommandID)
 	if !retried {
-		// The reply as the conversation stored it, with its files.
 		select {
 		case reply = <-replies:
 		case <-turn.Done():
@@ -140,11 +140,13 @@ func (s *Server) taskThreadSession(ctx context.Context, delivery scheduledDelive
 }
 
 // threadUnreachable is the failure a run records for a thread the bridge would not reply on.
-// A removed line, an opted-out person and a person past the window stay so until somebody
-// acts (the window opens again only when the person writes), so another attempt would only
-// repeat them.
+// A removed thread or line, an opted-out person and a person past the window stay so until
+// somebody acts (the window opens again only when the person writes), so another attempt
+// would only repeat them.
 func threadUnreachable(err error) error {
 	switch {
+	case errors.Is(err, store.ErrNoChannelThread):
+		return undeliveredFinally(scheduling.ReasonThreadGone, err)
 	case errors.Is(err, store.ErrNoConnectorConnection):
 		return undeliveredFinally(scheduling.ReasonConnectionRemoved, err)
 	case errors.Is(err, channelbridge.ErrOptedOut):

@@ -69,13 +69,24 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *store.AgentConfig
 
 // AddConnectorBinding appends a binding to a config's connectors and nothing else
 // (store.Store.AddConnectorBinding), and forgets the cached config under its id and its name.
-func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID string, binding store.ConnectorBinding) (bool, error) {
-	config, added, err := s.db.AddConnectorBinding(ctx, customerID, configID, binding)
+func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID string, binding store.ConnectorBinding, allow func(context.Context, store.AgentConfig) error) (bool, error) {
+	config, added, err := s.db.AddConnectorBinding(ctx, customerID, configID, binding, allow)
 	if err != nil || !added {
 		return added, err
 	}
 	s.forget(ctx, key("agent", customerID, configID), key("agent-name", customerID, config.Name))
 	return true, nil
+}
+
+// AddConfigPlugin names a plugin on a config as the app's and nothing else
+// (store.Store.AddConfigPlugin), and forgets the cached config under its id and its name.
+func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, pluginID string, allow func(context.Context, store.AgentConfig) error) error {
+	config, err := s.db.AddConfigPlugin(ctx, customerID, configID, pluginID, allow)
+	if err != nil {
+		return err
+	}
+	s.forget(ctx, key("agent", customerID, configID), key("agent-name", customerID, config.Name))
+	return nil
 }
 
 // DeleteAgentConfig marks a config as gone.

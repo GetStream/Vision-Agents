@@ -151,6 +151,55 @@ jobs:
       - name: Build
         run: npm run build
 
+  dotnet:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/dotnet
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: sdks/dotnet/global.json
+
+      - name: Check the generated models are in step with the spec
+        run: dotnet run --project tools/Generate -- --check
+
+      - name: Check formatting
+        run: dotnet format --verify-no-changes
+
+      - name: Build
+        run: dotnet build -warnaserror
+
+      - name: Test
+        run: dotnet test --no-build
+
+  php:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/php
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer
+
+      - name: Install
+        run: composer install --no-interaction --no-progress
+
+      - name: Check the generated classes are in step with the spec
+        run: composer generate-check
+
+      - name: Analyse
+        run: composer stan
+
+      - name: Test
+        run: composer test
+
   dashboard:
     runs-on: ubuntu-latest
     defaults:
