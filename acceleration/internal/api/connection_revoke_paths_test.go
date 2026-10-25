@@ -196,6 +196,24 @@ func (s *AuthorizationsSuite) TestRemovingTheAppsClientReadsEachRevisionOnce() {
 	s.Equal(int64(1), reads.reads.Load())
 }
 
+// The opt-in is each connection's revision's: of a client's connection made before the
+// connector opted in and one made after, only the second is revoked.
+func (s *AuthorizationsSuite) TestRemovingTheAppsClientReadsTheOptInOfEachConnectionsRevision() {
+	connector, before := s.clientConnection(s.provider.URL+fakeprovider.PathRevoke, "")
+	s.revise(connector, func(m *core.Manifest) { m.RevokeOnDelete = true })
+	after := s.clientUsersConnection(connector)
+	beforeStored, beforeManifest := s.held(before)
+	afterStored, afterManifest := s.held(after)
+	hits := s.provider.Hits(fakeprovider.PathRevoke)
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/connectors/"+connector+"/oauth-client", nil, nil))
+
+	s.Equal(hits+1, s.provider.Hits(fakeprovider.PathRevoke))
+	s.putClient(connector, s.provider.ClientSecret)
+	s.NoError(s.renew(beforeStored, beforeManifest))
+	s.assertRefusedAtTheProvider(afterStored, afterManifest)
+}
+
 // TestRemovingTheAppsClientWithoutTheOptInRevokesNothing is the control: as on the base
 // (2c083b25b, probed there), nothing is sent, and with the client put back the grant renews.
 func (s *AuthorizationsSuite) TestRemovingTheAppsClientWithoutTheOptInRevokesNothing() {
