@@ -80,6 +80,7 @@ func (s *PluginMigrateSuite) TestADryRunListsEveryRowAndItsTargetAndWritesNothin
 	s.Contains(s.row(report, pluginmigrate.KindConnection, app).Target, pluginmigrate.MovedConnectionID(app))
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindConnection, mine).Action)
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, fixed+" plugins").Action)
+	s.Contains(s.row(report, pluginmigrate.KindBinding, fixed+" plugins").Note, "checked at apply")
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, personal+" plugins").Action)
 	s.Len(report.Rows, 5, "every row read is listed")
 	s.False(report.Applied)

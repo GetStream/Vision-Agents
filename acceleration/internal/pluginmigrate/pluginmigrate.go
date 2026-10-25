@@ -158,6 +158,9 @@ func (r Report) Write(w io.Writer) error {
 // wrote and writes nothing again. An error is the database or the keyring failing; a row that
 // cannot be moved is a Skipped row, not an error.
 func Run(ctx context.Context, opts Options, apply bool) (Report, error) {
+	if opts.Complaint == nil {
+		return Report{}, errors.New("pluginmigrate: Options.Complaint is required: without the API's rule a binding could land beside a sensitive connector")
+	}
 	if opts.Catalog == nil {
 		opts.Catalog = plugins.Lookup
 	}
@@ -653,7 +656,8 @@ func (m *migration) moveBinding(ctx context.Context, config store.AgentConfig, e
 		if selection == "session" {
 			grants += " by name"
 		}
-		m.add(Row{Kind: KindBinding, Action: Planned, Source: source, Target: target, Note: "grants " + grants + ", as listed through " + through})
+		m.add(Row{Kind: KindBinding, Action: Planned, Source: source, Target: target, Note: "grants " + grants + ", as listed through " + through +
+			"; the rule on a binding beside a sensitive connector is checked at apply"})
 		return nil
 	}
 	specs, err := m.listTools(ctx, config.CustomerID, through)

@@ -142,18 +142,16 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		IncludeRotating: scope.IncludeRotating,
 		Store:           pgStore,
 		Configs:         configs,
-		Complaint: func(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
-			return api.SensitiveBindingsComplaint(ctx, pgStore, customerID, config)
-		},
-		Registry:       registry,
-		Credentials:    credentials,
-		Transports:     transports,
-		HTTP:           egress.NewClient(connectorHTTPTimeout, nil),
-		PublicEndpoint: egress.ValidatePublicHTTPSURL,
-		Clients:        clients,
-		PluginClients:  session.PluginClients(pgStore, secrets),
-		Getenv:         os.Getenv,
-		Logger:         logger,
+		Complaint:       sensitiveComplaint(pgStore),
+		Registry:        registry,
+		Credentials:     credentials,
+		Transports:      transports,
+		HTTP:            egress.NewClient(connectorHTTPTimeout, nil),
+		PublicEndpoint:  egress.ValidatePublicHTTPSURL,
+		Clients:         clients,
+		PluginClients:   session.PluginClients(pgStore, secrets),
+		Getenv:          os.Getenv,
+		Logger:          logger,
 		SealClientSecret: func(customerID, connectorID, secret string) ([]byte, int, error) {
 			return api.SealConnectorOAuthClientSecret(secrets, customerID, connectorID, secret)
 		},
@@ -162,6 +160,14 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		return err
 	}
 	return report.Write(out)
+}
+
+// sensitiveComplaint is the API's rule on a config's bindings, asked of the config a binding
+// is about to be added to: nessy beside a binding that sends data out is refused.
+func sensitiveComplaint(definitions *store.Store) func(context.Context, string, store.AgentConfig) (string, bool, error) {
+	return func(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+		return api.SensitiveBindingsComplaint(ctx, definitions, customerID, config)
+	}
 }
 
 // pluginIDs splits --plugin's comma-separated ids, dropping empty ones.
