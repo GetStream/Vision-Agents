@@ -2598,6 +2598,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A thread task (SMS or WhatsApp) whose reply the line refused is retried with the reply's files, not only its text. A thread removed while the task's turn runs fails the run as `thread_gone`, final, where it was recorded `delivered` with nothing sent (AI-1882, AI-1883).
 - A hosted tool's `tool_result` on `/v1/dispatch` takes the session socket's shape: it names its call with `tool_call_id` (`id` is still read), and `output` may be a parts array with pictures, which reach the model. A result with parts closed the worker's socket before, and one naming `tool_call_id` was never matched, so the call waited out its timeout. The Go SDK's hosted tools now send their pictures rather than failing the call, and need a router from this release to do so.
 - A worker on `/v1/dispatch` running a hosted tool call is sent `tool_cancel` (`id`, `session_id`) when the call's timeout passes or its session gives up on it, including when the session is on another node. It was never told, so it ran on, and its answer was dropped.
 - A session that a slow greeting delays no longer loses what happened while it was spoken: a conversation named, a connection chosen at a login, or a video frame seen before the session's row is stored are written after the row, not dropped (AI-1925). The title shows in the sessions list instead of `—`, and a fork of the ended session no longer asks for the login again.
