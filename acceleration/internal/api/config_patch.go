@@ -262,7 +262,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, invalidRequest(message)
 	}
 
-	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
+	if err := s.writePatched(ctx, &config, patch.Plugins == nil); err != nil {
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
 	stored := agentConfigOf(config)
@@ -273,4 +273,14 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	s.pluginEvents.Changed(customerID, config.ID)
 	s.warnPluginsSaved(ctx, config)
 	return &agentConfigResponse{Body: stored}, nil
+}
+
+// writePatched stores a config an update built from an earlier read. One that leaves the
+// plugins out keeps them as they are when it is written, so it does not drop a plugin a login
+// named since the read, and its sensitive rule is checked again on them.
+func (s *Server) writePatched(ctx context.Context, config *store.AgentConfig, keepPlugins bool) error {
+	if keepPlugins {
+		return s.configs.UpdateAgentConfigButPlugins(ctx, config, sensitiveCheck(config.CustomerID))
+	}
+	return s.configs.UpdateAgentConfig(ctx, config)
 }

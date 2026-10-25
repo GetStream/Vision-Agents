@@ -354,7 +354,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	config.SyncHash = hash
 
 	if found {
-		if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
+		if err := s.writePatched(ctx, &config, body.Plugins == nil); err != nil {
 			return nil, storeFailure(err, errAgentNameTaken)
 		}
 	} else {

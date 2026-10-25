@@ -178,14 +178,31 @@ func (s *Store) DeletePluginConnection(ctx context.Context, customerID, configID
 }
 
 // AddConfigPlugin names a plugin on a config as the app's if it is not already there. One
-// each end user connected becomes the app's, keeping its options. allow is asked about the
-// config as it is about to be written, with the config's row locked FOR UPDATE from the read
-// to the write, so a rule it checks holds against an edit made meanwhile: an update that
-// lands first is read here, and one that comes second waits and then writes over this one.
-// Nothing is written when allow fails, and its error is returned as is. Only the plugins
-// column is written, with updated_at. The config is returned as it is after, for a caller
-// that forgets a cached copy.
-func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, pluginID string, allow func(context.Context, AgentConfig) error) (config AgentConfig, err error) {
+// each end user connected becomes the app's, keeping its options. It is EditConfigPlugins
+// with that edit.
+func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, pluginID string, allow ConfigCheck) (AgentConfig, error) {
+	return s.EditConfigPlugins(ctx, customerID, configID, func(entries []PluginEntry) ([]PluginEntry, bool) {
+		at := slices.IndexFunc(entries, func(entry PluginEntry) bool { return entry.Name == pluginID })
+		switch {
+		case at < 0:
+			return append(entries, PluginEntry{Name: pluginID}), true
+		case entries[at].User:
+			entries[at].User = false
+			return entries, true
+		}
+		return entries, false
+	}, allow)
+}
+
+// EditConfigPlugins writes edit's change to a config's plugins. edit is handed the plugins as
+// stored and says whether it changed them; nothing is written when it did not. The config's row is locked FOR UPDATE from the read to the write, so a rule allow
+// checks holds against an edit made meanwhile: an update that lands first is read here, and
+// one that comes second waits and then writes over this one, or keeps these plugins
+// (UpdateAgentConfigButPlugins). allow, when not nil, is asked about the config as it is about
+// to be written; nothing is written when it fails, and its error is returned as is. Only the
+// plugins column is written, with updated_at. The config is returned as it is after, for a
+// caller that forgets a cached copy.
+func (s *Store) EditConfigPlugins(ctx context.Context, customerID, configID string, edit func([]PluginEntry) ([]PluginEntry, bool), allow ConfigCheck) (config AgentConfig, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		err := tx.NewSelect().Model(&config).
 			Where("id = ?", configID).
@@ -197,19 +214,16 @@ func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, plugi
 			return unknownAgentConfig(configID)
 		}
 		if err != nil {
-			return fmt.Errorf("store: add config plugin: %w", err)
+			return fmt.Errorf("store: edit config plugins: %w", err)
 		}
-		at := slices.IndexFunc(config.Plugins, func(entry PluginEntry) bool { return entry.Name == pluginID })
-		switch {
-		case at < 0:
-			config.Plugins = append(config.Plugins, PluginEntry{Name: pluginID})
-		case config.Plugins[at].User:
-			config.Plugins[at].User = false
-		default:
+		var changed bool
+		if config.Plugins, changed = edit(config.Plugins); !changed {
 			return nil
 		}
-		if err := allow(ctx, config); err != nil {
-			return err
+		if allow != nil {
+			if err := allow(ctx, config, txDefinitions{tx}); err != nil {
+				return err
+			}
 		}
 		config.UpdatedAt = time.Now().UTC()
 		_, err = tx.NewUpdate().Model(&config).
@@ -218,11 +232,14 @@ func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, plugi
 			Where("customer_id = ?", customerID).
 			Exec(ctx)
 		if err != nil {
-			return fmt.Errorf("store: add config plugin: %w", err)
+			return fmt.Errorf("store: edit config plugins: %w", err)
 		}
 		return nil
 	})
-	return config, stack.Wrap(err)
+	if err != nil {
+		return AgentConfig{}, stack.Wrap(err)
+	}
+	return config, nil
 }
 
 // ErrUnknownPluginClient is a plugin no OAuth client was set for on the config.
