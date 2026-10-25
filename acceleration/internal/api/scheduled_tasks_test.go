@@ -39,6 +39,8 @@ type schedulingScript struct {
 	rounds [][]llm.ToolCall
 	// failing is how many scheduled turns each model opened from now on fails.
 	failing int
+	// held, when set, keeps the scheduled turns of every model back until it is closed.
+	held chan struct{}
 }
 
 // failScheduled has every model opened from now on fail its next times a scheduled task comes
@@ -47,6 +49,23 @@ func (s *schedulingScript) failScheduled(times int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failing = times
+}
+
+// holdScheduled keeps every model's scheduled turns running, saying nothing, until release:
+// holdScheduled of schedulingModel for a session the test cannot reach before it opens.
+func (s *schedulingScript) holdScheduled() (release func()) {
+	held := make(chan struct{})
+	s.mu.Lock()
+	s.held = held
+	s.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(held) }) }
+}
+
+func (s *schedulingScript) holding() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.held
 }
 
 func (s *schedulingScript) failingTurns() int {
@@ -96,7 +115,7 @@ func (s *schedulingScript) next() []llm.ToolCall {
 func (s *schedulingScript) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.turns, s.rounds, s.failing = nil, nil, 0
+	s.turns, s.rounds, s.failing, s.held = nil, nil, 0, nil
 }
 
 // schedulingModel is a model that asks for the tool calls its test queued and
@@ -139,6 +158,7 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		names = append(names, tool.Name)
 	}
 	scheduled := strings.Contains(startedBy(params), "<scheduled_task")
+	everyHeld := m.script.holding()
 	m.mu.Lock()
 	m.offered = append(m.offered, names)
 	m.asked = append(m.asked, params)
@@ -147,6 +167,9 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		m.failing--
 	}
 	held := m.held
+	if held == nil {
+		held = everyHeld
+	}
 	if !scheduled {
 		held = nil
 	}

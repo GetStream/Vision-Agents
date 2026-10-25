@@ -176,8 +176,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   and runs the follow-up. The delivery holds the reply back from `Bridge.Reply` (`Bridge.Hold`)
   and sends it through the same path (`Bridge.Send`), so the run is `delivered_to` `sms` or
   `whatsapp` only once the line took it: a refused send is `delivery_failed`, and its retry
-  sends the reply the thread holds without a second turn; a person who opted out by then is
-  `channel_unreachable`, final. The task stores `deliver_to` `sms` or `whatsapp`
+  sends the reply the thread holds, with its files (`Session.FollowUpFinished`), without a
+  second turn; a person who opted out by then is `channel_unreachable`, final, and a thread
+  removed by then is `thread_gone`, final. The task stores `deliver_to` `sms` or `whatsapp`
   (`Spec.ThreadDelivery`), which PATCH refuses to change. Quiet hours hold it as any task.
   Before the turn,
   `Bridge.Reachable` refuses: a removed connection (`connection_removed`, final), an opted-out
@@ -191,6 +192,8 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestTelnyxChannelSuite/TestATaskIsCarriedInTheSessionTheBackendKeepsOnTheThread`,
   `TestTelnyxChannelSuite/TestATaskWhoseTurnFailsTextsNothing`,
   `TestTelnyxChannelSuite/TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry`,
+  `TestAFollowUpsFilesAreReadBackLiveAndAcrossRestart` (internal/conversation),
+  `TestTelnyxChannelSuite/TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFinally`,
   `TestTelnyxChannelSuite/TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotTextedAndTheTaskIsNotRetried`,
   `TestTelnyxChannelSuite/TestAThreadTaskInItsQuietHoursIsHeld`,
   `TestTelnyxChannelSuite/TestAThreadTasksDeliverToCannotChange`,
