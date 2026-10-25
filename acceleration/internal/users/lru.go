@@ -3,6 +3,7 @@ package users
 import (
 	"container/list"
 	"sync"
+	"time"
 )
 
 // DefaultCapacity is how many users one process keeps in memory, across every app it
@@ -18,9 +19,9 @@ const DefaultCapacity = 10_000
 // holds nothing and a busy one gets the room, which is what a cache of a fixed total size
 // means.
 //
-// No value is kept beside the key. The only question asked of this is whether a user has
-// already been written down, and keeping the row as well would be keeping a copy of
-// Postgres that nothing reads.
+// No row is kept beside the key, only the one value a write was made with (an email), since
+// the only question asked of this is whether that write was already made, and keeping the
+// row as well would be keeping a copy of Postgres that nothing reads.
 type seen struct {
 	capacity int
 
@@ -30,10 +31,13 @@ type seen struct {
 }
 
 // entry is what one element of the recency list holds, which is enough to find its
-// partition when it is evicted from the far end.
+// partition when it is evicted from the far end, and the value the user is held with until
+// expires. A zero expires never ends.
 type entry struct {
-	app string
-	id  string
+	app     string
+	id      string
+	value   string
+	expires time.Time
 }
 
 func newSeen(capacity int) *seen {
@@ -49,6 +53,18 @@ func newSeen(capacity int) *seen {
 
 // Get reports whether a user is held, and marks them as the most recently used.
 func (s *seen) Get(app, id string) bool {
+	return s.Holds(app, id, "", time.Time{})
+}
+
+// Add holds a user, evicting the least recently used one across every app when the cache
+// is full.
+func (s *seen) Add(app, id string) {
+	s.Keep(app, id, "", time.Time{})
+}
+
+// Holds reports whether a user is held with value and their hold has not expired by now,
+// and marks them as the most recently used.
+func (s *seen) Holds(app, id, value string, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -56,17 +72,23 @@ func (s *seen) Get(app, id string) bool {
 	if !found {
 		return false
 	}
+	held := element.Value.(entry)
+	if held.value != value || (!held.expires.IsZero() && !now.Before(held.expires)) {
+		return false
+	}
 	s.order.MoveToFront(element)
 	return true
 }
 
-// Add holds a user, evicting the least recently used one across every app when the cache
-// is full.
-func (s *seen) Add(app, id string) {
+// Keep holds a user with value until expires, in place of what they were held with,
+// evicting the least recently used one across every app when the cache is full.
+func (s *seen) Keep(app, id, value string, expires time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	held := entry{app: app, id: id, value: value, expires: expires}
 	if element, found := s.apps[app][id]; found {
+		element.Value = held
 		s.order.MoveToFront(element)
 		return
 	}
@@ -76,7 +98,7 @@ func (s *seen) Add(app, id string) {
 		partition = map[string]*list.Element{}
 		s.apps[app] = partition
 	}
-	partition[id] = s.order.PushFront(entry{app: app, id: id})
+	partition[id] = s.order.PushFront(held)
 
 	for s.order.Len() > s.capacity {
 		s.evict(s.order.Back())
