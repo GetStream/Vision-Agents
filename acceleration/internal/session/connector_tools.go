@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -363,7 +364,6 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 	if binding.TimeoutMs > 0 {
 		timeout = time.Duration(binding.TimeoutMs) * time.Millisecond
 	}
-	offered := 0
 	for _, kind := range sourceKinds(manifest) {
 		source, found := registry.ToolSources[kind]
 		if !found {
@@ -385,27 +385,44 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 				tool: name, digest: digests[name], timeout: timeout, declared: declaredArguments(tool.Parameters),
 				limit: manifest.RateLimitKey(connection.CustomerID, resolved.Connection), maxInFlight: manifest.RateLimit.MaxConcurrentCalls}
 			d.tools = append(d.tools, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
-			offered++
 		}
 	}
-	if len(patternMiss) > 0 {
-		return unavailableTool, nil
-	}
-	if offered < len(binding.Tools) {
-		var changed []string
-		for _, grant := range binding.Tools {
-			if _, found := d.routes[binding.Name+mcp.Separator+grant.Name]; !found && grant.SchemaDigest == "" {
-				changed = append(changed, grant.Name)
-			}
+	var changed []string
+	for _, grant := range binding.Tools {
+		if _, found := d.routes[binding.Name+mcp.Separator+grant.Name]; !found {
+			changed = append(changed, grant.Name)
 		}
-		if len(changed) > 0 {
-			m.logger.Warn("a tool granted by name is not offered: the connection no longer lists it with the "+
-				"schema it was pinned at, and approving it (POST .../tools/approve) or a reconnect gives it back", "connector", binding.Name,
-				"connection", connection.ID, "tools", changed)
-		}
-		return unavailableTool, nil
 	}
-	return m.sandboxGrant(binding, connection, manifest, scheme, d), nil
+	if len(changed) > 0 {
+		m.logger.Warn("a granted tool is not offered: the connection no longer lists it with the schema it was "+
+			"granted against or pinned at, and approving it (POST .../tools/approve), a reconnect or a config "+
+			"saved at its new schema gives it back", "connector", binding.Name, "connection", connection.ID, "tools", changed)
+	}
+	if len(patternMiss) == 0 && len(changed) == 0 {
+		return m.sandboxGrant(binding, connection, manifest, scheme, d), nil
+	}
+	// The binding keeps the tools that still match; a call of one left out says why (Run).
+	for _, name := range slices.Concat(patternMiss, changed) {
+		d.leftOut = append(d.leftOut, binding.Name+mcp.Separator+name)
+	}
+	return unavailableTool, nil
+}
+
+// toolLeftOut is what the model reads of a call of alias's granted tool that the binding left
+// out, since the provider no longer lists it with the schema it was approved at
+// (unavailableTool): only an admin's approval gives it back, never a login.
+func toolLeftOut(alias, tool string) string {
+	raw, _ := json.Marshal(struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}{Status: unavailableTool, Message: toolLeftOutWhy(alias, tool)})
+	return string(raw)
+}
+
+// toolLeftOutWhy is why alias's tool was left out, in words for the model.
+func toolLeftOutWhy(alias, tool string) string {
+	return fmt.Sprintf("%s's %s cannot be used: the provider changed its schema since it was approved, so an admin "+
+		"must approve the new schema first. Tell the user that; do not offer to connect it.", alias, tool)
 }
 
 // patternToolCap is how many tools one pattern binding offers. It is the maxItems on
