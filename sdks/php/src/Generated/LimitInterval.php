@@ -7,12 +7,13 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Generated;
 
 /**
- * How often a budget resets. A week starts on Monday.
+ * The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted
+ * from Monday 2024-01-01, or the calendar month.
  */
-enum BudgetInterval: string
+enum LimitInterval: string
 {
-    case Hourly = 'hourly';
     case Daily = 'daily';
     case Weekly = 'weekly';
+    case Biweekly = 'biweekly';
     case Monthly = 'monthly';
 }
