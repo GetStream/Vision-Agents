@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,4 +170,68 @@ func (s *UsersSuite) TestADeploymentWithNoRedisStillWritesItsUsersDown() {
 	kind, found := s.recorded(app, "jlahey")
 	s.True(found)
 	s.Equal(store.UserKindAuthenticated, kind)
+}
+
+// email is the address a user's row holds.
+func (s *UsersSuite) email(customerID, userID string) string {
+	email, err := s.db.UserEmail(s.ctx, customerID, userID)
+	s.Require().NoError(err)
+	return email
+}
+
+// plain is a recorder with no Redis, holding an email for ttl.
+func (s *UsersSuite) plain(ttl time.Duration) *Recorder {
+	recorder, err := New(Options{Store: s.db, TTL: ttl, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(recorder.Close)
+	return recorder
+}
+
+// TestAnEmailIsWrittenAgainOnceItsTTLEnds changes the row behind the recorder's back, so a
+// later Email putting the address back is evidence that it went to Postgres.
+func (s *UsersSuite) TestAnEmailIsWrittenAgainOnceItsTTLEnds() {
+	recorder, app := s.plain(500*time.Millisecond), s.app()
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	s.Require().NoError(s.db.SetUserEmail(s.ctx, app, "jlahey", "behind@fake.example"))
+
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	s.Equal("behind@fake.example", s.email(app, "jlahey"), "an address just written costs no write")
+
+	s.Eventually(func() bool {
+		return recorder.Email(s.ctx, app, "jlahey", "jim@fake.example") == nil &&
+			s.email(app, "jlahey") == "jim@fake.example"
+	}, settleFor, 10*time.Millisecond, "the hold outlived its ttl")
+}
+
+func (s *UsersSuite) TestAnEmailThatFailedToBeWrittenIsTriedAgain() {
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	recorder, app := s.plain(time.Hour), s.app()
+	recorder.db = closed
+	s.Require().Error(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+
+	recorder.db = s.db
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+
+	s.Equal("jim@fake.example", s.email(app, "jlahey"))
+}
+
+// TestEmailsSaidAtOnceAreAllWritten is for -race: requests for the same and other users
+// call Email at the same time.
+func (s *UsersSuite) TestEmailsSaidAtOnceAreAllWritten() {
+	recorder, app := s.plain(time.Hour), s.app()
+	var group sync.WaitGroup
+	for i := range 16 {
+		group.Go(func() {
+			s.NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+			s.NoError(recorder.Email(s.ctx, app, fmt.Sprintf("user-%d", i%4), fmt.Sprintf("user-%d@fake.example", i%4)))
+		})
+	}
+	group.Wait()
+
+	s.Equal("jim@fake.example", s.email(app, "jlahey"))
+	for i := range 4 {
+		s.Equal(fmt.Sprintf("user-%d@fake.example", i), s.email(app, fmt.Sprintf("user-%d", i)))
+	}
 }

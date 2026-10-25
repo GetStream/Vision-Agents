@@ -13,6 +13,10 @@
 // one whose Redis is unreachable. Nothing here fails a request because a cache is missing,
 // and nothing here fails a request at all: recording who called is not what the caller
 // asked for.
+//
+// The email a backend says its user signs in with is said on every request too, and is
+// held in an LRU of its own, by user and address, for the TTL: a changed address is written
+// at once.
 package users
 
 import (
@@ -50,7 +54,8 @@ type Options struct {
 	Address  string
 	Username string
 	Password string
-	// TTL is how long a user's key lives in Redis. DefaultTTL when unset.
+	// TTL is how long a user's key lives in Redis, and how long an email this process wrote
+	// is not written again. DefaultTTL when unset.
 	TTL time.Duration
 	// Capacity is how many users this process holds in memory across every app.
 	// DefaultCapacity when unset.
@@ -63,6 +68,7 @@ type Recorder struct {
 	db     *store.Store
 	redis  rueidis.Client
 	seen   *seen
+	emails *seen
 	ttl    time.Duration
 	logger *slog.Logger
 }
@@ -83,6 +89,7 @@ func New(options Options) (*Recorder, error) {
 	recorder := &Recorder{
 		db:     options.Store,
 		seen:   newSeen(options.Capacity),
+		emails: newSeen(options.Capacity),
 		ttl:    options.TTL,
 		logger: options.Logger,
 	}
@@ -155,6 +162,26 @@ func (r *Recorder) Seen(ctx context.Context, customerID, userID, kind string) er
 		}
 	}
 	r.seen.Add(customerID, userID)
+	return nil
+}
+
+// Email records the address a backend said a user signs in with (store.SetUserEmail), and
+// does nothing for the address this process last wrote for them within the TTL. A backend
+// may say it on every request. A changed address is written at once; one another replica
+// wrote under this one is written again here once the TTL ends, so a row lags for at most
+// that long. A failed write is not held, so the next request tries again.
+func (r *Recorder) Email(ctx context.Context, customerID, userID, email string) error {
+	if email == "" {
+		return nil
+	}
+	now := time.Now()
+	if r.emails.Holds(customerID, userID, email, now) {
+		return nil
+	}
+	if err := r.db.SetUserEmail(ctx, customerID, userID, email); err != nil {
+		return err
+	}
+	r.emails.Keep(customerID, userID, email, now.Add(r.ttl))
 	return nil
 }
 
