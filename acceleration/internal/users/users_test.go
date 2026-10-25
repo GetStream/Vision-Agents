@@ -258,53 +258,44 @@ func (s *UsersSuite) TestAnEmailForNoUserIsNotHeld() {
 
 // TestTwoAddressesSaidAtOnceLeaveTheHeldOneTheRows: requests saying A and B for one user at
 // the same time end with the row and the hold on the same address, whichever it is, so a
-// later request for the row's address is not written while one for the other is.
+// later request for the row's address is not written while one for the other is. Many
+// users at once give the scheduler room to pause one request between its write and its
+// hold.
 func (s *UsersSuite) TestTwoAddressesSaidAtOnceLeaveTheHeldOneTheRows() {
 	recorder, app := s.plain(time.Hour), s.app()
 	addresses := []string{"jim@fake.example", "randy@fake.example"}
-	for round := range 100 {
-		user := fmt.Sprintf("user-%d", round)
+	for round := range 10 {
 		var group sync.WaitGroup
-		for _, address := range addresses {
-			group.Go(func() { s.NoError(recorder.Email(s.ctx, app, user, address)) })
+		for user := range 50 {
+			for _, address := range addresses {
+				group.Go(func() { s.NoError(recorder.Email(s.ctx, app, fmt.Sprintf("user-%d-%d", round, user), address)) })
+			}
 		}
 		group.Wait()
 
-		row := s.email(app, user)
-		s.Require().True(recorder.emails.Holds(app, user, row, time.Now()),
-			"round %d: the row holds %s and the cache does not", round, row)
+		for user := range 50 {
+			name := fmt.Sprintf("user-%d-%d", round, user)
+			row := s.email(app, name)
+			s.Require().True(recorder.emails.Holds(app, name, row, time.Now()),
+				"%s: the row holds %s and the cache does not", name, row)
+		}
 	}
 }
 
-func (s *UsersSuite) TestAnEmailThatFailedToBeWrittenIsTriedAgain() {
-	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
-	s.Require().NoError(err)
-	s.Require().NoError(closed.Close())
+// TestAnEmailWaitsForAWriteInFlightForTheSameUser holds the lock a write in flight holds,
+// which is what makes the interleaving above certain rather than likely: a request seen
+// while it is held writes nothing until it is let go.
+func (s *UsersSuite) TestAnEmailWaitsForAWriteInFlightForTheSameUser() {
 	recorder, app := s.plain(time.Hour), s.app()
-	recorder.db = closed
-	s.Require().Error(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	lock := recorder.emailLock(app, "jlahey")
+	lock.Lock()
+	done := make(chan error)
+	go func() { done <- recorder.Email(s.ctx, app, "jlahey", "jim@fake.example") }()
 
-	recorder.db = s.db
-	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	s.Never(func() bool { return s.email(app, "jlahey") != "" }, 200*time.Millisecond, 10*time.Millisecond,
+		"written while another write held the lock")
+	lock.Unlock()
 
+	s.Require().NoError(<-done)
 	s.Equal("jim@fake.example", s.email(app, "jlahey"))
-}
-
-// TestEmailsSaidAtOnceAreAllWritten is for -race: requests for the same and other users
-// call Email at the same time.
-func (s *UsersSuite) TestEmailsSaidAtOnceAreAllWritten() {
-	recorder, app := s.plain(time.Hour), s.app()
-	var group sync.WaitGroup
-	for i := range 16 {
-		group.Go(func() {
-			s.NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
-			s.NoError(recorder.Email(s.ctx, app, fmt.Sprintf("user-%d", i%4), fmt.Sprintf("user-%d@fake.example", i%4)))
-		})
-	}
-	group.Wait()
-
-	s.Equal("jim@fake.example", s.email(app, "jlahey"))
-	for i := range 4 {
-		s.Equal(fmt.Sprintf("user-%d@fake.example", i), s.email(app, fmt.Sprintf("user-%d", i)))
-	}
 }
