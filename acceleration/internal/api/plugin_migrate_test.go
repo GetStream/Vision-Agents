@@ -463,6 +463,32 @@ func (s *PluginMigrateSuite) TestAMovedConfigStaysEditableWithItsPluginEntryKept
 	}
 }
 
+// TestABindingBesideNessyIsSkippedWithTheRulesMessage: a plugin entry beside nessy, stored
+// before the rule (no API save takes it now), is moved onto a binding that sends data out,
+// which the rule every save of a config checks (SensitiveBindingsComplaint) refuses: the row is
+// Skipped with the rule's message and the config keeps nessy alone. The base, 59153e02a, added
+// crm beside it. crm has no read-only endpoint, so its entry is not read-only.
+func (s *PluginMigrateSuite) TestABindingBesideNessyIsSkippedWithTheRulesMessage() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "migrate-" + s.utils.uuid(),
+		LLM: "connecting/connector-model", Plugins: []store.PluginEntry{{Name: movedPlugin}},
+		Connectors: []store.ConnectorBinding{{Name: "customers", ConnectorID: "nessy",
+			Connection: store.ConnectionBinding{Type: "session"}, Tools: []store.ToolGrant{{Name: "org_lookup"}}}}}
+	s.Require().NoError(s.configs.CreateAgentConfig(context.Background(), &config))
+	s.pluginClient(config.ID, s.provider.ClientID, s.provider.ClientSecret)
+	s.login(config.ID, "", s.provider.ClientID)
+
+	report := s.run(true)
+
+	row := s.row(report, pluginmigrate.KindBinding, config.ID+" plugins")
+	s.Equal(pluginmigrate.Skipped, row.Action)
+	s.Contains(row.Note, `connector binding "customers" binds "nessy"`)
+	s.Contains(row.Note, `connector binding "`+movedPlugin+`", plugin "`+movedPlugin+`" can send data out`)
+	stored := s.storedConfig(config.ID)
+	s.Require().Len(stored.Connectors, 1)
+	s.Equal("nessy", stored.Connectors[0].ConnectorID)
+}
+
 // TestAMovedGrantIsAuditedAndLoggedByItsTokens: the run records the grant it moved as the API
 // records one it created, a grant_created row saying plugin_migrate with the plugin row's
 // tokens by fingerprint, and logs the same line (AI-994 F43). A dry run and a second run add
@@ -657,6 +683,9 @@ func (s *PluginMigrateSuite) options(includeRotating bool) pluginmigrate.Options
 	s.Require().NoError(err)
 	return pluginmigrate.Options{
 		Customer: s.customerID(), IncludeRotating: includeRotating, Store: s.store, Configs: s.configs, Registry: s.connectors,
+		Complaint: func(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+			return SensitiveBindingsComplaint(ctx, s.store, customerID, config)
+		},
 		Credentials: credentials, Transports: transports,
 		HTTP: s.provider.Client(), PublicEndpoint: loopbackOrPublic, Clients: s.clients,
 		PluginClients: session.PluginClients(s.store, s.sealer),

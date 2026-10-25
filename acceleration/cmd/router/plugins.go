@@ -142,15 +142,18 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		IncludeRotating: scope.IncludeRotating,
 		Store:           pgStore,
 		Configs:         configs,
-		Registry:        registry,
-		Credentials:     credentials,
-		Transports:      transports,
-		HTTP:            egress.NewClient(connectorHTTPTimeout, nil),
-		PublicEndpoint:  egress.ValidatePublicHTTPSURL,
-		Clients:         clients,
-		PluginClients:   session.PluginClients(pgStore, secrets),
-		Getenv:          os.Getenv,
-		Logger:          logger,
+		Complaint: func(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+			return api.SensitiveBindingsComplaint(ctx, pgStore, customerID, config)
+		},
+		Registry:       registry,
+		Credentials:    credentials,
+		Transports:     transports,
+		HTTP:           egress.NewClient(connectorHTTPTimeout, nil),
+		PublicEndpoint: egress.ValidatePublicHTTPSURL,
+		Clients:        clients,
+		PluginClients:  session.PluginClients(pgStore, secrets),
+		Getenv:         os.Getenv,
+		Logger:         logger,
 		SealClientSecret: func(customerID, connectorID, secret string) ([]byte, int, error) {
 			return api.SealConnectorOAuthClientSecret(secrets, customerID, connectorID, secret)
 		},

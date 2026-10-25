@@ -54,7 +54,7 @@ const (
 // Configs adds a binding to an agent config, writing its connectors column alone:
 // appconfig.Store, which forgets the cached config it writes.
 type Configs interface {
-	AddConnectorBinding(ctx context.Context, customerID, configID string, binding store.ConnectorBinding) (added bool, err error)
+	AddConnectorBinding(ctx context.Context, customerID, configID string, binding store.ConnectorBinding, allow func(context.Context, store.AgentConfig) error) (added bool, err error)
 }
 
 // Options are what a run reads and writes through. Every field but Customer, Plugins and
@@ -73,6 +73,10 @@ type Options struct {
 	IncludeRotating bool
 	Store           *store.Store
 	Configs         Configs
+	// Complaint is the API's rule on a config's bindings (api.SensitiveBindingsComplaint),
+	// asked of a config as a binding is about to be added to it. A binding it refuses is a
+	// Skipped row with its message.
+	Complaint func(ctx context.Context, customerID string, config store.AgentConfig) (message string, ok bool, err error)
 	// Registry holds the oauth2_code scheme and the mcp tool source, as the router's does.
 	Registry core.Registry
 	// Credentials seals and saves a moved connection's credentials (pgsealed).
@@ -681,7 +685,20 @@ func (m *migration) moveBinding(ctx context.Context, config store.AgentConfig, e
 		Connection: store.ConnectionBinding{Type: selection, ConnectionID: connectionID}, Tools: grants}
 	// Only the connectors column is written, under the config's row lock, so an edit of any
 	// other column made meanwhile is kept, and one binding of that name is ever added.
-	added, err := m.opts.Configs.AddConnectorBinding(ctx, config.CustomerID, config.ID, binding)
+	added, err := m.opts.Configs.AddConnectorBinding(ctx, config.CustomerID, config.ID, binding,
+		func(ctx context.Context, config store.AgentConfig) error {
+			message, ok, err := m.opts.Complaint(ctx, config.CustomerID, config)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return complaint(message)
+			}
+			return nil
+		})
+	if refused, ok := errors.AsType[complaint](err); ok {
+		return skip(string(refused))
+	}
 	if err != nil {
 		return err
 	}
@@ -692,6 +709,11 @@ func (m *migration) moveBinding(ctx context.Context, config store.AgentConfig, e
 	m.add(Row{Kind: KindBinding, Action: Written, Source: source, Target: target, Note: fmt.Sprintf("%d tools granted", len(grants))})
 	return nil
 }
+
+// complaint is a binding Options.Complaint refused, with its message.
+type complaint string
+
+func (c complaint) Error() string { return string(c) }
 
 // listTools is what a validate lists (api.validateConnection): every tool of every source of
 // the connection's connector, through the connection's own credential.

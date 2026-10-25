@@ -216,7 +216,7 @@ func (s *SlackChannelSuite) TestAMigrationAndASaveOfOneConfigAtOnceDoNotDeadlock
 			defer done.Done()
 			started.Wait()
 			_, _, migrated = s.store.AddConnectorBinding(ctx, s.customerID(), config.ID,
-				store.ConnectorBinding{Name: "slack_migrated", ConnectorID: "slack_bot", Connection: fixed})
+				store.ConnectorBinding{Name: "slack_migrated", ConnectorID: "slack_bot", Connection: fixed}, nil)
 		}()
 		go func() {
 			defer done.Done()
@@ -239,7 +239,7 @@ func (s *SlackChannelSuite) TestAPluginMigrationCannotGiveTheBotASecondAgent() {
 
 	_, added, err := s.store.AddConnectorBinding(context.Background(), s.customerID(), other, store.ConnectorBinding{
 		Name: "slack", ConnectorID: "slack_bot", Connection: store.ConnectionBinding{Type: "fixed", ConnectionID: s.bot.ConnectionID},
-	})
+	}, nil)
 
 	taken, ok := errors.AsType[*store.ChannelConnectionTakenError](err)
 	s.Require().True(ok, "%v", err)
