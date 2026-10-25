@@ -103,7 +103,7 @@ Already settled, no need to test: Twilio and Telnyx carry the header (live, 2026
 ### Task 4: Store and lines: one trunk per customer and vendor
 
 **Files:**
-- Create: `acceleration/migrations/20261107120000_shared_trunks.sql`
+- Create: `acceleration/migrations/20261113120000_shared_trunks.sql`
 - Create: `acceleration/internal/store/streamtrunks.go`, test `streamtrunks_test.go` (`StoreSuite`; add `stream_trunks` to the `TRUNCATE` list in `store_test.go:119`)
 - Create: `acceleration/internal/phone/lines.go`, test in `apps_integration_test.go` (`AppsSuite`)
 - Modify: `acceleration/internal/store/models.go` (`PhoneNumber`, `CallResource`), `callresources.go`, `store.go` (`AttachNumber`)
