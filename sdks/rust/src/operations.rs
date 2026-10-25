@@ -2416,6 +2416,334 @@ impl Client {
         )
         .await
     }
+    /// Read a customer's policy
+    ///
+    /// `GET /v1/manage/organizations/{organization_id}/policies/{scope}/{id}` (`getCustomerPolicy`).
+    pub async fn get_customer_policy(
+        &self,
+        organization_id: &str,
+        scope: &str,
+        id: &str,
+    ) -> Result<types::Policy> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/manage/organizations/{organization_id}/policies/{scope}/{id}",
+                organization_id = segment(organization_id),
+                scope = segment(scope),
+                id = segment(id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "getCustomerPolicy",
+        )
+        .await
+    }
+    /// Replace a customer's policy
+    ///
+    /// `PUT /v1/manage/organizations/{organization_id}/policies/{scope}/{id}` (`updateCustomerPolicy`).
+    pub async fn update_customer_policy(
+        &self,
+        organization_id: &str,
+        scope: &str,
+        id: &str,
+        body: &types::Policy,
+    ) -> Result<types::Policy> {
+        self.send(
+            Method::PUT,
+            &format!(
+                "/v1/manage/organizations/{organization_id}/policies/{scope}/{id}",
+                organization_id = segment(organization_id),
+                scope = segment(scope),
+                id = segment(id)
+            ),
+            None::<&()>,
+            Some(body),
+            "updateCustomerPolicy",
+        )
+        .await
+    }
+    /// Read the price list in force
+    ///
+    /// `GET /v1/manage/price-lists/active` (`getActivePriceList`).
+    pub async fn get_active_price_list(
+        &self,
+        query: &GetActivePriceListQuery,
+    ) -> Result<types::PriceList> {
+        self.send(
+            Method::GET,
+            "/v1/manage/price-lists/active",
+            Some(query),
+            None::<&()>,
+            "getActivePriceList",
+        )
+        .await
+    }
+    /// List the price changes
+    ///
+    /// `GET /v1/manage/price-lists/changes` (`listPriceChanges`).
+    pub async fn list_price_changes(
+        &self,
+        query: &ListPriceChangesQuery,
+    ) -> Result<types::PriceChangePage> {
+        self.send(
+            Method::GET,
+            "/v1/manage/price-lists/changes",
+            Some(query),
+            None::<&()>,
+            "listPriceChanges",
+        )
+        .await
+    }
+    /// Change the price list
+    ///
+    /// `POST /v1/manage/price-lists/changes` (`createPriceChange`).
+    pub async fn create_price_change(
+        &self,
+        body: &types::PriceChangeInput,
+    ) -> Result<types::PriceChange> {
+        self.send(
+            Method::POST,
+            "/v1/manage/price-lists/changes",
+            None::<&()>,
+            Some(body),
+            "createPriceChange",
+        )
+        .await
+    }
+    /// Preview a price change
+    ///
+    /// `POST /v1/manage/price-lists/changes/preview` (`previewPriceChange`).
+    pub async fn preview_price_change(
+        &self,
+        body: &types::PriceChangeInput,
+    ) -> Result<types::PricePreview> {
+        self.send(
+            Method::POST,
+            "/v1/manage/price-lists/changes/preview",
+            None::<&()>,
+            Some(body),
+            "previewPriceChange",
+        )
+        .await
+    }
+    /// Read a price change
+    ///
+    /// `GET /v1/manage/price-lists/changes/{name}` (`getPriceChange`).
+    pub async fn get_price_change(&self, name: &str) -> Result<types::PriceChange> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/manage/price-lists/changes/{name}",
+                name = segment(name)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "getPriceChange",
+        )
+        .await
+    }
+    /// Cancel a scheduled price change
+    ///
+    /// `POST /v1/manage/price-lists/changes/{name}/cancel` (`cancelPriceChange`).
+    pub async fn cancel_price_change(
+        &self,
+        name: &str,
+        body: &types::CancelPriceChangeInput,
+    ) -> Result<types::PriceChange> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/manage/price-lists/changes/{name}/cancel",
+                name = segment(name)
+            ),
+            None::<&()>,
+            Some(body),
+            "cancelPriceChange",
+        )
+        .await
+    }
+    /// List the organization's spend limits
+    ///
+    /// `GET /v1/manage/spend/limits` (`manageListLimits`).
+    pub async fn manage_list_limits(
+        &self,
+        query: &ManageListLimitsQuery,
+    ) -> Result<types::LimitPage> {
+        self.send(
+            Method::GET,
+            "/v1/manage/spend/limits",
+            Some(query),
+            None::<&()>,
+            "manageListLimits",
+        )
+        .await
+    }
+    /// Create a spend limit
+    ///
+    /// `POST /v1/manage/spend/limits` (`manageCreateLimit`).
+    pub async fn manage_create_limit(
+        &self,
+        body: &types::ManageLimitInput,
+    ) -> Result<types::Limit> {
+        self.send(
+            Method::POST,
+            "/v1/manage/spend/limits",
+            None::<&()>,
+            Some(body),
+            "manageCreateLimit",
+        )
+        .await
+    }
+    /// List the organization's grants
+    ///
+    /// `GET /v1/manage/spend/limits/grants` (`manageListLimitGrants`).
+    pub async fn manage_list_limit_grants(
+        &self,
+        query: &ManageListLimitGrantsQuery,
+    ) -> Result<types::LimitGrantPage> {
+        self.send(
+            Method::GET,
+            "/v1/manage/spend/limits/grants",
+            Some(query),
+            None::<&()>,
+            "manageListLimitGrants",
+        )
+        .await
+    }
+    /// Grant a subject a one-time amount past its limits
+    ///
+    /// `POST /v1/manage/spend/limits/grants` (`manageCreateLimitGrant`).
+    pub async fn manage_create_limit_grant(
+        &self,
+        body: &types::ManageLimitGrantInput,
+    ) -> Result<types::LimitGrant> {
+        self.send(
+            Method::POST,
+            "/v1/manage/spend/limits/grants",
+            None::<&()>,
+            Some(body),
+            "manageCreateLimitGrant",
+        )
+        .await
+    }
+    /// Revoke a grant
+    ///
+    /// `POST /v1/manage/spend/limits/grants/{grant_id}/revoke` (`manageRevokeLimitGrant`).
+    pub async fn manage_revoke_limit_grant(
+        &self,
+        grant_id: &str,
+        body: &types::LimitGrantRevocation,
+    ) -> Result<types::LimitGrant> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/manage/spend/limits/grants/{grant_id}/revoke",
+                grant_id = segment(grant_id)
+            ),
+            None::<&()>,
+            Some(body),
+            "manageRevokeLimitGrant",
+        )
+        .await
+    }
+    /// Read what a subject spent against its limits
+    ///
+    /// `GET /v1/manage/spend/limits/usage` (`manageGetLimitUsage`).
+    pub async fn manage_get_limit_usage(
+        &self,
+        query: &ManageGetLimitUsageQuery,
+    ) -> Result<types::SubjectUsage> {
+        self.send(
+            Method::GET,
+            "/v1/manage/spend/limits/usage",
+            Some(query),
+            None::<&()>,
+            "manageGetLimitUsage",
+        )
+        .await
+    }
+    /// Reset a subject's spend for its limits
+    ///
+    /// `POST /v1/manage/spend/limits/usage/reset` (`manageResetLimitUsage`).
+    pub async fn manage_reset_limit_usage(
+        &self,
+        body: &types::ManageLimitResetInput,
+    ) -> Result<types::SubjectUsage> {
+        self.send(
+            Method::POST,
+            "/v1/manage/spend/limits/usage/reset",
+            None::<&()>,
+            Some(body),
+            "manageResetLimitUsage",
+        )
+        .await
+    }
+    /// Read a spend limit
+    ///
+    /// `GET /v1/manage/spend/limits/{limit_id}` (`manageGetLimit`).
+    pub async fn manage_get_limit(&self, limit_id: &str) -> Result<types::Limit> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/manage/spend/limits/{limit_id}",
+                limit_id = segment(limit_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "manageGetLimit",
+        )
+        .await
+    }
+    /// Change a spend limit's amount or note
+    ///
+    /// `PATCH /v1/manage/spend/limits/{limit_id}` (`manageUpdateLimit`).
+    pub async fn manage_update_limit(
+        &self,
+        limit_id: &str,
+        body: &types::LimitChange,
+    ) -> Result<types::Limit> {
+        self.send(
+            Method::PATCH,
+            &format!(
+                "/v1/manage/spend/limits/{limit_id}",
+                limit_id = segment(limit_id)
+            ),
+            None::<&()>,
+            Some(body),
+            "manageUpdateLimit",
+        )
+        .await
+    }
+    /// Delete a spend limit
+    ///
+    /// `DELETE /v1/manage/spend/limits/{limit_id}` (`manageDeleteLimit`).
+    pub async fn manage_delete_limit(&self, limit_id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/manage/spend/limits/{limit_id}",
+                limit_id = segment(limit_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "manageDeleteLimit",
+        )
+        .await
+    }
+    /// Check a management call gets through
+    ///
+    /// `GET /v1/manage/status` (`getManageStatus`).
+    pub async fn get_manage_status(&self) -> Result<types::ManageStatus> {
+        self.send(
+            Method::GET,
+            "/v1/manage/status",
+            None::<&()>,
+            None::<&()>,
+            "getManageStatus",
+        )
+        .await
+    }
     /// Make Stream's own app a customer's provider app
     ///
     /// `PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app` (`setOperatorProviderApp`).
@@ -3054,6 +3382,65 @@ impl Client {
         )
         .await
     }
+    /// List the calling app's users with a policy of their own
+    ///
+    /// `GET /v1/policies/users` (`listUserPolicies`).
+    pub async fn list_user_policies(
+        &self,
+        query: &ListUserPoliciesQuery,
+    ) -> Result<types::UserPolicyPage> {
+        self.send(
+            Method::GET,
+            "/v1/policies/users",
+            Some(query),
+            None::<&()>,
+            "listUserPolicies",
+        )
+        .await
+    }
+    /// Read one end user's quota
+    ///
+    /// `GET /v1/policies/users/{user_id}` (`getUserPolicy`).
+    pub async fn get_user_policy(&self, user_id: &str) -> Result<types::UserPolicy> {
+        self.send(
+            Method::GET,
+            &format!("/v1/policies/users/{user_id}", user_id = segment(user_id)),
+            None::<&()>,
+            None::<&()>,
+            "getUserPolicy",
+        )
+        .await
+    }
+    /// Replace one end user's own quota
+    ///
+    /// `PUT /v1/policies/users/{user_id}` (`updateUserPolicy`).
+    pub async fn update_user_policy(
+        &self,
+        user_id: &str,
+        body: &types::UserPolicyInput,
+    ) -> Result<types::UserPolicy> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/policies/users/{user_id}", user_id = segment(user_id)),
+            None::<&()>,
+            Some(body),
+            "updateUserPolicy",
+        )
+        .await
+    }
+    /// Remove one end user's own quota
+    ///
+    /// `DELETE /v1/policies/users/{user_id}` (`deleteUserPolicy`).
+    pub async fn delete_user_policy(&self, user_id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/policies/users/{user_id}", user_id = segment(user_id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteUserPolicy",
+        )
+        .await
+    }
     /// The router configs the calling customer holds
     ///
     /// `GET /v1/router/configs` (`listRouterConfigs`).
@@ -3149,6 +3536,156 @@ impl Client {
             None::<&()>,
             None::<&()>,
             "getAppSettings",
+        )
+        .await
+    }
+    /// List the organization's spend limits
+    ///
+    /// `GET /v1/spend/limits` (`listLimits`).
+    pub async fn list_limits(&self, query: &ListLimitsQuery) -> Result<types::LimitPage> {
+        self.send(
+            Method::GET,
+            "/v1/spend/limits",
+            Some(query),
+            None::<&()>,
+            "listLimits",
+        )
+        .await
+    }
+    /// Create a spend limit
+    ///
+    /// `POST /v1/spend/limits` (`createLimit`).
+    pub async fn create_limit(&self, body: &types::LimitInput) -> Result<types::Limit> {
+        self.send(
+            Method::POST,
+            "/v1/spend/limits",
+            None::<&()>,
+            Some(body),
+            "createLimit",
+        )
+        .await
+    }
+    /// List the organization's grants
+    ///
+    /// `GET /v1/spend/limits/grants` (`listLimitGrants`).
+    pub async fn list_limit_grants(
+        &self,
+        query: &ListLimitGrantsQuery,
+    ) -> Result<types::LimitGrantPage> {
+        self.send(
+            Method::GET,
+            "/v1/spend/limits/grants",
+            Some(query),
+            None::<&()>,
+            "listLimitGrants",
+        )
+        .await
+    }
+    /// Grant a subject a one-time amount past its limits
+    ///
+    /// `POST /v1/spend/limits/grants` (`createLimitGrant`).
+    pub async fn create_limit_grant(
+        &self,
+        body: &types::LimitGrantInput,
+    ) -> Result<types::LimitGrant> {
+        self.send(
+            Method::POST,
+            "/v1/spend/limits/grants",
+            None::<&()>,
+            Some(body),
+            "createLimitGrant",
+        )
+        .await
+    }
+    /// Revoke a grant
+    ///
+    /// `POST /v1/spend/limits/grants/{grant_id}/revoke` (`revokeLimitGrant`).
+    pub async fn revoke_limit_grant(
+        &self,
+        grant_id: &str,
+        body: &types::LimitGrantRevocation,
+    ) -> Result<types::LimitGrant> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/spend/limits/grants/{grant_id}/revoke",
+                grant_id = segment(grant_id)
+            ),
+            None::<&()>,
+            Some(body),
+            "revokeLimitGrant",
+        )
+        .await
+    }
+    /// Read what a subject spent against its limits
+    ///
+    /// `GET /v1/spend/limits/usage` (`getLimitUsage`).
+    pub async fn get_limit_usage(&self, query: &GetLimitUsageQuery) -> Result<types::SubjectUsage> {
+        self.send(
+            Method::GET,
+            "/v1/spend/limits/usage",
+            Some(query),
+            None::<&()>,
+            "getLimitUsage",
+        )
+        .await
+    }
+    /// Reset a subject's spend for its limits
+    ///
+    /// `POST /v1/spend/limits/usage/reset` (`resetLimitUsage`).
+    pub async fn reset_limit_usage(
+        &self,
+        body: &types::LimitResetInput,
+    ) -> Result<types::SubjectUsage> {
+        self.send(
+            Method::POST,
+            "/v1/spend/limits/usage/reset",
+            None::<&()>,
+            Some(body),
+            "resetLimitUsage",
+        )
+        .await
+    }
+    /// Read a spend limit
+    ///
+    /// `GET /v1/spend/limits/{limit_id}` (`getLimit`).
+    pub async fn get_limit(&self, limit_id: &str) -> Result<types::Limit> {
+        self.send(
+            Method::GET,
+            &format!("/v1/spend/limits/{limit_id}", limit_id = segment(limit_id)),
+            None::<&()>,
+            None::<&()>,
+            "getLimit",
+        )
+        .await
+    }
+    /// Change a spend limit's amount or note
+    ///
+    /// `PATCH /v1/spend/limits/{limit_id}` (`updateLimit`).
+    pub async fn update_limit(
+        &self,
+        limit_id: &str,
+        body: &types::LimitChange,
+    ) -> Result<types::Limit> {
+        self.send(
+            Method::PATCH,
+            &format!("/v1/spend/limits/{limit_id}", limit_id = segment(limit_id)),
+            None::<&()>,
+            Some(body),
+            "updateLimit",
+        )
+        .await
+    }
+    /// Delete a spend limit
+    ///
+    /// `DELETE /v1/spend/limits/{limit_id}` (`deleteLimit`).
+    pub async fn delete_limit(&self, limit_id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/spend/limits/{limit_id}", limit_id = segment(limit_id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteLimit",
         )
         .await
     }
@@ -3669,6 +4206,100 @@ pub struct ListDataChangesQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
 }
+/// The query string `getActivePriceList` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct GetActivePriceListQuery {
+    /// The moment to read the list at, RFC 3339. Omitted is now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+}
+/// The query string `listPriceChanges` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListPriceChangesQuery {
+    /// Only changes of this kind. Omitted is every kind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same kind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `manageListLimits` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ManageListLimitsQuery {
+    /// Only limits on this subject. team lists the teams' limits, category every other category's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    /// Up to 200. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same filters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<String>,
+}
+/// The query string `manageListLimitGrants` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ManageListLimitGrantsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Only grants in this state. Omitted is every one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Up to 200. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same filters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<String>,
+}
+/// The query string `manageGetLimitUsage` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ManageGetLimitUsageQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<String>,
+}
 /// The query string `listUseCasesForReview` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListUseCasesForReviewQuery {
@@ -3750,6 +4381,84 @@ pub struct ListUseCaseReviewsQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }
+/// The query string `listUserPolicies` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListUserPoliciesQuery {
+    /// Up to 100. Omitted is 100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `listLimits` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListLimitsQuery {
+    /// Only limits on this subject. team lists the teams' limits, category every other category's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    /// Up to 200. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same filters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `listLimitGrants` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListLimitGrantsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Only grants in this state. Omitted is every one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Up to 200. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same filters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `getLimitUsage` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct GetLimitUsageQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
 /// The query string `getActivity` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct GetActivityQuery {
@@ -3792,6 +4501,18 @@ pub struct GetSpendQuery {
     /// Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+    /// Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// Only count usage for this end user of the app.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    /// Only count usage for this team: its users' tokens name it in their team claim.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    /// Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 /// The query string `getTagKeys` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
