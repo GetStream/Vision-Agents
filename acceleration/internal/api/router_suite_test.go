@@ -77,6 +77,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
@@ -413,6 +414,9 @@ type RouterSuite struct {
 	// inbound answers what arrives on the app's channels.
 	inbound *channels.Service
 
+	// daytona is where the sessions' sandboxes are made, for a suite whose agents run code to
+	// set before it starts the harness. Nil makes them on the Daytona the environment names.
+	daytona *daytonatest.Server
 	// sandbox is what an app with no approved use case may do, for a suite about the
 	// sandbox to set before it starts the harness. The zero value is off.
 	sandbox dlc.Sandbox
@@ -1126,7 +1130,12 @@ func (s *RouterSuite) sessionManager(
 	if !s.memoryOff {
 		metering = metered.NewMemory(remembering, s.metering)
 	}
+	var sandboxes *metered.Sandboxes
+	if s.daytona != nil {
+		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(), Logger: logger})
+	}
 	sessions, err := session.NewManager(session.ManagerOptions{
+		Sandboxes:     sandboxes,
 		LLM:           streams.LLM,
 		STT:           streams.STT,
 		TTS:           streams.TTS,

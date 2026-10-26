@@ -1530,7 +1530,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !changed {
 			return
 		}
-		m.Files = mergeFiles(m.Files, e.Files)
+		m.Files = MergeFiles(m.Files, e.Files)
 		c.afterTools()
 		unsaved = true
 	case agent.Delegated:
@@ -1570,7 +1570,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !changed {
 			return
 		}
-		m.Files = mergeFiles(m.Files, e.Files)
+		m.Files = MergeFiles(m.Files, e.Files)
 		c.afterTools()
 		unsaved = true
 	case agent.TaskCancelled:

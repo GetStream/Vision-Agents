@@ -197,13 +197,16 @@ func (s *Service) Link(ctx context.Context, customerID, configID, userID string)
 }
 
 // Notice is a message sent to one end user on a channel, first, rather than
-// as an answer: who it is for, on which agent's line, and what it says.
+// as an answer: who it is for, on which agent's line, and what it says and
+// carries.
 type Notice struct {
 	CustomerID string
 	ConfigID   string
 	Kind       Kind
 	UserID     string
 	Text       string
+	// Files are what the agent's code made, sent by URL as a reply's files are.
+	Files []sandbox.Attachment
 }
 
 // whatsappWindow is how long after somebody last wrote WhatsApp lets a line
@@ -211,7 +214,7 @@ type Notice struct {
 // router does not send, so the write is refused and the caller falls back.
 const whatsappWindow = 24 * time.Hour
 
-// Notify sends text to one end user on a channel they already talk to the
+// Notify sends text and files to one end user on a channel they already talk to the
 // agent on, over the line that agent answers on there.
 //
 // Everything that keeps an answer from going out keeps a first message from
@@ -221,7 +224,8 @@ const whatsappWindow = 24 * time.Hour
 // it Meta wants a template this router does not send. A refusal is an error
 // like any other, which is what a caller with another channel falls back on.
 func (s *Service) Notify(ctx context.Context, notice Notice) error {
-	if notice.Text == "" {
+	reply := Reply{Text: notice.Text, Files: filesOf(notice.Files)}
+	if reply.Empty() {
 		return stack.Wrap(errors.New("channels: there is nothing to send"))
 	}
 	line, thread, address, provider, err := s.reach(ctx, notice)
@@ -236,7 +240,7 @@ func (s *Service) Notify(ctx context.Context, notice Notice) error {
 		attribution.APIKey = OriginNotice
 	}
 	owner := routing.Owner{CustomerID: notice.CustomerID, Attribution: attribution}
-	if err := s.deliver(ctx, line, provider, to, thread, Reply{Text: notice.Text}, owner); err != nil {
+	if err := s.deliver(ctx, line, provider, to, thread, reply, owner); err != nil {
 		return stack.Wrap(err)
 	}
 	s.gate.Sent(ctx, notice.CustomerID, string(notice.Kind), address)

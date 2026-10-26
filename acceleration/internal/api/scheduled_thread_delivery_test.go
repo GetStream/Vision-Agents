@@ -12,6 +12,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -146,6 +148,41 @@ func (s *TelnyxChannelSuite) TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread()
 	s.Contains(s.scheduledTurnTools(), "schedule_task", "the turn answers the person, who may schedule again")
 	s.Equal(replies+1, s.repliesIn(channel), "the reply is kept in the thread")
 	s.Eventually(func() bool { return !s.threadOpen(channel) }, settleFor, 10*time.Millisecond, "the session was left open")
+}
+
+// codeHandsBackAReport has every code run on the suite's Daytona write report.csv, and queues
+// the next turn's runs of code that hand it back, one by default. It returns where the report
+// is published.
+func (s *RouterSuite) codeHandsBackAReport(runs ...llm.ToolCall) string {
+	s.daytona.Writes("report.csv", []byte("day,steps\nmon,9000\n"))
+	if len(runs) == 0 {
+		runs = []llm.ToolCall{reportRun()}
+	}
+	s.schedulingScript.plan(runs...)
+	return "https://cdn.fake/file/report.csv"
+}
+
+// reportRun is a run of code that hands back report.csv.
+func reportRun() llm.ToolCall {
+	return llm.ToolCall{ID: store.NewID(), Name: sandbox.ToolName,
+		Arguments: `{"code": "open('report.csv', 'w').write('day,steps')", "files": ["report.csv"]}`}
+}
+
+// A reply that is only the file the task's code made, with no words, is texted as the file's
+// link.
+func (s *TelnyxChannelSuite) TestATaskWhoseReplyIsOnlyAFileTextsTheFile() {
+	person := "+13125550001"
+	s.config.Sandbox = string(Daytona)
+	task, _ := s.scheduledInThread(person)
+	report := s.codeHandsBackAReport()
+	s.schedulingScript.saySilently()
+	sent := len(s.telnyx.sent())
+
+	run := s.deliveredByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunDelivered, run.State, "error %v", run.Error)
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal(telnyxMessage{from: s.line, to: person, text: report}, s.took(sent + 1)[sent].withoutAuthorization())
 }
 
 // A turn another router is taking in the thread is waited for, and the thread's turn is let go
