@@ -380,8 +380,14 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	// A reply to a tool result is given a little thinking. The caller was told to wait
 	// while the tool ran, so it costs them nothing they notice, and at no effort Luna
 	// answers a free table with "may I book it?" instead of booking it.
+	//
+	// A reply to the caller gets the same floor when the model would otherwise not think
+	// at all: at none GPT-6 Sol can commit to an answer in its first word and reason its
+	// way to the opposite after it, or ask the caller to confirm what it could have done.
+	// The thinking delays the first word, so a session or turn that names an effort,
+	// none included, still wins.
 	var reasoning llm.ReasoningParams
-	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
+	if slices.Contains(model.ReasoningEfforts, toolReplyEffort) && (turn.AfterTool || model.DefaultEffort == "none") {
 		reasoning.Effort = toolReplyEffort
 	}
 
