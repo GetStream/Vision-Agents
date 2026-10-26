@@ -228,6 +228,8 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksMigrationSuite/TestTheWakeIndexAppliesComesOffAndAppliesAgain`.
 - **A draining router finishes what it claimed.** `TestDrainSuite/TestTheDrainWaitsForAScheduledDeliveryInFlight`
   (`cmd/router`), `TestSchedulerSuite/TestAStoppedWorkerClaimsNothingMoreButFinishesItsDelivery`.
+  A delivery waiting to retry does not hold the drain: it is left to its lease, and another router takes it up
+  (after the store's stale-run time, 10 min). `TestSchedulerSuite/TestADrainStopsARetryWaitAndLeavesTheRunToItsLease`.
 - **Config delete pauses, session delete deletes, data move carries.**
   `TestScheduledTasksSuite/TestDeletingAConfigPausesItsTasks`,
   `TestScheduledTasksSuite/TestDeletingASessionDeletesItsTasks`,

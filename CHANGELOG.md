@@ -28,6 +28,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ## Bug Fixes
 
+### A draining router no longer waits out a scheduled task's retry
+
+A scheduled delivery that failed and was waiting to try again held the router's drain for up to 12.5 minutes, as long as the waits last. Once the router drains, the wait ends and the run is left to its lease: another router takes it up under the same run (AI-1561).
+
 ### A tool_approval that reaches no call is answered
 
 A `tool_approval` on the session socket that no call waits for now gets a `tool_approval_ignored` frame with the `tool_call_id`, `request_id` and `turn_id` it named and a `reason`, and the socket stays open. This covers an approval sent twice, one for a call that already stopped, one naming a call nobody made, and one naming another `request_id` or `turn_id`. An approval of a durable command's call with its `request_id` and no `turn_id` gets one too, its `reason` naming the missing `turn_id`. Before, each was dropped without a word. Clients that do not know the frame ignore it; no `error` frame is sent. An approval sent before the `tool_result` of a call outside a durable command is answered as before: with nothing (AI-1881).
