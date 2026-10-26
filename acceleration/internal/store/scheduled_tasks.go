@@ -245,9 +245,6 @@ func (s *Store) CreateScheduledTask(ctx context.Context, task *ScheduledTask, ma
 // A config is only ever soft-deleted (DeleteAgentConfig), so an id with no row
 // is not a delete and is left to the caller, which resolved it.
 func refuseDeletedConfig(ctx context.Context, tx bun.Tx, customerID, configID string) error {
-	if configID == "" {
-		return nil
-	}
 	var deleted []bool
 	err := tx.NewSelect().Model((*AgentConfig)(nil)).
 		ColumnExpr("deleted_at IS NOT NULL").

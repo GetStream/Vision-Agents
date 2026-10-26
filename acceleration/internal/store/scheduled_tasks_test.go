@@ -893,13 +893,14 @@ func (s *StoreSuite) TestDeletingAConfigWritesItsTasksHeldOccurrenceMissed() {
 	s.task("elsewhere", func(task *ScheduledTask) { task.ConfigID, task.NextRunAt = "config-2", nil })
 	s.task("one", func(task *ScheduledTask) { task.CustomerID, task.NextRunAt = "globex", nil })
 	claim := s.held("one", time.Now().Add(8*time.Hour))
-	// What the pause must leave alone: a run made by hand, the running run of a
-	// task on another config, and that of another customer's task under the
-	// same id and config.
+	// What the pause must leave alone: an earlier occurrence already delivered,
+	// a run made by hand, the running run of a task on another config, and that
+	// of another customer's task under the same id and config.
+	delivered := &ScheduledTaskRun{TaskID: "one", CustomerID: "acme", ScheduledFor: due.Add(-24 * time.Hour), State: ScheduledTaskRunDelivered}
 	manual := &ScheduledTaskRun{TaskID: "one", CustomerID: "acme", ScheduledFor: due, Trigger: ScheduledTaskTriggerManual}
 	elsewhere := &ScheduledTaskRun{TaskID: "elsewhere", CustomerID: "acme", ScheduledFor: due}
 	theirs := &ScheduledTaskRun{TaskID: "one", CustomerID: "globex", ScheduledFor: due}
-	for _, run := range []*ScheduledTaskRun{manual, elsewhere, theirs} {
+	for _, run := range []*ScheduledTaskRun{delivered, manual, elsewhere, theirs} {
 		s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, run))
 	}
 
@@ -908,6 +909,7 @@ func (s *StoreSuite) TestDeletingAConfigWritesItsTasksHeldOccurrenceMissed() {
 	missed := s.run(claim.Run.ID)
 	s.Equal(ScheduledTaskRunMissed, missed.State, "no worker claims a paused task, so the held occurrence is settled now")
 	s.NotNil(missed.FinishedAt)
+	s.Equal(ScheduledTaskRunDelivered, s.run(delivered.ID).State)
 	s.Equal(ScheduledTaskRunRunning, s.run(manual.ID).State, "a run by hand records its own outcome")
 	s.Equal(ScheduledTaskRunRunning, s.run(elsewhere.ID).State)
 	s.Equal(ScheduledTaskRunRunning, s.run(theirs.ID).State)
