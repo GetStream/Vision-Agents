@@ -248,6 +248,7 @@ func (a *Agent) consumeSTS(p *pipeline, speech *stsrouter.Session, events <-chan
 			a.mu.Lock()
 			a.lastParticipant = a.participantOr(typed.Participant)
 			a.lastHeardAt = typed.At
+			a.scheduled = false
 			a.mu.Unlock()
 
 		case sts.SpeechStopped:
