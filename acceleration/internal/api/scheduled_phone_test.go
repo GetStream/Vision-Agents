@@ -394,6 +394,17 @@ func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIs
 	s.Empty(run.SessionID, "no call was taken on the run")
 }
 
+func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasTimeToRingButNotToHoldIsMissedWithoutACall() {
+	s.shortCalls(2*time.Second, 10*time.Second)
+	task := s.phoneTask(s.data.createUser(), []string{"phone"}, time.Now())
+
+	run, err := s.deliverWithin(task, 11*time.Second)
+
+	var missed *scheduling.Missed
+	s.Require().ErrorAs(err, &missed, "the call would be hung up before its limit")
+	s.Empty(run.SessionID, "no call was taken on the run")
+}
+
 // retryAfterUnansweredCall delivers the task's occurrence due at due once
 // more, with left before its time runs out, after an earlier attempt rang
 // and nobody answered.
