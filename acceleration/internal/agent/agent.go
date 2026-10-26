@@ -810,7 +810,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 		return "", err
 	}
 	if a.native() {
-		return "", a.respondNative(text, images)
+		return "", a.respondNative(ctx, text, images)
 	}
 	caller := stt.Participant{ID: typedCaller}
 	sender, _ := routing.CallerFrom(ctx)
