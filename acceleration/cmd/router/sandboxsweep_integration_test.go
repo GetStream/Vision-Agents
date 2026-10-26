@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -91,6 +93,44 @@ func (s *SecretSweepSuite) swept(settings config.CodeSandbox, redis *live.Client
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.asked
+}
+
+// asking is what Daytona has been asked so far.
+func (s *SecretSweepSuite) asking() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.asked)
+}
+
+// TestTheRouterStartsTheSweeper: the router sweeps when it starts, with nothing else asking for a
+// sweep, and its sweep ends with the lease given back.
+func (s *SecretSweepSuite) TestTheRouterStartsTheSweeper() {
+	settings := config.Defaults().CodeSandbox
+	settings.SecretPrefix = "w15sweep"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.Require().NoError(startSecretSweeper(ctx, settings, s.redis, s.directory, s.logger))
+
+	s.Eventually(func() bool { return slices.Contains(s.asking(), "/api/secret/paginated va_w15sweep_") },
+		5*time.Second, 10*time.Millisecond)
+	// The next test sweeps under the same lease.
+	s.Eventually(func() bool {
+		held, err := s.redis.Redis().Do(ctx, s.redis.Redis().B().Exists().Key("sandbox:secret-sweep:w15sweep").Build()).AsInt64()
+		return err == nil && held == 0
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+// TestADefaultRouterStartsNoSweeper is the control for the start: on base 54fb4b288 main.go runs a
+// sweeper only where secretSweeper gives one, and it gives none here (TestADefaultRouterSweepsNoSecrets).
+func (s *SecretSweepSuite) TestADefaultRouterStartsNoSweeper() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.Require().NoError(startSecretSweeper(ctx, config.Defaults().CodeSandbox, s.redis, s.directory, s.logger))
+
+	time.Sleep(300 * time.Millisecond)
+	s.Empty(s.asking())
 }
 
 // TestADefaultRouterSweepsNoSecrets is the control: on base e5d6d8057 nothing in the router
