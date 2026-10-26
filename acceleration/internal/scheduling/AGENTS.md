@@ -37,7 +37,7 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
                  v
         deliver_to, in order, first that lands:
           conversation  Session.FollowUp(command id "st_<run id>")
-          sms | whatsapp | imessage   same turn's words -> channels.Service.Notify
+          sms | whatsapp | imessage   same turn's words and files -> channels.Service.Notify
           phone         phone.Service.Call -> call session -> task as first turn
 
         deliverOnThread (a task made in an SMS or WhatsApp thread; deliver_to is not read):
