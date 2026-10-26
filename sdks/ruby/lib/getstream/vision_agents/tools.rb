@@ -76,34 +76,34 @@ module GetStream
       #
       # @raise [ConfigurationError] for a tool nobody registered.
       # @raise [Error] for a call that took longer than the tool's timeout, which is stopped.
-      def call(name, arguments, call = ToolCall.new)
+      def call(name, arguments, tool_call_context = ToolCall.new)
         tool = @lock.synchronize { @tools[name] }
         raise ConfigurationError, "no tool is called #{name}" unless tool
 
         parsed = arguments.to_s.strip.empty? ? {} : JSON.parse(arguments)
-        output = tool.timeout ? within(tool, parsed, call) : invoke(tool, parsed, call)
+        output = tool.timeout ? within(tool, parsed, tool_call_context) : invoke(tool, parsed, tool_call_context)
         output.is_a?(String) ? output : JSON.generate(output)
       end
 
       private
 
       # A lambda that takes only the arguments is not handed the call it would refuse.
-      def invoke(tool, parsed, call)
-        tool.run.lambda? && tool.run.arity == 1 ? tool.run.call(parsed) : tool.run.call(parsed, call)
+      def invoke(tool, parsed, tool_call_context)
+        tool.run.lambda? && tool.run.arity == 1 ? tool.run.call(parsed) : tool.run.call(parsed, tool_call_context)
       end
 
       # Runs the tool on a thread of its own, which is left to finish when it takes too long.
-      def within(tool, parsed, call)
+      def within(tool, parsed, tool_call_context)
         outcome = Thread::Queue.new
         worker = Thread.new do
-          outcome << [:output, invoke(tool, parsed, call)]
+          outcome << [:output, invoke(tool, parsed, tool_call_context)]
         rescue StandardError => e
           outcome << [:error, e]
         end
         worker.report_on_exception = false
         kind, value = outcome.pop(timeout: tool.timeout)
         unless kind
-          call.stop!
+          tool_call_context.stop!
           raise Error, "#{tool.name} took longer than #{tool.timeout}s"
         end
         raise value if kind == :error

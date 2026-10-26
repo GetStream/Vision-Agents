@@ -32,21 +32,21 @@ class TestToolCall < Minitest::Test
   end
 
   def test_a_call_that_takes_longer_than_its_timeout_fails_and_is_stopped
-    call = VA::ToolCall.new(id: "t1")
+    tool_call_context = VA::ToolCall.new(id: "t1")
     tools = VA::Tools.new.register("stuck", description: "Never finishes", timeout: 0.05) do
       sleep 1
       "never"
     end
 
-    failed = assert_raises(VA::Error) { tools.call("stuck", "{}", call) }
+    failed = assert_raises(VA::Error) { tools.call("stuck", "{}", tool_call_context) }
     assert_equal "stuck took longer than 0.05s", failed.message
-    assert call.cancelled?
+    assert tool_call_context.cancelled?
   end
 
   def test_a_block_is_handed_its_call_and_a_one_argument_lambda_is_not
     seen = nil
     tools = VA::Tools.new
-    tools.register("whoami", description: "Who asked") { |_args, call| seen = call.id }
+    tools.register("whoami", description: "Who asked") { |_args, tool_call_context| seen = tool_call_context.id }
     tools.register("plain", description: "Takes arguments only", &->(args) { args["x"] })
 
     tools.call("whoami", "{}", VA::ToolCall.new(id: "t1"))
@@ -55,24 +55,24 @@ class TestToolCall < Minitest::Test
   end
 
   def test_a_call_without_a_socket_does_nothing
-    call = VA::ToolCall.new
+    tool_call_context = VA::ToolCall.new
 
-    assert_nil call.update("checking")
-    assert_nil call.say("One moment.")
-    assert_nil call.disallow_interruptions
-    refute call.cancelled?
+    assert_nil tool_call_context.update("checking")
+    assert_nil tool_call_context.say("One moment.")
+    assert_nil tool_call_context.disallow_interruptions
+    refute tool_call_context.cancelled?
   end
 
   def test_a_call_reports_how_it_is_going_and_a_call_stopped_first_is_not_held
     sent = []
-    call = VA::ToolCall.new(id: "t1", send: ->(frame) { sent << frame })
+    tool_call_context = VA::ToolCall.new(id: "t1", send: ->(frame) { sent << frame })
 
-    call.update("checking")
-    call.say("One moment.")
-    call.cancel!
+    tool_call_context.update("checking")
+    tool_call_context.say("One moment.")
+    tool_call_context.cancel!
 
     assert_equal [{ type: "tool_update", tool_call_id: "t1", text: "checking", verbatim: false },
                   { type: "tool_update", tool_call_id: "t1", text: "One moment.", verbatim: true }], sent
-    assert_raises(VA::CallNotHeldError) { call.disallow_interruptions }
+    assert_raises(VA::CallNotHeldError) { tool_call_context.disallow_interruptions }
   end
 end

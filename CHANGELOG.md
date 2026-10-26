@@ -54,6 +54,10 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### The call a tool function is handed is named toolCallContext
+
+The `ToolCall` a tool function is handed is named `toolCallContext` (`tool_call_context` in Python, Ruby and Rust) in every SDK's signatures, examples and docs, rather than `call`, which read as the phone or video call. Only code that passed it by name changes: PHP's `Tools::call(..., toolCallContext: ...)` and Python's `calling(tool_call_context=...)`.
+
 ### A hosted tool that names no timeout has 30 seconds
 
 A worker on `/v1/dispatch` whose `host_tools` names no `timeout_ms` now gives each call 30 seconds, the default for the tools a session's caller runs, rather than two minutes. A worker whose tools take longer says so with `timeout_ms`.

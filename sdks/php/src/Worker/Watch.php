@@ -70,13 +70,13 @@ final class Watch implements IteratorAggregate
                         continue;
                     }
                     $id = Json::string($frame, 'id');
-                    $call = ToolCall::fromFrame($frame, $this->sessionId, $this->socket->send(...), $this->holds, $id);
-                    $this->calls[$id] = $call;
+                    $toolCallContext = ToolCall::fromFrame($frame, $this->sessionId, $this->socket->send(...), $this->holds, $id);
+                    $this->calls[$id] = $toolCallContext;
                     // Each call in its own fiber, so a slow tool does not hold up the events
                     // behind it or the other calls the model made in the same turn.
-                    $this->running[$id] = async(function () use ($frame, $id, $call): void {
+                    $this->running[$id] = async(function () use ($frame, $id, $toolCallContext): void {
                         try {
-                            $this->runTool($frame, $call);
+                            $this->runTool($frame, $toolCallContext);
                         } finally {
                             unset($this->running[$id], $this->calls[$id]);
                             $this->holds->forget($id);
@@ -102,8 +102,8 @@ final class Watch implements IteratorAggregate
                 yield SessionEvent::fromFrame($frame);
             }
         } finally {
-            foreach ($this->calls as $call) {
-                $call->stop();
+            foreach ($this->calls as $toolCallContext) {
+                $toolCallContext->stop();
             }
             $this->holds->release();
             Future\awaitAll($this->running);
@@ -146,7 +146,7 @@ final class Watch implements IteratorAggregate
      *
      * @param array<string, mixed> $frame
      */
-    private function runTool(array $frame, ToolCall $call): void
+    private function runTool(array $frame, ToolCall $toolCallContext): void
     {
         $id = Json::string($frame, 'id');
         $name = Json::string($frame, 'name');
@@ -163,7 +163,7 @@ final class Watch implements IteratorAggregate
                 throw new \RuntimeException("{$name} was asked for, and no tools are registered");
             }
             $arguments = $frame['arguments'] ?? '';
-            $result['output'] = $this->tools->call($name, is_string($arguments) ? $arguments : Json::encode($arguments), $call);
+            $result['output'] = $this->tools->call($name, is_string($arguments) ? $arguments : Json::encode($arguments), $toolCallContext);
         } catch (Throwable $failed) {
             $result['error'] = $failed->getMessage();
         }

@@ -477,10 +477,10 @@ async fn hosting_payments(
                     .clone(),
                 ..Default::default()
             },
-            |_, call: ToolCall| async move {
-                call.disallow_interruptions().await?;
+            |_, tool_call_context: ToolCall| async move {
+                tool_call_context.disallow_interruptions().await?;
                 tokio::time::sleep(Duration::from_millis(200)).await;
-                Ok::<_, Error>(format!("paid for {}", call.session_id))
+                Ok::<_, Error>(format!("paid for {}", tool_call_context.session_id))
             },
         )
         .unwrap();

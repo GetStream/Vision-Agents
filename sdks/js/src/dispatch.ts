@@ -413,7 +413,7 @@ export class Dispatch {
     const key = hostedKey(frame);
     const cancel = new AbortController();
     this.hostedCalls.set(key, cancel);
-    const call = toolCallOf(frame, "", socketLine((sent) => this.tell(sent), this.holds), signal);
+    const toolCallContext = toolCallOf(frame, "", socketLine((sent) => this.tell(sent), this.holds), signal);
     this.track(
       (async () => {
         const result: Record<string, unknown> = { type: "tool_result", tool_call_id: id, id };
@@ -422,7 +422,7 @@ export class Dispatch {
             name,
             text(frame, "arguments"),
             AbortSignal.any([signal, cancel.signal]),
-            call,
+            toolCallContext,
           );
         } catch (cause) {
           result["error"] = cause instanceof Error ? cause.message : String(cause);
