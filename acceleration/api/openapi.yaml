@@ -4470,6 +4470,7 @@ components:
         source:
           description: Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so posting the same source again replaces what it wrote before.
           example: pricing.md
+          maxLength: 256
           type: string
         text:
           description: The document, whole. It is cut into passages here.
@@ -4553,6 +4554,7 @@ components:
           type: string
         url:
           example: https://example.com/pricing
+          maxLength: 2048
           type: string
       required:
         - url
@@ -4579,6 +4581,7 @@ components:
         url:
           description: 'The page to read. It must be http or https: this is handed to a crawler and then used to key the passages it becomes.'
           example: https://example.com/pricing
+          maxLength: 2048
           type: string
       required:
         - namespace

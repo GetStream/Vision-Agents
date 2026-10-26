@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
@@ -263,6 +264,19 @@ func (s *SyncSuite) TestASyncedDirectorysPagesAreReadIntoItsKnowledge() {
 	s.Equal("https://example.com/pricing", listed[0].Url)
 	s.Equal("What a call costs", value(listed[0].Title))
 	s.Equal(24, value(listed[0].RefreshHours))
+}
+
+func (s *SyncSuite) TestASyncDeclaringAPageWithAUrlLongerThan2048CharactersIsRefused() {
+	page := "https://example.com/"
+	page += strings.Repeat("a", 2049-len(page))
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "librarian", "hash": "v1",
+		"knowledge_urls": []map[string]any{{"url": page}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected length <= 2048")
+	s.Empty(s.configsNamed("librarian"))
 }
 
 func (s *SyncSuite) TestASyncedDirectorysSimulationsAreFoundByNameAndForgottenWhenTakenOut() {
