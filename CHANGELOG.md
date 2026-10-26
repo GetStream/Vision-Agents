@@ -28,6 +28,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ## Bug Fixes
 
+### Scheduled tasks follow config deletes and guest claims
+
+Deleting an agent config now writes its tasks' occurrences still running, such as one held through quiet hours, `missed`, as pausing a task does; before, they stayed `running` (AI-1600). A task created, resumed or edited while its config is being deleted is refused with a 404 `agent_config_not_found` (REST) or `unknown_config` (the agent's tools), instead of being left active on the deleted config; the agent's `schedule_task` on a session whose config was deleted is refused the same way (AI-1598). Claiming a guest now moves the guest's scheduled tasks to the account, with their conversations (AI-1532).
+
 ### A draining router no longer waits out a scheduled task's retry
 
 A scheduled delivery that failed and was waiting to try again held the router's drain for up to 12.5 minutes, as long as the waits last. Once the router drains, the wait ends and the run is left to its lease: another router takes it up under the same run (AI-1561).
