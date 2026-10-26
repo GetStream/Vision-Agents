@@ -680,7 +680,15 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
   return declared;
 }
 
-const CONNECTOR_KEYS = new Set(["name", "connector", "tools", "connection", "required"]);
+const CONNECTOR_KEYS = new Set([
+  "name",
+  "connector",
+  "tools",
+  "connection",
+  "required",
+  "sandbox",
+  "require_approval",
+]);
 
 /**
  * Reads `connectors:`, each the alias alone or a mapping:
@@ -693,6 +701,10 @@ const CONNECTOR_KEYS = new Set(["name", "connector", "tools", "connection", "req
  *     tools: [list_*, get_issue]
  *     connection: work
  *     required: true
+ *   - name: code
+ *     connector: github
+ *     sandbox: true
+ *     require_approval: [create_*]
  * ```
  */
 function connectors(lines: string[], inline: string, where: string): ConnectorDeclaration[] {
@@ -1067,7 +1079,7 @@ function connectorOf(
   for (const key of keys.keys()) {
     if (!CONNECTOR_KEYS.has(key)) {
       throw new ConfigurationError(
-        `${where}: ${JSON.stringify(key)} is not something a connector says; name, connector, tools, connection and required are`,
+        `${where}: ${JSON.stringify(key)} is not something a connector says; name, connector, tools, connection, required, sandbox and require_approval are`,
       );
     }
   }
@@ -1120,6 +1132,23 @@ function connectorOf(
       );
     }
     declared.required = required === "true";
+  }
+
+  const sandbox = one("sandbox");
+  if (sandbox !== undefined && sandbox !== "true" && sandbox !== "false") {
+    throw new ConfigurationError(`${where}: connector ${JSON.stringify(name)}: sandbox must be true or false`);
+  }
+  if (sandbox === "true") {
+    declared.sandbox = true;
+  }
+
+  const approval = keys.get("require_approval");
+  if (approval && (approval.nested.length > 0 || scalar(approval.inline) !== undefined)) {
+    declared.requireApproval = approval.nested.length
+      ? approval.nested.map((item) => listItem(item, "require_approval", where))
+      : /^\[\s*\]$/.test(approval.inline)
+        ? []
+        : flowList(approval.inline, "require_approval", where);
   }
   return declared;
 }

@@ -167,6 +167,39 @@ describe("loadFolder", () => {
     ]);
   });
 
+  it("reads sandbox and require_approval on a connector, and leaves each out when unset", async () => {
+    const folder = await loadFolder(
+      await agentDir({
+        "agent.yaml": [
+          "name: concierge",
+          "connectors:",
+          "  - name: github",
+          "    sandbox: true",
+          "  - name: issues",
+          "    require_approval: [create_*, merge_pull_request]",
+          "  - name: mail",
+          "    sandbox: false",
+          "    require_approval: []",
+          "  - name: notes",
+          "    sandbox: null",
+          "    require_approval:",
+          "      - delete_*",
+          "  - name: crm",
+          "    require_approval: ~",
+          "",
+        ].join("\n"),
+      }),
+    );
+
+    assert.deepEqual(folder.settings?.connectors, [
+      { name: "github", sandbox: true },
+      { name: "issues", requireApproval: ["create_*", "merge_pull_request"] },
+      { name: "mail", requireApproval: [] },
+      { name: "notes", requireApproval: ["delete_*"] },
+      { name: "crm" },
+    ]);
+  });
+
   it("tells an empty connectors list from none, since one removes the bindings and the other keeps them", async () => {
     const without = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\n" }));
     const empty = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\nconnectors: []\n" }));
@@ -184,6 +217,11 @@ describe("loadFolder", () => {
       ["connectors:\n  - name: github\n    tools: []\n", /connector "github": tools: \[\] grants nothing/],
       ["connectors:\n  - name: github\n    plugin: github\n", /"plugin" is not something a connector says/],
       ["connectors:\n  - name: github\n    required: yes please\n", /required must be true or false/],
+      ["connectors:\n  - name: github\n    sandbox: github\n", /connector "github": sandbox must be true or false/],
+      ["connectors:\n  - name: github\n    sandbox: 1\n", /connector "github": sandbox must be true or false/],
+      ["connectors:\n  - name: github\n    sandbox:\n      - true\n", /a connector's sandbox is one value, not a list/],
+      ["connectors:\n  - name: github\n    require_approval: create_*\n", /require_approval should be a list/],
+      ["connectors:\n  - name: github\n    require_approval:\n      create: true\n", /require_approval should be a list/],
       ["connectors:\n  - linear\n    tools: [a]\n", /belongs to no connector/],
       ["plugins:\n  - linear\nconnectors:\n  - linear\n", /"linear" is named under both connectors and plugins/],
     ] as const) {

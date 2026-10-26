@@ -988,6 +988,68 @@ class TestSyncAgent:
             },
         ]
 
+    async def test_sandbox_and_require_approval_are_sent_on_each_binding_that_sets_them(
+        self, router: Router, support_dir
+    ):
+        router.connection_pages = [[app_connection("co-1", "company", "github")]]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n"
+            "  - name: github\n    sandbox: true\n"
+            "  - name: code\n    connector: github\n    connection: company\n"
+            "    sandbox: true\n"
+            "  - name: issues\n    connector: linear\n"
+            "    require_approval: [create_*, update_issue]\n"
+            "  - name: mail\n    sandbox: false\n    require_approval: []\n"
+            "  - linear\n"
+        )
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        session = {"type": "session"}
+        assert router.bodies[-1]["connectors"] == [
+            {
+                "name": "github",
+                "connector_id": "github",
+                "connection": session,
+                "tools": [],
+                "tool_patterns": ["*"],
+                "sandbox": True,
+            },
+            {
+                "name": "code",
+                "connector_id": "github",
+                "connection": {"type": "fixed", "connection_id": "co-1"},
+                "tools": [],
+                "tool_patterns": ["*"],
+                "sandbox": True,
+            },
+            {
+                "name": "issues",
+                "connector_id": "linear",
+                "connection": session,
+                "tools": [],
+                "tool_patterns": ["*"],
+                "require_approval": ["create_*", "update_issue"],
+            },
+            {
+                "name": "mail",
+                "connector_id": "mail",
+                "connection": session,
+                "tools": [],
+                "tool_patterns": ["*"],
+                "require_approval": [],
+            },
+            {
+                "name": "linear",
+                "connector_id": "linear",
+                "connection": session,
+                "tools": [],
+                "tool_patterns": ["*"],
+            },
+        ]
+
     async def test_an_empty_connectors_list_is_sent_so_the_stored_ones_are_removed(
         self, router: Router, support_dir
     ):
