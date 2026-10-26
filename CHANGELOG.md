@@ -8,9 +8,14 @@
 to from an Android app with swift_assistant's agent, `configure` and backend. Its conversations
 are the router's, in a drawer that lists, searches, opens and deletes them, and a new one has no
 session until it is first written to. The chat is Stream Chat's AI components, with the reply's
-reasoning and steps, copy, share and rating under it, and the composer floating over the
-conversation. Each new conversation's session names `io.getstream.visionagents.androidassistant:/connected`
-as its `return_url`. CI builds it beside the Kotlin SDK.
+reasoning and steps, copy, share and rating under it, photos from the picker, and the composer
+floating over the conversation. The phone answers `get_local_context`, `get_location`,
+`list_events`, `add_reminder` (a calendar event with an alert) and `send_email`, asking for each
+permission the first time a tool needs it. Voice mode starts voice on the open conversation,
+with Stream's voice glow, captions, and a camera button with a preview of what Juno sees. Each
+new conversation's session names `io.getstream.visionagents.androidassistant:/connected` as its
+`return_url`, and the app opens a connector's sign-in in an Auth Tab, though Stream's Android AI
+components have no sign-in card to start one from yet. CI builds it beside the Kotlin SDK.
 
 ### Kotlin sessions name where a sign-in goes back to
 

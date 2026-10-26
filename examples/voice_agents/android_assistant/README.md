@@ -104,7 +104,13 @@ Stream Chat 7.16.0 is on `https://stream-io-repo.com` rather than Maven Central,
   through the router's proxy for the person's Gmail (`POST /gmail/send`).
 - **Sign-ins go back to the app.** Every new conversation names
   `io.getstream.visionagents.androidassistant:/connected` as its session's `return_url`, the
-  app's own scheme in the reverse domain form the router asks for.
+  app's own scheme in the reverse domain form the router asks for. `SignIn.kt` is the browser
+  half of a connector's sign-in: `authenticate(url)` opens `launch_url#handoff_token=<token>` in
+  an Auth Tab (`androidx.browser` 1.10.0) and returns the `…:/connected` URL the router sent it
+  back to, with `connection_id` and `status`, or null when the person closed it. Where the
+  browser has no Auth Tab, it is a Custom Tab, and the redirect comes back through
+  `SignInCallbackActivity`, which the app's scheme opens. `MainActivity` provides it as
+  `LocalSignIn`.
 
 The app is the user `juno-owner`, Alex, as the iOS app is, so both phones list the same
 conversations. `Assistant.kt` holds the whole configuration: the router's and the backend's
@@ -112,7 +118,12 @@ URLs, the customer id, the Stream key, the agent's name and the user.
 
 ## What is not here yet
 
-- The connector sign-in: a Gmail or Linear call that waits for one shows its step, with no way
-  to connect from the phone yet.
+- The connector sign-in card. A Gmail or Linear call that waits for a sign-in shows its step,
+  with no Connect or Not now yet: Stream's Android AI components have no card for it in 7.16.0
+  (iOS has `AIToolAuthorizationView`), and `AgentSession` in the Kotlin SDK has no
+  `declineLogin` for Not now. `SignIn.authenticate` is what Connect will call once the card is
+  there. Until then, connect Gmail and Linear from the iOS app, which is the same
+  `juno-owner`, and the Android app uses those connections. `send_email` asked before Gmail
+  is connected tells the agent to call a Gmail tool first, which waits for that sign-in.
 - Think harder, which iOS offers in the composer's options: Stream's Android composer has no
   options sheet.
