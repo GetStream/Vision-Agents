@@ -62,6 +62,7 @@ import io.getstream.chat.android.ai.compose.ui.component.AIVoiceAgentState
 import io.getstream.chat.android.ai.compose.ui.component.AIVoiceGlow
 import io.getstream.chat.android.ai.compose.ui.component.AIVoiceVisualizationDefaults
 import io.getstream.video.android.core.Call
+import io.getstream.visionagents.android.core.AgentEvent
 import io.getstream.visionagents.android.core.AgentSession
 import io.getstream.visionagents.android.core.AgentsException
 import io.getstream.visionagents.android.core.Conversation
@@ -70,11 +71,13 @@ import io.getstream.visionagents.android.core.VoiceSession
 import io.getstream.webrtc.android.ui.VideoTextureViewRenderer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.webrtc.RendererCommon
@@ -123,7 +126,9 @@ fun VoiceMode(viewModel: ChatViewModel, chat: AgentChat, modifier: Modifier = Mo
                 }
             }
             val joining by remember(current) { current?.failure ?: MutableStateFlow(null) }.collectAsStateWithLifecycle()
-            val reason = failure ?: joining?.message
+            val trouble by remember(current) { current?.session?.let(::trouble) ?: flowOf(null) }
+                .collectAsStateWithLifecycle(null)
+            val reason = failure ?: joining?.message ?: trouble
             reason?.let {
                 Text(
                     it,
@@ -453,4 +458,27 @@ private fun ApprovalCard(request: ToolApprovalRequest, session: AgentSession, mo
         },
         modifier = modifier,
     )
+}
+
+/**
+ * What Juno cannot do on the call right now, from the agent's own failures, or null.
+ *
+ * The call stays up when the agent fails, so nothing else on the screen changes: without this
+ * it would go on saying it is listening to someone it cannot hear. A failure shows until the
+ * agent next hears, answers or speaks.
+ */
+private fun trouble(session: AgentSession): Flow<String?> = session.events().transform { event ->
+    when (event.kind) {
+        AgentEvent.Kind.Error -> emit(troubleText(event.string("context")))
+        AgentEvent.Kind.Heard, AgentEvent.Kind.Responding, AgentEvent.Kind.Spoke -> emit(null)
+        else -> Unit
+    }
+}
+
+/** A failure as the person needs to hear it, by the part of the agent that failed. */
+private fun troubleText(context: String): String = when (context) {
+    "stt" -> "Juno can't hear you right now: speech recognition isn't working."
+    "llm", "sts" -> "Juno can't answer right now: its model isn't working."
+    "tts" -> "Juno can't speak right now: its voice isn't working."
+    else -> "Something went wrong on Juno's side."
 }
