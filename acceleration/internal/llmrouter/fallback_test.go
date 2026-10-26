@@ -30,7 +30,7 @@ func TestRequestFailureFallsBackThroughAccelerate(t *testing.T) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		requests <- body
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"id\":\"fallback\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Opus answer\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3}}\n\ndata: [DONE]\n\n")
+		fmt.Fprint(w, claudeAnswer("Opus answer", 12, 3))
 	}))
 	defer backup.Close()
 	registry := NewRegistry()
@@ -58,7 +58,7 @@ func TestRequestFailureFallsBackThroughAccelerate(t *testing.T) {
 	require.Equal(t, int64(12), response.Usage.InputTokens)
 	request := <-requests
 	require.Equal(t, "claude-opus-5", request["model"])
-	require.Len(t, request["messages"], 2)
+	require.Len(t, request["messages"], 1, "the instructions are Claude's system prompt, not a turn")
 	require.Len(t, request["tools"], 1)
 	require.Empty(t, session.children)
 	// A caller cancellation and invalid request must not become a second billable request.
@@ -81,7 +81,7 @@ func TestAProviderOutOfCreditFallsBack(t *testing.T) {
 	defer broke.Close()
 	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"id\":\"fallback\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"respond\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		fmt.Fprint(w, claudeAnswer("respond", 1, 1))
 	}))
 	defer backup.Close()
 	registry := NewRegistry()
@@ -118,7 +118,7 @@ func TestAPriorityListFallsBackInTheOrderItWasWritten(t *testing.T) {
 	defer primary.Close()
 	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"id\":\"fallback\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Opus answer\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3}}\n\ndata: [DONE]\n\n")
+		fmt.Fprint(w, claudeAnswer("Opus answer", 12, 3))
 	}))
 	defer backup.Close()
 	registry := NewRegistry()
@@ -150,7 +150,7 @@ func TestAPriorityListFallsBackInTheOrderItWasWritten(t *testing.T) {
 // allowing is a customer whose policies allow only the models named.
 type allowing []string
 
-func (a allowing) Admit(context.Context, string) (routing.Admission, error) {
+func (a allowing) Admit(context.Context, routing.Owner) (routing.Admission, error) {
 	return routing.Admission{Models: a}, nil
 }
 
@@ -184,4 +184,26 @@ func TestAFallbackNeverReachesAModelThePolicyDoesNotAllow(t *testing.T) {
 
 	require.ErrorIs(t, err, routing.ErrModelNotAllowed)
 	require.Zero(t, asked.Load(), "the model the policy does not allow was never asked")
+}
+
+// claudeAnswer is a Messages API stream that says text, having read input tokens and
+// written output ones.
+func claudeAnswer(text string, input, output int) string {
+	events := []string{
+		fmt.Sprintf(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"usage":{"input_tokens":%d,"output_tokens":1}}}`, input),
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		fmt.Sprintf(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`, text),
+		`{"type":"content_block_stop","index":0}`,
+		fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":%d}}`, output),
+		`{"type":"message_stop"}`,
+	}
+	var stream string
+	for _, event := range events {
+		var typed struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal([]byte(event), &typed)
+		stream += "event: " + typed.Type + "\ndata: " + event + "\n\n"
+	}
+	return stream
 }

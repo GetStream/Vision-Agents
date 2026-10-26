@@ -171,6 +171,10 @@ public sealed class RouterTests
 
     private static object Job(string status, string? text = null) => new
     {
-        id = "job-1", status, text, created_at = "2026-09-24T10:00:00Z", updated_at = "2026-09-24T10:00:00Z",
+        id = "job-1",
+        status,
+        text,
+        created_at = "2026-09-24T10:00:00Z",
+        updated_at = "2026-09-24T10:00:00Z",
     };
 }

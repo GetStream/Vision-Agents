@@ -30,6 +30,9 @@ func NewRecorderRegistry() *Recorders { return routing.NewRegistry[tts.Recorder]
 // DefaultRecorderRegistry returns a registry with every batch voice this build supports.
 func DefaultRecorderRegistry() *Recorders {
 	registry := NewRecorderRegistry()
+	// Every factory here only reads config, so a model the deployment has no key or endpoint
+	// for is listed unavailable and never routed to.
+	registry.Probe()
 
 	registry.Register(elevenlabs.ProviderName, func(spec routing.Spec) (tts.Recorder, error) {
 		settings := elevenlabsSettings{}
@@ -114,6 +117,8 @@ func NewRecordings(options Options) (*Recordings, error) {
 		Live:     options.Live,
 		Voices:   options.Voices,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -154,13 +159,23 @@ func (recording Recording) request() routing.Request {
 func (r *Recordings) Records(provider string) bool { return r.Builds(provider) }
 
 // Check refuses a recording that no candidate can record: a model of a vendor that only
-// streams, or a shortcut or priority list made only of them. It names the models that
-// can. One candidate that records is enough, since Record passes over the rest.
+// streams, a shortcut or priority list made only of them, or a priority list of live
+// models alone, which a recording never goes to (routing.Request.Realtime). It names the
+// models that can. One candidate that records is enough, since Record passes over the rest.
 func (r *Recordings) Check(ctx context.Context, recording Recording) error {
-	candidates, err := r.Candidates(ctx, recording.request())
+	request := recording.request()
+	candidates, err := r.Candidates(ctx, request)
 	if err != nil {
-		// Record refuses it in the words it always has.
-		return nil
+		// A priority list that resolves once live models are let back in held only those.
+		request.Realtime = nil
+		if _, live := r.Candidates(ctx, request); live != nil {
+			// Record refuses it in the words it always has.
+			return nil
+		}
+		// The first error says what else was wrong with the list, such as an unknown name.
+		return routing.Refused(stack.Wrap(fmt.Errorf("%w; a recording keeps only a list's batch models, "+
+			"and these are models for live calls; batch models that record: %s",
+			err, strings.Join(r.recorders(true), ", "))))
 	}
 	var streamed []string
 	for _, candidate := range candidates {
@@ -169,14 +184,21 @@ func (r *Recordings) Check(ctx context.Context, recording Recording) error {
 		}
 		streamed = append(streamed, candidate.Config.Name())
 	}
-	var recorders []string
+	// A priority list never goes to a live model, so naming one would send the caller
+	// to the refusal above.
+	return routing.Refused(stack.Wrap(fmt.Errorf("routing: %s can only stream speech, not record it; models that record: %s",
+		strings.Join(streamed, ", "), strings.Join(r.recorders(len(request.Providers) > 0), ", "))))
+}
+
+// recorders names the models that can record, the batch ones alone when batchOnly.
+func (r *Recordings) recorders(batchOnly bool) []string {
+	var names []string
 	for _, provider := range r.Config().Providers {
-		if r.Records(provider.Provider) {
-			recorders = append(recorders, provider.Name())
+		if (!batchOnly || !provider.Realtime) && r.Records(provider.Provider) {
+			names = append(names, provider.Name())
 		}
 	}
-	return routing.Refused(stack.Wrap(fmt.Errorf("routing: %s can only stream speech, not record it; models that record: %s",
-		strings.Join(streamed, ", "), strings.Join(recorders, ", "))))
+	return names
 }
 
 // Record selects a voice and speaks the whole text.
@@ -199,6 +221,8 @@ func (r *Recordings) Record(
 		return tts.Recorded{}, routing.ProviderConfig{}, routing.Refused(err)
 	}
 	request := recording.request()
+	request.Attribution = routing.AttributionFrom(ctx)
+	request.Spent = routing.SpentFrom(ctx)
 
 	var recorded tts.Recorded
 	// failed is the vendor's own answer, whole, for a walk that asked only one candidate.

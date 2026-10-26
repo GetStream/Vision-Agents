@@ -471,6 +471,12 @@ func (s *Session) Wait(ctx context.Context) error {
 // Interrupt abandons the reply being spoken.
 func (s *Session) Interrupt() error { return s.pipeline.Interrupt() }
 
+// AnswerApproval answers a tool call whose step waits for a person to allow it, as
+// stream.Pipeline.AnswerApproval does.
+func (s *Session) AnswerApproval(toolCallID, requestID string, allowed bool, summary string) error {
+	return s.pipeline.AnswerApproval(toolCallID, requestID, allowed, summary)
+}
+
 // Close stops the conversation. Safe to call after it has already ended. What it recorded
 // and remembered is kept; Delete takes it away.
 func (s *Session) Close(ctx context.Context) error { return s.pipeline.Leave(ctx) }

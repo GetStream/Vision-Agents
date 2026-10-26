@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -49,7 +49,7 @@ func (s *Session) Search(ctx context.Context, query search.Query) (search.Result
 	s.mu.Unlock()
 
 	found, err := s.ask(ctx, provider, config, query)
-	if err == nil || s.fallback == nil || ctx.Err() != nil {
+	if err == nil || s.fallback == nil || ctx.Err() != nil || routing.ReservationRefused(err) {
 		return found, err
 	}
 	next, found, fallbackErr := s.fallback(ctx, query, config)
@@ -87,9 +87,13 @@ func (s *Session) Close() error {
 
 // ask puts one question to one provider and records what it cost.
 func (s *Session) ask(ctx context.Context, provider search.Provider, config routing.ProviderConfig, query search.Query) (search.Result, error) {
-	started := time.Now()
-	found, err := provider.Search(ctx, query)
-	s.record(config, started, err)
+	found, err := routing.Call(ctx, routing.Meter{
+		Recorder: s.recorder, Config: config, Owner: s.owner,
+		Code:     func(error) string { return "search_failed" },
+		Estimate: pricing.Quantities{pricing.Requests: 1},
+	}, func(ctx context.Context) (search.Result, error) {
+		return provider.Search(ctx, query)
+	})
 	if err != nil {
 		return search.Result{}, err
 	}
@@ -107,29 +111,4 @@ func (s *Session) moveTo(failed routing.ProviderConfig, next *Session) {
 	}
 	_ = s.provider.Close()
 	s.provider, s.config = next.provider, next.config
-}
-
-// record files one search as a request row. A search API bills by the call rather than by
-// what it read, so the cost is set outright from the configured rate instead of being
-// multiplied out of a usage count nothing here collects.
-func (s *Session) record(config routing.ProviderConfig, started time.Time, err error) {
-	if s.recorder == nil {
-		return
-	}
-
-	stat := routing.Stat{
-		Owner:      s.owner,
-		StartedAt:  started.UTC(),
-		LatencyMs:  routing.MsSince(started),
-		CostMicros: config.Price.RequestMicros(),
-		Success:    err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = "search_failed"
-		stat.ErrorMessage = err.Error()
-		// A search that failed is not billed, so the row records what was waited for
-		// without charging for it.
-		stat.CostMicros = 0
-	}
-	s.recorder.Record(config, stat)
 }

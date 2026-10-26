@@ -813,7 +813,7 @@ func (t *TTS) readLoop(sock *socket) {
 			continue
 		}
 		if message.Error == quotaExceeded {
-			t.keys.Cooldown(sock.key, keypool.MaxCooldown)
+			t.keys.QuotaExceeded(sock.key)
 		}
 		t.handleMessage(sock, message)
 	}

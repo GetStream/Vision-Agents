@@ -1178,3 +1178,40 @@ func (s *StoreSuite) TestCustomersRacingForOneProviderUnitLeaveOneHolder() {
 	s.Require().NoError(err)
 	s.Equal(connections[winner].ID, found.ID)
 }
+
+// TestAUsersGrantedConnectionsAreHerLiveOnesThatHoldCredentials: what the user delete revokes
+// is one user's live connections with a grant, not another user's, the app's, another
+// customer's, a pending one or a deleted one.
+func (s *StoreSuite) TestAUsersGrantedConnectionsAreHerLiveOnesThatHoldCredentials() {
+	first := s.connection("acme-app", userOwned("alice"))
+	second := s.connection("acme-app", userOwned("alice"))
+	s.connection("acme-app", userOwned("alice"))
+	gone := s.connection("acme-app", userOwned("alice"))
+	bob := s.connection("acme-app", userOwned("bob"))
+	app := s.connection("acme-app", nil)
+	elsewhere := s.connection("other-app", userOwned("alice"))
+	for _, connection := range []ConnectorConnection{first, second, gone, bob, app, elsewhere} {
+		s.granted(connection)
+	}
+	s.deletedKeepingCredentials(gone)
+
+	found, err := s.store.GrantedConnectorConnectionsOfUser(s.ctx, "acme-app", "alice")
+
+	s.Require().NoError(err)
+	s.Equal([]string{first.ID, second.ID}, connectionIDs(found))
+}
+
+// deletedKeepingCredentials marks connection deleted and leaves its credentials, which no
+// delete does: a row a query must leave out for being deleted alone.
+func (s *StoreSuite) deletedKeepingCredentials(connection ConnectorConnection) {
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE connector_connections SET deleted_at = now() WHERE id = ?", connection.ID)
+	s.Require().NoError(err)
+}
+
+func connectionIDs(connections []ConnectorConnection) []string {
+	ids := make([]string, 0, len(connections))
+	for _, connection := range connections {
+		ids = append(ids, connection.ID)
+	}
+	return ids
+}

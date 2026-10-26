@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -159,6 +161,215 @@ func (s *OpenAISuite) TestAToolResultImageGoesInFunctionCallOutput() {
 	s.Contains(string(raw), `"type":"function_call_output"`)
 	s.Contains(string(raw), `"type":"input_image"`)
 	s.Contains(string(raw), "2 roses")
+}
+
+// TestAnExplicitBreakpointIsSent: in explicit mode OpenAI caches only at the breakpoints a
+// request names, so instructions sent without one are never written to the cache.
+func (s *OpenAISuite) TestAnExplicitBreakpointIsSent() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	items := provider.input(llm.ResponseParams{
+		Instructions:       "Be brief.",
+		Input:              []llm.Message{{Role: llm.User, Content: "hi"}},
+		PromptCacheOptions: llm.PromptCacheOptions{Mode: llm.CacheExplicit},
+	})
+	s.Require().Len(items, 2)
+
+	var sent struct {
+		Content []map[string]any `json:"content"`
+	}
+	raw, err := json.Marshal(items[0])
+	s.Require().NoError(err)
+	s.Require().NoError(json.Unmarshal(raw, &sent))
+	s.Require().Len(sent.Content, 1)
+	s.Equal("Be brief.", sent.Content[0]["text"])
+	s.Equal(map[string]any{"mode": "explicit"}, sent.Content[0]["prompt_cache_breakpoint"])
+}
+
+func (s *OpenAISuite) TestImplicitCachingSendsNoBreakpoint() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	items := provider.input(llm.ResponseParams{
+		Instructions: "Be brief.",
+		Input:        []llm.Message{{Role: llm.User, Content: "hi"}},
+	})
+
+	raw, err := json.Marshal(items[0])
+	s.Require().NoError(err)
+	s.NotContains(string(raw), "prompt_cache_breakpoint")
+}
+
+// TestTheTierAndUsageOpenAIReportedReachTheResponse uses a first turn of a cached
+// conversation as gpt-5.6-terra answered it, served at the flex tier.
+func (s *OpenAISuite) TestTheTierAndUsageOpenAIReportedReachTheResponse() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `event: response.completed
+data: {"type":"response.completed","response":{"id":"r","status":"completed","service_tier":"flex",`+
+			`"usage":{"input_tokens":2389,"input_tokens_details":{"cache_write_tokens":2386,"cached_tokens":0},`+
+			`"output_tokens":22,"output_tokens_details":{"reasoning_tokens":7},"total_tokens":2411}}}
+
+`)
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+
+	s.Equal("flex", response.ServiceTier)
+	s.Equal(llm.Usage{
+		InputTokens:         2389,
+		InputTokensDetails:  llm.InputTokensDetails{CacheWriteTokens: 2386},
+		OutputTokens:        22,
+		OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: 7},
+		TotalTokens:         2411,
+	}, response.Usage)
+}
+
+// answering is a server that streams the opening of an answer and then nothing, until the
+// request is given up on.
+func answering() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.output_text.delta\n"+
+			`data: {"type":"response.output_text.delta","item_id":"m","output_index":0,"content_index":0,"delta":"Hello","sequence_number":1}`+"\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+}
+
+// drained reads a stream to its end and returns what it settled as.
+func drained(stream *llm.Stream) llm.Response {
+	for stream.Next() {
+	}
+	return stream.Response()
+}
+
+func (s *OpenAISuite) TestACallersDeadlineCutsTheResponseShort() {
+	server := answering()
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+	ctx, cancel := context.WithTimeout(s.T().Context(), 300*time.Millisecond)
+	defer cancel()
+
+	stream, err := provider.Create(ctx, llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	response := drained(stream)
+
+	s.True(response.TimedOut)
+	s.Equal(llm.StatusFailed, response.Status, "whoever waited still sees it fail")
+	s.Equal("Hello", response.OutputText)
+	s.ErrorIs(stream.Err(), context.DeadlineExceeded)
+}
+
+func (s *OpenAISuite) TestTheProvidersOwnLimitCutsTheResponseShort() {
+	server := answering()
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL, Timeout: 300 * time.Millisecond})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	response := drained(stream)
+
+	s.True(response.TimedOut)
+	s.Equal("Hello", response.OutputText)
+}
+
+func (s *OpenAISuite) TestAResponseTheVendorFailedIsNotCutShort() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.failed\n"+
+			`data: {"type":"response.failed","response":{"id":"r","status":"failed","error":{"code":"server_error","message":"the model fell over"}}}`+"\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	response := drained(stream)
+
+	s.False(response.TimedOut)
+	s.Equal(llm.StatusFailed, response.Status)
+	s.ErrorContains(stream.Err(), "the model fell over")
+}
+
+func (s *OpenAISuite) TestTheInstructionsOpenAConversationThatIsReplayed() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	raw, err := json.Marshal(provider.params(llm.ResponseParams{
+		Instructions: "You are Ashley.",
+		Input:        []llm.Message{{Role: llm.User, Content: "hello"}},
+	}))
+	s.Require().NoError(err)
+	var sent struct {
+		PreviousResponseID string `json:"previous_response_id"`
+		Input              []struct {
+			Role string `json:"role"`
+		} `json:"input"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &sent))
+
+	s.Empty(sent.PreviousResponseID)
+	s.Require().Len(sent.Input, 2)
+	s.Equal("developer", sent.Input[0].Role)
+	s.Contains(string(raw), "You are Ashley.")
+}
+
+func (s *OpenAISuite) TestAContinuedResponseDoesNotSendItsInstructionsAgain() {
+	// The stored response already holds the developer message it was sent. Sending it
+	// again appended a copy to the chain every turn: a 5k-token prompt became 48k after
+	// ten turns of a voice call.
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	raw, err := json.Marshal(provider.params(llm.ResponseParams{
+		Instructions:       "You are Ashley.",
+		Input:              []llm.Message{{Role: llm.User, Content: "and tomorrow?"}},
+		PreviousResponseID: "resp_1",
+	}))
+	s.Require().NoError(err)
+	var sent struct {
+		PreviousResponseID string `json:"previous_response_id"`
+		Input              []struct {
+			Role string `json:"role"`
+		} `json:"input"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &sent))
+
+	s.Equal("resp_1", sent.PreviousResponseID)
+	s.Require().Len(sent.Input, 1)
+	s.Equal("user", sent.Input[0].Role)
+	s.NotContains(string(raw), "You are Ashley.")
+}
+
+func (s *OpenAISuite) TestAContinuedResponseCarryingOnlyAToolResultSendsJustThatResult() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	items := provider.input(llm.ResponseParams{
+		Instructions:       "You are Ashley.",
+		Input:              []llm.Message{{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booked"}},
+		PreviousResponseID: "resp_1",
+	})
+	s.Require().Len(items, 1)
+
+	raw, err := json.Marshal(items[0])
+	s.Require().NoError(err)
+	s.Contains(string(raw), `"type":"function_call_output"`)
 }
 
 // sendMessage is Slack's MCP slack_send_message input schema as its server listed it on

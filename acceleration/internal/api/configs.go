@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -21,6 +22,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -147,6 +150,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := s.liveSTTComplaint(config, ""); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, nil); !ok {
+		return nil, invalidRequest(message)
+	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
@@ -271,6 +277,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); !ok {
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
@@ -672,8 +681,51 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 				return fmt.Sprintf("connector binding %q has a tool_patterns entry that is not a tool name or pattern", alias), false
 			}
 		}
+		if complaint, ok := approvalComplaint(binding); !ok {
+			return complaint, false
+		}
 	}
 	return "", true
+}
+
+// approvalComplaint reports a binding's require_approval that would hold nothing, or not hold
+// what it names: an entry path.Match cannot read, one that matches no tool the binding grants,
+// such as a typo that would leave a write ungated, or approval beside sandbox, whose code
+// calls the connector's API without the dispatcher.
+func approvalComplaint(binding AgentConnectorBinding) (string, bool) {
+	if len(binding.RequireApproval) == 0 {
+		return "", true
+	}
+	if binding.Sandbox {
+		return fmt.Sprintf("connector binding %q sets require_approval and sandbox, and code in the sandbox "+
+			"calls the connector's API with nobody asked", binding.Name), false
+	}
+	if err := plugins.CheckToolPatterns(binding.RequireApproval); err != nil {
+		return fmt.Sprintf("connector binding %q has a require_approval entry that is not a tool name or pattern", binding.Name), false
+	}
+	for _, entry := range binding.RequireApproval {
+		if !approvalMatches(binding, entry) {
+			return fmt.Sprintf("connector binding %q requires approval for %q, which matches no tool it grants", binding.Name, entry), false
+		}
+	}
+	return "", true
+}
+
+// approvalMatches reports whether a require_approval entry matches a tool the binding grants by
+// name, or for tool_patterns, a pattern: one the entry matches as written, such as linear_* for
+// linear_create_*, or one that grants the entry, such as linear_* for linear_create_issue.
+func approvalMatches(binding AgentConnectorBinding, entry string) bool {
+	if binding.ToolPatterns != nil {
+		return slices.ContainsFunc(*binding.ToolPatterns, func(pattern string) bool {
+			covers, _ := path.Match(entry, pattern)
+			granted, _ := path.Match(pattern, entry)
+			return covers || granted
+		})
+	}
+	return slices.ContainsFunc(binding.Tools, func(tool ConnectorToolGrant) bool {
+		matched, _ := path.Match(entry, tool.Name)
+		return matched
+	})
 }
 
 // unboundConnectors reports a binding naming what the app cannot bind: a connector it cannot
@@ -732,7 +784,7 @@ func leftOutGrant(binding AgentConnectorBinding, manifest core.Manifest) (string
 		return "", true
 	}
 	for _, tool := range binding.Tools {
-		if unasked := source.UnaskedScopes(manifest.Scopes.List, tool.Name); len(unasked) > 0 {
+		if unasked := source.UnaskedScopes(manifest.Scopes, tool.Name); len(unasked) > 0 {
 			return fmt.Sprintf("connector binding %q grants %q, which connector %q leaves out: it needs %s, "+
 				"which the connector never asks for", binding.Name, tool.Name, binding.ConnectorId,
 				strings.Join(unasked, ", ")), false
@@ -774,23 +826,67 @@ func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string
 	return "", true, nil
 }
 
+// sandboxLimitsComplaint refuses a config whose sandbox is bigger or more open than the
+// organization's sandbox limits allow, so the customer hears it while writing the config rather
+// than finding the session without its sandbox. was is the sandbox the config had before this
+// save, nil for a new config: a sandbox the save leaves as it was is not refused, so a config
+// stored before its organization's limits tightened stays editable, and its sessions still run
+// without the sandbox. Limits that cannot be read now refuse nothing here.
+func (s *Server) sandboxLimitsComplaint(ctx context.Context, customerID string, config store.AgentConfig, was *savedSandbox) (string, bool) {
+	if config.Sandbox == "" || s.policies == nil {
+		return "", true
+	}
+	now := sandboxOfConfig(config)
+	if was != nil && reflect.DeepEqual(*was, *now) {
+		return "", true
+	}
+	err := s.policies.SandboxAllowed(ctx, routing.Owner{CustomerID: customerID}, now.ask)
+	if err == nil || policy.Transient(err) {
+		return "", true
+	}
+	return err.Error(), false
+}
+
+// savedSandbox is the sandbox a config's sessions ask for, copied from the config.
+type savedSandbox struct {
+	provider string
+	ask      policy.SandboxAsk
+}
+
+func sandboxOfConfig(config store.AgentConfig) *savedSandbox {
+	copied := func(list []string) []string {
+		if len(list) == 0 {
+			return nil
+		}
+		return slices.Clone(list)
+	}
+	options := config.SandboxOptions
+	options.Setup, options.AllowedDomains = copied(options.Setup), copied(options.AllowedDomains)
+	options.NetworkAllowList = copied(options.NetworkAllowList)
+	return &savedSandbox{provider: config.Sandbox, ask: policy.SandboxAsk{Config: options,
+		Granted: slices.ContainsFunc(config.Connectors, func(binding store.ConnectorBinding) bool { return binding.Sandbox })}}
+}
+
 // sensitiveBindingsComplaint refuses a config that binds a sensitive connector, one whose
 // manifest says its tools read private data, together with a tool that sends data out: a
 // model that reads untrusted text could be steered into sending out what it read («Nessy as
 // a connector» on AI-1538, change 13). These send data out:
 //   - a binding whose connector has a source that does not say outbound: false, as one of its
-//     tools may write, and a binding with sandbox set, whose code calls the connector's whole API;
+//     tools may write, unless each tool it grants is in the source's read_only_tools or its
+//     require_approval, which holds every call for a person to allow, and a binding with
+//     sandbox set, whose code calls the connector's whole API;
 //   - an MCP server or a plugin, whose tools no manifest describes, unless the plugin reaches
 //     its read-only endpoint;
 //   - a sandbox that may reach the network.
 //
-// None of them can ask a person's approval of a call: only a tool a session declares carries
-// one (SessionToolApproval). It reads the config as it is about to be stored.
-func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+// Only a binding's require_approval asks a person before a call is sent; the others ask
+// nobody. It reads the config as it is about to be stored. router plugins migrate asks it
+// of a binding it adds (pluginmigrate.Options.Complaint).
+func SensitiveBindingsComplaint(ctx context.Context, definitions store.Definitions, customerID string, config store.AgentConfig) (string, bool, error) {
 	var sensitive *store.ConnectorBinding
-	var outbound []string
+	var outbound, unheld []string
 	for i, binding := range config.Connectors {
-		definition, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorID)
+		definition, err := definitions.LatestConnectorDefinition(ctx, customerID, binding.ConnectorID)
 		// A forced connector delete leaves its bindings behind (store.refuseUndefined), and
 		// a binding to a connector with no definition opens nothing.
 		if errors.Is(err, store.ErrNoConnectorDefinition) {
@@ -802,8 +898,11 @@ func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID stri
 		if definition.Manifest.Sensitive {
 			sensitive = &config.Connectors[i]
 		}
-		if bindingSendsOut(binding, definition.Manifest) {
+		if tools, sends := bindingSendsOut(binding, definition.Manifest); sends {
 			outbound = append(outbound, fmt.Sprintf("connector binding %q", binding.Name))
+			if len(tools) > 0 {
+				unheld = append(unheld, fmt.Sprintf("%q %s", binding.Name, strings.Join(tools, ", ")))
+			}
 		}
 	}
 	if sensitive == nil {
@@ -823,20 +922,83 @@ func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID stri
 	if len(outbound) == 0 {
 		return "", true, nil
 	}
-	return fmt.Sprintf("connector binding %q binds %q, whose tools read private data, and %s can send data out "+
+	message := fmt.Sprintf("connector binding %q binds %q, whose tools read private data, and %s can send data out "+
 		"with no person's approval: take them out of this config", sensitive.Name, sensitive.ConnectorID,
-		strings.Join(outbound, ", ")), false, nil
+		strings.Join(outbound, ", "))
+	if len(unheld) > 0 {
+		message += ", or add to each binding's require_approval its tools that do not only read: " +
+			strings.Join(unheld, "; ")
+	}
+	return message, false, nil
 }
 
-// bindingSendsOut reports whether a binding offers a tool that may send data out: one of a
-// source that does not say outbound: false, or the connector's API to sandbox code. A
-// connector with no source offers no tool, and neither does a binding that grants none.
-func bindingSendsOut(binding store.ConnectorBinding, manifest core.Manifest) bool {
-	if binding.Sandbox {
-		return true
+// sensitiveBindingsComplaint is SensitiveBindingsComplaint over the server's store.
+func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+	return SensitiveBindingsComplaint(ctx, s.store, customerID, config)
+}
+
+// sensitiveCheck is SensitiveBindingsComplaint as a store write asks it, under the config's
+// row lock: a refusal is the 400 an API write answers with.
+func sensitiveCheck(customerID string) store.ConfigCheck {
+	return func(ctx context.Context, config store.AgentConfig, definitions store.Definitions) error {
+		if message, ok, err := SensitiveBindingsComplaint(ctx, definitions, customerID, config); err != nil {
+			return err
+		} else if !ok {
+			return invalidRequest(message)
+		}
+		return nil
 	}
-	granted := len(binding.Tools) > 0 || binding.ToolPatterns != nil
-	return granted && slices.ContainsFunc(manifest.Sources, core.SourceRule.SendsOut)
+}
+
+// bindingSendsOut reports whether a binding offers a tool that may send data out with nobody
+// asked, and the names or patterns it grants such tools by: one of a source that does not say
+// outbound: false, unless the binding grants it by name and the source lists it in
+// read_only_tools, or its require_approval holds it, or the connector's API to sandbox code,
+// which names none. A tool pattern matches tools only a session lists, so it sends out if any
+// source may and its require_approval does not hold all it matches. A binding does not say
+// which source a granted name comes from, so it sends out if any source may send it. A
+// connector with no source offers no tool, and neither does a binding that grants none.
+func bindingSendsOut(binding store.ConnectorBinding, manifest core.Manifest) ([]string, bool) {
+	if binding.Sandbox {
+		return nil, true
+	}
+	var unheld []string
+	if binding.ToolPatterns != nil {
+		if !slices.ContainsFunc(manifest.Sources, core.SourceRule.SendsOut) {
+			return nil, false
+		}
+		for _, pattern := range *binding.ToolPatterns {
+			if !holdsPattern(binding, pattern) {
+				unheld = append(unheld, pattern)
+			}
+		}
+		return unheld, len(unheld) > 0
+	}
+	for _, tool := range binding.Tools {
+		sends := slices.ContainsFunc(manifest.Sources, func(source core.SourceRule) bool {
+			return source.SendsOutTool(tool.Name)
+		})
+		if sends && !binding.RequiresApproval(tool.Name) {
+			unheld = append(unheld, tool.Name)
+		}
+	}
+	return unheld, len(unheld) > 0
+}
+
+// holdsPattern reports whether the binding's require_approval holds every tool a tool pattern
+// matches: an entry does when it matches the pattern as written and has no wildcard or escape
+// but *, such as * or create_* for create_*, as each * then also matches what the pattern's
+// wildcards stand for. An entry's ? or class matches one character where the pattern's * may
+// stand for several, an escaped \* only the pattern's own *, and the pattern's class may stand
+// for a / that no * matches, so none of them is taken to hold the pattern.
+func holdsPattern(binding store.ConnectorBinding, pattern string) bool {
+	if strings.Contains(pattern, "[") {
+		return false
+	}
+	return slices.ContainsFunc(binding.RequireApproval, func(entry string) bool {
+		matched, _ := path.Match(entry, pattern)
+		return matched && !strings.ContainsAny(entry, `?[\`)
+	})
 }
 
 // pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same
@@ -894,13 +1056,14 @@ func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
 				Type:         string(binding.Connection.Type),
 				ConnectionID: value(binding.Connection.ConnectionId),
 			},
-			Tools:        tools,
-			ToolPatterns: copyPatterns(binding.ToolPatterns),
-			Required:     value(binding.Required),
-			TimeoutMs:    value(binding.TimeoutMs),
-			Events:       bindingEventsOf(binding.Events),
-			Policy:       bindingPolicyOf(binding.Policy),
-			Sandbox:      binding.Sandbox,
+			Tools:           tools,
+			ToolPatterns:    copyPatterns(binding.ToolPatterns),
+			Required:        value(binding.Required),
+			TimeoutMs:       value(binding.TimeoutMs),
+			Events:          bindingEventsOf(binding.Events),
+			Policy:          bindingPolicyOf(binding.Policy),
+			Sandbox:         binding.Sandbox,
+			RequireApproval: binding.RequireApproval,
 		})
 	}
 	return stored
@@ -959,10 +1122,11 @@ func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
 				Type:         AgentConnectorSelectionType(binding.Connection.Type),
 				ConnectionId: optional(binding.Connection.ConnectionID),
 			},
-			Tools:        tools,
-			ToolPatterns: copyPatterns(binding.ToolPatterns),
-			Required:     &required,
-			Sandbox:      binding.Sandbox,
+			Tools:           tools,
+			ToolPatterns:    copyPatterns(binding.ToolPatterns),
+			Required:        &required,
+			Sandbox:         binding.Sandbox,
+			RequireApproval: binding.RequireApproval,
 		}
 		if binding.TimeoutMs > 0 {
 			timeout := binding.TimeoutMs
@@ -2220,16 +2384,17 @@ func progressiveOf(stored bool, tools *AgentTools) bool {
 // (internal/api/connectors.go:1176 at cf62af0d), and nothing there says why 30 seconds; it is
 // unverified.
 type AgentConnectorBinding struct {
-	Name         string                   `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
-	ConnectorId  string                   `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
-	Connection   AgentConnectorSelection  `json:"connection"`
-	Tools        []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. A binding that sets tool_patterns sends an empty list: the patterns are the grant instead."`
-	ToolPatterns *[]string                `json:"tool_patterns,omitempty" minItems:"1" maxItems:"128" doc:"Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection lists that matches is pinned on that connection the first time, at the digest listed then, and a later session offers it only while that digest still matches. An empty list is refused. At most 128, the same cap as tools, which is also the most one session offers when more match."`
-	Required     *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
-	TimeoutMs    *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
-	Events       *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
-	Policy       *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
-	Sandbox      bool                     `json:"sandbox,omitempty" doc:"Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false."`
+	Name            string                   `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
+	ConnectorId     string                   `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
+	Connection      AgentConnectorSelection  `json:"connection"`
+	Tools           []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. A binding that sets tool_patterns sends an empty list: the patterns are the grant instead."`
+	ToolPatterns    *[]string                `json:"tool_patterns,omitempty" minItems:"1" maxItems:"128" doc:"Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection lists that matches is pinned on that connection the first time, at the digest listed then, and a later session offers it only while that digest still matches. An empty list is refused. At most 128, the same cap as tools, which is also the most one session offers when more match."`
+	Required        *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
+	TimeoutMs       *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
+	Events          *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
+	Policy          *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
+	Sandbox         bool                     `json:"sandbox,omitempty" doc:"Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false."`
+	RequireApproval []string                 `json:"require_approval,omitempty" maxItems:"128" nullable:"false" doc:"Names or path.Match patterns of the binding's tools whose every call waits for a person to allow it before the router sends it, such as create_issue or delete_*. The step of the call asks the session's user in its conversation, who answers with the session socket's tool_approval. Declined, or not answered in 10 minutes, the call is not sent and the model is told so. A session with nobody to ask, such as an incognito one or one opened by an MCP event, refuses the call at once. Each entry must match a tool the binding grants, or one of its tool_patterns. Refused with sandbox, whose code calls the API with nobody asked. At most 128, the cap tools has."`
 }
 
 // ConnectorBindingPolicy is a binding's policy envelope, read back as it was written.

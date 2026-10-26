@@ -73,12 +73,17 @@ func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequ
 		return nil, errUnknownConfig
 	}
 
+	// The calls it places later are owned by whoever scheduled it.
+	scheduler := routing.AttributionFrom(ctx)
 	campaign := store.Campaign{
-		CustomerID:  customerID,
-		Name:        strings.TrimSpace(request.Body.Name),
-		ConfigID:    request.Body.ConfigId,
-		FromNumber:  request.Body.FromNumber,
-		Concurrency: value(request.Body.Concurrency),
+		CustomerID:      customerID,
+		Name:            strings.TrimSpace(request.Body.Name),
+		ConfigID:        request.Body.ConfigId,
+		FromNumber:      request.Body.FromNumber,
+		Concurrency:     value(request.Body.Concurrency),
+		APIKey:          scheduler.APIKey,
+		UserID:          scheduler.UserID,
+		UsageCategories: scheduler.UsageCategories,
 	}
 	if request.Body.Tags != nil {
 		campaign.Tags = *request.Body.Tags
@@ -185,6 +190,9 @@ func (s *Server) startCampaign(ctx context.Context, request *startCampaignReques
 	if errors.Is(err, phone.ErrSuspended) {
 		return nil, errTelephonySuspended
 	}
+	if answer, refused := moneyError(err); refused {
+		return nil, answer
+	}
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
@@ -232,6 +240,10 @@ func campaignOf(campaign store.Campaign) Campaign {
 		CreatedAt:   campaign.CreatedAt,
 		StartedAt:   campaign.StartedAt,
 		FinishedAt:  campaign.FinishedAt,
+	}
+	if campaign.PausedReason != "" {
+		reason := campaign.PausedReason
+		rendered.PausedReason = &reason
 	}
 	if len(campaign.Tags) > 0 {
 		tags := campaign.Tags
@@ -328,7 +340,9 @@ func (s *Server) registerCampaigns(api huma.API) {
 		Path:        "/v1/agents/campaigns/{id}/start",
 		Summary:     "Start ringing",
 		Description: "Returns once the campaign is running rather than once it is over. A campaign that was " +
-			"paused carries on from whoever is left.\n" +
+			"paused carries on from whoever is left. An organization that may not pay for calls is refused " +
+			"here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused " +
+			"with paused_reason set.\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		DefaultStatus: http.StatusAccepted,
@@ -410,16 +424,17 @@ type pauseCampaignResponse struct {
 
 // Campaign is the Campaign schema.
 type Campaign struct {
-	Concurrency int                `json:"concurrency"`
-	ConfigId    string             `json:"config_id"`
-	CreatedAt   time.Time          `json:"created_at"`
-	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
-	FromNumber  string             `json:"from_number"`
-	Id          string             `json:"id"`
-	Name        string             `json:"name"`
-	StartedAt   *time.Time         `json:"started_at,omitempty"`
-	State       CampaignState      `json:"state" enum:"draft,running,paused,finished"`
-	Tags        *map[string]string `json:"tags,omitempty"`
+	Concurrency  int                `json:"concurrency"`
+	ConfigId     string             `json:"config_id"`
+	CreatedAt    time.Time          `json:"created_at"`
+	FinishedAt   *time.Time         `json:"finished_at,omitempty"`
+	FromNumber   string             `json:"from_number"`
+	Id           string             `json:"id"`
+	Name         string             `json:"name"`
+	PausedReason *string            `json:"paused_reason,omitempty" doc:"Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it."`
+	StartedAt    *time.Time         `json:"started_at,omitempty"`
+	State        CampaignState      `json:"state" enum:"draft,running,paused,finished"`
+	Tags         *map[string]string `json:"tags,omitempty"`
 }
 
 func (*Campaign) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

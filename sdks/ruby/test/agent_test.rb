@@ -194,6 +194,99 @@ class TestAgent < LocalRouterTest
     end
   end
 
+  def test_a_tool_is_handed_its_call_and_says_how_it_is_going
+    seen = Thread::Queue.new
+    frames = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t0", name: "search", arguments: "{}", run: false)
+      peer.send_frame(type: "tool_call", id: "t1", turn_id: "turn_2", name: "search", arguments: "{}",
+                      user: { id: "sam", name: "Sam", custom: { tier: "gold" } },
+                      conversation: { cid: "agent:kept", custom: { line: "support" } }, approved: true)
+      3.times { frames << peer.receive(timeout: 5) }
+      peer.receive_type("close", timeout: 10)
+    end
+    tools = VA::Tools.new.register("search", description: "Search flights") do |_args, call|
+      seen << call
+      call.update("checking three airlines")
+      call.say("Still looking, one moment.")
+      "found two"
+    end
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "text" => "checking three airlines",
+                     "verbatim" => false }, frames.pop(timeout: 5))
+      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "text" => "Still looking, one moment.",
+                     "verbatim" => true }, frames.pop(timeout: 5))
+      assert_equal "t1", frames.pop(timeout: 5)["tool_call_id"], "the call addressed elsewhere is left"
+    end
+    call = seen.pop(timeout: 1)
+    assert_equal %w[t1 sess_1 turn_2], [call.id, call.session_id, call.turn_id]
+    assert_equal VA::ToolUser.new("sam", "Sam", { "tier" => "gold" }), call.user
+    assert_equal VA::ToolConversation.new("agent:kept", { "line" => "support" }), call.conversation
+    assert call.approved?
+  end
+
+  def test_a_held_tool_is_answered_even_once_the_caller_talks_over_the_agent
+    results = Thread::Queue.new
+    release = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "charge", arguments: "{}")
+      results << peer.receive_type("tool_hold")
+      peer.send_frame(type: "tool_held", id: "t1")
+      sleep 0.05
+      peer.send_frame(type: "tool_cancel", id: "t1")
+      sleep 0.05
+      release << true
+      results << peer.receive_type("tool_result")
+      peer.receive_type("close", timeout: 10)
+    end
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, call|
+      call.disallow_interruptions
+      release.pop(timeout: 5)
+      call.cancelled? ? "stopped" : "charged"
+    end
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal({ "type" => "tool_hold", "tool_call_id" => "t1" }, results.pop(timeout: 5))
+      assert_equal({ "type" => "tool_result", "tool_call_id" => "t1", "output" => "charged" }, results.pop(timeout: 5))
+    end
+  end
+
+  def test_a_tool_stopped_before_it_was_held_never_writes
+    wrote = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "charge", arguments: "{}")
+      peer.receive_type("tool_hold")
+      peer.send_frame(type: "tool_cancel", id: "t1")
+      wrote << (peer.receive_type("tool_result", timeout: 0.5) || :nothing)
+      peer.receive_type("close", timeout: 10)
+    end
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, call|
+      call.disallow_interruptions
+      wrote << :charged
+    end
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal :nothing, wrote.pop(timeout: 5)
+    end
+  end
+
+  def test_a_call_for_a_tool_held_elsewhere_is_left_for_whoever_holds_it
+    results = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "book_flight", arguments: "{}")
+      peer.send_frame(type: "tool_call", id: "t2", name: "weather", arguments: "{}")
+      results << peer.receive_type("tool_result")
+      results << peer.receive_type("tool_result", timeout: 0.3)
+    end
+    tools = VA::Tools.new.register("weather", description: "Weather") { "clear" }
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal "t2", results.pop(timeout: 5)&.fetch("tool_call_id")
+      assert_nil results.pop(timeout: 5)
+    end
+  end
+
   def test_events_report_what_the_conversation_did
     serve_session do |peer|
       peer.send_frame(type: "heard", text: "hi", participant: { id: "p1", user_id: "ada" })
@@ -346,6 +439,17 @@ class TestAgent < LocalRouterTest
     assert_equal({ "guardrail" => "Never quote prices.", "visible_tools" => ["athena_*"], "llm" => "fast" },
                  @router.last(:patch, "/v1/agents/configs/cfg_1").json)
     assert_equal({ "name" => "support" }, @router.last(:get, "/v1/agents/configs").query)
+  end
+
+  def test_update_config_sends_a_review_guide
+    guide = { "instructions" => "Score how fast the refund was settled." }
+    @router.on(:get, "/v1/agents/configs", body: [{ "name" => "support", "id" => "cfg_1" }])
+    @router.on(:patch, "/v1/agents/configs/cfg_1") { |request| request.json.merge("id" => "cfg_1") }
+
+    config = agent.update_config(review: { instructions: guide["instructions"] })
+
+    assert_equal({ "review" => guide }, @router.last(:patch, "/v1/agents/configs/cfg_1").json)
+    assert_equal guide, config["review"]
   end
 
   def test_update_config_needs_a_stored_config

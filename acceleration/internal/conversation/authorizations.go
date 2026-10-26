@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -148,6 +149,17 @@ func (c *Conversation) FollowUpReply(id string) (state, text string, known bool)
 	defer c.mu.Unlock()
 	record, known := c.data.Commands[id]
 	return record.State, record.Reply, known
+}
+
+// FollowUpFinished is the reply to the follow-up under id as OnFinishedReply tells it, with
+// its files, for a follow-up delivered again to send rather than run twice. One the
+// conversation does not hold has no message id, text or files.
+func (c *Conversation) FollowUpFinished(id string) FinishedReply {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	record := c.data.Commands[id]
+	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: record.AssistantMessageID, CommandID: id,
+		Text: record.Reply, Files: append([]sandbox.Attachment(nil), record.Files...)}
 }
 
 // rememberAsked keeps a finished reply that asked for a login, to mark it once the login is

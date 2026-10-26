@@ -70,7 +70,11 @@ export interface Pipeline {
   tts?: string;
   /** A speech-to-speech target. Naming one means no transcriber or voice is opened. */
   sts?: string;
-  /** A provider-specific voice id. */
+  /**
+   * The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+   * the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent takes
+   * the vendor's own voice name instead.
+   */
   voice?: string;
   /** A language hint, which narrows the candidates in every modality. */
   language?: string;
@@ -97,6 +101,11 @@ export interface Declaration {
   tts?: string;
   /** An empty string turns speech-to-speech off, which is different from saying nothing. */
   sts?: string;
+  /**
+   * The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+   * the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent takes
+   * the vendor's own voice name instead.
+   */
   voice?: string;
   llm?: string;
   harness?: Schemas["Harness"];
@@ -150,6 +159,16 @@ export interface ConnectorDeclaration {
    */
   connection?: string;
   required?: boolean;
+  /**
+   * Whether code in the agent's sandbox may call the connector's API with the binding's
+   * connection. Left out sends no sandbox key.
+   */
+  sandbox?: boolean;
+  /**
+   * Tool names or `path.Match` patterns whose every call waits for the session's user to
+   * allow it. Left out sends no require_approval key.
+   */
+  requireApproval?: string[];
 }
 
 /**
@@ -554,6 +573,8 @@ export class Agent {
         tools: [],
         tool_patterns: entry.tools ?? ["*"],
         ...(entry.required === undefined ? {} : { required: entry.required }),
+        ...(entry.sandbox ? { sandbox: true } : {}),
+        ...(entry.requireApproval === undefined ? {} : { require_approval: entry.requireApproval }),
         connection:
           entry.connection === undefined
             ? { type: "session" }

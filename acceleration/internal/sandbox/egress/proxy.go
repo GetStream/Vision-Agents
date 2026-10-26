@@ -289,7 +289,7 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			forward.ServeHTTP(w, r)
 			return
 		}
-		token, err := p.tokens(r.Context(), grant)
+		token, err := p.token(r.Context(), grant)
 		if err != nil {
 			// A provider's refresh error may quote its answer (resolver.statusAfter wraps it),
 			// so only its class is logged.
@@ -382,20 +382,10 @@ func failed(logger *slog.Logger, err error) {
 
 // errorClass is the kind of err, for a log that must not hold its text.
 func errorClass(err error) string {
-	var netErr net.Error
-	switch {
-	case errors.Is(err, errNoHeader):
+	if errors.Is(err, errNoHeader) {
 		return "header_timeout"
-	case errors.Is(err, sandbox.ErrNoCredential):
-		return "no_credential"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline"
-	case errors.As(err, &netErr):
-		return "network"
 	}
-	return "other"
+	return sandbox.ErrorClass(err)
 }
 
 // fixedLine is a log.Logger's writer that logs message, never what it was given.
@@ -508,6 +498,15 @@ func (r Record) placed(host, value string) (Grant, authorization, bool) {
 	return Grant{}, authorization{}, false
 }
 
+// token is grant's token as its connection gives it now. A late grant the broker has not bound
+// yet has no connection, and gets no token whatever Tokens would make of an empty one.
+func (p *Proxy) token(ctx context.Context, grant Grant) (string, error) {
+	if grant.Connection.ConnectionID == "" {
+		return "", stack.Wrap(fmt.Errorf("%w: egress: the grant has no connection yet", sandbox.ErrNoCredential))
+	}
+	return p.tokens(ctx, grant)
+}
+
 func (p *Proxy) lookup(ctx context.Context, credential string) (Record, bool, error) {
 	if credential == "" {
 		return Record{}, false, nil
@@ -515,7 +514,20 @@ func (p *Proxy) lookup(ctx context.Context, credential string) (Record, bool, er
 	return p.store.lookup(ctx, credential)
 }
 
-// leaf is host's certificate, signed by the CA.
+// ListenerTLS is the TLS the proxy is served with when a sandbox reaches it at address, an IP
+// address: the sandbox's proxy credential then never crosses the network in the clear. Each
+// handshake gets a certificate for address, signed by the CA the sandbox trusts, as each
+// tunnel does, since one is valid for leafValidity alone.
+func (p *Proxy) ListenerTLS(address string) *tls.Config {
+	// The same floor and HTTP/1.1 as tunnel() holds a sandbox to: the server here serves no HTTP/2.
+	return &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			leaf, err := p.leaf(address)
+			return &leaf, err
+		}}
+}
+
+// leaf is host's certificate, signed by the CA. host is a name, or the proxy's own IP address.
 func (p *Proxy) leaf(host string) (tls.Certificate, error) {
 	// RFC 5280 section 4.1.2.2: a positive serial of at most 20 octets.
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
@@ -531,6 +543,11 @@ func (p *Proxy) leaf(host string) (tls.Certificate, error) {
 		NotAfter:     now.Add(leafValidity),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	if address := net.ParseIP(host); address != nil {
+		// A client checks an IP address against the certificate's iPAddress names alone (RFC 5280
+		// section 4.2.1.6), never its DNS names (crypto/x509 Certificate.VerifyHostname).
+		template.DNSNames, template.IPAddresses = nil, []net.IP{address}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, p.ca, &p.leafKey.PublicKey, p.caKey)
 	if err != nil {

@@ -1,5 +1,7 @@
 package llm
 
+import "github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+
 // ResponseStatus is how a response ended.
 type ResponseStatus string
 
@@ -44,7 +46,19 @@ type Response struct {
 	// while it acts will say something and call a tool in the same breath.
 	ToolCalls []ToolCall
 	Usage     Usage
-	Status    ResponseStatus
+	// UsageReported is true when the provider said what the response used, zero included.
+	// A response cut short often carries none, and neither does an adapter that forgot to
+	// ask: its cost is then estimated rather than taken as nothing.
+	UsageReported bool
+	// TimedOut is a response that ran past a deadline, its caller's or the provider's own
+	// limit, before the model finished. It failed for whoever was waiting, so its status is
+	// StatusFailed, but the provider did nothing wrong and billed what it had read and written.
+	TimedOut bool
+	// ServiceTier is the tier the provider says it served the response at, such as
+	// OpenAI's default, flex or fast, which it bills at different rates. Empty for a
+	// provider that does not say.
+	ServiceTier string
+	Status      ResponseStatus
 	// IncompleteReason says why a StatusIncomplete response stopped early.
 	IncompleteReason string
 	// TimeToFirstTokenMs is how long the caller waited for anything at all, which is the
@@ -61,8 +75,30 @@ type Usage struct {
 	InputTokensDetails  InputTokensDetails
 	OutputTokens        int64
 	OutputTokensDetails OutputTokensDetails
-	TotalTokens         int64
+	// TotalTokens is the provider's own total where it sends one, else input and output
+	// added up. A total the two do not add up to is a part of the bill the adapter missed.
+	TotalTokens int64
+	// VendorCostMicros is what the provider said the response cost it, in millionths of a
+	// dollar, for a provider that says. It never prices the response: the price list does,
+	// and this is what it is checked against.
+	VendorCostMicros int64
 }
+
+// Used is what the response is priced by. Cached and cache-written tokens are part of the
+// prompt and are billed once, each at its own rate.
+func (r Response) Used() pricing.Quantities {
+	cached := r.Usage.InputTokensDetails.CachedTokens
+	written := r.Usage.InputTokensDetails.CacheWriteTokens
+	return pricing.Quantities{
+		pricing.InputTokens:           max(r.Usage.InputTokens-cached-written, 0),
+		pricing.CachedInputTokens:     cached,
+		pricing.CacheWriteInputTokens: written,
+		pricing.OutputTokens:          r.Usage.OutputTokens,
+	}
+}
+
+// VendorCostMicros is what the provider said the response cost it.
+func (r Response) VendorCostMicros() int64 { return r.Usage.VendorCostMicros }
 
 // InputTokensDetails breaks the prompt down by how it was served.
 type InputTokensDetails struct {

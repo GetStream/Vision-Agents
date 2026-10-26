@@ -3,6 +3,8 @@
 package stssuite
 
 import (
+	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -69,6 +71,39 @@ func (s *Suite) TestTheModelHearsTheCallerAndAnswersInItsOwnVoice() {
 	}
 	if provider.Capabilities().OutputTranscript {
 		s.NotEmpty(reply.SaidText(), "the model should have written down what it said")
+	}
+}
+
+// TestTheWorkIsBilled: a reply says what it cost in tokens, in and out, where the model is
+// billed by the token, and a model billed by the session's seconds says how long it was open
+// once it closes. A model priced on the caller's audio alone is billed on the router's count.
+func (s *Suite) TestTheWorkIsBilled() {
+	provider := s.Started(Ask{Instructions: briefly})
+	defer s.Hangup(provider)
+	capabilities := provider.Capabilities()
+	if !capabilities.Usage && !capabilities.SessionBilled {
+		s.T().Skip("priced on the caller's audio, which the router counts")
+	}
+
+	s.Speak(provider)
+	reply := s.Spoken(provider)
+
+	if capabilities.Usage {
+		s.Positive(reply.Complete.Usage.InputTokens, "the reply should say what it read")
+		s.Positive(reply.Complete.Usage.OutputTokens, "the reply should say what it generated")
+	}
+	if capabilities.BilledAudio {
+		s.True(reply.Complete.Usage.AudioBilled, "the reply should carry the vendor's count of the audio it bills")
+	}
+	if capabilities.SessionBilled {
+		s.Require().NoError(provider.Close())
+		var seconds int64
+		for event := range provider.Events() {
+			if usage, ok := event.(sts.SessionUsage); ok {
+				seconds = usage.Seconds
+			}
+		}
+		s.Positive(seconds, "the session should say how long it was open as it closes")
 	}
 }
 
@@ -309,4 +344,125 @@ func (s *Suite) TestAPromptMakesTheModelSpeakUnasked() {
 	reply := s.Settled(provider)
 	s.NotEmpty(reply.Chunks, "the model should have greeted the caller")
 	s.False(reply.Complete.Interrupted)
+}
+
+func (s *Suite) TestAModelToldHowAnOpenCallIsGoingSaysSoAndCallsNothing() {
+	updater, ok := s.New(Ask{Tools: []llm.Tool{weatherTool}}).(sts.CallUpdater)
+	if !ok || !updater.UpdatesCalls() {
+		s.T().Skip("this model cannot be told how an open call is going")
+	}
+	provider := s.Started(Ask{
+		Instructions: briefly + " Always use the get_weather tool when asked about the weather.",
+		Tools:        []llm.Tool{weatherTool},
+	})
+	defer s.Hangup(provider)
+	s.Require().NoError(provider.SendText("What is the weather in Paris right now?", speaker))
+	call := s.Asked(provider).ToolCalls[0]
+
+	// Reykjavik is in the status alone, so a reply naming it is one that heard the update.
+	s.Require().NoError(provider.(sts.CallUpdater).UpdateCall(sts.CallUpdate{
+		CallID: call.CallID, Status: "waiting on the backup weather station in Reykjavik", Instructions: briefly,
+		Guidance: "The weather lookup is still running and reports: waiting on the backup weather station in Reykjavik. " +
+			"Tell the caller in one short sentence where it has got to, naming the station's city. Do not call any tool.",
+	}))
+	var said strings.Builder
+	var update Reply
+	for !strings.Contains(strings.ToLower(said.String()), "reykjavik") {
+		update = s.Spoken(provider)
+		s.Require().Empty(update.ToolCalls, "a reply about an open call must call nothing")
+		for _, transcript := range update.Said {
+			said.WriteString(transcript.Text)
+		}
+	}
+
+	s.NotEmpty(update.Chunks, "the model should have said where the lookup has got to")
+	s.Require().NoError(provider.Answer(call.CallID, `{"forecast":"sunny","temperature_c":21}`, nil))
+	s.NotEmpty(s.Spoken(provider).Chunks, "the open call should still take its answer")
+}
+
+// bookTool is a function that changes something, so the agent asks the caller first.
+var bookTool = llm.Tool{
+	Name:        "book_flight",
+	Description: "Book a flight for the caller by its flight number.",
+	Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"flight_id": map[string]any{"type": "string", "description": "The flight number, such as BA 117."}},
+		"required":   []string{"flight_id"},
+	},
+}
+
+// confirmTool and approvalAnswer are confirm_tool_call and the answer to a call that needs
+// the caller's yes, as the agent offers and words them on a native call (agent/approval.go).
+var confirmTool = llm.Tool{
+	Name: "confirm_tool_call",
+	Description: "Give the caller's answer to a question a tool asked before running. Call it only once " +
+		"they have answered, with the tool_call_id the question came with.",
+	Parameters: map[string]any{
+		"type":     "object",
+		"required": []string{"tool_call_id", "allowed"},
+		"properties": map[string]any{
+			"tool_call_id": map[string]any{"type": "string", "description": "The id the question came with."},
+			"allowed":      map[string]any{"type": "boolean", "description": "True only for a yes."},
+		},
+	},
+}
+
+const approvalAnswer = "Not run yet: %s runs only once the caller says yes. Ask them now, in these words: %q. " +
+	"When they answer, call confirm_tool_call with tool_call_id %q and allowed true for a yes, or false for " +
+	"anything else. Do not call %s again for this and do not say it was done."
+
+func (s *Suite) TestAModelAsksTheCallerFirstAndConfirmsTheirAnswer() {
+	if !s.New(Ask{}).Capabilities().Tools {
+		s.T().Skip("this model calls no tools")
+	}
+	for _, c := range []struct {
+		name    string
+		answer  string
+		allowed bool
+	}{
+		{"yes", "Yes, please go ahead.", true},
+		{"no", "No, don't book it.", false},
+	} {
+		s.Run(c.name, func() {
+			provider := s.Started(Ask{
+				Instructions: briefly + " Always use the book_flight tool when asked to book a flight.",
+				Tools:        []llm.Tool{bookTool, confirmTool},
+			})
+			defer s.Hangup(provider)
+			s.Require().NoError(provider.SendText("Book flight BA 117 for me, please.", speaker))
+			asked := s.Asked(provider).ToolCalls
+			s.Require().NotEmpty(asked)
+			call := asked[0]
+			s.Require().Equal(bookTool.Name, call.Name)
+
+			question := "Shall I book flight BA 117?"
+			s.Require().NoError(provider.Answer(call.CallID, fmt.Sprintf(approvalAnswer, call.Name, question, call.CallID, call.Name), nil))
+			// The flight number is in the question alone, said as digits or as words. A model's
+			// transcript can trail the end of its reply, so it is read off the events as they come.
+			var said strings.Builder
+			for _, event := range s.Collect(provider, func(event sts.Event) bool {
+				if transcript, ok := event.(sts.OutputTranscript); ok {
+					said.WriteString(transcript.Text)
+				}
+				_, called := event.(sts.ToolCall)
+				heard := strings.ToLower(said.String())
+				return called || strings.Contains(heard, "117") || strings.Contains(heard, "seventeen")
+			}) {
+				_, called := event.(sts.ToolCall)
+				s.Require().False(called, "the model called again before asking the caller")
+			}
+
+			s.Require().NoError(provider.SendText(c.answer, speaker))
+			confirmed := s.Asked(provider).ToolCalls
+			s.Require().NotEmpty(confirmed)
+			s.Require().Equal(confirmTool.Name, confirmed[0].Name, "the caller's answer goes to confirm_tool_call")
+			var answer struct {
+				ToolCallID string `json:"tool_call_id"`
+				Allowed    bool   `json:"allowed"`
+			}
+			s.Require().NoError(json.Unmarshal([]byte(confirmed[0].Arguments), &answer))
+			s.Equal(c.allowed, answer.Allowed)
+			s.Equal(call.CallID, answer.ToolCallID)
+		})
+	}
 }

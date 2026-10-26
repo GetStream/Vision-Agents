@@ -230,6 +230,10 @@ func (s *Server) ownsNumber(ctx context.Context, customerID, number string) (str
 	if err != nil {
 		return "this app holds no number " + number + ": buy one with POST /v1/phone/numbers", false
 	}
+	// Text messages are sent through Telnyx, so a line is a number Telnyx holds for the app.
+	if held.Vendor != channels.Vendor(channels.SMS) {
+		return number + " was bought from " + held.Vendor + ", and text lines are Telnyx numbers", false
+	}
 	for _, capability := range held.Capabilities {
 		if capability == string(phone.SMS) {
 			return "", true

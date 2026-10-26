@@ -143,6 +143,43 @@ The model asks for a tool over the session socket, this process runs it, and the
 goes back the same way. A tool that throws is reported to the model, because the model is
 mid-sentence waiting for it and can only say something useful if it is told.
 
+A tool can say how the backend treats its calls, and read the call it is running for:
+
+```ts
+agent.tools.register<{ flight_id: string }>({
+  name: "book_flight",
+  description: "Book a flight for the caller",
+  parameters: { type: "object", properties: { flight_id: { type: "string" } }, required: ["flight_id"] },
+  approval: { title: "Book flight {flight_id}?" },
+  timeoutMs: 20_000,
+  run: async ({ flight_id }, signal, call) => {
+    call.update("checking seats");
+    const writing = await call.disallowInterruptions();
+    return bookings.book(flight_id, { user: call.user.id, key: call.id, signal: writing });
+  },
+});
+```
+
+- `interruptible: true` lets the caller talking over the agent cancel a call in flight. By
+  default it keeps running and the model is told it is still going.
+- `timeoutMs` is how long one call may take, in place of the session's. A call that takes
+  longer is aborted and fails.
+- `approval` is asked before each call runs. In writing the call waits in
+  `session.approvals`. On a voice call the agent asks the caller out loud, with each `{name}`
+  in the title filled in from the call's arguments, and runs the call on a yes within 15
+  seconds, with `call.approved` set. A `{name}` that is not in `parameters` is refused when
+  the tool is registered.
+
+`call` is the call being answered: its `id`, which a call sent again keeps, so it is the
+key to make a side effect happen once; `sessionId`, `turnId`, the `user` whose turn asked,
+and the `conversation`. `update(text)` says how the call is going: a voice agent tells the
+caller in its own words once nobody is talking. `say(text)` has it say `text` as written,
+which a speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call going
+from then on, for a write that must not stop halfway, and resolves with the signal to do it
+on, which only the timeout and the socket ending abort. When the call had already been
+stopped, that signal is already aborted with a `CallNotHeldError`. A call the router
+addresses to another watcher of the session (`run: false`) is left for whoever runs it.
+
 ## Agent dispatch
 
 A caller reached a Stream call over SIP, or somebody wrote in a channel, and the router
@@ -195,7 +232,9 @@ agent.tools.register({ name: "lookup", description: "Look up an order", run: loo
 dispatch.host(agent, { toolTimeoutMs: 60_000 });
 ```
 
-The router offers them to each session naming the agent and sends every call here. `run`
+The router offers them to each session naming the agent and sends every call here. A hosted
+tool takes the same `interruptible`, `timeoutMs` and `approval` (asked only on a voice
+call), is handed its `call`, and is aborted when the router gives up on it. `run`
 works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
 refuses them.
 
@@ -256,6 +295,61 @@ point rather than an override.
 `loadFolder` needs a filesystem, which is why it is the one thing in the `/node` entry
 point rather than the main one. It hands `sync` the stamp to read and write, so `sync`
 itself touches no filesystem.
+
+## A reply as it is heard
+
+The Chat channel has the agent's reply as fast as the model writes it, seconds ahead of the
+voice. `session.speech` says how much of each reply has been heard on the call, so a page can
+show a message as it is said:
+
+```ts
+import type { LocalMessage } from "stream-chat";
+
+function shownText(message: LocalMessage, now = performance.now()) {
+  const text = message.text ?? "";
+  const heard = session.speech.heard(message, now);
+  // Characters are Unicode code points, as the session socket counts them.
+  return heard ? Array.from(text).slice(0, heard.chars).join("") : text;
+}
+
+session.speech.subscribe(() => requestAnimationFrame(render));
+```
+
+Every message the agent said carries the `turn_id` the session socket's `speaking`, `spoke`
+and `interrupted` name (on `message.turn_id` in stream-chat 9, `message.custom.turn_id` in
+10). `heard` takes the message and reads either, or the turn id itself, and with `now` is
+`{ chars, done }`: the code points of the message heard so far, exact once the playing
+utterance's `spoke` has said how long it is and estimated from the voice's measured rate
+(about 15 a second until then), and `done` once the turn's last known utterance has played out
+or the caller talked over it. The voice is not sent the message's own words (a direction it
+acts, "last four digits, 1234" for "last four 1234", a sentence held back), so the router says
+where each utterance is in the message (`message_start` and `message_end` on `speaking`,
+`spoke` and `interrupted`), and each is revealed across its own place there; a router that
+does not say is counted in the voice's characters. A cut freezes the turn at what the router says was heard of the utterance it cut
+(`heard_ms` on `interrupted`), or at the estimate when it does not say. An utterance reported
+before the track got to it, behind speech still queued, starts when that has played
+(`delay_ms` on `speaking`). A voice that takes a sentence at a time can still start another
+after a pause, so show a reply in full once `done` is true and its message is no longer
+`generating`.
+
+A reply's message usually arrives before its audio starts, and Chat can even be faster than the
+session socket. While the agent is on the call, a turn is `{ chars: 0, done: false }` until its
+`speaking` once it is known to be coming: its text has begun on the socket (`said`,
+`response_delta`, or a `responded` with words), or `heard` was asked about a message of the
+agent's (`source: "agent"` or `ai_generated`) that is still `generating`. It is let go of, and
+`undefined` from then on, once it turns out to say nothing (an empty `responded`, or a `turn`
+that published no audio) or when `SPEECH_GRACE_MS` (5 s) pass without a `speaking`; speech that
+comes later does not take it back, since the page has shown it in full. The agent leaving the
+call (`left`), `voice.stop()` and the session ending stop anything being held, so a reply in
+writing afterwards shows at once. A turn let go of, a message with no turn and a router too
+old to send `speaking` are all `undefined`: show those as they are. A reply cut off before any
+of it was heard stays at `{ chars: 0, done: true }`.
+
+`now` is on the clock of `performance.now()`, which `requestAnimationFrame` hands its callback
+too, and `heard` is cheap enough to call on every frame. `subscribe` is told whenever what
+`heard` says of a turn changes other than with the clock; `get` says where the voice last was.
+The store is fed from the frames the session reads, beside `events()` rather than through it,
+so it needs no loop and takes nothing from yours. It keeps the last 20 turns.
 
 ## Going back, and branching off
 

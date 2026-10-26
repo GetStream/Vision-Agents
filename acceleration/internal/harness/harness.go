@@ -154,6 +154,9 @@ type Turn struct {
 	// Asked is what the caller asked to change about this reply, written over the
 	// session's own overwrites.
 	Asked llmoptions.LLM
+	// Attributes go on the reply's usage row, asked for when it is written
+	// (llm.ResponseParams.Attributes). Nil adds none.
+	Attributes func() map[string]string
 }
 
 // mustCallTokens bounds a reply that must call a tool.
@@ -202,6 +205,9 @@ type Harness struct {
 	stored stored
 	// compaction is private summary work in flight.
 	compaction *compaction
+	// measured is the history MaybeCompact last judged, so the next judgement can tell a
+	// prompt the provider has seen the start of from one rewritten since.
+	measured []llm.Message
 
 	// scan splits replies into speech and requests for help. Only the consumer of the
 	// model's deltas touches it, which is one goroutine.
@@ -406,6 +412,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,
+		Attributes:         turn.Attributes,
 		Instructions:       instructions,
 		Input:              input,
 		MaxOutputTokens:    maxTokens,

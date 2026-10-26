@@ -11,8 +11,9 @@
 #   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server, as
 #         google_calendar.yaml quotes it.
 id: bigquery
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 lists the tools
+# that only read. 3 takes execute_sql_readonly out of them.
+revision: 3
 name: BigQuery
 category: Analytics
 # [setup]: «running queries, getting metadata, and listing resources».
@@ -76,3 +77,26 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from the tool list at
+    # https://docs.cloud.google.com/bigquery/docs/reference/mcp (opened 2026-10-22, «Last
+    # updated 2026-10-15»): listing and reading datasets, tables and jobs. execute_sql «can
+    # execute any query», and cancel_job stops a job, so both are left out, as is a tool added
+    # later.
+    #
+    # execute_sql_readonly is left out too: it is «restricted to only SELECT statements»
+    # (https://docs.cloud.google.com/bigquery/docs/reference/mcp/tools_list/execute_sql_readonly,
+    # opened 2026-10-25, «Last updated 2026-10-15»), and a SELECT can call a remote function,
+    # «a direct integration with Cloud Run functions and Cloud Run»
+    # (https://docs.cloud.google.com/bigquery/docs/remote-functions, opened 2026-10-25, «Last
+    # updated 2026-10-13»), whose code may send the rows it is given anywhere. Another
+    # organization's functions are callable too: bigfunctions' send_slack_message «Sends
+    # `message` to a slack channel», run as `select
+    # bigfunctions.eu.send_slack_message(...)`, and «can be called by anyone»
+    # (https://unytics.io/bigfunctions/bigfunctions/send_slack_message/, opened 2026-10-25).
+    read_only_tools:
+      - list_dataset_ids
+      - get_dataset_info
+      - list_table_ids
+      - get_table_info
+      - get_query_results
+      - get_job

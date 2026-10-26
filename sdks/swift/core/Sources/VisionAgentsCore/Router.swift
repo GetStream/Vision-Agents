@@ -1,5 +1,4 @@
 import Foundation
-import OpenAPIRuntime
 
 /// Looking something up, configured once.
 ///
@@ -35,19 +34,8 @@ public struct Router: Sendable {
         _ query: String,
         options: SearchOptions = SearchOptions()
     ) async throws -> SearchAnswer {
-        let body = Components.Schemas.SearchRequest(
-            configId: named(),
-            options: options.schema,
-            query: query,
-            tags: labels().map { .init(additionalProperties: $0) })
-
-        let output = try await call { try await $0.search(body: .json(body)) }
-        switch output {
-        case .ok(let response):
-            return SearchAnswer(try response.body.json)
-        default:
-            throw AgentsError.undescribedSuccess
-        }
+        let body = SearchRequest(configId: named(), options: options.schema, query: query, tags: labels())
+        return SearchAnswer(try await call { try await $0.search(searchRequest: body) })
     }
 
     /// The config a request is made under, when there is one.
@@ -57,7 +45,7 @@ public struct Router: Sendable {
     func labels() -> [String: String]? { tags.isEmpty ? nil : tags }
 
     /// Runs one request, reporting a transport failure as one and leaving cancellation alone.
-    func call<T>(_ body: (Client) async throws -> T) async throws -> T {
+    func call<T>(_ body: (DefaultAPI) async throws -> T) async throws -> T {
         try await backend.call(body)
     }
 }

@@ -63,6 +63,10 @@ func (s *Server) detect(ctx context.Context, request *detectRequest) (*detectRes
 		Overwrites: value(sent.Overwrites),
 		Detection:  looking,
 	})
+	// Every candidate refused for money is a refusal, not a detection that failed.
+	if answer, refused := moneyError(err); refused {
+		return nil, answer
+	}
 	var failure *detection.Error
 	if err != nil && !errors.As(err, &failure) {
 		return nil, invalidRequest(err.Error())

@@ -99,7 +99,11 @@ type nativePeer struct {
 	setup  json.RawMessage
 }
 
-func (s *AgentSuite) joinNativeDelegating() *nativePeer {
+func (s *AgentSuite) joinNativeDelegating() *nativePeer { return s.joinNativeWith(nil) }
+
+// joinNativeWith joins a native agent over the real OpenAI adapter, with configure changing
+// its options first when given.
+func (s *AgentSuite) joinNativeWith(configure func(*Options)) *nativePeer {
 	connections := make(chan *websocket.Conn, 1)
 	frames := make(chan map[string]json.RawMessage, 32)
 	upgrader := websocket.Upgrader{}
@@ -149,11 +153,15 @@ func (s *AgentSuite) joinNativeDelegating() *nativePeer {
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
 	s.edge = newLoopbackEdge()
-	s.agent, err = New(Options{
+	options := Options{
 		CustomerID: "acme", Edge: s.edge, STS: router, STSTarget: "openai/gpt-realtime-2",
 		LLM: reasoner, SubagentTarget: "stub/stub-model",
 		Skills: harness.Skills{Skills: []harness.Skill{{Name: "think", Description: "reason carefully", Instructions: "Solve it", Deadline: time.Minute}}},
-	})
+	}
+	if configure != nil {
+		configure(&options)
+	}
+	s.agent, err = New(options)
 	s.Require().NoError(err)
 	s.events = collect(s.agent)
 	s.T().Cleanup(func() { s.agent.Close() })
@@ -168,7 +176,7 @@ func (s *AgentSuite) nativeFrame(peer *nativePeer, kind string) map[string]json.
 			if string(frame["type"]) == strconv.Quote(kind) {
 				return frame
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(settleFor):
 			s.FailNow("missing native frame", kind)
 			return nil
 		}
@@ -592,6 +600,8 @@ func (s *AgentSuite) TestCloseCancelsAWithheldNativeReplacementHandshake() {
 	select {
 	case err := <-done:
 		s.NoError(err)
+	// Under nativeRetrySetupTimeout (5s, native.go:22): past it the setup times out on its
+	// own and Close returns even when it did not cancel the handshake.
 	case <-time.After(time.Second):
 		s.FailNow("Close did not cancel the withheld native handshake")
 	}

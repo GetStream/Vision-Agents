@@ -84,6 +84,9 @@ type Request struct {
 	// ReplayPendingTools asks for the tool calls already in flight, which is what a tool
 	// host reconnecting mid-call needs.
 	ReplayPendingTools bool `json:"replay_pending_tools,omitempty"`
+	// Tools is which of the session's tools the watcher runs, when DeclaresTools.
+	Tools         []string `json:"tools,omitempty"`
+	DeclaresTools bool     `json:"declares_tools,omitempty"`
 	// Payload is the frame the watcher sent, for a Command.
 	Payload json.RawMessage `json:"payload,omitempty"`
 }

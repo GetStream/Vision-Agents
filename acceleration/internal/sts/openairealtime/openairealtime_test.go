@@ -1,8 +1,10 @@
 package openairealtime
 
 import (
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -183,7 +185,8 @@ func (s *RealtimeSuite) TestTheReplyIsTimedFromWhenTheCallerStopped() {
 	s.False(complete.Interrupted)
 	s.GreaterOrEqual(complete.TimeToFirstByteMs, 20.0, "the wait began when the caller stopped")
 	s.InDelta(100, complete.AudioDurationMs, 0.001)
-	s.Equal(sts.Usage{InputTokens: 100, CachedInputTokens: 10, OutputTokens: 50, InputAudioTokens: 80, OutputAudioTokens: 45}, complete.Usage)
+	s.Equal(sts.Usage{InputTokens: 100, CachedInputTokens: 10, OutputTokens: 50, InputAudioTokens: 80, OutputTextTokens: 5, OutputAudioTokens: 45},
+		complete.Usage)
 }
 
 func (s *RealtimeSuite) TestACommitStandsInForSpeechStoppedUnderSemanticTurns() {
@@ -362,6 +365,213 @@ func (s *RealtimeSuite) TestTheFramesXAISendsDecodeDespiteTheirStringDetails() {
 	s.False(complete.Interrupted)
 	s.Equal(int64(3), complete.Usage.InputTokens)
 	s.Equal("turn_detected", detailed.Response.StatusDetails.Reason, "the object form still reads")
+}
+
+// xaiResponseDone is the response.done xAI sent for a typed turn answered in speech.
+//
+//go:embed testdata/xai_response_done.json
+var xaiResponseDone []byte
+
+// settled is the usage of the one reply the provider has settled so far.
+func (s *RealtimeSuite) settled(provider *STS) sts.Usage {
+	var completes []sts.ResponseComplete
+	for _, event := range s.drain(provider) {
+		if complete, ok := event.(sts.ResponseComplete); ok {
+			completes = append(completes, complete)
+		}
+	}
+	s.Require().Len(completes, 1)
+	return completes[0].Usage
+}
+
+// TestXAIUsageIsReadFromTheTopOfResponseDone: xAI leaves response.usage empty and reports
+// what the reply cost beside it, at the top of the event.
+func (s *RealtimeSuite) TestXAIUsageIsReadFromTheTopOfResponseDone() {
+	provider := s.newProvider(XAI)
+	s.True(provider.Capabilities().Usage)
+
+	var finished serverEvent
+	s.Require().NoError(json.Unmarshal(xaiResponseDone, &finished))
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(finished)
+
+	s.Equal(sts.Usage{InputTokens: 7, OutputTokens: 119, InputTextTokens: 7, OutputTextTokens: 7, OutputAudioTokens: 112,
+		BilledAudioMs: 2_000, AudioBilled: true},
+		s.settled(provider))
+}
+
+// xaiDone is a reply xAI settled with its running total of billable audio at seconds.
+func xaiDone(id string, seconds float64) serverEvent {
+	return serverEvent{Type: eventResponseDone, Response: &response{ID: id, Status: "completed", Usage: &usage{}},
+		Usage: &usage{OutputTokens: 10, BillableAudioSeconds: &seconds}}
+}
+
+// TestXAIBillsTheGrowthOfItsBillableAudio uses the totals of a recorded push-to-talk
+// session, 2, 7 and 9, and a reply too short to move the rounded figure.
+func (s *RealtimeSuite) TestXAIBillsTheGrowthOfItsBillableAudio() {
+	provider := s.newProvider(XAI)
+
+	var billed []int64
+	for i, seconds := range []float64{2, 7, 9, 9} {
+		id := fmt.Sprintf("resp_%d", i)
+		provider.handleMessage(created(id))
+		provider.handleMessage(xaiDone(id, seconds))
+		used := s.settled(provider)
+		s.True(used.AudioBilled, "xAI keeps the count, so its count is the bill even at zero")
+		billed = append(billed, used.BilledAudioMs)
+	}
+
+	s.Equal([]int64{2_000, 5_000, 2_000, 0}, billed)
+}
+
+// TestALateDoneForASupersededReplyLeavesItsGrowthToTheReplyOpen: the second reply is
+// superseded by the third before xAI settles it, and its done arrives while the third is
+// open. It settles nothing, and its growth is billed by the third.
+func (s *RealtimeSuite) TestALateDoneForASupersededReplyLeavesItsGrowthToTheReplyOpen() {
+	provider := s.newProvider(XAI)
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(xaiDone("resp_1", 2))
+	s.settled(provider)
+
+	provider.handleMessage(created("resp_2"))
+	provider.handleMessage(created("resp_3"))
+	provider.handleMessage(xaiDone("resp_2", 7))
+	provider.handleMessage(xaiDone("resp_3", 9))
+
+	var settled []string
+	var billed []int64
+	for _, event := range s.drain(provider) {
+		if complete, ok := event.(sts.ResponseComplete); ok {
+			settled = append(settled, complete.ResponseID)
+			billed = append(billed, complete.Usage.BilledAudioMs)
+		}
+	}
+	s.Equal([]string{"resp_2", "resp_3"}, settled, "the superseded reply settles once, when it is superseded")
+	s.Equal([]int64{0, 7_000}, billed, "the late done's growth is billed by the reply open, with its own")
+}
+
+func (s *RealtimeSuite) TestOpenAIKeepsNoCountOfBilledAudio() {
+	provider := s.newProvider(OpenAI)
+
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(done("resp_1", "completed", &usage{InputTokens: 12, OutputTokens: 30}))
+
+	s.False(s.settled(provider).AudioBilled)
+}
+
+// transcribed is OpenAI writing down a caller turn: 33 audio tokens in and 16 text out, as
+// a recorded gpt-realtime-2 session reported it.
+func transcribed(item string) serverEvent {
+	var event serverEvent
+	if err := json.Unmarshal([]byte(`{"type":"conversation.item.input_audio_transcription.completed","item_id":"`+item+
+		`","transcript":"What is the weather in Turin?","usage":{"type":"tokens","input_tokens":33,`+
+		`"input_token_details":{"audio_tokens":33,"text_tokens":0},"output_tokens":16,"total_tokens":49}}`), &event); err != nil {
+		panic(err)
+	}
+	return event
+}
+
+func (s *RealtimeSuite) TestOpenAIsTranscriptionReportsWhatItCost() {
+	provider, err := New(Options{Vendor: OpenAI, APIKey: "test-key", InputTranscript: true, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+
+	provider.handleMessage(transcribed("item_1"))
+
+	var reported []sts.TranscriptionUsage
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.TranscriptionUsage); ok {
+			reported = append(reported, typed)
+		}
+	}
+	s.Equal([]sts.TranscriptionUsage{{
+		ItemID: "item_1",
+		Model:  "gpt-4o-mini-transcribe",
+		Usage:  sts.Usage{InputTokens: 33, OutputTokens: 16, InputAudioTokens: 33, OutputTextTokens: 16},
+	}}, reported)
+}
+
+func (s *RealtimeSuite) TestATranscriberBilledByTheSecondReportsTheSecondsItHeard() {
+	provider, err := New(Options{Vendor: OpenAI, APIKey: "test-key", InputTranscript: true, TranscriptionModel: "whisper-1",
+		Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	var event serverEvent
+	s.Require().NoError(json.Unmarshal([]byte(`{"type":"conversation.item.input_audio_transcription.completed",`+
+		`"item_id":"item_1","transcript":"Hello.","usage":{"type":"duration","seconds":2.4}}`), &event))
+
+	provider.handleMessage(event)
+
+	var reported []sts.TranscriptionUsage
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.TranscriptionUsage); ok {
+			reported = append(reported, typed)
+		}
+	}
+	s.Equal([]sts.TranscriptionUsage{{ItemID: "item_1", Model: "whisper-1", AudioMs: 2_400}}, reported)
+}
+
+func (s *RealtimeSuite) TestATranscriptionWithNoTranscriberConfiguredIsStillNamed() {
+	provider := s.newProvider(OpenAI)
+
+	provider.handleMessage(transcribed("item_1"))
+
+	var models []string
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.TranscriptionUsage); ok {
+			models = append(models, typed.Model)
+		}
+	}
+	s.Equal([]string{"gpt-4o-mini-transcribe"}, models)
+}
+
+func (s *RealtimeSuite) TestATranscriberTheConversationIncludesReportsNothing() {
+	provider := s.newProvider(XAI)
+
+	provider.handleMessage(transcribed("item_1"))
+
+	for _, event := range s.drain(provider) {
+		_, billed := event.(sts.TranscriptionUsage)
+		s.False(billed, "xAI's transcript comes with the conversation")
+	}
+}
+
+func (s *RealtimeSuite) TestOpenAIUsageIsStillReadFromTheResponse() {
+	provider := s.newProvider(OpenAI)
+
+	var finished serverEvent
+	s.Require().NoError(json.Unmarshal([]byte(`{"type":"response.done","response":{"id":"resp_1","status":"completed",`+
+		`"usage":{"input_tokens":12,"output_tokens":30,"input_token_details":{"cached_tokens":4,"audio_tokens":8},`+
+		`"output_token_details":{"audio_tokens":24}}}}`), &finished))
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(finished)
+
+	s.Equal(sts.Usage{InputTokens: 12, CachedInputTokens: 4, OutputTokens: 30, InputAudioTokens: 8, OutputTextTokens: 6, OutputAudioTokens: 24},
+		s.settled(provider), "the 6 output tokens the details leave out are billed as text")
+}
+
+// TestTheUsageIsSplitByModality uses a spoken turn as gpt-realtime-2.1 reported it: most of
+// the prompt is the instructions, as text, and served from the cache.
+func (s *RealtimeSuite) TestTheUsageIsSplitByModality() {
+	provider := s.newProvider(OpenAI)
+
+	var finished serverEvent
+	s.Require().NoError(json.Unmarshal([]byte(`{"type":"response.done","response":{"id":"resp_1","status":"completed",`+
+		`"usage":{"input_tokens":828,"output_tokens":271,"input_token_details":{"text_tokens":795,"audio_tokens":33,`+
+		`"image_tokens":0,"cached_tokens":768,"cached_tokens_details":{"text_tokens":768,"audio_tokens":0,"image_tokens":0}},`+
+		`"output_token_details":{"text_tokens":95,"audio_tokens":176,"reasoning_tokens":43}}}}`), &finished))
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(finished)
+
+	s.Equal(sts.Usage{
+		InputTokens:           828,
+		CachedInputTokens:     768,
+		OutputTokens:          271,
+		InputTextTokens:       795,
+		InputAudioTokens:      33,
+		CachedInputTextTokens: 768,
+		OutputTextTokens:      95,
+		OutputAudioTokens:     176,
+		ReasoningTokens:       43,
+	}, s.settled(provider))
 }
 
 func (s *RealtimeSuite) TestACancelThatFoundNothingIsNotAnError() {

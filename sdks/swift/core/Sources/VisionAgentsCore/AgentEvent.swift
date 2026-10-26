@@ -1,4 +1,5 @@
 import Foundation
+import StreamCore
 
 /// Who said something.
 public struct Participant: Sendable, Hashable {
@@ -9,7 +10,7 @@ public struct Participant: Sendable, Hashable {
     /// What to show for this participant: their name, or their user id when they have none.
     public var display: String { name.isEmpty ? userID : name }
 
-    init(_ fields: [String: JSONValue]) {
+    init(_ fields: [String: RawJSON]) {
         id = fields["id"]?.stringValue ?? ""
         userID = fields["user_id"]?.stringValue ?? ""
         name = fields["name"]?.stringValue ?? ""
@@ -26,12 +27,12 @@ public struct AgentEvent: Sendable, Hashable {
     public let type: String
 
     /// The event's fields, flattened as the router sends them.
-    public let fields: [String: JSONValue]
+    public let fields: [String: RawJSON]
 
     /// This event as one of the kinds the SDK knows, or nil for one it does not.
     public var kind: Kind? { Kind(rawValue: type) }
 
-    public init(type: String, fields: [String: JSONValue] = [:]) {
+    public init(type: String, fields: [String: RawJSON] = [:]) {
         self.type = type
         self.fields = fields
     }
@@ -67,26 +68,34 @@ public struct AgentEvent: Sendable, Hashable {
         case left
     }
 
-    public subscript(key: String) -> JSONValue {
-        fields[key] ?? .null
+    public subscript(key: String) -> RawJSON {
+        fields[key] ?? .nil
+    }
+
+    /// The string under `key`, or the empty string for anything else.
+    ///
+    /// Absent and empty are one case on purpose: the router writes `""` for a field that does
+    /// not apply, so a caller that told them apart would be distinguishing nothing.
+    func string(_ key: String) -> String {
+        self[key].stringValue ?? ""
     }
 }
 
 extension AgentEvent {
     /// What was said, transcribed or generated, depending on the event.
-    public var text: String { self["text"].stringValue }
+    public var text: String { string("text") }
 
     /// The turn this belongs to, or the empty string for events outside a turn.
-    public var turnID: String { self["turn_id"].stringValue }
+    public var turnID: String { string("turn_id") }
 
     /// Who this is about, or nil for the events that are about nobody.
     public var participant: Participant? {
-        guard case .object(let fields) = self["participant"] else { return nil }
+        guard case .dictionary(let fields) = self["participant"] else { return nil }
         return Participant(fields)
     }
 
     /// What went wrong, for `error` and for the events that carry a failure of their own.
-    public var errorText: String { self["error"].stringValue }
+    public var errorText: String { string("error") }
 }
 
 extension AgentEvent {
@@ -94,11 +103,11 @@ extension AgentEvent {
     public var toolCall: ToolCall? {
         guard kind == .toolCall else { return nil }
         return ToolCall(
-            id: self["id"].stringValue,
-            name: self["name"].stringValue,
-            arguments: self["arguments"].stringValue,
-            requestID: self["request_id"].stringValue,
-            turnID: self["turn_id"].stringValue)
+            id: string("id"),
+            name: string("name"),
+            arguments: string("arguments"),
+            requestID: string("request_id"),
+            turnID: string("turn_id"))
     }
 
     /// A request from the model to run one of the caller's functions.
@@ -112,11 +121,11 @@ extension AgentEvent {
         public var turnID = ""
 
         /// The arguments decoded, or an empty dictionary if the model wrote something else.
-        public var argumentValues: [String: JSONValue] {
+        public var argumentValues: [String: RawJSON] {
             guard let data = arguments.data(using: .utf8),
-                let decoded = try? JSONDecoder().decode(JSONValue.self, from: data)
+                let decoded = try? JSONDecoder().decode([String: RawJSON].self, from: data)
             else { return [:] }
-            return decoded.objectValue
+            return decoded
         }
     }
 }
@@ -132,14 +141,14 @@ extension AgentEvent {
     public var connectorScopeRequired: ConnectorScopeRequired? {
         guard kind == .connectorScopeRequired else { return nil }
         return ConnectorScopeRequired(
-            name: self["name"].stringValue,
-            connectorID: self["connector_id"].stringValue,
-            connectionID: self["connection_id"].stringValue,
-            scopes: self["scopes"].arrayValue.map(\.stringValue),
-            authorizationID: self["authorization_id"].stringValue,
-            launchURL: self["launch_url"].stringValue,
-            handoffToken: self["handoff_token"].stringValue,
-            expiresAt: try? RouterDates().decode(self["expires_at"].stringValue))
+            name: string("name"),
+            connectorID: string("connector_id"),
+            connectionID: string("connection_id"),
+            scopes: self["scopes"].stringArrayValue ?? [],
+            authorizationID: string("authorization_id"),
+            launchURL: string("launch_url"),
+            handoffToken: string("handoff_token"),
+            expiresAt: try? RouterDates().decode(string("expires_at")))
     }
 
     /// The access a connector tool call needs, and where the person grants it.
@@ -159,7 +168,7 @@ extension AgentEvent {
 
 extension AgentEvent: Decodable {
     public init(from decoder: Decoder) throws {
-        let fields = try decoder.singleValueContainer().decode([String: JSONValue].self)
+        let fields = try decoder.singleValueContainer().decode([String: RawJSON].self)
         guard case .string(let type)? = fields["type"] else {
             throw DecodingError.dataCorruptedError(
                 in: try decoder.singleValueContainer(),

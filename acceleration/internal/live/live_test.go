@@ -208,6 +208,27 @@ func (s *LiveSuite) TestUsageAccumulatesEveryBillableUnit() {
 	s.EqualValues(700, usage.CostMicros)
 }
 
+func (s *LiveSuite) TestRequestsRecordedTogetherAddUpAsOneAtATime() {
+	fatal := s.usage(50, 0, false)
+	fatal.Fatal = true
+
+	s.Require().NoError(s.client.RecordRequests(s.ctx, s.usage(100, 1000, true), s.usage(300, 2000, true), fatal))
+
+	health, err := s.client.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.EqualValues(3, health.Requests)
+	s.EqualValues(1, health.Errors)
+	s.False(health.Available, "the fatal one in the batch takes the provider out")
+	used, err := s.client.Usage(s.ctx, "stt", s.customer)
+	s.Require().NoError(err)
+	s.EqualValues(3, used.Requests)
+	s.EqualValues(3000, used.AudioMs)
+}
+
+func (s *LiveSuite) TestRecordingNoRequestsIsNotAnError() {
+	s.NoError(s.client.RecordRequests(s.ctx))
+}
+
 func (s *LiveSuite) TestUsageIsScopedToOneModality() {
 	s.Require().NoError(s.client.RecordRequest(s.ctx, s.usage(100, 1500, true)))
 

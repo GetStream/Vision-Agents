@@ -9,9 +9,9 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * What an organization or an app decided about spend, data handling, prompt injection, which
- * models may be used and how usage is labelled. Every field is optional, and a field left out
- * is no opinion rather than off.
+ * What an organization or an app decided about data handling, prompt injection, which models
+ * may be used and how usage is labelled. Every field is optional, and a field left out is no
+ * opinion rather than off. Spend limits are not here: they are /v1/spend/limits.
  */
 final readonly class Policy
 {
@@ -19,10 +19,15 @@ final readonly class Policy
         // The only models requests may be routed to, as provider/model names, in every modality. Left out allows ever...
         /** @var list<string>|null */
         public ?array $allowedModels = null,
-        public ?Budget $budget = null,
+        // The organization's own warning threshold, in millionths of a dollar: at or below it, every answer to a back...
+        public ?int $balanceWarningMicros = null,
+        // Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400...
+        /** @var array<string, mixed>|null */
+        public ?array $budget = null,
         public ?DataPolicy $dataPolicy = null,
         // Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any to...
         public ?bool $promptInjection = null,
+        public ?Quota $quota = null,
         // Keep the app out of the router's own Stream app: in app mode it is never written there for want of a regist...
         public ?bool $requireOwnStreamApp = null,
         // Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed w...
@@ -38,9 +43,11 @@ final readonly class Policy
     {
         return new self(
             allowedModels: array_key_exists('allowed_models', $data) && $data['allowed_models'] !== null ? Json::strings($data, 'allowed_models') : null,
-            budget: array_key_exists('budget', $data) && $data['budget'] !== null ? Budget::fromArray(Json::object($data, 'budget')) : null,
+            balanceWarningMicros: array_key_exists('balance_warning_micros', $data) && $data['balance_warning_micros'] !== null ? Json::int($data, 'balance_warning_micros') : null,
+            budget: array_key_exists('budget', $data) && $data['budget'] !== null ? Json::object($data, 'budget') : null,
             dataPolicy: array_key_exists('data_policy', $data) && $data['data_policy'] !== null ? DataPolicy::fromArray(Json::object($data, 'data_policy')) : null,
             promptInjection: array_key_exists('prompt_injection', $data) && $data['prompt_injection'] !== null ? Json::bool($data, 'prompt_injection') : null,
+            quota: array_key_exists('quota', $data) && $data['quota'] !== null ? Quota::fromArray(Json::object($data, 'quota')) : null,
             requireOwnStreamApp: array_key_exists('require_own_stream_app', $data) && $data['require_own_stream_app'] !== null ? Json::bool($data, 'require_own_stream_app') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
@@ -57,14 +64,20 @@ final readonly class Policy
         if ($this->allowedModels !== null) {
             $out['allowed_models'] = $this->allowedModels;
         }
+        if ($this->balanceWarningMicros !== null) {
+            $out['balance_warning_micros'] = $this->balanceWarningMicros;
+        }
         if ($this->budget !== null) {
-            $out['budget'] = $this->budget->toArray();
+            $out['budget'] = Json::objectValue($this->budget);
         }
         if ($this->dataPolicy !== null) {
             $out['data_policy'] = $this->dataPolicy->toArray();
         }
         if ($this->promptInjection !== null) {
             $out['prompt_injection'] = $this->promptInjection;
+        }
+        if ($this->quota !== null) {
+            $out['quota'] = $this->quota->toArray();
         }
         if ($this->requireOwnStreamApp !== null) {
             $out['require_own_stream_app'] = $this->requireOwnStreamApp;

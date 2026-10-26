@@ -44,6 +44,46 @@ func (s *StoreSuite) TestSavingASessionTwiceIsOneConversation() {
 	s.Len(all, 1)
 }
 
+func (s *StoreSuite) TestASessionThatRememberedStillSaysSoWhenSavedAgainWithout() {
+	// A conversation reopened from its row is opened without the memory it had.
+	s.opened("one", "app", s.base, func(session *AgentSession) { session.Remembers = new(true) })
+	s.opened("one", "app", s.base, func(session *AgentSession) { session.Remembers = new(false) })
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Require().NotNil(found.Remembers)
+	s.True(*found.Remembers)
+}
+
+func (s *StoreSuite) TestASessionWithoutMemorySaysSo() {
+	s.opened("one", "app", s.base, func(session *AgentSession) { session.Remembers = new(false) })
+	s.opened("one", "app", s.base, func(session *AgentSession) { session.Remembers = new(false) })
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Require().NotNil(found.Remembers)
+	s.False(*found.Remembers)
+}
+
+func (s *StoreSuite) TestARowFromBeforeItSaidStaysUnknownWhenSavedAgainWithout() {
+	s.opened("one", "app", s.base, nil)
+	s.opened("one", "app", s.base, func(session *AgentSession) { session.Remembers = new(false) })
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Nil(found.Remembers)
+}
+
+func (s *StoreSuite) TestARowFromBeforeItSaidRemembersOnceSavedWithMemory() {
+	s.opened("one", "app", s.base, nil)
+	s.opened("one", "app", s.base, func(session *AgentSession) { session.Remembers = new(true) })
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Require().NotNil(found.Remembers)
+	s.True(*found.Remembers)
+}
+
 func (s *StoreSuite) TestASessionIsOnlyItsOwnCustomers() {
 	s.opened("mine", "app", s.base, nil)
 

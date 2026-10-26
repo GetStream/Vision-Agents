@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -114,6 +115,44 @@ type ToolCall struct {
 	// Arguments is the JSON object the model filled in, left as text because it is the
 	// caller that knows what shape to expect.
 	Arguments string
+	// SessionID, User and Conversation say what the call is part of: this session, the
+	// person whose turn asked for it, and the conversation it is held in.
+	SessionID    string
+	User         *ToolUser
+	Conversation *ToolConversation
+	// Run says whether the watcher it went to is one that runs it. Every watcher sees a
+	// call, since a page shows calls, and only those that run it should answer.
+	Run bool
+	// Approved says the caller already said yes to the call, on a voice call that asked
+	// them its approval question, so nobody is to ask again.
+	Approved bool
+}
+
+// ToolHeld says a call will outlive the caller talking over the agent from now on, because
+// whoever runs it asked (HoldTool).
+type ToolHeld struct {
+	ID string
+}
+
+// ToolApprovalIgnored is a tool_approval no call took, with the ids it named and why.
+type ToolApprovalIgnored struct {
+	ID        string
+	CommandID string
+	TurnID    string
+	Reason    string
+}
+
+// ToolUser is who a tool call was made for.
+type ToolUser struct {
+	ID   string
+	Name string
+}
+
+// ToolConversation is the conversation a tool call was made in: its id, when it is kept,
+// and the session's custom.
+type ToolConversation struct {
+	CID    string
+	Custom map[string]any
 }
 
 // Session is one conversation this process is running on somebody's behalf.
@@ -177,6 +216,11 @@ type Session struct {
 	unwatched     *time.Timer
 	state         State
 	modality      string
+	// runtime bills every second the session is open, at the rate of runtimeMode: text while
+	// it is held in writing, voice on a call, and video once the user's video was seen on
+	// that call. Unlike modality it moves back down when a call ends.
+	runtime     *routing.Slices
+	runtimeMode string
 	// timeout is the timer that ends the session (SetTimeout), nil when it has none, and
 	// timeoutArmed changes whenever the timeout is set, cleared or stopped by closing, so one
 	// that was moved or cleared while it was firing does not end the session.
@@ -186,7 +230,7 @@ type Session struct {
 	// call's last leaves still arrive while the session closes.
 	closing bool
 	// end ends this session when its timeout is reached (Manager.end).
-	end func()
+	end func(TimeoutReason)
 	// runs are who is in the call, per agent run that can tell (presence). callerSeen is
 	// whether a phone caller has been in the session's call, and settledOnce whether any run
 	// has settled, which only the first may start a phone session's start timeout from.
@@ -224,6 +268,14 @@ type Session struct {
 	// with no store, which is what makes the flag safe: there is nowhere to write rather
 	// than a check to remember.
 	records recorder
+	// recordMu guards recording and unwritten. Until the manager has queued the session's row,
+	// what the fan-out records, and what a turn changes on the row, is held rather than
+	// written, so no write reaches the writer ahead of the session it belongs to; the manager
+	// queues the row only once the session has joined, so a session whose call refused it
+	// leaves no row.
+	recordMu  sync.Mutex
+	recording bool
+	unwritten []func()
 	// turnsMu guards the bookkeeping that turns a stream of events into rows.
 	turnsMu sync.Mutex
 	// turns maps a turn id to the response row it is being recorded as, so the events of
@@ -290,9 +342,13 @@ func (s *Session) SawVideo() {
 	s.mu.Lock()
 	seen := s.modality == store.ModalityVideo
 	s.modality = store.ModalityVideo
+	if s.runtimeMode == store.ModalityVoice {
+		s.runtimeMode = store.ModalityVideo
+		s.runtime.Switch(s.runtimeMode)
+	}
 	s.mu.Unlock()
 	if !seen && s.records != nil {
-		s.records.SawVideo(s.id)
+		s.afterRow(func() { s.records.SawVideo(s.id) })
 	}
 }
 
@@ -378,6 +434,7 @@ func (s *Session) Speech() string {
 type watcher struct {
 	events chan Event
 	once   sync.Once
+	seat   Seat
 }
 
 func (w *watcher) close() { w.once.Do(func() { close(w.events) }) }
@@ -400,17 +457,19 @@ func (w *watcher) send(event Event) bool {
 // that connects late has missed the conversation, and a control channel that opened with a
 // backlog would have it answering tool calls that timed out before it arrived.
 func (s *Session) Watch() (<-chan Event, func()) {
-	return s.watch(false)
+	return s.WatchAs(Seat{Owner: OwnerOf(s.spec)})
 }
 
 // WatchPendingVoiceTools opts a durable tool host into replay of pending live
 // voice requests. Text command recovery uses the persistent conversation path.
 func (s *Session) WatchPendingVoiceTools() (<-chan Event, func()) {
-	return s.watch(true)
+	return s.WatchAs(Seat{Owner: OwnerOf(s.spec), ReplayPendingVoiceTools: true})
 }
 
-func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
-	attached := &watcher{events: make(chan Event, watcherBuffer)}
+// WatchAs is Watch for a watcher that says who it is and which tools it runs, which is
+// what its tool calls are addressed by.
+func (s *Session) WatchAs(seat Seat) (<-chan Event, func()) {
+	attached := &watcher{events: make(chan Event, watcherBuffer), seat: seat}
 
 	s.mu.Lock()
 	if s.state == Ended {
@@ -428,9 +487,11 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	for _, unavailable := range s.connectorsUnavailable {
 		attached.send(unavailable)
 	}
-	if replayVoiceTools && !s.spec.Text && s.tools != nil {
+	if seat.ReplayPendingVoiceTools && !s.spec.Text && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
-			attached.send(pending)
+			replayed := s.placed(pending)
+			replayed.Run = s.seatRuns(seat, replayed.Name)
+			attached.send(replayed)
 		}
 	}
 	s.mu.Unlock()
@@ -616,7 +677,7 @@ func (s *Session) chose(name, connectionID string) {
 	s.spec.ConnectorSelections = append(kept, ConnectorSelection{Name: name, ConnectionID: connectionID})
 	s.labelMu.Unlock()
 	if s.records != nil {
-		s.records.Chose(s.spec.CustomerID, s.id, name, connectionID)
+		s.afterRow(func() { s.records.Chose(s.spec.CustomerID, s.id, name, connectionID) })
 	}
 }
 
@@ -663,6 +724,15 @@ func (s *Session) FollowUpReply(id string) (state, text string, known bool) {
 	return s.persisted.FollowUpReply(id)
 }
 
+// FollowUpFinished is the reply to the follow-up under id as the conversation told it once it
+// finished, with its files (persistent.Conversation.FollowUpFinished).
+func (s *Session) FollowUpFinished(id string) persistent.FinishedReply {
+	if s.persisted == nil {
+		return persistent.FinishedReply{}
+	}
+	return s.persisted.FollowUpFinished(id)
+}
+
 // AwaitCommand accepts a durable submission the way RespondCommand does without answering
 // it. It is for an agent that leaves text to dispatch: the end user's message is recorded
 // and shown as being answered, and the model answers once the server calls RespondCommand
@@ -696,6 +766,29 @@ func (s *Session) Report(err error, context string) {
 		return
 	}
 	s.broadcast(agent.Error{Err: err, Context: context})
+}
+
+// IgnoreApproval tells the watchers a tool_approval reached no call, naming the ids it sent so
+// its sender can tell which of its answers it is.
+func (s *Session) IgnoreApproval(id, commandID, turnID string, reason error) {
+	s.broadcast(ToolApprovalIgnored{ID: id, CommandID: commandID, TurnID: turnID, Reason: reason.Error()})
+}
+
+// WaitsForResult reports whether the call id waits for a watcher's tool_result.
+func (s *Session) WaitsForResult(id string) bool {
+	_, waiting := s.tools.nameOf(id)
+	return waiting
+}
+
+// WaitsOnCommand reports whether the call id waits for its result on a turn of a durable
+// command.
+func (s *Session) WaitsOnCommand(id string) bool {
+	turnID, waiting := s.tools.turnOf(id)
+	if s.persisted == nil || !waiting || turnID == "" {
+		return false
+	}
+	_, bound := s.persisted.CommandForTurn(turnID)
+	return bound
 }
 
 // Ask answers a piece of text in writing, without speaking any of it, and writes the answer
@@ -850,8 +943,9 @@ const settleGap = 2 * time.Second
 
 // Settle waits for the agent to finish what it was given: nothing left to do, and quiet for a
 // moment, since one message can earn several turns. events is a watcher of this session, and
-// seen, when set, is handed each event as it passes.
-func (s *Session) Settle(ctx context.Context, events <-chan Event, seen func(Event)) {
+// seen, when set, is handed each event as it passes. seen answering true says the event ends
+// the conversation, so Settle returns at once if the agent is not busy, without the gap.
+func (s *Session) Settle(ctx context.Context, events <-chan Event, seen func(Event) bool) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	last := time.Now()
@@ -863,8 +957,8 @@ func (s *Session) Settle(ctx context.Context, events <-chan Event, seen func(Eve
 			if !open {
 				return
 			}
-			if seen != nil {
-				seen(event)
+			if seen != nil && seen(event) && !s.Busy() {
+				return
 			}
 			last = time.Now()
 		case <-ticker.C:
@@ -1072,6 +1166,11 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 	if voice && s.modality == store.ModalityText {
 		s.modality = store.ModalityVoice
 	}
+	s.runtimeMode = store.ModalityText
+	if voice {
+		s.runtimeMode = store.ModalityVoice
+	}
+	s.runtime.Switch(s.runtimeMode)
 	// A call is held whoever is watching the socket, so the countdown a conversation in
 	// writing ends on is stopped, and started again once the call is left unwatched.
 	if s.unwatched != nil {
@@ -1157,6 +1256,8 @@ func turnIDOf(event Event) string {
 		return typed.TurnID
 	case agent.Interrupted:
 		return typed.TurnID
+	case agent.Speaking:
+		return typed.TurnID
 	case agent.Spoke:
 		return typed.TurnID
 	}
@@ -1202,6 +1303,27 @@ func (s *Session) Describe(ctx context.Context, labels Labels) {
 	}
 }
 
+// HoldTool keeps a call running when the caller talks over the agent, which a call to an
+// interruptible tool would not, and tells every watcher which happened first: ToolHeld, or
+// the call's cancel when it is not running any more.
+func (s *Session) HoldTool(id string) bool {
+	name, waiting := s.tools.nameOf(id)
+	if waiting && s.current().HoldTool(id) {
+		s.broadcast(ToolHeld{ID: id})
+		return true
+	}
+	s.broadcast(ToolCall{ID: id, Name: name, Cancel: true})
+	return false
+}
+
+// ToolUpdate passes on what whoever runs a call says about it while it runs (agent
+// ToolUpdate). An update for a call this session is not waiting on is dropped.
+func (s *Session) ToolUpdate(id, text string, verbatim bool) {
+	if _, waiting := s.tools.nameOf(id); waiting {
+		s.current().ToolUpdate(id, text, verbatim)
+	}
+}
+
 // ResolveTool hands a tool result back to the model waiting for it, reporting whether
 // anything was.
 func (s *Session) ResolveTool(id, output, failure string) bool {
@@ -1236,14 +1358,14 @@ func (s *Session) ResolveCommandTool(id, commandID, turnID string, parts []llm.C
 }
 
 // DecideCommandTool records a person's answer to a call of a durable command that waited
-// for their approval, reporting whether the call's command and turn match. The call still
-// needs its result.
+// for their approval, reporting whether the call's command and turn match and the call still
+// waits on that turn. The call still needs its result.
 func (s *Session) DecideCommandTool(id, commandID, turnID string, allowed bool, summary string) bool {
 	if s.persisted == nil || id == "" || commandID == "" || turnID == "" {
 		return false
 	}
 	expected, bound := s.persisted.CommandForTurn(turnID)
-	if !bound || expected != commandID {
+	if !bound || expected != commandID || !s.tools.waitsOn(id, turnID) {
 		return false
 	}
 	s.persisted.Observe(agent.ToolApprovalDecided{ID: id, TurnID: turnID, Allowed: allowed, Summary: summary})
@@ -1259,6 +1381,9 @@ func (s *Session) Close() error {
 }
 
 func (s *Session) close() error {
+	// The last slice is written before anything else closes, however long the rest takes.
+	s.runtime.Stop()
+
 	s.mu.Lock()
 	s.closing = true
 	s.stopTimeout()
@@ -1350,6 +1475,36 @@ func (s *Session) record(event Event) {
 		return
 	}
 
+	s.afterRow(func() { s.write(event) })
+}
+
+// afterRow runs write once the manager has queued the session's row. A turn taken while a
+// slow greeting is spoken runs before then, and an update queued ahead of the row it
+// changes matches no row and is lost.
+func (s *Session) afterRow(write func()) {
+	s.recordMu.Lock()
+	defer s.recordMu.Unlock()
+	if !s.recording {
+		s.unwritten = append(s.unwritten, write)
+		return
+	}
+	write()
+}
+
+// startRecording is called once the session's row is queued: it writes what was held
+// until then, in the order it happened, and lets every later write through.
+func (s *Session) startRecording() {
+	s.recordMu.Lock()
+	defer s.recordMu.Unlock()
+	s.recording = true
+	for _, write := range s.unwritten {
+		write()
+	}
+	s.unwritten = nil
+}
+
+// write maps one event onto the rows it adds to.
+func (s *Session) write(event Event) {
 	switch typed := event.(type) {
 	case agent.Responding:
 		if !s.continueTurn(typed.TurnID, typed.Continues) {
@@ -1608,6 +1763,20 @@ func (s *Session) broadcast(event Event) {
 	}
 }
 
+// placed is call with what it is part of filled in: this session, its conversation, and
+// the session's own user when the agent did not say whose turn asked for it.
+func (s *Session) placed(call ToolCall) ToolCall {
+	if call.Cancel {
+		return call
+	}
+	call.SessionID = s.id
+	call.Conversation = &ToolConversation{CID: s.spec.ConversationID, Custom: s.spec.Custom}
+	if call.User == nil && s.spec.Caller.UserID != "" {
+		call.User = &ToolUser{ID: s.spec.Caller.UserID}
+	}
+	return call
+}
+
 // askTool publishes a tool request, failing when nobody is connected to answer it.
 //
 // The failure matters: without it the model would wait out the whole timeout on a call the
@@ -1616,6 +1785,7 @@ func (s *Session) askTool(call ToolCall) error {
 	if call.TurnID != "" && s.persisted != nil {
 		call.CommandID, _ = s.persisted.CommandForTurn(call.TurnID)
 	}
+	call = s.placed(call)
 	// Only a conversation held in writing is asked by command. On a call a question is spoken,
 	// with no request id, and the vision skill's request for frames belongs to no turn: their
 	// results are taken by turn or by id (ResolveTurnTool, ResolveToolParts), as anywhere else.
@@ -1628,9 +1798,18 @@ func (s *Session) askTool(call ToolCall) error {
 	if len(s.watchers) == 0 {
 		return errors.New("session: nobody is connected to run it")
 	}
+	runnable := call.Cancel
+	for _, attached := range s.watchers {
+		runnable = runnable || s.seatRuns(attached.seat, call.Name)
+	}
+	if !runnable {
+		return fmt.Errorf("session: nobody connected runs %s", call.Name)
+	}
 	delivered := false
 	for _, attached := range s.watchers {
-		if attached.send(call) {
+		addressed := call
+		addressed.Run = s.seatRuns(attached.seat, call.Name)
+		if attached.send(addressed) {
 			delivered = true
 		}
 	}

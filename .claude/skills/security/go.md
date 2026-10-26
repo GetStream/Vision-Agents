@@ -156,6 +156,9 @@ fresh `http.Client` on a caller's URL.
 - A 500 says only "something went wrong" (`apierror.go`). Flag an error that returns a
   wrapped driver, provider or upstream message to the caller.
 - The ops key (`X-Ops-Key`) is compared in constant time and turns the paths off when empty.
+- The manage key (`X-Manage-Key`) is compared in constant time, makes every `/v1/manage/*`
+  path a 404 `not_configured` when empty, is never the ops key, and every call with it must
+  name its actor in `X-Stream-Actor-Id` (`requireStaffKey`, `ManageSuite`).
 
 ### 8. Input that reaches SQL, the shell or the filesystem
 

@@ -137,9 +137,11 @@ type ConnectionDefinitionStatus string
 
 func (ConnectionDefinitionStatus) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectionDefinitionStatus",
-		"current when the connection reads its connector's latest revision, outdated when a later "+
-			"one exists, and broken when a later one marked it as not working: the connection is "+
-			"given no credential until it moves to the latest revision, by a consent that connects "+
+		"current when the connection reads its connector's latest revision, or an earlier one that "+
+			"differs from it only in what a config is checked against (sensitive, and which tools only "+
+			"read or send data out), outdated when a later one changes what the connection reads, "+
+			"and broken when a later one marked it as not working: the connection is given no "+
+			"credential until it moves to the latest revision, by a consent that connects "+
 			"it again or, for a bearer or api_key connection, by saving its token or key again, "+
 			"and for a none connection by saving its empty credentials again.",
 		store.DefinitionCurrent, store.DefinitionOutdated, store.DefinitionBroken)
@@ -527,7 +529,7 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 		ID: connection.ID, ConnectorID: connection.ConnectorID, OwnerType: connection.OwnerType,
 		HadGrant: len(connection.CredentialsSealed) > 0,
 	}, core.CredentialChange{Current: core.FingerprintsOf(s.connectors.Schemes, held.Credentials)})
-	s.revokeAtProvider(ctx, connection, held)
+	s.revokeAtProvider(ctx, connection, held, "connection_delete")
 	return nil, nil
 }
 
@@ -555,40 +557,92 @@ func (s *Server) heldCredentials(ctx context.Context, connection store.Connector
 // (resolver.go), which covers two such requests. Unverified, not measured.
 const revokeTimeout = 30 * time.Second
 
-// revokeAtProvider asks the provider to revoke the grant a just deleted connection held
-// (RFC 7009 for oauth2_code), when the manifest revision it was connected on says
-// revoke_on_delete (AI-1544). It runs after the delete, so a delete the store refuses revokes
-// nothing. The connection is gone whatever the provider answers, so a failure is logged.
-// Detached: once the row is gone the router can never revoke later, so a caller that hangs
-// up must not cancel it.
-func (s *Server) revokeAtProvider(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState) {
+// revokeAtProvider asks the provider to revoke the grant held names (RFC 7009 for
+// oauth2_code), when the manifest revision it was connected on says revoke_on_delete
+// (AI-1544): one the router is dropping, as after says, a connection's delete, its user's, a
+// refused consent's, or one whose client is about to go. A delete runs it after the store
+// deleted the row, so a delete the store refuses revokes nothing. The change stands whatever
+// the provider answers, so a failure is logged. Detached: once the router drops the tokens
+// it can never revoke them later, so a caller that hangs up must not cancel it. It says
+// whether the provider revoked the grant.
+func (s *Server) revokeAtProvider(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState, after string) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revokeTimeout)
 	defer cancel()
-	if err := s.revokeHeld(ctx, connection, held); err != nil {
-		s.logger.Error("could not revoke a deleted connection's grant at the provider", "connection", connection.ID,
+	revoked, err := s.revokeHeld(ctx, connection, held)
+	if err != nil {
+		s.logger.Error("could not revoke a grant at the provider", "after", after, "connection", connection.ID,
 			"connector", connection.ConnectorID, "error", err)
 	}
+	return revoked
 }
 
-// revokeHeld is revokeAtProvider's revoke, nil when there is nothing to revoke or the
-// manifest does not opt in.
-func (s *Server) revokeHeld(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState) error {
+// revocableGrants is the credential state of each of connections whose manifest revision says
+// revoke_on_delete, by connection id, read before a change drops it or the client its revoke
+// needs. A connection that does not opt in is not read, so its row is left as it was: a read
+// may write (pgsealed rewraps a blob under an old key). A definition that cannot be read
+// leaves its connection out: the change is never refused over a revoke. Each revision is read
+// once, as a client's connections are mostly of one.
+func (s *Server) revocableGrants(ctx context.Context, connections []store.ConnectorConnection) map[string]core.CredentialState {
+	type revision struct {
+		connector string
+		revision  int
+	}
+	optsIn := map[revision]bool{}
+	held := map[string]core.CredentialState{}
+	for _, connection := range connections {
+		key := revision{connection.ConnectorID, connection.DefinitionRevision}
+		revokes, read := optsIn[key]
+		if !read {
+			definition, err := s.store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
+			if err != nil {
+				s.logger.Warn("could not read whether a connection's grant is revoked", "connection", connection.ID, "error", err)
+				continue
+			}
+			revokes = definition.Manifest.RevokeOnDelete
+			optsIn[key] = revokes
+		}
+		if revokes {
+			held[connection.ID] = s.heldCredentials(ctx, connection)
+		}
+	}
+	return held
+}
+
+// revokeGrants revokes at the provider each of connections revocableGrants read, as
+// revokeAtProvider, one after another, and is those the provider revoked. One it did not read
+// holds nothing to revoke.
+func (s *Server) revokeGrants(ctx context.Context, connections []store.ConnectorConnection, held map[string]core.CredentialState, after string) []store.ConnectorConnection {
+	var revoked []store.ConnectorConnection
+	for _, connection := range connections {
+		if s.revokeAtProvider(ctx, connection, held[connection.ID], after) {
+			revoked = append(revoked, connection)
+		}
+	}
+	return revoked
+}
+
+// revokeHeld is revokeAtProvider's revoke, and whether the provider revoked the grant: false
+// with a nil error when there is nothing to revoke or the manifest does not opt in.
+func (s *Server) revokeHeld(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState) (bool, error) {
 	if held.Credentials.Scheme == "" {
-		return nil
+		return false, nil
 	}
 	definition, err := s.store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, held.DefinitionRevision)
 	if err != nil || !definition.Manifest.RevokeOnDelete {
-		return err
+		return false, err
 	}
 	scheme, found := s.connectors.Schemes[connection.AuthScheme]
 	if !found {
-		return stack.Wrap(fmt.Errorf("%w: %q", store.ErrUnregisteredScheme, connection.AuthScheme))
+		return false, stack.Wrap(fmt.Errorf("%w: %q", store.ErrUnregisteredScheme, connection.AuthScheme))
 	}
 	manifest, err := definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, held.Metadata)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return scheme.Revoke(ctx, held.Credentials, manifest)
+	if err := scheme.Revoke(ctx, held.Credentials, manifest); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // connectionDeleted lets go of what a connection the store just soft deleted still has

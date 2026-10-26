@@ -32,6 +32,7 @@ const maxVideos = 2
 func (s *Server) createResponse(ctx context.Context, request *createResponseRequest) (*createResponseResponse, error) {
 	// A response is asked of a running session rather than a stored one: a call that ended
 	// can be read and forked, but not talked to. A chat that ended is reopened.
+	leaveUncosted(ctx)
 	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
 	if failure != nil {
 		return nil, failure

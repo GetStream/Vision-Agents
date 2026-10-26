@@ -103,7 +103,7 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		return fmt.Errorf("the database is newer than this binary: %d migrations applied that it does not carry (the newest %d); "+
 			"run the build that applied them", len(unknown), unknown[len(unknown)-1])
 	}
-	secrets, err := loadKeyring(settings, "router plugins migrate needs")
+	secrets, err := loadKeyring(ctx, settings, "router plugins migrate needs")
 	if err != nil {
 		return err
 	}
@@ -142,6 +142,7 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		IncludeRotating: scope.IncludeRotating,
 		Store:           pgStore,
 		Configs:         configs,
+		Complaint:       api.SensitiveBindingsComplaint,
 		Registry:        registry,
 		Credentials:     credentials,
 		Transports:      transports,

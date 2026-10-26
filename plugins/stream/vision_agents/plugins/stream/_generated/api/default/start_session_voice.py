@@ -53,6 +53,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = ErrorResponse.from_dict(response.json())
+
+        return response_402
+
     if response.status_code == 403:
         response_403 = ErrorResponse.from_dict(response.json())
 
@@ -72,6 +77,11 @@ def _parse_response(
         response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
+
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -106,7 +116,8 @@ def sync_detailed(
 
     Starting voice on a session that is already on its call changes nothing, and naming another call
     while it is on is refused. A conversation in writing that ended is carried on under the same id, as
-    a message to it is.
+    a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the
+    socket was its call, and stopping voice hung it up, so open a new socket.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -148,7 +159,8 @@ def sync(
 
     Starting voice on a session that is already on its call changes nothing, and naming another call
     while it is on is refused. A conversation in writing that ended is carried on under the same id, as
-    a message to it is.
+    a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the
+    socket was its call, and stopping voice hung it up, so open a new socket.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -185,7 +197,8 @@ async def asyncio_detailed(
 
     Starting voice on a session that is already on its call changes nothing, and naming another call
     while it is on is refused. A conversation in writing that ended is carried on under the same id, as
-    a message to it is.
+    a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the
+    socket was its call, and stopping voice hung it up, so open a new socket.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -225,7 +238,8 @@ async def asyncio(
 
     Starting voice on a session that is already on its call changes nothing, and naming another call
     while it is on is refused. A conversation in writing that ended is carried on under the same id, as
-    a message to it is.
+    a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the
+    socket was its call, and stopping voice hung it up, so open a new socket.
 
     Args:
         id (str): The session, as returned when it was created.

@@ -28,6 +28,18 @@ type stubSandbox struct {
 	// written are the files put into it, in order, by path.
 	written []string
 	files   map[string]string
+	// remakeAfter, when set, has the sandbox made again once that many runs have run, as its
+	// provider deleting it would.
+	remakeAfter int
+}
+
+func (s *stubSandbox) Ready(context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.remakeAfter > 0 && len(s.ran) >= s.remakeAfter {
+		return 2, nil
+	}
+	return 1, nil
 }
 
 func (s *stubSandbox) Write(_ context.Context, path string, data []byte) error {
@@ -350,6 +362,41 @@ func (s *HarnessSuite) TestAFileTheCodeDidNotWriteIsNamed() {
 	s.Contains(told, "were not written, or were too large to return: /tmp/render.png")
 }
 
+// TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHaveThemConnect: the subagent cannot
+// call github__list_tools, so the line also says to tell the user.
+func (s *HarnessSuite) TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHaveThemConnect() {
+	s.box = &stubSandbox{result: sandbox.Result{Output: "status: 401", Unconnected: []sandbox.Grant{
+		{Binding: "github", Hosts: []string{"api.github.com"}}}}}
+	s.build(true)
+	s.slow.calls = runCode("call-1", "print(issues())")
+	s.slow.automatic = "Connect GitHub first."
+	s.respond("turn-1", "list my issues")
+
+	s.reply("turn-1", `<ask skill="think">list my issues</ask>`)
+
+	s.awaitSettled(1)
+	told := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1].Content
+	s.Equal("status: 401\n\nIf this code needed github (a 401 from api.github.com), the user has not connected it: call "+
+		"github__list_tools so they can, then run the code again; if you cannot call it, tell the user they must connect "+
+		"github.", told)
+}
+
+// TestCodeRunJustAfterTheConnectionTellsTheSubagentToWaitFor401: a token on its way to the
+// sandbox may still be missing from this run.
+func (s *HarnessSuite) TestCodeRunJustAfterTheConnectionTellsTheSubagentToWaitFor401() {
+	s.box = &stubSandbox{result: sandbox.Result{Output: "status: 401", Connected: []string{"github"}}}
+	s.build(true)
+	s.slow.calls = runCode("call-1", "print(issues())")
+	s.slow.automatic = "Try again shortly."
+	s.respond("turn-1", "list my issues")
+
+	s.reply("turn-1", `<ask skill="think">list my issues</ask>`)
+
+	s.awaitSettled(1)
+	told := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1].Content
+	s.Equal("status: 401\n\ngithub was just connected: if this run got 401, wait 20 seconds and run the code again.", told)
+}
+
 // library answers questions as the knowledge base or the web would, recording what was
 // asked and on which turn.
 type library struct {
@@ -480,4 +527,20 @@ func (s *HarnessSuite) TestASkillsFilesAreWrittenToTheSandboxOnceBeforeItsCodeRu
 	s.Equal("print('filled')", s.box.files["skills/pdf/scripts/fill.py"])
 	s.Len(s.box.code(), 2)
 	s.Contains(s.slow.requests()[0].Instructions, "under skills/pdf/")
+}
+
+func (s *HarnessSuite) TestASandboxMadeAgainGetsTheSkillsFilesAgain() {
+	s.box = &stubSandbox{result: sandbox.Result{Output: "filled"}, remakeAfter: 1}
+	s.skills = pdfSkills()
+	s.build(true)
+	s.slow.calls = append(runCode("call-1", "import subprocess"), runCode("call-2", "import subprocess")...)
+	s.slow.automatic = "Filled."
+	s.respond("turn-1", "fill in my form")
+
+	s.reply("turn-1", `<ask skill="pdf">fill in my form</ask>`)
+
+	s.Equal(Done, s.awaitSettled(1)[0].State)
+	s.Equal([]string{"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py",
+		"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py"}, s.box.writes(),
+		"the new sandbox holds nothing written into the last")
 }

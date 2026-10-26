@@ -54,6 +54,11 @@ pub enum Error {
     #[error("{0}")]
     Configuration(String),
 
+    /// A tool call asked to keep going through interruptions too late: the person had
+    /// already talked over the agent, so the router cancels the call instead.
+    #[error("tool call {0} was not held: it was already cancelled")]
+    NotHeld(String),
+
     /// An agent directory could not be read as one.
     #[error("{}: {message}", path.display())]
     Folder { path: PathBuf, message: String },

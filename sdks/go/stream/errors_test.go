@@ -37,6 +37,39 @@ func searching(t *testing.T, server *httptest.Server) error {
 	return err
 }
 
+func TestARefusalForMoneySaysPaymentIsRequired(t *testing.T) {
+	err := searching(t, refusing(t, http.StatusPaymentRequired, "application/json", `{"error": {
+		"message": "the organization has no credit left; add credit to use models that cost money",
+		"type": "payment_required", "code": "insufficient_credits",
+		"doc_url": "https://getstream.io/agents/docs/api/errors/#insufficient_credits"}}`))
+
+	var refused *RouterError
+	if !errors.As(err, &refused) || !refused.PaymentRequired() || refused.Code != "insufficient_credits" {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+	other := searching(t, refusing(t, http.StatusNotFound, "application/json", notFound))
+	if errors.As(other, &refused) && refused.PaymentRequired() {
+		t.Errorf("a refusal of another kind says payment is required")
+	}
+}
+
+func TestASpendCheckThatCannotBeMadeIsNoRefusalOfMoney(t *testing.T) {
+	err := searching(t, refusing(t, http.StatusServiceUnavailable, "application/json", `{"error": {
+		"message": "could not share spend with the other routers; retry shortly",
+		"type": "unavailable", "code": "spend_check_unavailable",
+		"doc_url": "https://getstream.io/agents/docs/api/errors/#spend_check_unavailable"}}`))
+
+	var refused *RouterError
+	if !errors.As(err, &refused) || !refused.SpendCheckUnavailable() || refused.PaymentRequired() {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+	other := searching(t, refusing(t, http.StatusServiceUnavailable, "application/json", `{"error": {
+		"message": "the agent gave no answer", "type": "unavailable", "code": "model_failed"}}`))
+	if errors.As(other, &refused) && refused.SpendCheckUnavailable() {
+		t.Errorf("another unavailable answer says the spend check is")
+	}
+}
+
 func TestARefusalCarriesEverythingTheRouterSaid(t *testing.T) {
 	err := searching(t, refusing(t, http.StatusNotFound, "application/json", notFound))
 

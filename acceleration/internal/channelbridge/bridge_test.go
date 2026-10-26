@@ -3,9 +3,12 @@ package channelbridge
 import (
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -21,22 +24,22 @@ func TestBridgeSuite(t *testing.T) {
 }
 
 func (s *BridgeSuite) TestAnAuthorIsTheSameUserOnEveryMessage() {
-	s.Equal(authorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"), authorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"))
+	s.Equal(AuthorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"), AuthorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"))
 }
 
 // One Slack workspace can install two customers' apps; its person is a user of each, never
 // one user both customers write as.
 func (s *BridgeSuite) TestTheSamePersonForAnotherCustomerIsAnotherUser() {
-	s.NotEqual(authorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"), authorUserID("globex", "slack_bot", "T0000TEAM", "U0000ALICE"))
+	s.NotEqual(AuthorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"), AuthorUserID("globex", "slack_bot", "T0000TEAM", "U0000ALICE"))
 }
 
 func (s *BridgeSuite) TestPartsThatJoinAlikeAreStillTwoUsers() {
-	s.NotEqual(authorUserID("acme", "slack_bot", "T0", "0U"), authorUserID("acme", "slack_bot", "T00", "U"))
+	s.NotEqual(AuthorUserID("acme", "slack_bot", "T0", "0U"), AuthorUserID("acme", "slack_bot", "T00", "U"))
 }
 
 // A phone number's "+" or any provider's id stays out of the user id.
 func (s *BridgeSuite) TestAnAuthorUserIDKeepsToLettersDigitsUnderscoreAndHyphen() {
-	s.Regexp(regexp.MustCompile(`^[A-Za-z0-9_-]+$`), authorUserID("acme", "linq", "+12025550100", "+12025550199"))
+	s.Regexp(regexp.MustCompile(`^[A-Za-z0-9_-]+$`), AuthorUserID("acme", "linq", "+12025550100", "+12025550199"))
 }
 
 func (s *BridgeSuite) TestABridgeNeedsAStoreStreamTransportsAndAResolver() {
@@ -103,4 +106,45 @@ func (s *BridgeSuite) TestAWhatsAppAuthorIsTheirNumberInE164() {
 	s.Equal("+16505551234", person.Address)
 	s.Equal("+16505551234", whatsapp.recipientOf("16505551234"))
 	s.Equal("+13125550001", telnyx.recipientOf("+13125550001"))
+}
+
+// WhatsApp takes free text for 24 hours after the person's last message; past that, a reply
+// reaches them only when the manifest has a template to send instead.
+func (s *BridgeSuite) TestAWhatsAppReplyPastTheDayIsPastTheWindowUnlessTheManifestHasATemplate() {
+	free := core.ReplyRule{}
+	templated := core.ReplyRule{Window: core.Duration(24 * time.Hour), AfterWindow: map[string]any{"type": "template"}}
+
+	s.False(pastWindow("whatsapp", free, 23*time.Hour), "within the day")
+	s.True(pastWindow("whatsapp", free, 24*time.Hour), "at the day's end")
+	s.False(pastWindow("whatsapp", templated, 25*time.Hour), "the template is sent instead")
+}
+
+// SMS and Slack take free text whenever the person last wrote.
+func (s *BridgeSuite) TestAnSMSOrSlackReplyIsNeverPastAWindow() {
+	s.False(pastWindow("telnyx", core.ReplyRule{}, 30*24*time.Hour))
+	s.False(pastWindow("slack_bot", core.ReplyRule{}, 30*24*time.Hour))
+}
+
+// A bridge that holds nothing but replies: a held command's reply never reaches the line,
+// so none of its other parts are needed.
+func (s *BridgeSuite) TestAReleasedCommandIsNoLongerHeld() {
+	b := &Bridge{held: map[string]chan conversation.FinishedReply{}}
+	_, release := b.Hold("cmd-1")
+	s.Len(b.held, 1)
+	release()
+	s.Empty(b.held)
+}
+
+func (s *BridgeSuite) TestAHeldCommandsReplyGoesToItsHolderAndClearsTheEntry() {
+	b := &Bridge{held: map[string]chan conversation.FinishedReply{}}
+	replies, release := b.Hold("cmd-1")
+	defer release()
+	b.Reply(conversation.FinishedReply{CommandID: "cmd-1", Text: "done"})
+	select {
+	case got := <-replies:
+		s.Equal("done", got.Text)
+	default:
+		s.Fail("the holder did not receive the reply")
+	}
+	s.Empty(b.held)
 }

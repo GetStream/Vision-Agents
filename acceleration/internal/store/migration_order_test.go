@@ -6,8 +6,11 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
 
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/suite"
@@ -359,6 +362,255 @@ func (s *MigrationOrderSuite) TestTheAuditCheckKeepsEveryRowAndTakesToolReapprov
 	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", beforeToolReapproved))
 	s.Equal(6, s.auditRows(db))
 	s.Require().ErrorContains(audit(AuditToolReapproved), "connector_audit_action_check")
+}
+
+// The versions around audit_log's management source and price_list resource (T2 A): the
+// migration before it, and its own.
+const (
+	beforeAuditManage  int64 = 20261110100000
+	auditManageVersion int64 = 20261110120000
+)
+
+// TestTheAuditLogKeepsEveryRowAndTakesTheManagementAPI: a database holding a row of every
+// resource type and source the CHECKs allowed migrates, keeps them all, and takes price_list
+// and manage and nothing else new. Its Down keeps the new rows and refuses new ones.
+func (s *MigrationOrderSuite) TestTheAuditLogKeepsEveryRowAndTakesTheManagementAPI() {
+	db := s.open()
+	s.upTo(db, beforeAuditManage)
+	audit := func(resource, source string) error {
+		_, err := db.DB().ExecContext(s.ctx, "INSERT INTO audit_log (id, customer_id, resource_type, resource_id, "+
+			"action, source, created_at) VALUES (?, '', ?, 'resource', 'created', ?, now())", newID(), resource, source)
+		return err
+	}
+	rows := func() int {
+		var count int
+		s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM audit_log").Scan(&count))
+		return count
+	}
+	for _, resource := range []string{"agent_config", "skill", "knowledge", "knowledge_url", "router_config", "plugin", "policy"} {
+		s.Require().NoError(audit(resource, "api"), resource)
+	}
+	for _, source := range []string{"dashboard", "cli", "sdk"} {
+		s.Require().NoError(audit("policy", source), source)
+	}
+	s.Require().ErrorContains(audit("price_list", "api"), "audit_log_resource_type_check")
+	s.Require().ErrorContains(audit("policy", "manage"), "audit_log_source_check")
+
+	s.upTo(db, auditManageVersion)
+
+	s.Equal(10, rows())
+	s.Require().NoError(audit("price_list", "manage"))
+	s.Require().ErrorContains(audit("limit", "manage"), "audit_log_resource_type_check")
+	s.Require().ErrorContains(audit("policy", "staff"), "audit_log_source_check")
+	s.goose()
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", beforeAuditManage))
+	s.Equal(11, rows())
+	s.Require().ErrorContains(audit("price_list", "api"), "audit_log_resource_type_check")
+	s.Require().ErrorContains(audit("policy", "manage"), "audit_log_source_check")
+}
+
+// priceTablesVersion is the price tables' migration.
+const priceTablesVersion int64 = 20261110130000
+
+// migrationBefore is the newest migration this binary carries older than version: what a
+// router built just before it had applied, whichever migration merged in between.
+func (s *MigrationOrderSuite) migrationBefore(version int64) int64 {
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	s.Require().NoError(err)
+	var before int64
+	for _, name := range carried {
+		prefix, _, _ := strings.Cut(name, "_")
+		found, err := strconv.ParseInt(prefix, 10, 64)
+		s.Require().NoError(err)
+		if found < version {
+			before = max(before, found)
+		}
+	}
+	s.Require().NotZero(before)
+	return before
+}
+
+// oldRequestInsert is how a router built before the price tables writes a request: none of the
+// columns they add.
+const oldRequestInsert = `INSERT INTO requests (modality, customer_id, provider, model, started_at, cost_micros, success)
+VALUES ('llm', 'app', 'openai', 'gpt', now(), 1234, true)`
+
+// TestThePreviousRouterRunsOnThePriceTables: a database the router before them wrote to takes
+// the price tables without rewriting requests; that router then still starts on it, with a
+// migration set that lacks them, and still writes its rows. Down takes them off and keeps the
+// rows.
+func (s *MigrationOrderSuite) TestThePreviousRouterRunsOnThePriceTables() {
+	db := s.open()
+	beforePriceTables := s.migrationBefore(priceTablesVersion)
+	s.upTo(db, beforePriceTables)
+	s.exec(db, oldRequestInsert)
+	filenode := func() int64 {
+		var node int64
+		s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT pg_relation_filenode('requests')").Scan(&node))
+		return node
+	}
+	before := filenode()
+
+	s.upTo(db, priceTablesVersion)
+
+	s.Equal(before, filenode(), "adding the columns does not rewrite requests")
+	var version string
+	var base int64
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT price_version, base_cost_micros FROM requests").Scan(&version, &base))
+	s.Empty(version)
+	s.Zero(base)
+
+	previous := fstest.MapFS{}
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	s.Require().NoError(err)
+	for _, name := range carried {
+		version, _, _ := strings.Cut(name, "_")
+		if version >= strconv.FormatInt(priceTablesVersion, 10) {
+			continue
+		}
+		body, err := fs.ReadFile(migrations.FS, name)
+		s.Require().NoError(err)
+		previous[name] = &fstest.MapFile{Data: body}
+	}
+	goose.SetBaseFS(previous)
+	s.Require().NoError(goose.SetDialect("postgres"))
+	s.Require().NoError(goose.UpContext(s.ctx, db.DB().DB, "."), "the previous router migrates a newer database as a no-op")
+	s.exec(db, oldRequestInsert)
+
+	s.goose()
+	s.Require().NoError(db.Migrate(s.ctx))
+	s.Require().NoError(db.RecordRequest(s.ctx, &Request{Modality: "llm", CustomerID: "app", Provider: "openai", Model: "gpt",
+		StartedAt: time.Now(), CostMicros: 1, Success: true}))
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", beforePriceTables))
+	var exists bool
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, `SELECT to_regclass('public.price_entries') IS NOT NULL
+OR to_regclass('public.price_changes') IS NOT NULL`).Scan(&exists))
+	s.False(exists)
+	var rows int
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM requests").Scan(&rows))
+	s.Equal(3, rows)
+	s.exec(db, oldRequestInsert)
+}
+
+// auditCancelledVersion is the migration that lets audit_log record a cancelled price change
+// (T1 C).
+const auditCancelledVersion int64 = 20261110140000
+
+// TestTheAuditLogTakesCancelledAndThePreviousRouterStillWrites: a database holding a row of
+// every action the CHECK allowed migrates, keeps them all, and takes cancelled and nothing else
+// new. The router before it still migrates the database as a no-op and writes its requests and
+// audit rows. Down keeps the cancelled rows and refuses new ones.
+func (s *MigrationOrderSuite) TestTheAuditLogTakesCancelledAndThePreviousRouterStillWrites() {
+	db := s.open()
+	before := s.migrationBefore(auditCancelledVersion)
+	s.upTo(db, before)
+	audit := func(action string) error {
+		_, err := db.DB().ExecContext(s.ctx, "INSERT INTO audit_log (id, customer_id, resource_type, resource_id, "+
+			"action, source, created_at) VALUES (?, '', 'price_list', 'change', ?, 'manage', now())", newID(), action)
+		return err
+	}
+	rows := func() int {
+		var count int
+		s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM audit_log").Scan(&count))
+		return count
+	}
+	for _, action := range []string{"created", "updated", "deleted", "synced"} {
+		s.Require().NoError(audit(action), action)
+	}
+	s.Require().ErrorContains(audit("cancelled"), "audit_log_action_check")
+
+	s.upTo(db, auditCancelledVersion)
+
+	s.Equal(4, rows())
+	s.Require().NoError(audit(AuditCancelled))
+	s.Require().ErrorContains(audit("withdrawn"), "audit_log_action_check")
+	// Added NOT VALID: the old CHECK already held for every row, so none is read again.
+	var validated bool
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT convalidated FROM pg_constraint "+
+		"WHERE conname = 'audit_log_action_check' AND conrelid = 'audit_log'::regclass").Scan(&validated))
+	s.False(validated)
+
+	previous := fstest.MapFS{}
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	s.Require().NoError(err)
+	for _, name := range carried {
+		if version, _, _ := strings.Cut(name, "_"); version >= strconv.FormatInt(auditCancelledVersion, 10) {
+			continue
+		}
+		body, err := fs.ReadFile(migrations.FS, name)
+		s.Require().NoError(err)
+		previous[name] = &fstest.MapFile{Data: body}
+	}
+	goose.SetBaseFS(previous)
+	s.Require().NoError(goose.SetDialect("postgres"))
+	s.Require().NoError(goose.UpContext(s.ctx, db.DB().DB, "."), "the previous router migrates a newer database as a no-op")
+	s.exec(db, oldRequestInsert)
+	s.Require().NoError(audit(AuditCreated))
+
+	s.goose()
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", before))
+	s.Equal(6, rows())
+	s.Require().ErrorContains(audit(AuditCancelled), "audit_log_action_check")
+	s.Require().NoError(audit(AuditCreated))
+}
+
+// userScopeVersion lets a policy belong to one end user of an app (T7 B).
+const userScopeVersion int64 = 20261112130000
+
+// TestThePoliciesTakeTheUserScopeAndThePreviousRouterStillWrites: a database holding an
+// organization's and an app's policy migrates, keeps both, and takes a user's and no other new
+// scope. The router before it still migrates the database as a no-op and writes its policies.
+// Down keeps the users' rows and refuses new ones.
+func (s *MigrationOrderSuite) TestThePoliciesTakeTheUserScopeAndThePreviousRouterStillWrites() {
+	db := s.open()
+	before := s.migrationBefore(userScopeVersion)
+	s.upTo(db, before)
+	policy := func(scope, id string) error {
+		_, err := db.DB().ExecContext(s.ctx, "INSERT INTO policies (scope, scope_id, document, updated_at) "+
+			"VALUES (?, ?, '{}', now()) ON CONFLICT (scope, scope_id) DO UPDATE SET updated_at = now()", scope, id)
+		return err
+	}
+	rows := func() int {
+		var count int
+		s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM policies").Scan(&count))
+		return count
+	}
+	s.Require().NoError(policy("organization", "org-1"))
+	s.Require().NoError(policy("app", "app-1"))
+	s.Require().ErrorContains(policy("user", "app-1/ann"), "policies_scope_check")
+
+	s.upTo(db, userScopeVersion)
+
+	s.Equal(2, rows())
+	s.Require().NoError(policy(string(ScopeUser), UserScopeID("app-1", "ann")))
+	s.Require().ErrorContains(policy("team", "app-1/a"), "policies_scope_check")
+
+	previous := fstest.MapFS{}
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	s.Require().NoError(err)
+	for _, name := range carried {
+		if version, _, _ := strings.Cut(name, "_"); version >= strconv.FormatInt(userScopeVersion, 10) {
+			continue
+		}
+		body, err := fs.ReadFile(migrations.FS, name)
+		s.Require().NoError(err)
+		previous[name] = &fstest.MapFile{Data: body}
+	}
+	goose.SetBaseFS(previous)
+	s.Require().NoError(goose.SetDialect("postgres"))
+	s.Require().NoError(goose.UpContext(s.ctx, db.DB().DB, "."), "the previous router migrates a newer database as a no-op")
+	s.Require().NoError(policy("app", "app-1"))
+
+	s.goose()
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", before))
+	s.Equal(3, rows(), "a user's policy is kept for the next Up")
+	s.Require().ErrorContains(policy("user", "app-1/bea"), "policies_scope_check")
+	s.Require().NoError(policy("organization", "org-1"))
+
+	s.upTo(db, userScopeVersion)
+	has, err := db.HasUserPolicies(s.ctx, "app-1")
+	s.Require().NoError(err)
+	s.True(has, "Up again finds the users' rows it kept")
 }
 
 func (s *MigrationOrderSuite) auditRows(db *Store) int {

@@ -44,6 +44,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 const (
@@ -51,6 +52,9 @@ const (
 	redisEnvVar       = "ROUTER_REDIS_ADDR"
 	phoneConfigEnvVar = "ROUTER_PHONE_CONFIG"
 )
+
+// cliAttribution owns what a command buys and dials: an operator ran it, and no key started it.
+var cliAttribution = routing.Attribution{APIKey: routing.CLIOrigin("phone")}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -106,7 +110,7 @@ func run(command string, arguments []string) error {
 // listVendors says which vendors are known, which are implemented and which are ready to
 // use, which is the first question when nothing works.
 func listVendors() error {
-	registry, err := registry()
+	registry, _, err := registry()
 	if err != nil {
 		return err
 	}
@@ -287,7 +291,7 @@ func buy(ctx context.Context, arguments []string) error {
 		Vendor:  *vendor,
 		E164:    *number,
 		Country: *country,
-		Owner:   routing.Owner{CustomerID: *customer, Tags: tags.Tags},
+		Owner:   routing.Owner{CustomerID: *customer, Attribution: cliAttribution, Tags: tags.Tags},
 	})
 	if err != nil {
 		return err
@@ -356,7 +360,7 @@ func dial(ctx context.Context, arguments []string) error {
 	defer cleanup()
 
 	placed, err := service.Call(ctx, phone.CallRequest{
-		Owner:         routing.Owner{CustomerID: *customer, Tags: tags.Tags},
+		Owner:         routing.Owner{CustomerID: *customer, Attribution: cliAttribution, Tags: tags.Tags},
 		From:          *from,
 		To:            *to,
 		SessionID:     *sessionID,
@@ -400,7 +404,7 @@ func transfer(ctx context.Context, arguments []string) error {
 	defer cleanup()
 
 	placed, err := service.Transfer(ctx, phone.TransferRequest{
-		Owner:    routing.Owner{CustomerID: *customer, Tags: tags.Tags},
+		Owner:    routing.Owner{CustomerID: *customer, Attribution: cliAttribution, Tags: tags.Tags},
 		From:     *from,
 		To:       *to,
 		CallID:   *sessionID,
@@ -640,7 +644,11 @@ func release(ctx context.Context, arguments []string) error {
 func build(ctx context.Context) (*phone.Service, func(), error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	registry, err := registry()
+	registry, _, err := registry()
+	if err != nil {
+		return nil, nil, err
+	}
+	list, err := prices.Embedded(nil, "", logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -677,7 +685,7 @@ func build(ctx context.Context) (*phone.Service, func(), error) {
 
 	var recorder *routing.Recorder
 	if pgStore != nil || liveClient != nil {
-		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, logger)
+		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, list, logger)
 		closers = append(closers, recorder.Close)
 	}
 
@@ -702,12 +710,13 @@ func build(ctx context.Context) (*phone.Service, func(), error) {
 	return service, cleanup, nil
 }
 
-func registry() (*phone.Registry, error) {
+// registry is the vendors, and the config they were read from.
+func registry() (*phone.Registry, phone.Config, error) {
 	config, err := phone.LoadConfig(os.Getenv(phoneConfigEnvVar))
 	if err != nil {
-		return nil, err
+		return nil, phone.Config{}, err
 	}
-	return vendors.Registry(config), nil
+	return vendors.Registry(config), config, nil
 }
 
 func where(number phone.Available) string {

@@ -72,7 +72,7 @@ func (s *LLMQuotaSuite) sessionAs(name string, messages, tokens int64, caller ro
 	s.Require().NoError(err)
 
 	provider := newStubLLM()
-	recorder := routing.NewRecorder(routing.LLM, nil, nil, slog.Default())
+	recorder := routing.NewRecorder(routing.LLM, nil, nil, nil, slog.Default())
 	config := routing.ProviderConfig{Provider: name, Model: "stub-model"}
 	session := newSession(provider, config,
 		routing.Owner{CustomerID: "acme", Caller: caller}, recorder, limiter)

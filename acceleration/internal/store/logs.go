@@ -83,7 +83,8 @@ func SafeLogText(text string) string {
 func safeLogDetails(details map[string]any) map[string]any {
 	out := map[string]any{}
 	// Explicitly allow metadata; arbitrary tool arguments/results and request headers never enter storage.
-	for _, key := range []string{"turn_id", "tool_call_id", "tool", "provider", "model", "duration_ms", "context", "kind", "error_message", "error_code", "probability", "held_ms"} {
+	for _, key := range []string{"turn_id", "tool_call_id", "tool", "provider", "model", "duration_ms", "context", "kind", "error_message", "error_code", "probability", "held_ms", "sfu_edge", "sfu_host", "stream_sip_host", "vendor", "vendor_call_id", "sfus_used", "stream_session_id", "customer_trunk_host",
+		"agent_current_sfu", "agent_location", "agent_distance_to_sfu_km", "caller_current_sfu", "caller_location", "caller_distance_to_sfu_km", "stream_media_addr", "customer_media_addr"} {
 		if value, ok := details[key]; ok {
 			out[key] = SafeLogText(fmt.Sprint(value))
 		}
@@ -168,14 +169,21 @@ func (s *Store) AgentLog(ctx context.Context, customer string, id int64) (*Agent
 	if err != nil {
 		return &row, err
 	}
-	// A request's id is only unique in its own database, so with shards the log row's own
-	// details, which carry the error since 20260914175000_agent_log_failures.sql, are the answer.
-	if row.EventType == "provider_request" && !s.Sharded() {
+	// The log row's own details carry the error since 20260914175000_agent_log_failures.sql,
+	// and are the answer. A request's id is only unique in the database that numbered it, with
+	// shards or after a data move, which gives a moved request an id of its new deployment's, so
+	// an older row's request is found by that number only when it also started when the row
+	// says it happened, for the same agent: both writers log a request at its started_at.
+	_, carried := row.Details["error_code"]
+	if row.EventType == "provider_request" && !s.Sharded() && !carried {
 		rawID, _ := row.Details["request_id"].(string)
 		requestID, parseErr := strconv.ParseInt(rawID, 10, 64)
 		if parseErr == nil && requestID > 0 {
 			var request Request
-			lookup := s.db.NewSelect().Model(&request).Column("error_code", "error_message").Where("customer_id = ? AND id = ?", customer, requestID).Scan(ctx)
+			lookup := s.db.NewSelect().Model(&request).Column("error_code", "error_message").
+				Where("customer_id = ? AND id = ?", customer, requestID).
+				Where("started_at = ? AND agent_id = ?", row.OccurredAt, row.AgentID).
+				Scan(ctx)
 			if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
 				return nil, lookup
 			}

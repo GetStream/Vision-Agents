@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -62,6 +63,9 @@ type Result struct {
 	// Documents are the sources behind it, most relevant first.
 	Documents []Document
 }
+
+// Used is one request: a search API bills by the call rather than by what it read.
+func (Result) Used() pricing.Quantities { return pricing.Quantities{pricing.Requests: 1} }
 
 // Document is one source that bears on the question.
 type Document struct {

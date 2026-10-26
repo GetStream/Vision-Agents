@@ -67,6 +67,10 @@ var ErrLocked = errors.New("dlc: the use case cannot do that in its status")
 // ErrRefused is a text or call the gate would not let through.
 var ErrRefused = errors.New("dlc: refused")
 
+// ErrUnpaid is a text, call or number refused because the organization may not pay for it.
+// The refusal it wraps says why: suspended, out of credit, or past a spend limit.
+var ErrUnpaid = errors.New("dlc: the organization may not pay for this")
+
 // Editable reports whether an app may still change a use case in status.
 func Editable(status string) bool {
 	return status == Draft || status == ChangesRequested || status == VendorRejected

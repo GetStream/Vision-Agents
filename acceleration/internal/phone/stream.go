@@ -221,6 +221,14 @@ func (s *Stream) DeleteRoute(ctx context.Context, id string) error {
 // does not wrap without building a second client.
 func (s *Stream) Client() *getstream.Stream { return s.client }
 
+// EndCall ends a call for everybody on it, a caller who came in over SIP included.
+func (s *Stream) EndCall(ctx context.Context, callType, callID string) error {
+	if _, err := s.client.Video().EndCall(ctx, callType, callID, &getstream.EndCallRequest{}); err != nil {
+		return stack.Wrap(fmt.Errorf("phone: end call %s:%s: %w", callType, callID, err))
+	}
+	return nil
+}
+
 // sipURI makes sure the trunk address is a SIP uri, since Stream reports the host without
 // the scheme and a vendor needs the whole thing.
 func sipURI(uri string) string {

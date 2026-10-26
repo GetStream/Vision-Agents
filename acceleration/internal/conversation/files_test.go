@@ -258,3 +258,61 @@ func TestAReopenedConversationSaysAPhotoWasSentWithoutShowingItAgain(t *testing.
 		{Role: llm.Assistant, Content: "The first."},
 	}, history)
 }
+
+// A follow-up's reply is carried again as it finished, with its files, live and after the
+// conversation is read back from Stream, as a scheduled task's retry sends it (AI-1882).
+func TestAFollowUpsFilesAreReadBackLiveAndAcrossRestart(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginFollowUp("st_run", "the task is due")
+	require.NoError(t, err)
+	render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
+	c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "run-1", Tool: sandbox.ToolName, Result: "Attached.", Files: []sandbox.Attachment{render}})
+	c.Observe(agent.ResponseDelta{Text: "Here is your teapot."})
+	c.Observe(agent.Responded{})
+
+	finished := FinishedReply{Customer: "customer", CID: c.CID(), MessageID: current(c).ID, CommandID: "st_run",
+		Text: "Here is your teapot.", Files: []sandbox.Attachment{render}}
+	require.Equal(t, finished, c.FollowUpFinished("st_run"))
+	saved(t, c)
+	c.Release()
+	service.Close()
+
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	require.Equal(t, finished, c.FollowUpFinished("st_run"))
+	require.Equal(t, FinishedReply{Customer: "customer", CID: c.CID(), CommandID: "st_other"}, c.FollowUpFinished("st_other"))
+}
+
+// A follow-up delivered again after an abandoned turn is read back with the files of the reply
+// that answered it, not the abandoned turn's none.
+func TestARetriedFollowUpsFilesAreReadBackAcrossRestart(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginFollowUp("st_run", "the task is due")
+	require.NoError(t, err)
+	c.AbandonFollowUp("st_run")
+	_, err = c.BeginFollowUp("st_run", "the task is due")
+	require.NoError(t, err)
+	render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
+	c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "run-1", Tool: sandbox.ToolName, Result: "Attached.", Files: []sandbox.Attachment{render}})
+	c.Observe(agent.ResponseDelta{Text: "Here is your teapot."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	c.Release()
+	service.Close()
+
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	require.Equal(t, []sandbox.Attachment{render}, c.FollowUpFinished("st_run").Files)
+}

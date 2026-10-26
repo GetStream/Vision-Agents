@@ -53,7 +53,12 @@ Start from the closest existing file:
    (`registration`: `operator`, `customer`, `managed`, `dcr`, `cimd`), `scopes`, `refresh`,
    `rate_limit` and `sources`. Add a `channel` block only if the provider sends messages.
    Set `sensitive: true` if the connector reads private data, and `outbound: false` on a
-   source whose tools only read (`providers/AGENTS.md`); left out, a tool counts as writing.
+   source whose tools only read (`providers/AGENTS.md`), or list the tools that only read in
+   its `read_only_tools` when others write (`google_drive.yaml`); left out, a tool counts as
+   writing.
+   A tool's `needs_scopes` is the scope the consent asks for; when the provider documents a
+   broader scope that gives all it gives, list it under `scopes.covered_by`
+   (`google_drive.yaml`), so a grant holding the broader one is not told to consent again.
    A source's `headers` are fixed request headers sent on every request, such as GitHub's
    `X-MCP-Toolsets` (`github.yaml`); a header the credential, the connection or MCP writes
    is refused.
@@ -85,7 +90,9 @@ Start from the closest existing file:
   the router from starting. A comment, spacing or key order is not a change.
 - **Existing connections keep their pinned revision.** They move to the new one at their next
   consent (OAuth) or token save. So a new field, such as `api_base`, reaches old connections
-  only then.
+  only then. The API shows them `outdated` only when the new revision changes what they read
+  (`core.Manifest.ReadsAsConnection`): a revision that changes only `sensitive`, `outbound` or
+  `read_only_tools` leaves them `current`, since the config check reads those from the latest.
 - **To retire a broken revision**, the new revision lists it in `broken_revisions` with a
   reason. Connections on it are asked to sign in again.
 - **Never delete a file to remove a connector.** Its revisions stay for the connections that

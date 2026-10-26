@@ -2,6 +2,7 @@ package elevenlabs
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -91,6 +93,30 @@ func finish(conn *websocket.Conn, contextID string) error {
 
 type ElevenLabsSuite struct {
 	suite.Suite
+}
+
+// quotaRefusals is how many socket frames of a spent quota the pool of ELEVENLABS_API_KEY
+// has counted as refused.
+func quotaRefusals(t *testing.T) float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "router_keypool_refused_attempts_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["key_var"] == "ELEVENLABS_API_KEY" && labels["status"] == "quota_exceeded" {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
 }
 
 func TestElevenLabsSuite(t *testing.T) {
@@ -1021,4 +1047,22 @@ func (s *ElevenLabsSuite) TestCloseCancelsAStalledReplacementHandshake() {
 
 func (s *ElevenLabsSuite) TestSatisfiesTTSInterface() {
 	var _ tts.TTS = s.newTTS(Options{})
+}
+
+func (s *ElevenLabsSuite) TestAKeyWithNoQuotaLeftIsCountedAsRefused() {
+	spent, spare := "elevenlabs-"+rand.Text(), "elevenlabs-"+rand.Text()
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	before := quotaRefusals(s.T())
+	provider, conn := s.connect(fake, Options{APIKey: spent + "," + spare})
+	defer provider.Close()
+
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage,
+		[]byte(`{"message":"This request exceeds your API key quota.","error":"quota_exceeded","code":1008}`)))
+	s.collect(provider, func(event tts.Event) bool {
+		_, failed := event.(tts.Error)
+		return failed
+	})
+
+	s.Equal(before+1, quotaRefusals(s.T()))
 }

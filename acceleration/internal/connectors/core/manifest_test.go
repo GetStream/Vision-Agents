@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -96,6 +97,191 @@ func (s *ManifestSuite) TestASourceSendsDataOutUnlessItSaysOutboundFalse() {
 	}
 }
 
+// A source that offers tools that write beside ones that read sends out only the ones it does
+// not list in read_only_tools, and a source that says outbound: false sends out none.
+func (s *ManifestSuite) TestASourceSendsOutEveryToolItDoesNotListAsReadOnly() {
+	endpoints := "endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n    endpoint: mcp\n" +
+		"    read_only_tools: [read_doc]\n"
+	parsed, err := ParseManifest(minimal(endpoints))
+	s.Require().NoError(err)
+	source := MCPSource(parsed.Sources)
+
+	s.False(source.SendsOutTool("read_doc"))
+	s.True(source.SendsOutTool("update_doc"))
+	s.True(source.SendsOut())
+
+	parsed, err = ParseManifest(minimal(endpoints + "    outbound: false\n"))
+	s.Require().NoError(err)
+	s.False(MCPSource(parsed.Sources).SendsOutTool("update_doc"))
+}
+
+func (s *ManifestSuite) TestAnEmptyReadOnlyToolIsRejected() {
+	_, err := ParseManifest(minimal("endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n" +
+		"    endpoint: mcp\n    read_only_tools: [read_doc, \"\"]\n"))
+	s.ErrorContains(err, "sources[0].read_only_tools[1]: is empty")
+}
+
+func (s *ManifestSuite) TestAReadOnlyToolNamedTwiceIsRejected() {
+	_, err := ParseManifest(minimal("endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n" +
+		"    endpoint: mcp\n    read_only_tools: [read_doc, read_doc]\n"))
+	s.ErrorContains(err, `sources[0].read_only_tools[1]: "read_doc" is named twice`)
+}
+
+// readsAsConnection is a connector at revision 1 with a source that lists a tool that only
+// reads, as bigquery.yaml revision 2 did.
+const readsAsConnection = "endpoints:\n  mcp: https://example.com/mcp\nscopes:\n  list: [read]\n" +
+	"sources:\n  - kind: mcp\n    endpoint: mcp\n    read_only_tools: [list_tables, run_select]\n"
+
+// revisedFrom is the pinned manifest with old replaced by new, at revision 2.
+func (s *ManifestSuite) revisedFrom(old, new string) Manifest {
+	raw := strings.Replace(string(minimal(readsAsConnection)), "revision: 1", "revision: 2", 1)
+	s.Require().Contains(raw, old)
+	parsed, err := ParseManifest([]byte(strings.Replace(raw, old, new, 1)))
+	s.Require().NoError(err)
+	return parsed
+}
+
+func (s *ManifestSuite) pinned() Manifest {
+	parsed, err := ParseManifest(minimal(readsAsConnection))
+	s.Require().NoError(err)
+	return parsed
+}
+
+// Only the sensitive-connector check reads sensitive, outbound and read_only_tools, and it
+// reads the latest revision; only the seeder reads broken_revisions. A later revision that
+// changes only those reads, for a connection, as the one it pins.
+func (s *ManifestSuite) TestARevisionChangingOnlyWhatAConfigIsCheckedAgainstReadsAsTheOneBefore() {
+	later := s.revisedFrom("    read_only_tools: [list_tables, run_select]\n",
+		"    read_only_tools: [list_tables]\n    outbound: true\nsensitive: true\n"+
+			"broken_revisions:\n  - revisions: [1]\n    reason: lists run_select\n")
+	s.Require().NotEqual(s.pinned(), later)
+
+	s.True(s.pinned().ReadsAsConnection(later))
+	s.True(later.ReadsAsConnection(s.pinned()))
+}
+
+func (s *ManifestSuite) TestARevisionAskingForOtherScopesReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("list: [read]", "list: [read, write]")))
+}
+
+func (s *ManifestSuite) TestARevisionWithAnotherSchemeReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("schemes: [oauth2_code]", "schemes: [bearer]")))
+}
+
+func (s *ManifestSuite) TestARevisionWithAnotherEndpointReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("https://example.com/mcp", "https://example.com/v2/mcp")))
+}
+
+// A field of a source other than outbound and read_only_tools counts: a tool's needs_scopes
+// decides whether the source offers the tool.
+func (s *ManifestSuite) TestARevisionChangingAnotherFieldOfASourceReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("    read_only_tools:",
+		"    tools:\n      - name: run_select\n        needs_scopes: [read]\n    read_only_tools:")))
+}
+
+// The connector's name counts, which a consent started from a session shows
+// (ConnectorConsents, internal/api/authorizations.go).
+func (s *ManifestSuite) TestARevisionWithAnotherNameReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("name: Example\n", "name: Renamed\n")))
+}
+
+// Category, description and setup only the catalog shows, from the latest revision.
+func (s *ManifestSuite) TestARevisionChangingOnlyWhatTheCatalogShowsReadsAsTheOneBefore() {
+	later := s.revisedFrom("name: Example\n", "name: Example\ncategory: Data\ndescription: Renamed.\n"+
+		"setup:\n  url: https://example.com/setup\n")
+	s.Require().NotEqual(s.pinned(), later)
+
+	s.True(s.pinned().ReadsAsConnection(later))
+}
+
+// readsAsConnectionIgnores is every field ReadsAsConnection leaves out, by name. Any other
+// field of Manifest or SourceRule counts, so one added later counts until it is named here
+// with the check that reads it.
+var readsAsConnectionIgnores = map[string]bool{
+	"Revision": true, "BrokenRevisions": true, "Sensitive": true,
+	"Category": true, "Description": true, "Setup": true,
+	"SourceRule.Outbound": true, "SourceRule.ReadOnlyTools": true,
+}
+
+// filled is a non-zero value of t, every field of a struct set.
+func filled(t reflect.Type) reflect.Value {
+	v := reflect.New(t).Elem()
+	switch t.Kind() {
+	case reflect.String:
+		v.SetString("x")
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Int, reflect.Int64:
+		v.SetInt(7)
+	case reflect.Float64:
+		v.SetFloat(7)
+	case reflect.Interface:
+		v.Set(reflect.ValueOf("x"))
+	case reflect.Pointer:
+		v.Set(reflect.New(t.Elem()))
+		v.Elem().Set(filled(t.Elem()))
+	case reflect.Slice:
+		v.Set(reflect.Append(v, filled(t.Elem())))
+	case reflect.Map:
+		v.Set(reflect.MakeMap(t))
+		v.SetMapIndex(filled(t.Key()), filled(t.Elem()))
+	case reflect.Struct:
+		for i := range t.NumField() {
+			v.Field(i).Set(filled(t.Field(i).Type))
+		}
+	default:
+		panic("filled: unsupported kind " + t.Kind().String())
+	}
+	return v
+}
+
+// Every field of a manifest, and of each source, counts for a connection unless named in
+// readsAsConnectionIgnores: a connection reads the rest from its pinned revision (headers
+// sources/mcp/source.go, refresh schemes/oauth2cc/scheme.go, channel channelbridge/bridge.go,
+// sandbox per google_drive.yaml revision 5).
+func (s *ManifestSuite) TestEveryFieldCountsForAConnectionUnlessItIsNamedAsIgnored() {
+	base := Manifest{Sources: []SourceRule{{}}}
+	seen := map[string]bool{}
+	check := func(name string, change func(*Manifest)) {
+		seen[name] = true
+		changed := Manifest{Sources: []SourceRule{{}}}
+		change(&changed)
+		s.Equal(readsAsConnectionIgnores[name], base.ReadsAsConnection(changed), name)
+		s.Equal(readsAsConnectionIgnores[name], changed.ReadsAsConnection(base), name)
+	}
+	mt := reflect.TypeFor[Manifest]()
+	for i := range mt.NumField() {
+		f := mt.Field(i)
+		s.Require().True(f.IsExported(), f.Name)
+		if f.Name == "Sources" {
+			continue
+		}
+		check(f.Name, func(m *Manifest) { reflect.ValueOf(m).Elem().Field(i).Set(filled(f.Type)) })
+	}
+	st := reflect.TypeFor[SourceRule]()
+	for i := range st.NumField() {
+		f := st.Field(i)
+		s.Require().True(f.IsExported(), f.Name)
+		check("SourceRule."+f.Name, func(m *Manifest) {
+			reflect.ValueOf(&m.Sources[0]).Elem().Field(i).Set(filled(f.Type))
+		})
+	}
+	for name := range readsAsConnectionIgnores {
+		s.True(seen[name], "%s is named as ignored but is no field", name)
+	}
+}
+
+// The comparison changes neither manifest: each source keeps what it lists.
+func (s *ManifestSuite) TestReadsAsConnectionLeavesBothManifestsAsTheyWere() {
+	pinned := s.pinned()
+	later := s.revisedFrom("list_tables, run_select", "list_tables")
+
+	pinned.ReadsAsConnection(later)
+
+	s.Equal(s.pinned(), pinned)
+	s.Equal([]string{"list_tables"}, later.Sources[0].ReadOnlyTools)
+}
+
 // A manifest that says neither marshals as it did before the fields existed, so the seeder
 // finds a stored built-in unchanged (store.sameManifest).
 func (s *ManifestSuite) TestAManifestWithoutSensitiveOrOutboundMarshalsWithoutThem() {
@@ -105,6 +291,7 @@ func (s *ManifestSuite) TestAManifestWithoutSensitiveOrOutboundMarshalsWithoutTh
 	s.Require().NoError(err)
 	s.NotContains(string(raw), "sensitive")
 	s.NotContains(string(raw), "outbound")
+	s.NotContains(string(raw), "read_only_tools")
 }
 
 func (s *ManifestSuite) TestAManifestNamesItsEarlierBrokenRevisionsWithAReason() {
@@ -332,6 +519,31 @@ func (s *ManifestSuite) TestOwnerEmailNeedsARequiredEmailFromTheIDToken() {
 	} {
 		_, err := ParseManifest(minimal("owner_email: true\n" + capture))
 		s.ErrorContains(err, "owner_email: needs a capture rule named email, from the id_token and not optional", name)
+	}
+}
+
+// The consent refuses an email_verified that is not true, so that flag is the id_token's
+// word too: from the callback the browser would set it.
+func (s *ManifestSuite) TestOwnerEmailVerifiedComesFromTheIDToken() {
+	email := "capture:\n  - name: email\n    from: id_token\n    path: $.email\n"
+	for name, verified := range map[string]string{
+		"left out": "",
+		"required": "  - name: email_verified\n    from: id_token\n    path: $.email_verified\n",
+		"optional": "  - name: email_verified\n    from: id_token\n    path: $.email_verified\n    optional: true\n",
+	} {
+		_, err := ParseManifest(minimal("owner_email: true\n" + email + verified))
+		s.NoError(err, name)
+	}
+
+	for name, verified := range map[string]string{
+		"token response": "  - name: email_verified\n    from: token_response\n    path: $.email_verified\n",
+		"callback":       "  - name: email_verified\n    from: callback_query\n    key: email_verified\n",
+	} {
+		_, err := ParseManifest(minimal("owner_email: true\n" + email + verified))
+		s.ErrorContains(err, "owner_email: a capture rule named email_verified must come from the id_token", name)
+
+		_, err = ParseManifest(minimal(email + verified))
+		s.NoError(err, "%s: without owner_email nothing reads it", name)
 	}
 }
 
@@ -615,9 +827,124 @@ func (s *ManifestSuite) TestUnaskedScopesAreTheOnesScopesListLeavesOut() {
 	s.Require().NoError(err)
 	rule := m.Sources[0]
 
-	s.Equal([]string{"channels:manage"}, rule.UnaskedScopes(m.Scopes.List, "delete_channel"))
-	s.Empty(rule.UnaskedScopes(m.Scopes.List, "list_channels"), "every scope it needs is asked for")
-	s.Empty(rule.UnaskedScopes(m.Scopes.List, "post_message"), "the manifest does not name it")
+	s.Equal([]string{"channels:manage"}, rule.UnaskedScopes(m.Scopes, "delete_channel"))
+	s.Empty(rule.UnaskedScopes(m.Scopes, "list_channels"), "every scope it needs is asked for")
+	s.Empty(rule.UnaskedScopes(m.Scopes, "post_message"), "the manifest does not name it")
+}
+
+// coveredSource is a manifest asking for files.readonly and files.all, whose create_file needs
+// files.own, which files.all covers; more YAML under scopes.covered_by in extra.
+func coveredSource(extra string) []byte {
+	return minimal("endpoints:\n  mcp: https://mcp.example.com/mcp\nscopes:\n  list: [files.readonly, files.all]\n" +
+		"  covered_by:\n" + extra + "sources:\n  - kind: mcp\n    endpoint: mcp\n    tools:\n" +
+		"      - name: create_file\n        needs_scopes: [files.own]\n")
+}
+
+// TestAScopeIsMetByItselfOrByAScopeThatCoversIt: a grant of files.all meets files.own, one of
+// files.readonly does not, and covered_by reaches the resolved manifest a validate reads.
+func (s *ManifestSuite) TestAScopeIsMetByItselfOrByAScopeThatCoversIt() {
+	m, err := ParseManifest(coveredSource("    files.own: [files.all]\n"))
+	s.Require().NoError(err)
+
+	resolved, err := m.Resolve("oauth2_code", nil, nil)
+
+	s.Require().NoError(err)
+	s.Equal(map[string][]string{"files.own": {"files.all"}}, resolved.Scopes.CoveredBy)
+	s.True(resolved.Scopes.Meets([]string{"files.all"}, "files.own"))
+	s.True(resolved.Scopes.Meets([]string{"files.own"}, "files.own"))
+	s.False(resolved.Scopes.Meets([]string{"files.readonly"}, "files.own"))
+	s.False(resolved.Scopes.Meets(nil, "files.own"))
+	s.False(resolved.Scopes.Meets([]string{"files.own"}, "files.all"), "covering goes one way")
+}
+
+// TestAScopeNoEntryCoversIsMetOnlyByItself: with no covered_by, Meets is the plain membership
+// check validate made before it.
+func (s *ManifestSuite) TestAScopeNoEntryCoversIsMetOnlyByItself() {
+	var none ScopePolicy
+
+	s.True(none.Meets([]string{"files.own"}, "files.own"))
+	s.False(none.Meets([]string{"files.all"}, "files.own"))
+}
+
+// TestAToolWhoseScopeAnAskedScopeCoversIsAsked: scopes.list asks for files.all, which covers the
+// files.own create_file needs, so a consent can grant what it needs.
+func (s *ManifestSuite) TestAToolWhoseScopeAnAskedScopeCoversIsAsked() {
+	m, err := ParseManifest(coveredSource("    files.own: [files.all]\n"))
+	s.Require().NoError(err)
+	rule := m.Sources[0]
+
+	s.Empty(rule.UnaskedScopes(m.Scopes, "create_file"))
+	m.Scopes.CoveredBy = nil
+	s.Equal([]string{"files.own"}, rule.UnaskedScopes(m.Scopes, "create_file"))
+}
+
+// TestACoveringScopeTheManifestNeverAsksForIsAccepted: a grant may hold a broader scope no
+// consent of this connector asks for, such as one moved from a plugin that asked for it.
+func (s *ManifestSuite) TestACoveringScopeTheManifestNeverAsksForIsAccepted() {
+	m, err := ParseManifest(coveredSource("    files.own: [files.everything]\n"))
+	s.Require().NoError(err)
+
+	s.True(m.Scopes.Meets([]string{"files.everything"}, "files.own"))
+	s.Equal([]string{"files.own"}, m.Sources[0].UnaskedScopes(m.Scopes, "create_file"), "no consent asks for it")
+}
+
+func (s *ManifestSuite) TestACoveredByEntryForAScopeNoToolNeedsIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: [files.all]\n    files.other: [files.all]\n"))
+	s.ErrorContains(err, `scopes.covered_by.files.other: "files.other" is a scope no tool needs`)
+}
+
+func (s *ManifestSuite) TestAnEmptyCoveredByListIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: []\n"))
+	s.ErrorContains(err, "scopes.covered_by.files.own: is empty")
+}
+
+func (s *ManifestSuite) TestANullCoveredByListIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: null\n"))
+	s.ErrorContains(err, "scopes.covered_by.files.own: is empty")
+}
+
+func (s *ManifestSuite) TestAnEmptyCoveringScopeIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: [files.all, \"\"]\n"))
+	s.ErrorContains(err, "scopes.covered_by.files.own[1]: is empty")
+}
+
+func (s *ManifestSuite) TestAScopeCannotCoverItself() {
+	_, err := ParseManifest(coveredSource("    files.own: [files.own]\n"))
+	s.ErrorContains(err, "scopes.covered_by.files.own[0]: is the scope it covers")
+}
+
+func (s *ManifestSuite) TestACoveringScopeListedTwiceIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: [files.all, files.all]\n"))
+	s.ErrorContains(err, `scopes.covered_by.files.own[1]: "files.all" is listed twice`)
+}
+
+func (s *ManifestSuite) TestCoveredByThatIsNotAMapIsRejected() {
+	_, err := ParseManifest(coveredSource("    - files.all\n"))
+	s.ErrorContains(err, "cannot unmarshal !!seq into map[string][]string")
+}
+
+func (s *ManifestSuite) TestACoveringScopeThatIsNotAListIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: files.all\n"))
+	s.ErrorContains(err, "cannot unmarshal !!str `files.all` into []string")
+}
+
+// TestAnEmptyOrNullCoveredByIsNoEntry: it parses, covers nothing, and marshals as a manifest
+// without it does, so a stored manifest's JSON stays as it was.
+func (s *ManifestSuite) TestAnEmptyOrNullCoveredByIsNoEntry() {
+	without, err := ParseManifest(toolSource("      - name: send\n        needs_scopes: [chat:write]\n"))
+	s.Require().NoError(err)
+	want, err := json.Marshal(without)
+	s.Require().NoError(err)
+	for _, value := range []string{"{}", "null"} {
+		m, err := ParseManifest([]byte(strings.Replace(string(toolSource("      - name: send\n        needs_scopes: [chat:write]\n")),
+			"sources:", "  covered_by: "+value+"\nsources:", 1)))
+		s.Require().NoError(err, value)
+		got, err := json.Marshal(m)
+		s.Require().NoError(err)
+
+		s.JSONEq(string(want), string(got), value)
+		s.False(m.Scopes.Meets([]string{"channels:read"}, "chat:write"), value)
+	}
 }
 
 // TestTheMCPSourceIsTheFirstOfThatKind: a source of another kind is not the one whose tool rules

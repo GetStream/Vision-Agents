@@ -79,7 +79,7 @@ func TestNoAuth(t *testing.T) {
 		principal, err := authenticator.Authenticate(context.Background(), r)
 		require.NoError(t, err)
 		require.Equal(t, Principal{
-			AppID: "examples", Kind: KindServer, ServerSide: true,
+			AppID: "examples", Kind: KindServer, ServerSide: true, APIKey: NoAuthKey,
 		}, principal)
 	})
 
@@ -113,7 +113,7 @@ func TestNoAuth(t *testing.T) {
 		principal, err := authenticator.Authenticate(context.Background(), r)
 		require.NoError(t, err)
 		require.Equal(t, Principal{
-			AppID: "examples", Kind: KindServer, ServerSide: true,
+			AppID: "examples", Kind: KindServer, ServerSide: true, APIKey: NoAuthKey,
 		}, principal)
 	})
 }
@@ -336,7 +336,7 @@ func TestAPIKey(t *testing.T) {
 			request(key, signed(t, secret, time.Hour)))
 		require.NoError(t, err)
 		require.Equal(t,
-			Principal{OrganizationID: "org-1", AppID: "app-1", Kind: KindAnonymous}, principal)
+			Principal{OrganizationID: "org-1", AppID: "app-1", Kind: KindAnonymous, APIKey: key}, principal)
 	})
 
 	t.Run("names the end user the token was minted for", func(t *testing.T) {

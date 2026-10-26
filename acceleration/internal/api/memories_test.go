@@ -87,7 +87,9 @@ func (s *MemoriesSuite) TestStoppingASessionKeepsWhatItRemembered() {
 }
 
 func (s *MemoriesSuite) TestDeletingASessionForgetsOnlyWhatItRemembered() {
-	opened := s.client.createSession(textSession(nil))
+	remembering := textSession(nil)
+	remembering.Memory = &SessionMemory{UserId: new(s.client.userID)}
+	opened := s.client.createSession(remembering)
 	learned := memory.Scope{AppID: s.customerID(), UserID: s.client.userID, RunID: opened.Id}
 	earlier := memory.Scope{AppID: s.customerID(), UserID: s.client.userID, RunID: s.utils.uuid()}
 	s.remember(learned)

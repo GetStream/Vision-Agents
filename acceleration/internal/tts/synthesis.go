@@ -29,10 +29,15 @@ type Synthesis struct {
 
 var synthesisSequence atomic.Uint64
 
+// NewSynthesisID is an id no other utterance of the process has.
+func NewSynthesisID() string {
+	return fmt.Sprintf("s-%d-%d", time.Now().UnixNano(), synthesisSequence.Add(1))
+}
+
 // NewSynthesis starts tracking an utterance, generating an ID when the caller has none.
 func NewSynthesis(id string) *Synthesis {
 	if id == "" {
-		id = fmt.Sprintf("s-%d-%d", time.Now().UnixNano(), synthesisSequence.Add(1))
+		id = NewSynthesisID()
 	}
 	return &Synthesis{ID: id, startedAt: time.Now()}
 }

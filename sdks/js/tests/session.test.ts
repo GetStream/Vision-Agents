@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { Client, ConfigurationError, Session, Socket, Tools } from "../src/index.js";
+import {
+  CallNotHeldError,
+  Client,
+  ConfigurationError,
+  Session,
+  Socket,
+  Tools,
+  type ToolCall,
+} from "../src/index.js";
 import { TestRouter, type Connection } from "./router.js";
 
 describe("Socket", () => {
@@ -251,13 +259,33 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("reports a tool the model asked for that nothing is registered as", async () => {
-    const [session, connection] = await opened(new Tools());
+  it("leaves a call for a tool held elsewhere to whoever holds it", async () => {
+    const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
+    const [session, connection] = await opened(tools);
 
-    connection.send({ type: "tool_call", id: "call_1", name: "unknown", arguments: "{}" });
+    // Every watcher is sent every call and the first answer wins, so answering a tool this
+    // session does not hold would beat the backend that runs it.
+    connection.send({ type: "tool_call", id: "call_1", name: "book_flight", arguments: "{}" });
+    connection.send({ type: "tool_call", id: "call_2", name: "lookup", arguments: "{}" });
 
-    const answer = await connection.next();
-    assert.match(String(answer["error"]), /nothing is registered as unknown/);
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_2", output: "found" });
+    await session.close();
+  });
+
+  it("answers no call at all when it holds no tools", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "tool_call", id: "call_1", name: "book_flight", arguments: "{}" });
+    connection.send({ type: "joined" });
+    // Frames are read in order, so once joined is read the call before it has been seen.
+    for await (const event of session.events()) {
+      if (event.kind === "joined") {
+        break;
+      }
+    }
+    session.say("one moment");
+
+    assert.deepEqual(await connection.next(), { type: "say", text: "one moment" });
     await session.close();
   });
 
@@ -282,6 +310,114 @@ describe("Session", () => {
 
     await connection.next();
     assert.equal(aborted, true);
+    await session.close();
+  });
+
+  it("leaves a call the router addresses to another watcher", async () => {
+    const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "lookup", arguments: "{}", run: false });
+    connection.send({ type: "tool_call", id: "call_2", name: "lookup", arguments: "{}", run: true });
+
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_2", output: "found" });
+    await session.close();
+  });
+
+  it("hands a function the call it runs for, and sends how it is going", async () => {
+    let seen: ToolCall | undefined;
+    const tools = new Tools().register({
+      name: "search",
+      description: "Search flights",
+      run: (_input, _signal, call) => {
+        seen = call;
+        call.update("checking three airlines");
+        call.say("Still looking, one moment.");
+        return "found two";
+      },
+    });
+    const [session, connection] = await opened(tools);
+
+    connection.send({
+      type: "tool_call",
+      id: "call_1",
+      turn_id: "turn_2",
+      name: "search",
+      arguments: "{}",
+      user: { id: "sam", name: "Sam", custom: { tier: "gold" } },
+      conversation: { cid: "agent:kept", custom: { line: "support" } },
+      approved: true,
+    });
+
+    assert.deepEqual(await connection.next(), {
+      type: "tool_update",
+      tool_call_id: "call_1",
+      text: "checking three airlines",
+      verbatim: false,
+    });
+    assert.deepEqual(await connection.next(), {
+      type: "tool_update",
+      tool_call_id: "call_1",
+      text: "Still looking, one moment.",
+      verbatim: true,
+    });
+    assert.equal((await connection.next())["output"], "found two");
+    assert.equal(seen?.id, "call_1");
+    assert.equal(seen?.sessionId, "sess_1", "the session the call came over");
+    assert.equal(seen?.turnId, "turn_2");
+    assert.deepEqual(seen?.user, { id: "sam", name: "Sam", custom: { tier: "gold" } });
+    assert.deepEqual(seen?.conversation, { cid: "agent:kept", custom: { line: "support" } });
+    assert.equal(seen?.approved, true);
+    await session.close();
+  });
+
+  it("keeps a held call going when the caller talks over the agent", async () => {
+    let release = () => {};
+    let writing: AbortSignal | undefined;
+    const tools = new Tools().register({
+      name: "charge",
+      description: "Charge the card",
+      run: async (_input, _signal, call) => {
+        writing = await call.disallowInterruptions();
+        await new Promise<void>((resolve) => (release = resolve));
+        return "charged";
+      },
+    });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "charge", arguments: "{}" });
+    assert.deepEqual(await connection.next(), { type: "tool_hold", tool_call_id: "call_1" });
+    connection.send({ type: "tool_held", id: "call_1" });
+    while (!writing) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    connection.send({ type: "tool_cancel", id: "call_1" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release();
+
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_1", output: "charged" });
+    assert.equal(writing.aborted, false);
+    await session.close();
+  });
+
+  it("hands a call stopped before it could be held a signal already aborted", async () => {
+    let writing: AbortSignal | undefined;
+    const tools = new Tools().register({
+      name: "charge",
+      description: "Charge the card",
+      run: async (_input, _signal, call) => {
+        writing = await call.disallowInterruptions();
+        return writing.aborted ? "never charged" : "charged";
+      },
+    });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "charge", arguments: "{}" });
+    assert.deepEqual(await connection.next(), { type: "tool_hold", tool_call_id: "call_1" });
+    connection.send({ type: "tool_cancel", id: "call_1" });
+
+    assert.equal((await connection.next())["output"], "never charged");
+    assert.ok(writing?.reason instanceof CallNotHeldError);
     await session.close();
   });
 
@@ -384,6 +520,23 @@ describe("Session", () => {
       await session.close();
     });
 
+    it("runs at once a call the caller already allowed out loud", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send({ ...refundCall, approved: true });
+
+      assert.deepEqual(await connection.next(), {
+        type: "tool_result",
+        tool_call_id: "call_1",
+        request_id: "m1",
+        turn_id: "t1",
+        output: "Refunded A-1042",
+      });
+      assert.deepEqual(session.approvals, []);
+      assert.deepEqual(ran, ["A-1042"]);
+      await session.close();
+    });
+
     it("stops waiting when the model cancels the call", async () => {
       const [session, connection] = await opened(refunds());
 
@@ -423,6 +576,58 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("reads what is being heard off a speaking event, before the spoke that ends it", async () => {
+    const [session, connection] = await opened();
+    const at = "2026-10-22T09:30:00.123456789Z";
+
+    connection.send({ type: "speaking", turn_id: "turn-1", synthesis_id: "turn-1#0", text: "Hello there.", at });
+    connection.send({ type: "spoke", turn_id: "turn-1", synthesis_id: "turn-1#0", characters: 12, audio_duration_ms: 900 });
+
+    const read = [];
+    for await (const event of session.events()) {
+      read.push(event);
+      if (read.length === 2) {
+        break;
+      }
+    }
+    const [speaking, spoke] = read;
+    assert.equal(speaking?.kind, "speaking");
+    assert.equal(speaking?.text, "Hello there.");
+    assert.equal(speaking?.frame["at"], at);
+    assert.equal(spoke?.kind, "spoke");
+    assert.equal(spoke?.frame["synthesis_id"], speaking?.frame["synthesis_id"]);
+    assert.equal(spoke?.frame["characters"], 12);
+    await session.close();
+  });
+
+  it("follows the voice off the socket without taking anything from events()", async () => {
+    const [session, connection] = await opened();
+    const told: (string | undefined)[] = [];
+    session.speech.subscribe(() => told.push(session.speech.get()?.synthesisId));
+
+    const frames = [
+      { type: "response_delta", turn_id: "turn-1", text: "Hello there." },
+      { type: "speaking", turn_id: "turn-1", synthesis_id: "turn-1", text: "Hello there.", at: "2026-10-22T09:30:00Z" },
+      { type: "spoke", turn_id: "turn-1", synthesis_id: "turn-1", characters: 12, audio_duration_ms: 900 },
+    ];
+    for (const frame of frames) {
+      connection.send(frame);
+    }
+
+    const read: string[] = [];
+    for await (const event of session.events()) {
+      read.push(event.kind);
+      if (read.length === frames.length) {
+        break;
+      }
+    }
+    assert.deepEqual(read, ["response_delta", "speaking", "spoke"], "every event is still the caller's");
+    // Held while its text came first, on a voice session; then heard, then measured.
+    assert.deepEqual(told, [undefined, "turn-1", "turn-1"]);
+    assert.equal(session.speech.heard("turn-1", performance.now() + 900)?.done, true);
+    await session.close();
+  });
+
   it("sends what the caller asked the conversation to do", async () => {
     const [session, connection] = await opened();
 
@@ -452,6 +657,34 @@ describe("Session", () => {
     assert.equal(router.last.method, "POST");
     assert.equal(router.last.path, "/v1/agents/sessions/sess_1/voice");
     assert.equal(session.voice.started, true);
+    await session.close();
+  });
+
+  it("holds no reply for a voice once the agent is off the call", async () => {
+    const [session, connection] = await opened();
+    const row = { id: "sess_1", user_id: "john", agent_id: "john", state: "live", created_at: "2026-01-01T00:00:00Z" };
+    router.serve("DELETE", "/v1/agents/sessions/sess_1/voice", { body: row });
+    router.serve("POST", "/v1/agents/sessions/sess_1/voice", { body: { ...row, call_id: "sess_1" } });
+    const deltas = (async () => {
+      const kinds: string[] = [];
+      for await (const event of session.events()) {
+        kinds.push(event.kind);
+        if (kinds.length === 3) {
+          return kinds;
+        }
+      }
+      return kinds;
+    })();
+
+    connection.send({ type: "speaking", turn_id: "turn-0", synthesis_id: "turn-0", text: "Hi." });
+    await session.voice.stop();
+    connection.send({ type: "response_delta", turn_id: "turn-1", text: "In writing now." });
+    await session.voice.start();
+    connection.send({ type: "response_delta", turn_id: "turn-2", text: "Back on the call." });
+    await deltas;
+
+    assert.equal(session.speech.heard("turn-1"), undefined, "a reply in writing is shown as it is");
+    assert.deepEqual(session.speech.heard("turn-2"), { chars: 0, done: false });
     await session.close();
   });
 

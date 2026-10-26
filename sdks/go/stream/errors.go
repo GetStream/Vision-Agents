@@ -27,8 +27,9 @@ type RouterError struct {
 	// Status is the HTTP status the router answered with.
 	Status int
 	// Type is the kind of failure, which is what decides the status: invalid_request,
-	// authentication, permission, not_found, conflict, rate_limited, internal, unavailable
-	// and a few more. Empty when what answered was not the router, such as a proxy.
+	// authentication, payment_required, permission, not_found, conflict, rate_limited,
+	// internal, unavailable and a few more. Empty when what answered was not the router, such
+	// as a proxy.
 	Type string
 	// Code is what went wrong, for a program to branch on: not_configured,
 	// validation_failed, server_side_only, session_not_found and others. More are added, so
@@ -91,6 +92,25 @@ func (e *RouterError) Error() string {
 		}
 	}
 	return strings.Join(said, ": ")
+}
+
+// PaymentRequired reports work refused for money, a 402: the organization's credit is spent
+// (Code insufficient_credits), its spend hard limit for the day or the month is reached
+// (system_limit_reached), or one of the organization's own spend limits is spent
+// (spend_limit_reached). Retrying does not help until credit is added or the limit resets,
+// which Message says when; a model that costs nothing is still served. A suspended
+// organization is a permission failure instead, account_suspended, and a spent limit on one end
+// user is a rate limit, user_limit_reached, with Retry-After.
+func (e *RouterError) PaymentRequired() bool {
+	return e.Type == string(acceleration.ErrorTypePaymentRequired) || e.Status == http.StatusPaymentRequired
+}
+
+// SpendCheckUnavailable reports whether the router refused work that costs money because it
+// could not share what the organization is spending with the other routers for a while
+// (spend_check_unavailable, a 503). It is no refusal of the organization's money: retry after a
+// few seconds, as Retry-After says, and a model that costs nothing is still served.
+func (e *RouterError) SpendCheckUnavailable() bool {
+	return e.Code == "spend_check_unavailable"
 }
 
 // Unwrap is what the socket dialler said, for a refused upgrade, and nil otherwise.

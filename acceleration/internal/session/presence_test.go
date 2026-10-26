@@ -179,6 +179,43 @@ func (s *SessionSuite) TestAnInboundSessionWhoseCallerIsGoneEndsAtTheStartTimeou
 	s.GreaterOrEqual(time.Since(started), inboundStartTimeout, "the session ended before the inbound start timeout")
 }
 
+// endingReason takes the place of the session's ending, to read which timeout reached it.
+func (s *SessionSuite) endingReason(created *Session) <-chan TimeoutReason {
+	reasons := make(chan TimeoutReason, 1)
+	created.mu.Lock()
+	created.end = func(reason TimeoutReason) { reasons <- reason }
+	created.mu.Unlock()
+	return reasons
+}
+
+// endedBy waits for the session's timeout and checks which one it was.
+func (s *SessionSuite) endedBy(reasons <-chan TimeoutReason, want TimeoutReason) {
+	select {
+	case reason := <-reasons:
+		s.Equal(want, reason)
+	case <-time.After(settleFor):
+		s.FailNow("no timeout ended the session")
+	}
+}
+
+func (s *SessionSuite) TestTheHangupTimeoutSaysItIsTheHangup() {
+	s.manages()
+	created := s.rings(inbound(), caller)
+	reasons := s.endingReason(created)
+
+	s.call().leaves(caller)
+
+	s.endedBy(reasons, TimeoutHangup)
+}
+
+func (s *SessionSuite) TestTheStartTimeoutSaysItIsTheStart() {
+	s.manages()
+	created := s.rings(outbound())
+	reasons := s.endingReason(created)
+
+	s.endedBy(reasons, TimeoutStart)
+}
+
 func (s *SessionSuite) TestASessionWithoutPhoneGetsNoStartTimeout() {
 	s.manages()
 	created := s.rings(Spec{})
@@ -206,7 +243,7 @@ func (s *SessionSuite) TestTheRouterNeverTouchesANonPhoneSessionsTimeout() {
 	events := s.watches(created)
 
 	set := time.Now()
-	created.SetTimeout(2 * hangupTimeout)
+	created.SetTimeout(2*hangupTimeout, TimeoutHangup)
 	s.call().arrives(visitor)
 	s.saw(events, visitor, true)
 	s.call().leaves(visitor)
@@ -290,7 +327,7 @@ func (s *SessionSuite) TestNothingIsSetFromAnUnsettledRun() {
 
 	timed := s.rings(inbound(), caller)
 	s.settles(timed)
-	timed.SetTimeout(hangupTimeout)
+	timed.SetTimeout(hangupTimeout, TimeoutHangup)
 	unsettled := newPresence()
 	timed.observe(unsettled, agent.ParticipantJoined{Participant: visitor})
 	s.timedOut(timed)

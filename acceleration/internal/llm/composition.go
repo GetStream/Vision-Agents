@@ -2,6 +2,8 @@ package llm
 
 import (
 	"encoding/json"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 const (
@@ -100,6 +102,19 @@ func (c Composition) Scaled(total int64) Composition {
 	}
 	*largest += total - sum
 	return c
+}
+
+// Estimate is what a response used by the router's own count, for a provider that never said:
+// the prompt as Compose counts it, which the provider read whole however soon the response was
+// cut, and what came back, the answer, the thinking and the tool calls, by the same rule of
+// thumb. It is a floor: history the provider holds itself, and a tool call cut off before its
+// arguments were whole, are not counted.
+func Estimate(params ResponseParams, response Response) pricing.Quantities {
+	output := textTokens(response.OutputText) + textTokens(response.ReasoningText)
+	for _, call := range response.ToolCalls {
+		output += textTokens(call.Name) + textTokens(call.Arguments)
+	}
+	return pricing.Quantities{pricing.InputTokens: Compose(params).Total(), pricing.OutputTokens: output}
 }
 
 func textTokens(text string) int64 {

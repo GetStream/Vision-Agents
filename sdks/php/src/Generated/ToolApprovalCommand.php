@@ -10,7 +10,11 @@ use GetStream\VisionAgents\Json;
 
 /**
  * A person's answer to a call awaiting their approval, from a persistent text command. It
- * changes only how the call is shown; the call still needs a tool_result.
+ * changes only how the call is shown; the call still needs a tool_result. With allowed false
+ * and only tool_call_id it declines the sign-in a connector call waits for
+ * (awaiting_authorization) instead, and the router answers that call itself. For a connector
+ * call whose binding sets require_approval, the answer decides whether the router sends it,
+ * and names tool_call_id and request_id; turn_id may be left out.
  */
 final readonly class ToolApprovalCommand
 {
@@ -18,10 +22,11 @@ final readonly class ToolApprovalCommand
         public bool $allowed,
         public string $requestId,
         public string $toolCallId,
-        public string $turnId,
         public string $type,
         // Shown on the declined call, such as "Location not shared".
         public ?string $summary = null,
+        // The turn of the call. Required, except for a connector call whose binding sets require_approval.
+        public ?string $turnId = null,
     ) {
     }
 
@@ -34,9 +39,9 @@ final readonly class ToolApprovalCommand
             allowed: Json::bool($data, 'allowed'),
             requestId: Json::string($data, 'request_id'),
             toolCallId: Json::string($data, 'tool_call_id'),
-            turnId: Json::string($data, 'turn_id'),
             type: Json::string($data, 'type'),
             summary: array_key_exists('summary', $data) && $data['summary'] !== null ? Json::string($data, 'summary') : null,
+            turnId: array_key_exists('turn_id', $data) && $data['turn_id'] !== null ? Json::string($data, 'turn_id') : null,
         );
     }
 
@@ -51,10 +56,12 @@ final readonly class ToolApprovalCommand
         $out['allowed'] = $this->allowed;
         $out['request_id'] = $this->requestId;
         $out['tool_call_id'] = $this->toolCallId;
-        $out['turn_id'] = $this->turnId;
         $out['type'] = $this->type;
         if ($this->summary !== null) {
             $out['summary'] = $this->summary;
+        }
+        if ($this->turnId !== null) {
+            $out['turn_id'] = $this->turnId;
         }
         return $out;
     }

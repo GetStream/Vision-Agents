@@ -9,7 +9,7 @@ package socketedge
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -27,8 +27,9 @@ const chunkDuration = 20 * time.Millisecond
 // reply at once would have nothing left to drop when the caller cuts in.
 const playoutAhead = 400 * time.Millisecond
 
-// ErrLeft is what hearing more audio returns once the call is over.
-var ErrLeft = errors.New("socketedge: the call has been left")
+// ErrLeft is what hearing or publishing more audio returns once the call is over. It is
+// agent.ErrCallLeft, which is how the agent tells a caller hanging up from a failure.
+var ErrLeft = fmt.Errorf("socketedge: %w", agent.ErrCallLeft)
 
 // Options configures an Edge.
 type Options struct {
@@ -58,11 +59,15 @@ type Edge struct {
 	// drained is closed and replaced whenever the queue shrinks, which is what a publisher
 	// waiting for room waits on.
 	drained chan struct{}
+	joined  bool
 	left    bool
 
 	stop     chan struct{}
 	stopOnce sync.Once
 	done     chan struct{}
+	// hearing counts the Hear calls between their check of left and their send, which Leave
+	// waits out before it closes inbound.
+	hearing sync.WaitGroup
 }
 
 // New returns an edge that has not been joined.
@@ -82,10 +87,27 @@ func New(options Options) *Edge {
 	}
 }
 
-// Join starts sending the agent's speech.
+// Join starts sending the agent's speech. An edge is one call: joining it again changes
+// nothing, and once left, it is not joined again.
 func (e *Edge) Join(context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.left {
+		return ErrLeft
+	}
+	if e.joined {
+		return nil
+	}
+	e.joined = true
 	go e.playout()
 	return nil
+}
+
+// Left reports whether the call has been left.
+func (e *Edge) Left() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.left
 }
 
 func (e *Edge) Audio() <-chan agent.InboundAudio { return e.inbound }
@@ -141,10 +163,14 @@ func (e *Edge) Hear(raw []byte) error {
 	pcm := audio.Resample(audio.FromBytes(raw, e.rate, 1), stt.SampleRate, 1)
 	e.mu.Lock()
 	left := e.left
+	if !left {
+		e.hearing.Add(1)
+	}
 	e.mu.Unlock()
 	if left {
 		return ErrLeft
 	}
+	defer e.hearing.Done()
 	select {
 	case e.inbound <- agent.InboundAudio{Participant: e.caller, Audio: pcm}:
 		return nil
@@ -162,10 +188,15 @@ func (e *Edge) Leave() error {
 		return nil
 	}
 	e.left = true
+	joined := e.joined
 	e.mu.Unlock()
 
 	e.stopOnce.Do(func() { close(e.stop) })
-	<-e.done
+	if joined {
+		<-e.done
+	}
+	// stop is closed, so a Hear waiting to send is released and none starts again.
+	e.hearing.Wait()
 	close(e.inbound)
 	return nil
 }

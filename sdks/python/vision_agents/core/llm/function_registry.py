@@ -5,6 +5,7 @@ Function registry for managing available functions that can be called by LLMs.
 from __future__ import annotations
 
 import inspect
+import re
 from typing import Any, Callable, Dict, List, Optional, Type, Union, get_type_hints
 from dataclasses import dataclass
 from enum import Enum
@@ -23,6 +24,27 @@ class FunctionParameter:
     default: Any = None
 
 
+# A {name} in an approval question, filled in from the call's arguments.
+_PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+@dataclass(frozen=True)
+class ToolPolicy:
+    """How a backend that runs the agent elsewhere treats calls to one function.
+
+    A model run in this process ignores it.
+    """
+
+    # interruptible lets the caller talking over the agent cancel a call in flight. Off, a
+    # call keeps running and the model is told it is still going.
+    interruptible: bool = False
+    # timeout is how long one call may take, in seconds. Zero takes the session's.
+    timeout: float = 0.0
+    # approval is the question a person answers before each call runs, with {name} for an
+    # argument. Empty runs calls as they come.
+    approval: str = ""
+
+
 @dataclass
 class FunctionDefinition:
     """Represents a complete function definition."""
@@ -32,6 +54,7 @@ class FunctionDefinition:
     parameters: List[FunctionParameter]
     function: Callable
     returns: Optional[Type] = None
+    policy: ToolPolicy = ToolPolicy()
 
 
 @dataclass
@@ -42,6 +65,7 @@ class _ExplicitSchemaFunction:
     description: str
     parameters_schema: Dict[str, Any]
     function: Callable
+    policy: ToolPolicy = ToolPolicy()
 
 
 class FunctionRegistry:
@@ -55,6 +79,9 @@ class FunctionRegistry:
         name: Optional[str] = None,
         description: Optional[str] = None,
         parameters_schema: Optional[Dict[str, Any]] = None,
+        interruptible: bool = False,
+        timeout: float = 0.0,
+        needs_approval: str = "",
     ) -> Callable:
         """
         Decorator to register a function with the registry.
@@ -64,10 +91,31 @@ class FunctionRegistry:
             description: Optional description for the function. If not provided, uses the docstring.
             parameters_schema: Optional explicit JSON schema for parameters. If provided, this is
                 used instead of inferring from type hints. Useful for MCP tools or external APIs.
+            interruptible: Let the caller talking over the agent cancel a call in flight. Off,
+                the call keeps running. Applies where Stream runs the agent.
+            timeout: How long one call may take, in seconds, in place of the session's.
+                Zero takes the session's. Applies where Stream runs the agent.
+            needs_approval: A question a person answers before each call runs, such as
+                "Book flight {flight_id}?". Each {name} is an argument, filled in from the
+                call. On a voice call the agent asks it out loud and waits 15 seconds for a
+                yes; in writing the question goes to the app. Applies where Stream runs the
+                agent.
 
         Returns:
             Decorator function.
+
+        Raises:
+            ValueError: The function is synchronous, the timeout is negative, or the
+                approval question is blank or names an argument the function does not take.
         """
+        if timeout < 0:
+            raise ValueError(f"a timeout cannot be negative, got {timeout}")
+        approval = needs_approval.strip()
+        if needs_approval and not approval:
+            raise ValueError("an approval question cannot be blank")
+        policy = ToolPolicy(
+            interruptible=interruptible, timeout=timeout, approval=approval
+        )
 
         def decorator(func: Callable) -> Callable:
             if not inspect.iscoroutinefunction(func):
@@ -81,11 +129,15 @@ class FunctionRegistry:
 
             # If explicit schema provided, use it directly
             if parameters_schema is not None:
+                _check_approval(
+                    func_name, approval, parameters_schema.get("properties") or {}
+                )
                 self.functions[func_name] = _ExplicitSchemaFunction(
                     name=func_name,
                     description=func_description,
                     parameters_schema=parameters_schema,
                     function=func,
+                    policy=policy,
                 )
                 return func
 
@@ -122,12 +174,14 @@ class FunctionRegistry:
             # Determine return type
             return_type = type_hints.get("return", None)
 
+            _check_approval(func_name, approval, {param.name for param in parameters})
             function_def = FunctionDefinition(
                 name=func_name,
                 description=func_description,
                 parameters=parameters,
                 function=func,
                 returns=return_type,
+                policy=policy,
             )
 
             self.functions[func_name] = function_def
@@ -140,6 +194,11 @@ class FunctionRegistry:
     ) -> Optional[FunctionDefinition | _ExplicitSchemaFunction]:
         """Get a function definition by name."""
         return self.functions.get(name)
+
+    def policy(self, name: str) -> ToolPolicy:
+        """How calls to the function `name` are treated, or the default for one not here."""
+        function = self.functions.get(name)
+        return function.policy if function is not None else ToolPolicy()
 
     def list_functions(self) -> List[str]:
         """Get a list of all registered function names."""
@@ -286,6 +345,16 @@ class FunctionRegistry:
 
         # Default fallback
         return {"type": "string"}
+
+
+def _check_approval(name: str, approval: str, arguments: Any) -> None:
+    """Refuse an approval question that names an argument `name` does not take."""
+    for placeholder in _PLACEHOLDER.findall(approval):
+        if placeholder not in arguments:
+            raise ValueError(
+                f"the approval question for {name} names {{{placeholder}}}, "
+                f"which is not one of its arguments"
+            )
 
 
 # Global registry instance

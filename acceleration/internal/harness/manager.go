@@ -78,9 +78,11 @@ type manager struct {
 	// the same skill supersede the older one.
 	bySkill map[string]string
 	// written are the skill files already put into the sandbox, by skill, so a skill's
-	// scripts are written once per version rather than before every run.
-	written map[string]map[string]string
-	closed  bool
+	// scripts are written once per version rather than before every run. They were written
+	// into the sandbox's generation; a sandbox made again holds none of them.
+	written    map[string]map[string]string
+	generation int
+	closed     bool
 
 	sequence  atomic.Int64
 	drainers  sync.WaitGroup
@@ -795,12 +797,19 @@ func (m *manager) asker(name string) func(ctx context.Context, turnID, query str
 }
 
 // writeBundle puts a skill's files into the sandbox under skills/<name>/, the first time one
-// of its tasks runs code and again whenever the skill has changed since.
+// of its tasks runs code and again whenever the skill, or the sandbox, has changed since.
 func (m *manager) writeBundle(running *task) error {
 	if len(Scripts(slices.Collect(maps.Keys(running.bundle)))) == 0 {
 		return nil
 	}
+	generation, err := m.box.Ready(running.ctx)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
+	if generation != m.generation {
+		m.written, m.generation = map[string]map[string]string{}, generation
+	}
 	current := maps.Equal(m.written[running.skill], running.bundle)
 	m.mu.Unlock()
 	if current {
@@ -823,8 +832,9 @@ func (m *manager) setBroken(running *task, broken string) {
 	m.mu.Unlock()
 }
 
-// HandBack says what a run of code did in words the model can read, and publishes the files
-// it returned where the person can see them, returning the ones that were. A nil publish
+// HandBack says what a run of code did in words the model can read, with how to connect what
+// the run had no token for, and publishes the files it returned where the person can see
+// them, returning the ones that were. A nil publish
 // means the conversation has nowhere to show a file.
 func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Result, logger *slog.Logger) (string, []sandbox.Attachment) {
 	var said string
@@ -867,6 +877,14 @@ func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Res
 	}
 	if len(result.Missing) > 0 {
 		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
+	}
+	for _, grant := range result.Unconnected {
+		said += fmt.Sprintf("\n\nIf this code needed %s (a 401 from %s), the user has not connected it: call %s__list_tools "+
+			"so they can, then run the code again; if you cannot call it, tell the user they must connect %s.",
+			grant.Binding, strings.Join(grant.Hosts, ", "), grant.Binding, grant.Binding)
+	}
+	for _, binding := range result.Connected {
+		said += fmt.Sprintf("\n\n%s was just connected: if this run got 401, wait 20 seconds and run the code again.", binding)
 	}
 	return said, published
 }

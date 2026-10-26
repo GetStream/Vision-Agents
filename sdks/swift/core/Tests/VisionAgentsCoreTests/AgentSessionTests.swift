@@ -28,11 +28,11 @@ import Testing
     await session.start()
     do {
       let data = try #require(try await server.commands.first(where: { @Sendable _ in true }))
-      let command = try JSONDecoder().decode([String: JSONValue].self, from: data)
+      let command = try JSONDecoder().decode([String: RawJSON].self, from: data)
       #expect(command["tool_call_id"]?.stringValue == "local")
       #expect(command["type"]?.stringValue == "tool_result")
       if localFailure {
-        #expect(command["error"]?.stringValue.contains("local lookup failed") == true)
+        #expect(command["error"]?.stringValue?.contains("local lookup failed") == true)
       } else {
         #expect(command["output"]?.stringValue == "local result")
         #expect(command["error"]?.stringValue == "")
@@ -61,14 +61,14 @@ import Testing
     await session.start()
     do {
       let data = try #require(try await server.commands.first(where: { @Sendable _ in true }))
-      let command = try JSONDecoder().decode([String: JSONValue].self, from: data)
+      let command = try JSONDecoder().decode([String: RawJSON].self, from: data)
       #expect(
         command["output"]
           == .array([
-            .object(["type": .string("text"), "text": .string("the kitchen")]),
-            .object([
+            .dictionary(["type": .string("text"), "text": .string("the kitchen")]),
+            .dictionary([
               "type": .string("image_url"),
-              "image_url": .object(["url": .string("data:image/png;base64,iVBORw0KGgo=")]),
+              "image_url": .dictionary(["url": .string("data:image/png;base64,iVBORw0KGgo=")]),
             ]),
           ]))
       await session.close()
@@ -96,17 +96,15 @@ import Testing
     await session.start()
     do {
       let data = try #require(try await server.commands.first(where: { @Sendable _ in true }))
-      let command = try JSONDecoder().decode([String: JSONValue].self, from: data)
+      let command = try JSONDecoder().decode([String: RawJSON].self, from: data)
       #expect(command["tool_call_id"]?.stringValue == "remote")
       if recent {
         let parts = try #require(command["output"]?.arrayValue)
         #expect(parts.count == 2, "what the frame is, then the frame")
-        #expect(parts.first?.objectValue["text"]?.stringValue.contains("captured_at_ms") == true)
-        #expect(
-          parts.last?.objectValue["image_url"]?.objectValue["url"]?.stringValue
-            == "data:image/jpeg;base64,/9j/")
+        #expect(parts.first?["text"]?.stringValue?.contains("captured_at_ms") == true)
+        #expect(parts.last?["image_url"]?["url"]?.stringValue == "data:image/jpeg;base64,/9j/")
       } else {
-        #expect(command["output"]?.stringValue.contains("point it at what they mean again") == true)
+        #expect(command["output"]?.stringValue?.contains("point it at what they mean again") == true)
       }
       await session.close()
     } catch {
@@ -149,14 +147,14 @@ import Testing
     #expect(session.approvals.isEmpty)
     var commands = server.commands.makeAsyncIterator()
     let answer = try JSONDecoder().decode(
-      [String: JSONValue].self, from: try #require(try await commands.next()))
+      [String: RawJSON].self, from: try #require(try await commands.next()))
     #expect(answer["type"]?.stringValue == "tool_approval")
     #expect(answer["tool_call_id"]?.stringValue == "c1")
     #expect(answer["allowed"]?.boolValue == allowed)
     #expect(answer["request_id"]?.stringValue == "m1")
     #expect(answer["turn_id"]?.stringValue == "t1")
     let result = try JSONDecoder().decode(
-      [String: JSONValue].self, from: try #require(try await commands.next()))
+      [String: RawJSON].self, from: try #require(try await commands.next()))
     #expect(result["type"]?.stringValue == "tool_result")
     #expect(result["tool_call_id"]?.stringValue == "c1")
     if allowed {
@@ -164,8 +162,33 @@ import Testing
     } else {
       #expect(answer["summary"]?.stringValue == "Kept the order")
       #expect(result["output"]?.stringValue == "")
-      #expect(result["error"]?.stringValue.isEmpty == false)
+      #expect(result["error"]?.stringValue?.isEmpty == false)
     }
+  }
+
+  @Test func aDeclinedLoginNamesOnlyTheCallItWas() async throws {
+    let server = try ApprovalServer()
+    defer { server.listener.cancel() }
+    let url = try #require(try await server.addresses.first(where: { @Sendable _ in true }))
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+          modality: .text, state: .live, text: true, userId: "test")),
+      tools: [])
+    await session.start()
+    defer { Task { await session.close() } }
+
+    try await session.declineLogin("call-linear")
+
+    var commands = server.commands.makeAsyncIterator()
+    let answer = try JSONDecoder().decode(
+      [String: RawJSON].self, from: try #require(try await commands.next()))
+    #expect(
+      answer == [
+        "type": .string("tool_approval"), "tool_call_id": .string("call-linear"), "allowed": .bool(false),
+      ])
   }
 
   @Test func anUpdateRefreshesTheSessionItHolds() async throws {

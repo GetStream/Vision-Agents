@@ -70,12 +70,12 @@ func (s *ConnectorsSuite) TestOnlyAConnectorThatReadsMessagesIsAChannel() {
 	s.False(listed["slack"])
 }
 
-// TestGitHubShowsWhatASandboxGetsForItsAPI: github's sandbox block (revision 6), in a read and
+// TestGitHubShowsWhatASandboxGetsForItsAPI: github's sandbox block (revision 7), in a read and
 // in the list, is what code in a sandbox reads (env) and where its token may go (hosts).
 func (s *ConnectorsSuite) TestGitHubShowsWhatASandboxGetsForItsAPI() {
-	want := &ConnectorSandbox{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com"}}
+	want := &ConnectorSandbox{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com", "github.com"}}
 	github := s.get("github")
-	s.Equal(6, github.Revision)
+	s.Equal(7, github.Revision)
 	s.Equal(want, github.Sandbox)
 	for _, item := range s.list("").Items {
 		if item.ID == "github" {
@@ -86,7 +86,8 @@ func (s *ConnectorsSuite) TestGitHubShowsWhatASandboxGetsForItsAPI() {
 
 // TestNoOtherConnectorShowsASandbox is the control: on the base, b7187f62, no connector in the
 // list, built-in or custom, was answered with a sandbox key (pr-w13-man/author-1.md, «Control
-// probe»).
+// probe»). On 8e132bd37 only github.yaml has a sandbox block; google_drive.yaml adds the second,
+// asserted exactly below.
 func (s *ConnectorsSuite) TestNoOtherConnectorShowsASandbox() {
 	s.create(s.customConnector(s.customID()))
 	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors?limit=200", nil)
@@ -97,7 +98,9 @@ func (s *ConnectorsSuite) TestNoOtherConnectorShowsASandbox() {
 	s.Require().NoError(json.Unmarshal(raw, &page))
 	s.Require().Greater(len(page.Items), 20)
 	for _, item := range page.Items {
-		if item["id"] != "github" {
+		if item["id"] == "google_drive" {
+			s.Equal(map[string]any{"env": "GOOGLE_DRIVE_TOKEN", "hosts": []any{"www.googleapis.com"}}, item["sandbox"])
+		} else if item["id"] != "github" {
 			s.NotContains(item, "sandbox", item["id"])
 		}
 	}

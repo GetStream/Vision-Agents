@@ -80,6 +80,24 @@ func (s *ConnectorEventDestinationsSuite) TestAPlainHTTPDestinationIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 }
 
+// The router's own events need no provider app: their destinations are managed as any other
+// connector's, under the built-in source stream.
+func (s *ConnectorEventDestinationsSuite) TestTheRoutersOwnEventsTakeADestinationWithNoProviderApp() {
+	target := newDestination(s.T())
+
+	created := s.createDestination(store.StreamSource, target.URL, store.ForwardAll)
+
+	s.Equal(store.StreamSource, created.Destination.ConnectorID)
+	s.True(strings.HasPrefix(created.Secret, "whsec_"))
+	s.Equal(created.Destination.ID, s.listDestinations(store.StreamSource, "").Items[0].ID)
+	var rotated ConnectorEventDestinationSecret
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost,
+		destinationsPath(store.StreamSource)+"/"+created.Destination.ID+"/rotate-secret", nil, &rotated))
+	s.NotEqual(created.Secret, rotated.Secret)
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, destinationsPath(store.StreamSource)+"/"+created.Destination.ID, nil, nil))
+	s.Empty(s.listDestinations(store.StreamSource, "").Items)
+}
+
 func (s *ConnectorEventDestinationsSuite) TestAConnectorWithoutProviderEventsTakesNoDestination() {
 	status, answer := s.serverClient.call(http.MethodPost, destinationsPath("github"),
 		ConnectorEventDestinationRequest{URL: newDestination(s.T()).URL, Forward: store.ForwardAll})

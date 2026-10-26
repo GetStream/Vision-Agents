@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -103,7 +104,8 @@ func (s *SessionVoiceSuite) TestVoiceOnAPhoneSessionTakesNoCall() {
 	s.inOwnApp()
 	// The suite has no telephony to place a call with, so the session is opened as the phone
 	// service opens one, by the manager.
-	opened, err := s.manager.Create(context.Background(), session.Spec{CustomerID: s.customerID(), Phone: &session.PhoneSpec{}})
+	opened, err := s.manager.Create(context.Background(), session.Spec{CustomerID: s.customerID(), Phone: &session.PhoneSpec{},
+		Attribution: routing.Attribution{APIKey: "key-phone"}})
 	s.Require().NoError(err)
 	call := s.namedCall()
 
@@ -139,6 +141,35 @@ func (s *SessionVoiceSuite) TestADeviceStartsVoiceOnItsSessionsOwnCall() {
 		"/v1/agents/sessions/"+opened.Id+"/voice", nil, &started))
 
 	s.Equal(opened.Id, started.CallId)
+}
+
+// A device starting and stopping voice on its session is not given its brief.
+func (s *SessionVoiceSuite) TestADeviceTurningVoiceOnAndOffReadsNoBrief() {
+	request, _ := s.data.briefed(textSession(nil))
+	opened := s.serverClient.actingFor(s.client).createSession(request)
+
+	var started, stopped Session
+	s.Require().Equal(http.StatusOK, s.client.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/voice", nil, &started))
+	s.Require().Equal(http.StatusOK, s.client.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/voice", nil, &stopped))
+
+	s.Nil(started.Instructions)
+	s.Nil(stopped.Instructions)
+}
+
+// The control: a backend starting and stopping voice is given the brief.
+func (s *SessionVoiceSuite) TestABackendTurningVoiceOnAndOffReadsTheBrief() {
+	request, brief := s.data.briefed(textSession(nil))
+	opened := s.serverClient.createSession(request)
+
+	started := s.startVoice(opened.Id)
+	var stopped Session
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/voice", nil, &stopped))
+
+	s.Equal(brief, value(started.Instructions))
+	s.Equal(brief, value(stopped.Instructions))
 }
 
 func (s *SessionVoiceSuite) TestVoiceStartedAgainGoesBackToTheNamedCall() {

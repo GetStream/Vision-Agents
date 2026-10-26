@@ -310,7 +310,7 @@ func (s *SessionSuite) TestAudioAfterAFatalErrorIsDropped() {
 
 func (s *SessionSuite) TestAudioStopsReachingTheProviderBeforeTheCallerHearsOfAFatalError() {
 	provider := &countingSTT{emitter: stt.NewEmitter(128)}
-	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	recorder := routing.NewRecorder(routing.STT, nil, nil, nil, slog.Default())
 	defer recorder.Close()
 	session := newSession(provider, routing.ProviderConfig{Provider: "counting", Model: "live"},
 		routing.Owner{CustomerID: s.customerID}, recorder, nil, nil)
@@ -340,7 +340,7 @@ func (s *SessionSuite) TestAudioStopsReachingTheProviderBeforeTheCallerHearsOfAF
 func (s *SessionSuite) TestAWriteUnderWayWhenTheProviderFailsIsDropped() {
 	provider := &stalledSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)},
 		writing: make(chan struct{}), release: make(chan struct{})}
-	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	recorder := routing.NewRecorder(routing.STT, nil, nil, nil, slog.Default())
 	defer recorder.Close()
 	session := newSession(provider, routing.ProviderConfig{Provider: "stalled", Model: "live"},
 		routing.Owner{CustomerID: s.customerID}, recorder, nil, nil)
@@ -359,7 +359,7 @@ func (s *SessionSuite) TestAWriteUnderWayWhenTheProviderFailsIsDropped() {
 func (s *SessionSuite) TestAWriteUnderWayWhenTheNextModelTakesOverIsDropped() {
 	provider := &stalledSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)},
 		writing: make(chan struct{}), release: make(chan struct{})}
-	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	recorder := routing.NewRecorder(routing.STT, nil, nil, nil, slog.Default())
 	defer recorder.Close()
 	next := &quietSTT{emitter: stt.NewEmitter(64)}
 	reopen := func([]string) (stt.STT, routing.ProviderConfig, error) {
@@ -410,7 +410,7 @@ func (s *SessionSuite) TestAWriteTheNextModelFailsBehindTheFailoverIsDropped() {
 		provider.emitter.Send(stt.Transcript{Text: "hel", Mode: stt.ModeReplacement})
 	}
 	provider.emitter.Send(refused())
-	s.Require().Eventually(func() bool { return session.STT() == next }, 3*time.Second, time.Millisecond)
+	s.Require().Eventually(func() bool { return session.current() == next }, 3*time.Second, time.Millisecond)
 
 	s.NoError(s.write(session), "the caller heard of a write the next model failed, rather than of the model after it taking over")
 	for range cap(session.events) {
@@ -489,7 +489,7 @@ func (s *SessionSuite) TestAWriteThatFailsAfterTheProviderEndedReachesTheCaller(
 func (s *SessionSuite) TestAWriteThatFailsWhileTheNextModelStartsDoesNotWaitForIt() {
 	provider := &stalledSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)},
 		writing: make(chan struct{}), release: make(chan struct{})}
-	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	recorder := routing.NewRecorder(routing.STT, nil, nil, nil, slog.Default())
 	defer recorder.Close()
 	starting, started := make(chan struct{}), make(chan struct{})
 	defer close(started)
@@ -517,7 +517,7 @@ func (s *SessionSuite) TestAWriteThatFailsWhileTheNextModelStartsDoesNotWaitForI
 }
 
 func (s *SessionSuite) TestAWriteThatFailsAsTheVendorRefusesNeverWaitsForTheNextModelsDial() {
-	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	recorder := routing.NewRecorder(routing.STT, nil, nil, nil, slog.Default())
 	defer recorder.Close()
 	// The refusal reaches forward as the write fails, so the write asks forward to read
 	// ahead either before forward starts the next model or while it does: about one run
@@ -541,7 +541,7 @@ func (s *SessionSuite) TestAWriteThatFailsAsTheVendorRefusesNeverWaitsForTheNext
 }
 
 func (s *SessionSuite) TestACallerThatHangsUpWhileTheNextModelDialsEndsTheDial() {
-	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	recorder := routing.NewRecorder(routing.STT, nil, nil, nil, slog.Default())
 	defer recorder.Close()
 	provider := &closedSTT{emitter: stt.NewEmitter(64), refusal: refused()}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -725,7 +725,7 @@ func (s *SessionSuite) TestAnErrorTheProviderOutlivesLeavesItFirst() {
 }
 
 func (s *SessionSuite) TestAFatalErrorFromAVoiceLeavesItAvailable() {
-	recorder := routing.NewRecorder(routing.TTS, nil, s.live, slog.Default())
+	recorder := routing.NewRecorder(routing.TTS, nil, s.live, nil, slog.Default())
 	config := routing.ProviderConfig{Provider: s.refusing, Model: "voice"}
 	owner := routing.Owner{CustomerID: s.customerID}
 	for range 3 {
@@ -849,7 +849,7 @@ func (s *SessionSuite) failedSilently(router *Router) *Session {
 // handingOver opens a session on provider that hands over to the next of next each time
 // a model refuses, and returns it with the recorder of its stats.
 func (s *SessionSuite) handingOver(provider stt.STT, next ...stt.STT) (*Session, *routing.Recorder) {
-	recorder := routing.NewRecorder(routing.STT, s.store, nil, slog.Default())
+	recorder := routing.NewRecorder(routing.STT, s.store, nil, nil, slog.Default())
 	s.T().Cleanup(recorder.Close)
 	reopen := func(refused []string) (stt.STT, routing.ProviderConfig, error) {
 		if len(refused) > len(next) {

@@ -7,6 +7,8 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="ClassifyUsage")
 
 
@@ -17,16 +19,21 @@ class ClassifyUsage:
     Attributes:
         input_tokens (int):
         output_tokens (int):
+        cost_micros (int | Unset): What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says:
+            absent when it recorded nothing. Only a server-side caller is told.
     """
 
     input_tokens: int
     output_tokens: int
+    cost_micros: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         input_tokens = self.input_tokens
 
         output_tokens = self.output_tokens
+
+        cost_micros = self.cost_micros
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -36,6 +43,8 @@ class ClassifyUsage:
                 "output_tokens": output_tokens,
             }
         )
+        if cost_micros is not UNSET:
+            field_dict["cost_micros"] = cost_micros
 
         return field_dict
 
@@ -46,9 +55,12 @@ class ClassifyUsage:
 
         output_tokens = d.pop("output_tokens")
 
+        cost_micros = d.pop("cost_micros", UNSET)
+
         classify_usage = cls(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cost_micros=cost_micros,
         )
 
         classify_usage.additional_properties = d

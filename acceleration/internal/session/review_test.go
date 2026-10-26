@@ -82,7 +82,7 @@ func (s *ReviewSuite) toldWith(guide string) string {
 	s.T().Cleanup(router.Close)
 	reviews := newReviewer(router, nil, slog.New(slog.DiscardHandler))
 
-	reviews.Review(store.Call{ID: "call-prompted", CustomerID: "customer-reviewed"}, "en-low-latency", guide, []spoken{{text: "hello?"}})
+	reviews.Review(store.Call{ID: "call-prompted", CustomerID: "customer-reviewed"}, routing.Attribution{}, "en-low-latency", guide, []spoken{{text: "hello?"}})
 	reviews.running.Wait()
 	reviews.Close()
 
@@ -131,7 +131,7 @@ func (s *ReviewSuite) TestAReviewAShutdownAbandonsIsAWarningNotAnError() {
 	var logs bytes.Buffer
 	reviews, model := s.reviewerOver(&logs)
 
-	reviews.Review(store.Call{ID: "call-cut-short", CustomerID: "customer-reviewed"}, "en-low-latency", "", []spoken{{text: "hello?"}})
+	reviews.Review(store.Call{ID: "call-cut-short", CustomerID: "customer-reviewed"}, routing.Attribution{}, "en-low-latency", "", []spoken{{text: "hello?"}})
 	s.asked(model, &logs)
 	reviews.Close()
 
@@ -146,7 +146,7 @@ func (s *ReviewSuite) TestAReviewThatFailsWhileTheReviewerIsOpenIsAnError() {
 	var logs bytes.Buffer
 	reviews, model := s.reviewerOver(&logs)
 
-	reviews.Review(store.Call{ID: "call-unreadable", CustomerID: "customer-reviewed"}, "en-low-latency", "", []spoken{{text: "hello?"}})
+	reviews.Review(store.Call{ID: "call-unreadable", CustomerID: "customer-reviewed"}, routing.Attribution{}, "en-low-latency", "", []spoken{{text: "hello?"}})
 	s.asked(model, &logs)
 	model.answers(1)
 	reviews.running.Wait()
@@ -166,7 +166,7 @@ func (s *ReviewSuite) TestAReviewThatRunsOutOfTimeIsAnError() {
 		var logs bytes.Buffer
 		reviews, model := s.reviewerOver(&logs)
 
-		reviews.Review(store.Call{ID: "call-too-slow", CustomerID: "customer-reviewed"}, "en-low-latency", "", []spoken{{text: "hello?"}})
+		reviews.Review(store.Call{ID: "call-too-slow", CustomerID: "customer-reviewed"}, routing.Attribution{}, "en-low-latency", "", []spoken{{text: "hello?"}})
 		<-model.entered
 		time.Sleep(reviewTimeout)
 		reviews.running.Wait()

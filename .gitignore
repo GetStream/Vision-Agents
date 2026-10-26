@@ -142,7 +142,7 @@ DerivedData/
 xcuserdata/
 # A library's resolved versions are not used by anybody who depends on it, so they are
 # churn. The app's, under xcshareddata, is committed.
-/sdks/swift/*/Package.resolved
+/Package.resolved
 *.spec.md
 *.spec.plan
 
@@ -153,3 +153,6 @@ xcuserdata/
 
 # Left by the pre-2026-10-02 conversation outbox (CHAT_OUTBOX_DIR default), removed in 367662800
 acceleration/internal/api/.local/
+
+# The price changes the check_prices skill prepares, handed over rather than committed
+.claude/skills/check_prices/out/

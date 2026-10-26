@@ -1,0 +1,7 @@
+{
+  "namespaces": [
+    {"id": "app-1__docs"},
+    {"id": "app-1__handbook"}
+  ],
+  "next_cursor": "app-1__handbook"
+}

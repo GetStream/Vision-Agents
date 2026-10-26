@@ -343,6 +343,22 @@ func (s *ServerSuite) TestProvidersReportLiveHealth() {
 	s.True(routed.Health.Available)
 }
 
+func (s *ServerSuite) TestAProviderShowsTheTokenRatesItIsBilledAt() {
+	var providers []Provider
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/llm/providers", nil, &providers))
+
+	prices := map[string]*ProviderPrice{}
+	for _, provider := range providers {
+		prices[provider.Provider+"/"+provider.Model] = provider.Price
+	}
+	s.Require().Contains(prices, "counted/counted-model")
+	s.Require().NotNil(prices["counted/counted-model"])
+	s.Equal(pointerTo(1.0), prices["counted/counted-model"].PerMillionInputTokens)
+	s.Equal(pointerTo(10.0), prices["counted/counted-model"].PerMillionOutputTokens)
+	s.Nil(prices["stub/stub-model"], "a model billed by no token has no token rates")
+}
+
 func (s *ServerSuite) TestAModelThatServedRequestsHasAShareOfThem() {
 	var providers []Provider
 	s.Require().Equal(http.StatusOK,

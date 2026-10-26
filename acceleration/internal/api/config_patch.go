@@ -129,6 +129,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	existing := agentConfigOf(config)
 	before := config.MCPServers
 	heard := config.STT
+	was := sandboxOfConfig(config)
 
 	patch := request.Body
 	if message, ok := configComplaint(AgentConfigRequest{
@@ -257,11 +258,18 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if message, ok := s.liveSTTComplaint(config, heard); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, was); !ok {
+		return nil, invalidRequest(message)
+	}
 
-	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
+	if err := s.writePatched(ctx, &config, patch.Plugins == nil); err != nil {
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
 	stored := agentConfigOf(config)
+	if patch.Plugins == nil {
+		// The plugins were kept as stored, so a login named since the read is not this patch's change.
+		existing.Plugins = stored.Plugins
+	}
 	s.audit(ctx, auditRecord{
 		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
 		Action: store.AuditUpdated, Changes: auditDiff(existing, stored),
@@ -269,4 +277,14 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	s.pluginEvents.Changed(customerID, config.ID)
 	s.warnPluginsSaved(ctx, config)
 	return &agentConfigResponse{Body: stored}, nil
+}
+
+// writePatched stores a config an update built from an earlier read. One that leaves the
+// plugins out keeps them as they are when it is written, so it does not drop a plugin a login
+// named since the read, and its sensitive rule is checked again on them.
+func (s *Server) writePatched(ctx context.Context, config *store.AgentConfig, keepPlugins bool) error {
+	if keepPlugins {
+		return s.configs.UpdateAgentConfigButPlugins(ctx, config, sensitiveCheck(config.CustomerID))
+	}
+	return s.configs.UpdateAgentConfig(ctx, config)
 }

@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/netip"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -43,10 +44,10 @@ type Manifest struct {
 	// every manifest stored before it stays as it was.
 	Internal bool `yaml:"internal,omitempty" json:"internal,omitempty"`
 	// Sensitive is a connector whose tools read private data. An agent config that binds one
-	// binds no tool that sends data out (sensitiveBindingsComplaint in internal/api/configs.go),
-	// since a model that reads untrusted text could be steered into sending out what it read
-	// («Nessy as a connector» on AI-1538, change 13). Left out of the JSON when false, so the
-	// JSON of every manifest stored before it stays as it was.
+	// binds no tool that sends data out with no person's approval (sensitiveBindingsComplaint in
+	// internal/api/configs.go), since a model that reads untrusted text could be steered into
+	// sending out what it read («Nessy as a connector» on AI-1538, change 13). Left out of the
+	// JSON when false, so the JSON of every manifest stored before it stays as it was.
 	Sensitive bool `yaml:"sensitive,omitempty" json:"sensitive,omitempty"`
 	// Setup is what a person does at the provider before the first consent, as the plugin
 	// catalog's setup_url and setup_steps say it (internal/plugins/plugins.yaml), so a
@@ -84,11 +85,13 @@ type Manifest struct {
 	// email captured from the id_token must be the one the app's backend last said that user
 	// signs in with, or the grant is refused and nothing is stored. It needs a capture rule
 	// named email from the id_token (OpenID Connect Core 1.0 section 5.1's claim), so the
-	// scheme checks the token's iss, aud and exp. Left out of the JSON when false, so the JSON
-	// of every manifest stored before it stays as it was.
+	// scheme checks the token's iss, aud and exp. An email_verified capture, if any, must come
+	// from the id_token too. Left out of the JSON when false, so the JSON of every manifest
+	// stored before it stays as it was.
 	OwnerEmail bool `yaml:"owner_email,omitempty" json:"owner_email,omitempty"`
 	// RevokeOnDelete has a connection's delete ask the provider to revoke its grant
-	// (Scheme.Revoke) once the row is gone. A failure is logged and the delete stands. Opt-in
+	// (Scheme.Revoke) once the row is gone, as do its user's delete, a refused consent and the
+	// removal of the client that issued it. A failure is logged and the change stands. Opt-in
 	// (AI-1544), and left out of the JSON when false, so the JSON of every manifest stored
 	// before it stays as it was.
 	RevokeOnDelete bool `yaml:"revoke_on_delete,omitempty" json:"revoke_on_delete,omitempty"`
@@ -104,6 +107,30 @@ type Manifest struct {
 	// again on the latest revision. Last, and left out of the JSON when empty, so the JSON of
 	// every manifest that declares none stays as it was stored.
 	BrokenRevisions []BrokenRevisions `yaml:"broken_revisions,omitempty" json:"broken_revisions,omitempty"`
+}
+
+// ReadsAsConnection reports whether a connection pinned to m reads what one pinned to other
+// does: whether the two differ only in fields no connection reads from its pinned revision.
+// Those are the revision's own number; broken_revisions, which the seeder alone reads;
+// category, description and setup, which only the catalog shows, from the connector's latest
+// revision (connectorOf, internal/api/connectors.go); and sensitive and each source's outbound
+// and read_only_tools, which only the sensitive-connector check reads, from the connector's
+// latest revision whatever a connection pins (SensitiveBindingsComplaint,
+// internal/api/configs.go). Any other field counts, the name among them: a consent shows the
+// pinned name (ConnectorConsents, internal/api/authorizations.go).
+func (m Manifest) ReadsAsConnection(other Manifest) bool {
+	return reflect.DeepEqual(m.connectionReads(), other.connectionReads())
+}
+
+// connectionReads is m without the fields ReadsAsConnection leaves out.
+func (m Manifest) connectionReads() Manifest {
+	m.Revision, m.BrokenRevisions, m.Sensitive = 0, nil, false
+	m.Category, m.Description, m.Setup = "", "", Setup{}
+	m.Sources = slices.Clone(m.Sources)
+	for i := range m.Sources {
+		m.Sources[i].Outbound, m.Sources[i].ReadOnlyTools = nil, nil
+	}
+	return m
 }
 
 // BrokenRevisions are earlier revisions of a connector that share one reason for not
@@ -181,6 +208,17 @@ type ScopePolicy struct {
 	SendOnRefresh bool `yaml:"send_on_refresh,omitempty" json:"send_on_refresh,omitempty"`
 	// StepUpUnion asks, on a step-up, for the granted scopes plus the missing ones.
 	StepUpUnion bool `yaml:"step_up_union,omitempty" json:"step_up_union,omitempty"`
+	// CoveredBy are, for a scope a tool needs, the broader scopes the provider documents as
+	// giving all it gives, so holding one meets that need (Meets). Left out of the JSON when
+	// empty, so the JSON of every manifest stored before it stays as it was.
+	CoveredBy map[string][]string `yaml:"covered_by,omitempty" json:"covered_by,omitempty"`
+}
+
+// Meets reports whether scopes hold scope or a scope that covers it (CoveredBy).
+func (p ScopePolicy) Meets(scopes []string, scope string) bool {
+	return slices.Contains(scopes, scope) || slices.ContainsFunc(p.CoveredBy[scope], func(broader string) bool {
+		return slices.Contains(scopes, broader)
+	})
 }
 
 // RefreshPolicy is what the OAuth scheme reads to decide when and how to refresh.
@@ -229,11 +267,22 @@ type SourceRule struct {
 	// is taken to send data out, so it is true (SendsOut). Left out of the JSON when nil, so
 	// the JSON of every manifest stored before it stays as it was.
 	Outbound *bool `yaml:"outbound,omitempty" json:"outbound,omitempty"`
+	// ReadOnlyTools are the source's tools that only read, by the name the source lists each
+	// under, for a server that offers tools that write beside them. Each has a vendor source
+	// beside it in the manifest. A tool left out may write. Left out of the JSON when empty,
+	// so the JSON of every manifest stored before it stays as it was.
+	ReadOnlyTools []string `yaml:"read_only_tools,omitempty" json:"read_only_tools,omitempty"`
 }
 
 // SendsOut reports whether a tool of the source may send data out of the conversation.
 func (r SourceRule) SendsOut() bool {
 	return r.Outbound == nil || *r.Outbound
+}
+
+// SendsOutTool reports whether the source's tool called name may send data out of the
+// conversation: unless the source says outbound: false or lists it in read_only_tools.
+func (r SourceRule) SendsOutTool(name string) bool {
+	return r.SendsOut() && !slices.Contains(r.ReadOnlyTools, name)
 }
 
 // ToolRule is what a manifest says about one tool of a source.
@@ -261,18 +310,47 @@ func MCPSource(sources []SourceRule) *SourceRule {
 	return &sources[index]
 }
 
-// UnaskedScopes are the scopes a call of tool needs that asked, the manifest's scopes.list,
-// does not hold. No consent grants them, so a tool needing any is left out: the mcp source
-// drops it from what it lists (asked in sources/mcp/source.go), and a config save refuses a
-// binding that grants it (leftOutGrant in internal/api/configs.go).
-func (r SourceRule) UnaskedScopes(asked []string, tool string) []string {
+// UnaskedScopes are the scopes a call of tool needs that the manifest's scopes.list does not
+// meet (ScopePolicy.Meets). No consent grants them, so a tool needing any is left out: the mcp
+// source drops it from what it lists (asked in sources/mcp/source.go), and a config save
+// refuses a binding that grants it (leftOutGrant in internal/api/configs.go).
+func (r SourceRule) UnaskedScopes(scopes ScopePolicy, tool string) []string {
 	index := slices.IndexFunc(r.Tools, func(rule ToolRule) bool { return rule.Name == tool })
 	if index < 0 {
 		return nil
 	}
 	return slices.DeleteFunc(slices.Clone(r.Tools[index].NeedsScopes), func(scope string) bool {
-		return slices.Contains(asked, scope)
+		return scopes.Meets(scopes.List, scope)
 	})
+}
+
+// checkCoveredBy refuses a scopes.covered_by entry that could never meet a need: one for a
+// scope no tool needs, an empty list, or a broader scope that is empty, the scope itself or
+// listed twice.
+func (m Manifest) checkCoveredBy(fail func(field, format string, args ...any)) {
+	for _, scope := range slices.Sorted(maps.Keys(m.Scopes.CoveredBy)) {
+		field := "scopes.covered_by." + scope
+		if !slices.ContainsFunc(m.Sources, func(source SourceRule) bool {
+			return slices.ContainsFunc(source.Tools, func(tool ToolRule) bool { return slices.Contains(tool.NeedsScopes, scope) })
+		}) {
+			fail(field, "%q is a scope no tool needs", scope)
+		}
+		broader := m.Scopes.CoveredBy[scope]
+		if len(broader) == 0 {
+			fail(field, "is empty")
+		}
+		for i, cover := range broader {
+			field := fmt.Sprintf("%s[%d]", field, i)
+			switch {
+			case cover == "":
+				fail(field, "is empty")
+			case cover == scope:
+				fail(field, "is the scope it covers")
+			case slices.Index(broader, cover) != i:
+				fail(field, "%q is listed twice", cover)
+			}
+		}
+	}
 }
 
 // CaptureRule reads one public value at connect time into the connection's metadata.
@@ -602,6 +680,12 @@ func (m Manifest) Validate() error {
 	if email := captures[OwnerEmailCapture]; m.OwnerEmail && (email.From != FromIDToken || email.Optional) {
 		fail("owner_email", "needs a capture rule named %s, from the id_token and not optional", OwnerEmailCapture)
 	}
+	// An email_verified the consent reads is the same id_token's word on that email, never the
+	// callback's (browser-controlled) or another source's. It may be optional: a provider that
+	// sends none leaves only the email to compare.
+	if verified, ok := captures[OwnerEmailVerified]; m.OwnerEmail && ok && verified.From != FromIDToken {
+		fail("owner_email", "a capture rule named %s must come from the id_token", OwnerEmailVerified)
+	}
 
 	for i, name := range m.Identity {
 		field := fmt.Sprintf("identity[%d]", i)
@@ -658,6 +742,7 @@ func (m Manifest) Validate() error {
 	if m.Scopes.Separator != "" && !slices.Contains(scopeSeparators, m.Scopes.Separator) {
 		fail("scopes.separator", "%q is not one of %q", m.Scopes.Separator, scopeSeparators)
 	}
+	m.checkCoveredBy(fail)
 
 	if m.Refresh.Margin < 0 || m.Refresh.Grace < 0 || m.Refresh.AccessTTL < 0 || m.Refresh.RefreshTTL < 0 {
 		fail("refresh", "durations cannot be negative")
@@ -710,6 +795,17 @@ func (m Manifest) Validate() error {
 			if len(tool.NeedsScopes) == 0 {
 				fail(field+".needs_scopes", "is required: a tool that needs no scope is left out")
 			}
+		}
+		readOnly := map[string]bool{}
+		for j, tool := range source.ReadOnlyTools {
+			field := fmt.Sprintf("%s.read_only_tools[%d]", field, j)
+			if tool == "" {
+				fail(field, "is empty")
+			}
+			if readOnly[tool] {
+				fail(field, "%q is named twice", tool)
+			}
+			readOnly[tool] = true
 		}
 	}
 

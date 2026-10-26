@@ -64,6 +64,12 @@ func (r *heldRecorder) Voiced(string, string, string) {}
 
 func (r *heldRecorder) Flush(context.Context) error { return nil }
 
+func (r *heldRecorder) Opened(store.AgentSession, []store.ToolDefinition) {}
+
+func (r *heldRecorder) Closed(string, time.Time) {}
+
+func (r *heldRecorder) Close() {}
+
 // kinds is the conversation as a reader would see it: what happened, in order.
 func (r *heldRecorder) kinds() []string {
 	r.mu.Lock()
@@ -91,6 +97,8 @@ func (s *RecordSuite) SetupTest() {
 		id:      "session-1",
 		spec:    Spec{CustomerID: "acme"},
 		records: s.held,
+		// The manager has queued the session's row.
+		recording: true,
 	}
 }
 
@@ -129,6 +137,24 @@ func (s *RecordSuite) TestALineSaidAsWrittenIsAnAnswerOfItsOwn() {
 	s.Equal("Where does it hurt?", s.held.items[0].Text)
 	s.Require().Len(s.held.finished, 1)
 	s.Equal(store.ResponseCompleted, s.held.finished[0].status)
+}
+
+func (s *RecordSuite) TestWhatHappenedBeforeTheRowWasQueuedIsWrittenAfterItInOrder() {
+	joining := &Session{id: "session-1", spec: Spec{CustomerID: "acme"}, records: s.held}
+
+	joining.record(agent.Said{TurnID: "say-1", Text: "Hi, I'm listening.", Purpose: agent.PurposeGreeting})
+	joining.record(agent.Responding{TurnID: "turn-1", Prompt: "Hello?"})
+	s.Empty(s.held.responses, "a turn written before its session breaks the foreign key")
+
+	joining.startRecording()
+	joining.record(agent.Responded{TurnID: "turn-1", Text: "Hello."})
+
+	s.Require().Len(s.held.responses, 2)
+	s.Empty(s.held.responses[0].Said, "the greeting goes first")
+	s.Equal("Hello?", s.held.responses[1].Said)
+	s.Equal([]string{store.ItemAnswer, store.ItemSaid, store.ItemAnswer}, s.held.kinds())
+	s.Equal("Hi, I'm listening.", s.held.items[0].Text)
+	s.Require().Len(s.held.finished, 2)
 }
 
 func (s *RecordSuite) TestItemsKeepTheOrderTheyHappenedIn() {
@@ -336,7 +362,7 @@ func (s *RecordSuite) TestMatchesLiveAnswersTheSameFiltersAsTheStore() {
 
 func (s *RecordSuite) TestFramesOfTheUsersVideoMakeTheSessionAVideoOneOnce() {
 	held := &heldRecorder{}
-	live := &Session{id: "b", modality: store.ModalityVoice, records: held}
+	live := &Session{id: "b", modality: store.ModalityVoice, records: held, recording: true}
 	frames := framesRunner{parts: []llm.ContentPart{{Image: &llm.ImagePart{URL: "data:image/jpeg;base64,AA=="}}}}
 	runner := &videoRunner{next: frames, session: live}
 

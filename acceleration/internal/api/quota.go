@@ -28,6 +28,36 @@ func quotaHeaders(header http.Header, status quota.Status) {
 	header.Set(quotaResetHeader, strconv.FormatInt(status.Reset.Unix(), 10))
 }
 
+// modelWork is the routes that start model responses a quota counts: a session, which may
+// greet; a turn; a run; and the sockets that take turns, refused only as they are opened.
+var modelWork = func() *http.ServeMux {
+	routes := http.NewServeMux()
+	nothing := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	for _, pattern := range []string{
+		"POST /v1/agents/sessions",
+		"POST /v1/agents/sessions/{id}/respond",
+		"POST /v1/agents/sessions/{id}/responses",
+		"POST /v1/agents/runs",
+		"GET /v1/agents/sessions/{id}/events",
+		"GET /v1/{modality}/stream",
+	} {
+		routes.Handle(pattern, nothing)
+	}
+	return routes
+}()
+
+// startsModelWork reports whether a request starts model work: a write to one of modelWork's
+// routes, or a socket opened on one. A read never does.
+func startsModelWork(r *http.Request) bool {
+	if _, pattern := modelWork.Handler(r); pattern == "" {
+		return false
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	}
+	return true
+}
+
 // withQuota refuses a caller who has spent their day before any work is started.
 //
 // It is not the only place the limit is enforced, and it is not the one that matters most:
@@ -53,16 +83,21 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 			(r.Method == http.MethodDelete && sessionID != "" && !strings.Contains(sessionID, "/") ||
 				r.Method == http.MethodPost && stopping && stopped != "" && !strings.Contains(stopped, "/"))
 		// A request nobody authenticated has no account to count against. A backend, and a
-		// caller with neither a name nor an address, are told apart by Allow itself: it
-		// counts nothing for a server-side caller even when it names a user, because
-		// counting that name would charge a person's day for work their customer chose to
-		// do for them.
+		// caller with neither a name nor an address, are told apart by Allow itself: a
+		// backend naming a user is held to the quotas the customer set for that user, and
+		// never to the deployment's default, which guards against devices alone.
 		customerID, known := CustomerFrom(r.Context())
 		if !known || endingSession {
 			next.ServeHTTP(w, r)
 			return
 		}
 		caller := CallerFrom(r.Context())
+		// A backend is refused only work that asks a model for something: it reads and
+		// manages its user's sessions, and everything else, whatever that user has spent.
+		if caller.ServerSide && !startsModelWork(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		status, err := s.quota.Allow(r.Context(), customerID, caller)
 		quotaHeaders(w.Header(), status)

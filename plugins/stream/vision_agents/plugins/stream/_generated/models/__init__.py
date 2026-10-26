@@ -53,8 +53,6 @@ from .authorization_kind import AuthorizationKind
 from .authorization_request import AuthorizationRequest
 from .authorize_plugin_request import AuthorizePluginRequest
 from .available_number import AvailableNumber
-from .budget import Budget
-from .budget_interval import BudgetInterval
 from .business_profile import BusinessProfile
 from .business_profile_legal_entity_type import BusinessProfileLegalEntityType
 from .business_profile_organization_type import BusinessProfileOrganizationType
@@ -80,6 +78,7 @@ from .campaign_request import CampaignRequest
 from .campaign_request_tags import CampaignRequestTags
 from .campaign_state import CampaignState
 from .campaign_tags import CampaignTags
+from .cancel_price_change_input import CancelPriceChangeInput
 from .candidate import Candidate
 from .channel_account import ChannelAccount
 from .channel_identity import ChannelIdentity
@@ -199,6 +198,7 @@ from .detection_request_tags import DetectionRequestTags
 from .detection_result import DetectionResult
 from .detection_status import DetectionStatus
 from .dispatch_setting import DispatchSetting
+from .effective_quota import EffectiveQuota
 from .endpointing import Endpointing
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
@@ -253,6 +253,21 @@ from .knowledge_url_state import KnowledgeUrlState
 from .left_out_connector import LeftOutConnector
 from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
+from .limit import Limit
+from .limit_change import LimitChange
+from .limit_grant import LimitGrant
+from .limit_grant_input import LimitGrantInput
+from .limit_grant_page import LimitGrantPage
+from .limit_grant_revocation import LimitGrantRevocation
+from .limit_grant_state import LimitGrantState
+from .limit_in_force import LimitInForce
+from .limit_input import LimitInput
+from .limit_interval import LimitInterval
+from .limit_level import LimitLevel
+from .limit_page import LimitPage
+from .limit_reset_input import LimitResetInput
+from .limit_subject import LimitSubject
+from .limit_window import LimitWindow
 from .link_channel_request import LinkChannelRequest
 from .list_agent_logs_severity import ListAgentLogsSeverity
 from .list_scheduled_tasks_state import ListScheduledTasksState
@@ -262,6 +277,10 @@ from .llm_options_format import LlmOptionsFormat
 from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
+from .manage_limit_grant_input import ManageLimitGrantInput
+from .manage_limit_input import ManageLimitInput
+from .manage_limit_reset_input import ManageLimitResetInput
+from .manage_status import ManageStatus
 from .mcp_server import McpServer
 from .mcp_server_branding import McpServerBranding
 from .modality import Modality
@@ -299,15 +318,45 @@ from .plugin_event_arguments import PluginEventArguments
 from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
+from .policy_budget import PolicyBudget
+from .policy_scope import PolicyScope
 from .policy_tags import PolicyTags
 from .postal_address import PostalAddress
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
+from .price_change import PriceChange
+from .price_change_entry import PriceChangeEntry
+from .price_change_entry_rates import PriceChangeEntryRates
+from .price_change_entry_when import PriceChangeEntryWhen
+from .price_change_input import PriceChangeInput
+from .price_change_kind import PriceChangeKind
+from .price_change_page import PriceChangePage
+from .price_entry import PriceEntry
+from .price_entry_charged_rates import PriceEntryChargedRates
+from .price_entry_input import PriceEntryInput
+from .price_entry_input_rates import PriceEntryInputRates
+from .price_entry_input_when import PriceEntryInputWhen
+from .price_entry_rates import PriceEntryRates
+from .price_entry_when import PriceEntryWhen
+from .price_item import PriceItem
+from .price_item_when import PriceItemWhen
+from .price_list import PriceList
+from .price_preview import PricePreview
+from .price_preview_item import PricePreviewItem
+from .price_preview_item_rate_factors import PricePreviewItemRateFactors
+from .price_preview_item_when import PricePreviewItemWhen
+from .price_rate import PriceRate
+from .price_tier import PriceTier
+from .price_tier_rates import PriceTierRates
+from .priced_entry import PricedEntry
+from .priced_entry_charged_rates import PricedEntryChargedRates
+from .priced_entry_rates import PricedEntryRates
 from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
 from .provider_price import ProviderPrice
 from .quota import Quota
+from .quota_level import QuotaLevel
 from .rcs_profile import RCSProfile
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
@@ -404,6 +453,8 @@ from .speech import Speech
 from .speech_request import SpeechRequest
 from .speech_request_tags import SpeechRequestTags
 from .spend_bucket import SpendBucket
+from .spend_hard_limit_usage import SpendHardLimitUsage
+from .spend_hard_limit_window import SpendHardLimitWindow
 from .start_session_voice_request import StartSessionVoiceRequest
 from .stats_bucket import StatsBucket
 from .stored_connector_o_auth_client import StoredConnectorOAuthClient
@@ -416,6 +467,7 @@ from .sts_options_overwrites import StsOptionsOverwrites
 from .sts_options_turn_detection import StsOptionsTurnDetection
 from .stt_options import SttOptions
 from .stt_options_overwrites import SttOptionsOverwrites
+from .subject_usage import SubjectUsage
 from .suspend_telephony_request import SuspendTelephonyRequest
 from .sync_agent_request import SyncAgentRequest
 from .sync_agent_request_tags import SyncAgentRequestTags
@@ -450,6 +502,10 @@ from .tts_options import TtsOptions
 from .tts_options_overwrites import TtsOptionsOverwrites
 from .tts_options_pronunciations import TtsOptionsPronunciations
 from .turn_stats_bucket import TurnStatsBucket
+from .upcoming_price_entry import UpcomingPriceEntry
+from .upcoming_price_entry_charged_rates import UpcomingPriceEntryChargedRates
+from .upcoming_price_entry_rates import UpcomingPriceEntryRates
+from .upcoming_price_entry_when import UpcomingPriceEntryWhen
 from .update_scheduled_task_request import UpdateScheduledTaskRequest
 from .update_session_request import UpdateSessionRequest
 from .update_session_request_custom import UpdateSessionRequestCustom
@@ -464,6 +520,10 @@ from .use_case_request import UseCaseRequest
 from .use_case_review import UseCaseReview
 from .use_case_review_vendor_payload import UseCaseReviewVendorPayload
 from .use_case_status import UseCaseStatus
+from .user_policy import UserPolicy
+from .user_policy_entry import UserPolicyEntry
+from .user_policy_input import UserPolicyInput
+from .user_policy_page import UserPolicyPage
 from .video_source import VideoSource
 from .voice import Voice
 from .voice_binding import VoiceBinding
@@ -531,8 +591,6 @@ __all__ = (
     "AuthorizationRequest",
     "AuthorizePluginRequest",
     "AvailableNumber",
-    "Budget",
-    "BudgetInterval",
     "BusinessProfile",
     "BusinessProfileLegalEntityType",
     "BusinessProfileOrganizationType",
@@ -554,6 +612,7 @@ __all__ = (
     "CampaignRequestTags",
     "CampaignState",
     "CampaignTags",
+    "CancelPriceChangeInput",
     "Candidate",
     "ChannelAccount",
     "ChannelIdentity",
@@ -673,6 +732,7 @@ __all__ = (
     "DetectionResult",
     "DetectionStatus",
     "DispatchSetting",
+    "EffectiveQuota",
     "Endpointing",
     "EqualsType1",
     "ErrorDetail",
@@ -725,6 +785,21 @@ __all__ = (
     "LeftOutConnector",
     "LibraryVoice",
     "LibraryVoices",
+    "Limit",
+    "LimitChange",
+    "LimitGrant",
+    "LimitGrantInput",
+    "LimitGrantPage",
+    "LimitGrantRevocation",
+    "LimitGrantState",
+    "LimitInForce",
+    "LimitInput",
+    "LimitInterval",
+    "LimitLevel",
+    "LimitPage",
+    "LimitResetInput",
+    "LimitSubject",
+    "LimitWindow",
     "LinkChannelRequest",
     "ListAgentLogsSeverity",
     "ListScheduledTasksState",
@@ -734,6 +809,10 @@ __all__ = (
     "LlmOptionsMetadata",
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
+    "ManageLimitGrantInput",
+    "ManageLimitInput",
+    "ManageLimitResetInput",
+    "ManageStatus",
     "McpServer",
     "McpServerBranding",
     "Modality",
@@ -771,15 +850,45 @@ __all__ = (
     "PluginSetupStep",
     "PluginWithOptions",
     "Policy",
+    "PolicyBudget",
+    "PolicyScope",
     "PolicyTags",
     "PostalAddress",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
+    "PriceChange",
+    "PriceChangeEntry",
+    "PriceChangeEntryRates",
+    "PriceChangeEntryWhen",
+    "PriceChangeInput",
+    "PriceChangeKind",
+    "PriceChangePage",
+    "PriceEntry",
+    "PriceEntryChargedRates",
+    "PriceEntryInput",
+    "PriceEntryInputRates",
+    "PriceEntryInputWhen",
+    "PriceEntryRates",
+    "PriceEntryWhen",
+    "PriceItem",
+    "PriceItemWhen",
+    "PriceList",
+    "PricePreview",
+    "PricePreviewItem",
+    "PricePreviewItemRateFactors",
+    "PricePreviewItemWhen",
+    "PriceRate",
+    "PriceTier",
+    "PriceTierRates",
+    "PricedEntry",
+    "PricedEntryChargedRates",
+    "PricedEntryRates",
     "Provider",
     "ProviderBenchmark",
     "ProviderHealth",
     "ProviderPrice",
     "Quota",
+    "QuotaLevel",
     "RCSProfile",
     "RecordingSource",
     "RecordingStatus",
@@ -876,6 +985,8 @@ __all__ = (
     "SpeechRequest",
     "SpeechRequestTags",
     "SpendBucket",
+    "SpendHardLimitUsage",
+    "SpendHardLimitWindow",
     "StartSessionVoiceRequest",
     "StatsBucket",
     "StoredConnectorOAuthClient",
@@ -888,6 +999,7 @@ __all__ = (
     "StsOptionsTurnDetection",
     "SttOptions",
     "SttOptionsOverwrites",
+    "SubjectUsage",
     "SuspendTelephonyRequest",
     "SyncAgentRequest",
     "SyncAgentRequestTags",
@@ -922,6 +1034,10 @@ __all__ = (
     "TtsOptionsOverwrites",
     "TtsOptionsPronunciations",
     "TurnStatsBucket",
+    "UpcomingPriceEntry",
+    "UpcomingPriceEntryChargedRates",
+    "UpcomingPriceEntryRates",
+    "UpcomingPriceEntryWhen",
     "UpdateScheduledTaskRequest",
     "UpdateSessionRequest",
     "UpdateSessionRequestCustom",
@@ -936,6 +1052,10 @@ __all__ = (
     "UseCaseReview",
     "UseCaseReviewVendorPayload",
     "UseCaseStatus",
+    "UserPolicy",
+    "UserPolicyEntry",
+    "UserPolicyInput",
+    "UserPolicyPage",
     "VideoSource",
     "Voice",
     "VoiceBinding",

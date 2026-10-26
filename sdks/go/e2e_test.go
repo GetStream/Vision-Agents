@@ -18,11 +18,13 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/client"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
@@ -103,6 +105,83 @@ func TestTheRouterIsReachableAndSaysWhatItCanDo(t *testing.T) {
 		t.Fatalf("the router answered %s: %s", health.Status(), health.Body)
 	}
 	t.Logf("the router reports %v", health.JSON200.Dependencies)
+}
+
+// A backend's client hears what every answer cost through WithUsage, its routed calls included
+// when they go through the client's backend. A router that bills nobody says no balance.
+func TestTheUsageCallbackSeesEveryResponse(t *testing.T) {
+	var mu sync.Mutex
+	var seen []client.Usage
+	api, err := client.New(router(t), client.WithUsage(func(usage client.Usage) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, usage)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !api.ServerSide() {
+		t.Skip("only a backend is told what its requests cost")
+	}
+
+	answer, err := stream.Router{Backend: api.Backend()}.Search(t.Context(), "What is the capital of France?", nil)
+	if err != nil {
+		t.Skipf("this router does not search: %v", err)
+	}
+	t.Logf("searched with %s/%s", answer.Provider, answer.Model)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("one answer, one call: %+v", seen)
+	}
+	if seen[0].Operation != "POST /v1/search" {
+		t.Errorf("the operation is the request it answered: %q", seen[0].Operation)
+	}
+	if seen[0].CostMicros < 0 {
+		t.Errorf("a cost is never negative: %d", seen[0].CostMicros)
+	}
+	t.Logf("the search cost %d micros, estimated %v; balance %v %q", seen[0].CostMicros, seen[0].Estimated,
+		seen[0].BalanceMicros, seen[0].BalanceWarning)
+}
+
+// With a router that bills, every answer carries the balance, and the warning fires once for
+// the state it is in rather than once an answer.
+func TestTheBalanceWarningFiresOncePerCrossing(t *testing.T) {
+	var mu sync.Mutex
+	var warned []client.BalanceWarning
+	var balances int
+	api, err := client.New(router(t),
+		client.WithUsage(func(usage client.Usage) {
+			mu.Lock()
+			defer mu.Unlock()
+			if usage.BalanceMicros != nil {
+				balances++
+			}
+		}),
+		client.WithBalanceWarning(func(warning client.BalanceWarning) {
+			mu.Lock()
+			defer mu.Unlock()
+			warned = append(warned, warning)
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	searching := stream.Router{Backend: api.Backend()}
+	for range 3 {
+		if _, err := searching.Search(t.Context(), "What is the capital of France?", nil); err != nil {
+			t.Skipf("this router does not search: %v", err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if balances == 0 {
+		t.Skip("this router bills nobody, so no answer says a balance")
+	}
+	if len(warned) > 1 {
+		t.Fatalf("three answers in one state warn once at most: %+v", warned)
+	}
 }
 
 func TestAConversationInWritingIsAnsweredByAModel(t *testing.T) {

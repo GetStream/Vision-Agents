@@ -17,9 +17,8 @@ import (
 // The cadence is driven at a fraction of its real gap, because what these assert is what
 // is decided rather than how long the deciding waits.
 const (
-	testGap    = 10 * time.Millisecond
-	testRetry  = 20 * time.Millisecond
-	testWithin = time.Second
+	testGap   = 10 * time.Millisecond
+	testRetry = 20 * time.Millisecond
 	// testPatience is shorter than one retry, so the second ruling about words nobody has
 	// added to is the one that gives up on waiting for them.
 	testPatience = 5 * time.Millisecond
@@ -113,7 +112,7 @@ func (s *ConverseSuite) held() candidate {
 	select {
 	case ready := <-s.settling.Ready():
 		return ready
-	case <-time.After(testWithin):
+	case <-time.After(settleFor):
 		s.FailNow("the words never held still")
 		return candidate{}
 	}
@@ -151,7 +150,7 @@ func (s *ConverseSuite) seen() []Event {
 // asynchronous and an assertion made straight away would race it.
 func (s *ConverseSuite) eventually(satisfied func() bool, message string) {
 	s.T().Helper()
-	deadline := time.Now().Add(testWithin)
+	deadline := time.Now().Add(settleFor)
 	for time.Now().Before(deadline) {
 		if satisfied() {
 			return
@@ -1306,6 +1305,28 @@ func (s *ConverseSuite) TestAQueuedTurnSurvivesANewTurnThatStartsTheSameWay() {
 	s.Equal(queued.Candidate.ID, action.Candidate.ID)
 }
 
+func (s *ConverseSuite) TestACallerWhoWentOnBeforeHearingTheReplyIsGivingAThoughtInParts() {
+	first := s.settle("Question, Andre lies.", s.quiet())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: first.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.False(s.converse.inParts(caller.ID), "nothing yet says they are not done")
+
+	unheard := floor{Talking: true, LastParticipant: caller,
+		Unheard: unheardReply{turnID: first.ID, participant: caller.ID}}
+	actions := s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 2, Text: "Delphina says Andre lies.",
+	}, unheard)
+	s.Require().Contains(kinds(actions), ActInterrupt)
+	s.True(s.converse.inParts(caller.ID), "going on over the reply is saying they had not finished")
+	s.False(s.converse.inParts("somebody else"))
+
+	part := s.converse.Settled(s.held(), s.quiet()).Candidate
+	s.converse.Ruled(harness.Decided{CandidateID: part.ID, Disposition: harness.Respond, Floor: harness.Continue}, s.quiet())
+	s.False(s.converse.inParts(caller.ID), "an answer they heard out ends it")
+}
+
 func (s *ConverseSuite) TestAnAnnouncedMonologueIsNotAnsweredUntilItEnds() {
 	announced := s.settle("I'll give you everything up front so we don't go back and forth.", s.quiet())
 	held := s.converse.Ruled(harness.Decided{
@@ -1911,7 +1932,7 @@ func (s *ConverseSuite) TestAnUnfinishedThoughtIsPutAgainOnceTheCallerStops() {
 	case again := <-s.settling.Ready():
 		s.Equal("book a table", again.Text)
 		s.NotEqual(ready.ID, again.ID)
-	case <-time.After(testWithin):
+	case <-time.After(settleFor):
 		s.Fail("the caller lost their turn to a controller that wanted to wait")
 	}
 }

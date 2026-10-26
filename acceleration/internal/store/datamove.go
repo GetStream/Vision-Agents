@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ErrChangesExpired says the cursor a caller is resuming from is older than anything
@@ -40,6 +42,11 @@ type dataTable struct {
 	filter string
 	// shard is a table kept in the shards rather than the shared database.
 	shard bool
+	// across is the column a row is known by in every deployment, for a table whose primary
+	// key each deployment draws from a sequence of its own, so the same id is two rows in
+	// two deployments. Such a row is imported without its id, and is written once: importing
+	// it again, or a row the destination already holds under it, changes nothing.
+	across string
 }
 
 // rollup is a table of counts per key that every shard keeps its own rows of, so an export of
@@ -106,7 +113,11 @@ var dataTables = []dataTable{
 	{name: "agent_responses", customer: "customer_id", shard: true},
 	{name: "agent_response_items", parent: "agent_responses", parentColumn: "response_id", shard: true},
 	{name: "agent_logs", customer: "customer_id"},
-	{name: "requests", customer: "customer_id", shard: true},
+	// No foreign key points at a request's id. An agent log row names it as text, and
+	// Store.AgentLog only takes a request's error by that number from a row that carries none of
+	// its own and whose time and agent are the request's, so a moved row cannot show the error
+	// of whichever request holds its number here. Its usage id is the unit of work wherever it is.
+	{name: "requests", customer: "customer_id", shard: true, across: "usage_id"},
 	{name: "stats_hourly", customer: "customer_id", shard: true},
 	{name: "stats_daily", customer: "customer_id", shard: true},
 	{name: "stats_tags_hourly", customer: "customer_id", shard: true},
@@ -466,19 +477,40 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	if err != nil {
 		return err
 	}
+	if table == "phone_numbers" {
+		if err := importableNumber(ctx, db, customerID, row); err != nil {
+			return err
+		}
+	}
 	shape, err := s.shapeOf(ctx, table)
 	if err != nil {
 		return err
 	}
 
 	columns := shape.insertable()
+	if spec.across != "" {
+		// The id is the destination's to draw: the source's may be one of its own rows'.
+		columns = slices.DeleteFunc(columns, func(column string) bool { return spec.isKey(shape, column) })
+	}
 	quoted := strings.Join(columns, ", ")
+	selected := quoted
+	if i := slices.Index(columns, "usage_id"); spec.name == "requests" && i >= 0 {
+		// A row from before usage ids has none, and the table refuses a new row without one.
+		// Its usage id is made from the source's id for it, so importing it again names the
+		// same unit of work.
+		picked := slices.Clone(columns)
+		picked[i] = "COALESCE(usage_id, " + importedUsageID("customer_id", "id") + ")"
+		selected = strings.Join(picked, ", ")
+	}
 
 	assignments := make([]string, 0, len(columns))
 	for _, column := range columns {
 		if !spec.isKey(shape, column) {
 			assignments = append(assignments, column+" = EXCLUDED."+column)
 		}
+	}
+	if spec.across != "" {
+		assignments = nil
 	}
 
 	// The row first, then the customer, in the order the placeholders appear: the
@@ -508,10 +540,70 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 
 	query := fmt.Sprintf(
 		"INSERT INTO %s (%s) SELECT %s FROM jsonb_populate_record(NULL::%s, %s) AS r%s ON CONFLICT (%s) %s",
-		spec.name, quoted, quoted, spec.name, subject, where, strings.Join(shape.keys, ", "), conflict)
+		spec.name, quoted, selected, spec.name, subject, where, strings.Join(spec.keys(shape), ", "), conflict)
 
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: import %s: %w", table, err)
+	}
+	return nil
+}
+
+// digitsKey is a number as most vendors read the one they are given, as SQL over a text
+// value: its digits. Plivo, DIDWW, Vonage and Bird drop the plus; Twilio, Telnyx and Sinch
+// read it as written, which its digits only widen.
+const digitsKey = `regexp_replace(%s, '[^0-9]', '', 'g')`
+
+// vendorKeys is a number as a vendor that reads it another way does. Bandwidth also drops
+// the 1 of an 11-digit number (bandwidth.digits), so +15551234567 and +5551234567 are one
+// number there.
+var vendorKeys = map[string]string{
+	"bandwidth": `regexp_replace(regexp_replace(%s, '[^0-9]', '', 'g'), '^1([0-9]{10})$', '\1')`,
+}
+
+// importableNumber refuses an imported number the customer would hold in a form other than
+// E.164, or that another customer holds. Every bought number is held in the deployment's one
+// account at its vendor, and releasing it there is what holding it here allows, so a number
+// two customers held would be one either of them could give back. The unique index on what
+// is held compares the text as written, so it sees neither another form of a number nor the
+// same number at another vendor. A number given back is only its bill's history and imports
+// as written; one on the customer's own trunk is in no account here.
+//
+// Two imports of one number into two customers at the same moment can both pass this.
+func importableNumber(ctx context.Context, db bun.IDB, customerID string, row json.RawMessage) error {
+	// Read the way the insert reads it, by exact column name: a JSON decoder also matches a
+	// key in another case, which the insert then leaves out.
+	var e164, vendor sql.NullString
+	var released bool
+	if err := db.QueryRowContext(ctx,
+		"SELECT e164, vendor, released_at IS NOT NULL FROM jsonb_populate_record(NULL::phone_numbers, ?::jsonb)",
+		string(row)).Scan(&e164, &vendor, &released); err != nil {
+		return fmt.Errorf("store: read an imported number: %w", err)
+	}
+	if released {
+		return nil
+	}
+	if !IsE164(e164.String) {
+		return stack.Wrap(fmt.Errorf("%w: %q", ErrNotE164, e164.String))
+	}
+	if vendor.String == "sip_trunk" {
+		return nil
+	}
+	// Compared as the vendor it would be given back at reads a number, so a number held in
+	// another form, before every write checked the form, is found as well.
+	key, found := vendorKeys[vendor.String]
+	if !found {
+		key = digitsKey
+	}
+	var held bool
+	if err := db.QueryRowContext(ctx, fmt.Sprintf(`
+SELECT EXISTS (SELECT 1 FROM phone_numbers
+WHERE customer_id <> ? AND released_at IS NULL AND vendor <> 'sip_trunk' AND %s = %s)`,
+		fmt.Sprintf(key, "e164"), fmt.Sprintf(key, "?::text")),
+		customerID, e164.String).Scan(&held); err != nil {
+		return fmt.Errorf("store: who holds an imported number: %w", err)
+	}
+	if held {
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrNumberHeldElsewhere, e164.String))
 	}
 	return nil
 }
@@ -542,9 +634,20 @@ func (t dataTable) identity() string {
 		return "jsonb_build_object('customer_id', ?::text, 'password_kek_version', 0)"
 	}
 	// An attached number arrives without its bridge password for the same reason, so its key
-	// version stays behind too rather than describing a password that is not there.
+	// version stays behind too rather than describing a password that is not there. Nor does
+	// where its calls go: the trunk, route and call it was attached to are named by whatever
+	// the importer wrote, and a hook that finds one call under two customers' numbers answers
+	// it for neither (ErrAmbiguousHook). It arrives needing to be attached again.
 	if t.name == "phone_numbers" {
-		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL)"
+		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL," +
+			" 'stream_trunk_id', NULL, 'stream_route_id', NULL, 'stream_call_id', NULL," +
+			" 'stream_call_type', NULL, 'bridge_uri', NULL, 'bridge_username', NULL)"
+	}
+	// A request was billed by the deployment that recorded it, so this one never ships it, and
+	// what that one's usage service answered for it is not this one's: a reship of the rows
+	// this one shipped or had refused leaves it alone.
+	if t.name == "requests" {
+		return "jsonb_build_object('customer_id', ?::text, 'to_ship', false, 'shipped_at', NULL, 'ship_error', '')"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }
@@ -557,6 +660,31 @@ func (t dataTable) owned(relation string) string {
 			t.parent, relation, t.parentColumn)
 	}
 	return fmt.Sprintf("%s.%s = ?", relation, t.customer)
+}
+
+// keys are the columns a row of this table is known by across deployments: what an import
+// resolves a conflict on.
+func (t dataTable) keys(s shape) []string {
+	if t.across != "" {
+		return []string{t.across}
+	}
+	return s.keys
+}
+
+// captured are the columns a change records of a row. A row known by another column than its
+// primary key records both: the primary key is what a row without the other is found by.
+func (t dataTable) captured(s shape) []string {
+	if t.across != "" {
+		return append([]string{t.across}, s.keys...)
+	}
+	return s.keys
+}
+
+// importedUsageID is the usage id a request from before usage ids is imported under, as SQL,
+// made from the customer importing it and its id in the source, so importing it again and
+// replaying its delete name the same row.
+func importedUsageID(customer, sourceID string) string {
+	return fmt.Sprintf("md5('import:' || %s || ':' || %s)::uuid", customer, sourceID)
 }
 
 func (t dataTable) isKey(s shape, column string) bool {
@@ -682,11 +810,19 @@ func (s *Store) deleteRow(ctx context.Context, db bun.IDB, customerID string, ch
 		return err
 	}
 
-	conditions := make([]string, 0, len(shape.keys)+1)
-	args := make([]any, 0, len(shape.keys)+1)
-	for _, column := range shape.keys {
-		conditions = append(conditions, fmt.Sprintf("t.%s::text = (?::jsonb ->> '%s')", column, column))
-		args = append(args, string(change.Key))
+	var conditions []string
+	var args []any
+	if spec.across != "" {
+		// Never by the id, which names another row here. A row from before usage ids has none,
+		// and was imported under one made from its source id, which the change carries too.
+		conditions = append(conditions, fmt.Sprintf("t.%s = COALESCE((?::jsonb ->> '%s')::uuid, %s)",
+			spec.across, spec.across, importedUsageID("?::text", "(?::jsonb ->> 'id')")))
+		args = append(args, string(change.Key), customerID, string(change.Key))
+	} else {
+		for _, column := range shape.keys {
+			conditions = append(conditions, fmt.Sprintf("t.%s::text = (?::jsonb ->> '%s')", column, column))
+			args = append(args, string(change.Key))
+		}
 	}
 	if spec.parent != "" {
 		conditions = append(conditions, fmt.Sprintf(
@@ -745,7 +881,7 @@ func (s *Store) watchDataChanges(ctx context.Context, db *bun.DB) error {
 		if table.parent != "" {
 			arguments = []string{"'parent'", "'" + table.parentColumn + "'", "'" + table.parent + "'"}
 		}
-		for _, key := range shape.keys {
+		for _, key := range table.captured(shape) {
 			arguments = append(arguments, "'"+key+"'")
 		}
 

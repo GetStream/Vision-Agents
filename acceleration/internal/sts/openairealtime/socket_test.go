@@ -702,3 +702,31 @@ func (s *RealtimeSocketSuite) TestABargeInThatInterruptsTheReplyAsksForNothing()
 	s.False(events[5].(sts.ResponseComplete).Interrupted)
 	s.nothingAsked(provider, conn)
 }
+
+func (s *RealtimeSocketSuite) TestAnOpenCallIsTalkedAboutWithoutCallingAnything() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+	s.Require().True(provider.UpdatesCalls())
+
+	s.Require().NoError(provider.UpdateCall(sts.CallUpdate{
+		CallID: "call_1", Status: "searching 3 airlines", Guidance: "Tell the caller where it has got to.", Instructions: "Be brief.",
+	}))
+
+	update := s.nextFrame(conn)
+	s.Equal(eventResponseCreate, update.Type)
+	s.Require().NotNil(update.Response)
+	s.Equal("Be brief.\n\nTell the caller where it has got to.", update.Response.Instructions)
+	s.Equal("none", update.Response.ToolChoice, "a reply about an open call must not call it again")
+}
+
+func (s *RealtimeSocketSuite) TestOnlyOpenAIsRealtimeIsToldAboutAnOpenCall() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, _ := s.connect(fake, Options{Vendor: Qwen, Model: "qwen-audio-3.1-realtime-plus"})
+	defer func() { _ = provider.Close() }()
+
+	s.False(provider.UpdatesCalls())
+	s.ErrorIs(provider.UpdateCall(sts.CallUpdate{CallID: "call_1", Status: "searching"}), sts.ErrNoCallUpdates)
+}

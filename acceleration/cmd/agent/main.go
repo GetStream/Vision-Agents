@@ -27,8 +27,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -48,6 +48,9 @@ const (
 
 // finishWithin bounds how long the agent is given to finish its last sentence.
 const finishWithin = 10 * time.Second
+
+// cliAttribution owns what the agent does: an operator ran it, and no key started it.
+var cliAttribution = routing.Attribution{APIKey: routing.CLIOrigin("agent")}
 
 // The person the browser joins the call as, so the agent has somebody to talk to.
 const (
@@ -214,11 +217,13 @@ func run(options options, logger *slog.Logger) error {
 
 	// Without a mem0 key the agent starts every call knowing nothing but its
 	// instructions, which is the behaviour before memory existed.
-	var remembering memory.Store
+	var remembering *metered.Memory
 	if recall, err := mem0.New(mem0.Options{Logger: logger}); err != nil {
 		logger.Debug("not remembering anything between calls", "error", err)
 	} else {
-		remembering = recall
+		recorder := routing.NewRecorder(routing.Memory, routers.store, routers.live, nil, logger)
+		defer recorder.Close()
+		remembering = metered.NewMemory(recall, recorder)
 	}
 
 	// Skills only mean something with a subagent to run them, so loading them is skipped
@@ -242,6 +247,7 @@ func run(options options, logger *slog.Logger) error {
 		Edge:           edge,
 		Instructions:   options.prompt(),
 		CustomerID:     options.customerID,
+		Attribution:    cliAttribution,
 		AgentID:        options.agent(),
 		CallID:         options.callID,
 		Tags:           options.tags.Tags,
@@ -376,7 +382,7 @@ func buildTelephony(
 	}
 
 	return service.Line(phone.LineOptions{
-		Owner:        routing.Owner{CustomerID: options.customerID, Tags: options.tags.Tags},
+		Owner:        routing.Owner{CustomerID: options.customerID, Attribution: cliAttribution, Tags: options.tags.Tags},
 		From:         options.number,
 		CallID:       options.callID,
 		CallType:     options.callType,

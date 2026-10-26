@@ -301,7 +301,7 @@ func sourceRule(m core.ResolvedManifest) *core.SourceRule {
 // never see such a tool.
 func asked(m core.ResolvedManifest, rule *core.SourceRule, listed []*mcp.Tool) []*mcp.Tool {
 	return slices.DeleteFunc(listed, func(tool *mcp.Tool) bool {
-		return len(rule.UnaskedScopes(m.Scopes.List, tool.Name)) > 0
+		return len(rule.UnaskedScopes(m.Scopes, tool.Name)) > 0
 	})
 }
 

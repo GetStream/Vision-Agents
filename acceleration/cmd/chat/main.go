@@ -100,7 +100,7 @@ func run(options options, logger *slog.Logger) error {
 	}
 	defer cleanup()
 
-	session, err := router.Start(ctx, llmrouter.Request{
+	session, err := router.Start(routing.WithAttribution(ctx, routing.Attribution{APIKey: routing.CLIOrigin("chat")}), llmrouter.Request{
 		CustomerID:    options.customerID,
 		Tags:          options.tags,
 		Target:        options.target,
@@ -212,14 +212,13 @@ func buildRouter(ctx context.Context, logger *slog.Logger) (*llmrouter.Router, f
 type talker struct {
 	session *llmrouter.Session
 	options options
-	price   routing.Price
 
 	// history is the conversation so far, sent in full on every turn.
 	history []llm.Message
 }
 
 func newTalker(session *llmrouter.Session, options options) *talker {
-	return &talker{session: session, options: options, price: session.Price()}
+	return &talker{session: session, options: options}
 }
 
 // ask sends one turn, prints the answer as it arrives, and reports what the turn cost.
@@ -268,11 +267,7 @@ func (t *talker) ask(ctx context.Context, question string) error {
 // how many tokens it spent and what it cost.
 func (t *talker) summarise(response llm.Response) string {
 	usage := response.Usage
-	costMicros := t.price.CostMicros(routing.Usage{
-		InputTokens:       usage.InputTokens,
-		CachedInputTokens: usage.InputTokensDetails.CachedTokens,
-		OutputTokens:      usage.OutputTokens,
-	})
+	costMicros := t.session.QuoteResponse(response).CostMicros
 
 	summary := fmt.Sprintf("%s/%s  first token %.0fms  %d in  %d out  $%.6f",
 		response.Provider, response.Model,

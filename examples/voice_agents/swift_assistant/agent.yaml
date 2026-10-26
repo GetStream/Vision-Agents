@@ -9,9 +9,13 @@ search: search-fast
 greeting:
   text: Hey, it's Juno. What's on your mind?
   mode: exact
-# Each person's own Gmail, connected from the composer's Gmail button. Google's MCP server reads,
-# searches and drafts; sending is send_email, a tool on the phone that asks first and goes
-# through the router's proxy for this same connection.
+# Each person's own Gmail and Linear. The first time the agent reaches for one the person has
+# not connected, its call waits on a sign-in shown on its step in the chat, and carries on once
+# they have. Google's MCP server reads, searches and drafts; sending is send_email, a tool on
+# the phone that asks first and goes through the router's proxy for this same connection.
+# Linear's tools are the ones that read.
 connectors:
   - name: gmail
     tools: [search_threads, get_thread, get_message, list_labels, list_drafts, create_draft]
+  - name: linear
+    tools: [list_*, get_*, search_*]

@@ -89,11 +89,11 @@ func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithItsStoredText() {
 	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
 	s.Require().NoError(err)
 
-	s.answer(c, "is the build green?", "It is.")
+	id := s.answer(c, "is the build green?", "It is.")
 
 	s.Require().Eventually(func() bool { return len(s.handedOver()) == 1 }, 5*time.Second, 10*time.Millisecond)
 	reply := s.handedOver()[0]
-	s.Equal(conversation.FinishedReply{Customer: "customer", CID: s.cid, MessageID: reply.MessageID, Text: "It is."}, reply)
+	s.Equal(conversation.FinishedReply{Customer: "customer", CID: s.cid, MessageID: reply.MessageID, CommandID: id, Text: "It is."}, reply)
 	s.Contains(s.chat.Messages(s.channel), "It is.", "the reply is written into the thread channel")
 	s.Never(func() bool { return len(s.handedOver()) > 1 }, 200*time.Millisecond, 20*time.Millisecond,
 		"the reply being written is not handed over, only the stored final text")
@@ -320,9 +320,11 @@ func (s *ThreadChannelSuite) person(user, text string) {
 	s.Require().NoError(err)
 }
 
-// answer has the conversation answer told with reply, as Session.FollowUp leads it to.
-func (s *ThreadChannelSuite) answer(c *conversation.Conversation, told, reply string) {
-	_, err := c.BeginFollowUp("follow-up-"+uuid.NewString(), told)
+// answer has the conversation answer told with reply, as Session.FollowUp leads it to, and
+// returns the follow-up's id.
+func (s *ThreadChannelSuite) answer(c *conversation.Conversation, told, reply string) string {
+	id := "follow-up-" + uuid.NewString()
+	_, err := c.BeginFollowUp(id, told)
 	s.Require().NoError(err)
 	c.Observe(agent.ResponseDelta{Text: reply})
 	c.Observe(agent.Responded{})
@@ -334,6 +336,7 @@ func (s *ThreadChannelSuite) answer(c *conversation.Conversation, told, reply st
 		}
 		return false
 	}, 5*time.Second, 10*time.Millisecond)
+	return id
 }
 
 func (s *ThreadChannelSuite) handedOver() []conversation.FinishedReply {

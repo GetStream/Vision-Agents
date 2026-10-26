@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -79,7 +80,7 @@ func (s *ForwardedDispatchSuite) TestAToolHostedByAWorkerOnAnotherNodeIsOfferedA
 	}, settleFor, 10*time.Millisecond, "the tool was never offered here")
 
 	type answer struct {
-		output string
+		output []llm.ContentPart
 		err    error
 	}
 	answered := make(chan answer, 1)
@@ -96,10 +97,61 @@ func (s *ForwardedDispatchSuite) TestAToolHostedByAWorkerOnAnotherNodeIsOfferedA
 	select {
 	case got := <-answered:
 		s.Require().NoError(got.err)
-		s.Equal("targetSdkVersion 35", got.output)
+		s.Equal("targetSdkVersion 35", llm.TextOf(got.output))
 	case <-time.After(settleFor):
 		s.Fail("the answer never came back from the other node")
 	}
+}
+
+func (s *ForwardedDispatchSuite) TestAPictureAHostedToolAnswersWithComesBackFromAnotherNode() {
+	agent := "agent-" + s.utils.uuid()
+	worker := s.hostsOnTheOtherNode(agent)
+	s.Require().Eventually(func() bool {
+		offered, _ := s.elsewhere.HostedTools(s.customerID(), agent)
+		return len(offered) == 1
+	}, settleFor, 10*time.Millisecond, "the tool was never offered here")
+	answered := make(chan []llm.ContentPart, 1)
+	go func() {
+		parts, err := s.elsewhere.RunHosted(context.Background(), s.customerID(), agent,
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+		s.NoError(err)
+		answered <- parts
+	}()
+	call := s.await(worker, "tool_call")
+
+	s.Require().NoError(worker.WriteJSON(frame{"type": "tool_result", "tool_call_id": call["id"], "output": []frame{
+		{"type": "image_url", "image_url": frame{"url": roses}},
+	}}))
+
+	select {
+	case parts := <-answered:
+		s.Require().Len(parts, 1)
+		s.Require().NotNil(parts[0].Image, "the picture was lost between nodes")
+		s.NotEmpty(parts[0].Image.Data)
+	case <-time.After(settleFor):
+		s.Fail("the answer never came back from the other node")
+	}
+}
+
+func (s *ForwardedDispatchSuite) TestACallOnAnotherNodeTheSessionGivesUpOnIsCancelledOnTheWorker() {
+	agent := "agent-" + s.utils.uuid()
+	worker := s.hostsOnTheOtherNode(agent)
+	s.Require().Eventually(func() bool {
+		offered, _ := s.elsewhere.HostedTools(s.customerID(), agent)
+		return len(offered) == 1
+	}, settleFor, 10*time.Millisecond, "the tool was never offered here")
+	ctx, giveUp := context.WithCancel(context.Background())
+	defer giveUp()
+	go func() {
+		_, _ = s.elsewhere.RunHosted(ctx, s.customerID(), agent,
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk"})
+	}()
+	s.await(worker, "tool_call")
+
+	giveUp()
+
+	cancel := s.await(worker, "tool_cancel")
+	s.Equal("call-1", cancel["id"])
 }
 
 func (s *ForwardedDispatchSuite) TestAToolIsNoLongerOfferedOnceTheWorkerHostingItLeaves() {

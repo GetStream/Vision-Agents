@@ -1,0 +1,9 @@
+# What scripts/generate.mjs bundles the spec with before generating types from it.
+#
+# Operations tagged Staff (/v1/ops/*, /v1/manage/*) are Stream's own, reached with a staff key
+# and never by a customer, so the types leave them out. They stay in the spec, which Stream's
+# staff tools are typed from.
+decorators:
+  filter-out:
+    property: tags
+    value: Staff

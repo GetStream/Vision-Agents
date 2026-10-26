@@ -22,6 +22,10 @@ type ResponseParams struct {
 	TurnID string
 	// OnTiming reports this request when it settles, including failed attempts.
 	OnTiming func(CallTiming)
+	// Attributes are stored with the request's usage row. They are asked for when the row is
+	// written, so one settled after the request was made, such as whether a speculative reply
+	// was kept, is on it. Nil adds none.
+	Attributes func() map[string]string
 	// Instructions is the system prompt. It is separate from Input so a caller cannot
 	// forget it on a retry, and providers prepend it themselves.
 	Instructions string
@@ -49,7 +53,9 @@ type ResponseParams struct {
 	// It means nothing to a provider whose Capabilities do not report Store.
 	Store bool
 	// PreviousResponseID continues from a stored response, so only what has been added
-	// since needs sending. Empty replays the whole conversation.
+	// since needs sending. Empty replays the whole conversation. The stored response holds
+	// the instructions it was given, so a provider does not send them again: continue only
+	// with the same instructions, and replay the conversation when they change.
 	PreviousResponseID string
 	// Conversation is a provider-held conversation this response belongs to. It cannot
 	// be combined with PreviousResponseID.

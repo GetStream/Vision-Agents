@@ -5,6 +5,7 @@ package tools
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -14,6 +15,37 @@ import (
 const DescriptionTag = "schema"
 
 var timeType = reflect.TypeOf(time.Time{})
+
+// Schemer is a type that describes itself to a model, for whatever reflection cannot say:
+// a string that is one of a few values, a union, a shape only its own package knows.
+type Schemer interface {
+	JSONSchema() map[string]any
+}
+
+var schemerType = reflect.TypeOf((*Schemer)(nil)).Elem()
+
+// selfDescribed is the schema a type gives itself, or nil for one that gives none.
+func selfDescribed(t reflect.Type) map[string]any {
+	var value any
+	switch {
+	case t.Implements(schemerType):
+		value = reflect.Zero(t).Interface()
+	case reflect.PointerTo(t).Implements(schemerType):
+		value = reflect.New(t).Interface()
+	default:
+		return nil
+	}
+	described := value.(Schemer).JSONSchema()
+	if described == nil {
+		return nil
+	}
+	// A copy, so a description added beside it never writes into the type's own map.
+	schema := make(map[string]any, len(described)+1)
+	for key, value := range described {
+		schema[key] = value
+	}
+	return schema
+}
 
 // Schema renders a Go type as the JSON Schema object a model is offered.
 //
@@ -27,6 +59,9 @@ func Schema(t reflect.Type) (map[string]any, error) {
 func schemaOf(t reflect.Type, seen map[reflect.Type]bool) (map[string]any, error) {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
+	}
+	if schema := selfDescribed(t); schema != nil {
+		return schema, nil
 	}
 	if t == timeType {
 		return map[string]any{"type": "string", "format": "date-time"}, nil
@@ -135,6 +170,9 @@ func collect(t reflect.Type, seen map[reflect.Type]bool, properties map[string]a
 		if description := field.Tag.Get(DescriptionTag); description != "" {
 			schema["description"] = description
 		}
+		if err := constrain(schema, field.Tag); err != nil {
+			return fmt.Errorf("%s.%s: %w", t.Name(), field.Name, err)
+		}
 		properties[name] = schema
 
 		if !omitempty && field.Type.Kind() != reflect.Pointer {
@@ -142,6 +180,59 @@ func collect(t reflect.Type, seen map[reflect.Type]bool, properties map[string]a
 		}
 	}
 	return nil
+}
+
+// constrain adds what a field's tags say beyond its description: `enum` as comma-separated
+// values, `minimum` and `maximum`, `pattern`, `format`, and one `example`. Values are read
+// as the field's own type, so an enum on an int is numbers.
+func constrain(schema map[string]any, tag reflect.StructTag) error {
+	kind, _ := schema["type"].(string)
+	if values, ok := tag.Lookup("enum"); ok {
+		var enum []any
+		for _, value := range strings.Split(values, ",") {
+			parsed, err := valueOf(kind, strings.TrimSpace(value))
+			if err != nil {
+				return fmt.Errorf("enum: %w", err)
+			}
+			enum = append(enum, parsed)
+		}
+		schema["enum"] = enum
+	}
+	for _, bound := range []string{"minimum", "maximum"} {
+		if value, ok := tag.Lookup(bound); ok {
+			number, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				return fmt.Errorf("%s %q is not a number", bound, value)
+			}
+			schema[bound] = number
+		}
+	}
+	for _, key := range []string{"pattern", "format"} {
+		if value, ok := tag.Lookup(key); ok {
+			schema[key] = value
+		}
+	}
+	if value, ok := tag.Lookup("example"); ok {
+		parsed, err := valueOf(kind, value)
+		if err != nil {
+			return fmt.Errorf("example: %w", err)
+		}
+		schema["examples"] = []any{parsed}
+	}
+	return nil
+}
+
+// valueOf reads a tag's value as a JSON Schema type names it.
+func valueOf(kind, value string) (any, error) {
+	switch kind {
+	case "integer":
+		return strconv.ParseInt(value, 10, 64)
+	case "number":
+		return strconv.ParseFloat(value, 64)
+	case "boolean":
+		return strconv.ParseBool(value)
+	}
+	return value, nil
 }
 
 // fieldName reads the `json` tag: the name it gives, whether it may be left out, and

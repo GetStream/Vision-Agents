@@ -1,3 +1,4 @@
+import Combine
 import StreamChatAI
 import StreamVideo
 import StreamWebRTC
@@ -16,13 +17,15 @@ struct VoiceView: View {
     let agent: String
     let style: VoiceStyle
 
-    @State private var voice: VoiceSession?
+    @StateObject private var current = CurrentVoice()
     @State private var failure: String?
     @State private var isStarting = false
 
+    private var voice: VoiceSession? { current.session }
+
     var body: some View {
         VStack(spacing: 16) {
-            AgentPresence(voice: voice, style: style, isStarting: isStarting)
+            AgentPresence(current: current, style: style, isStarting: isStarting)
 
             if let voice {
                 if let request = voice.session.approvals.first {
@@ -54,11 +57,11 @@ struct VoiceView: View {
         .onChange(of: voice?.session.state) { _, state in
             // The agent leaving is the call being over, so let go of it and offer to start
             // another rather than leaving dead controls on screen.
-            if state == .ended { voice = nil }
+            if state == .ended { current.session = nil }
         }
         .onDisappear {
             let leaving = voice
-            voice = nil
+            current.session = nil
             Task { await leaving?.leave() }
         }
     }
@@ -68,7 +71,7 @@ struct VoiceView: View {
         failure = nil
         Task {
             do {
-                voice = try await VoiceSession.start(
+                current.session = try await VoiceSession.start(
                     agents: Demo.agents, agent: agent, tools: Demo.tools)
             } catch is CancellationError {
             } catch {
@@ -86,9 +89,11 @@ struct VoiceView: View {
 /// holding the phone speaks, with theirs in `Self.personColors`, crossfading between the two.
 /// Its own view so that the levels, read thirty times a second, redraw only this.
 private struct AgentPresence: View {
-    let voice: VoiceSession?
+    @ObservedObject var current: CurrentVoice
     let style: VoiceStyle
     let isStarting: Bool
+
+    private var voice: VoiceSession? { current.session }
 
     /// The colors the glow takes while the person is talking. The agent's are the
     /// appearance's, which is Stream's accent.
@@ -232,6 +237,20 @@ private struct AgentPresence: View {
             return "Ready"
         }
     }
+}
+
+/// The voice session once a call has started, for the views to observe: a view observes an
+/// object it is given when it is made, and the session comes later. A change to the session, or
+/// to its conversation, is a change to this.
+@MainActor
+private final class CurrentVoice: ObservableObject {
+    @Published var session: VoiceSession? {
+        didSet {
+            following = session?.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        }
+    }
+
+    private var following: AnyCancellable?
 }
 
 /// A tool's question, asked over the call with Stream's approval card. The tool runs only once

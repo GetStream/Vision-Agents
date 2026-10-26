@@ -246,19 +246,38 @@ class Agent:
         name: Optional[str] = None,
         description: Optional[str] = None,
         parameters_schema: Optional[dict[str, Any]] = None,
+        interruptible: bool = False,
+        timeout: float = 0.0,
+        needs_approval: str = "",
     ):
         """Register one of the caller's functions, which every conversation offers the model.
 
         The decorator the core registry provides, so the schema comes from the type hints and
         the description from the docstring:
 
-            @agent.register()
-            async def get_weather(location: str) -> str:
-                "Get current weather for a location"
-                return await weather_at(location)
+            @agent.register(needs_approval="Book flight {flight_id}?")
+            async def book_flight(flight_id: str) -> str:
+                "Book a flight for the caller"
+                call = current_call()
+                await call.update("checking seats")
+                await call.disallow_interruptions()
+                return await bookings.book(flight_id, key=call.id)
+
+        Args:
+            interruptible: Let the caller talking over the agent cancel a call in flight.
+                Off, the call keeps running and the model is told it is still going.
+            timeout: How long one call may take, in seconds. Zero takes the session's.
+            needs_approval: A question a person answers before each call runs, with
+                {name} for an argument. On a voice call the agent asks it out loud and
+                waits 15 seconds for a yes; in writing it goes to the app.
         """
         return self.functions.register(
-            name=name, description=description, parameters_schema=parameters_schema
+            name=name,
+            description=description,
+            parameters_schema=parameters_schema,
+            interruptible=interruptible,
+            timeout=timeout,
+            needs_approval=needs_approval,
         )
 
     async def config(self) -> Optional[AgentConfig]:

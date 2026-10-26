@@ -63,7 +63,11 @@ public sealed class ClientTests
         router.On("GET", "/v1/agents/configs", 200, Array.Empty<object>());
         using var client = new VisionAgentsClient(new VisionAgentsOptions
         {
-            Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret, UserId = "ada", Authenticate = true,
+            Url = router.Url,
+            ApiKey = "key",
+            ApiSecret = Fixtures.Secret,
+            UserId = "ada",
+            Authenticate = true,
         });
 
         await client.GetAsync<List<AgentConfig>>("/v1/agents/configs", cancellationToken: TestContext.Current.CancellationToken);
@@ -215,7 +219,12 @@ public sealed class ClientTests
 
         var listed = await client.Agent("support").Sessions.QueryAsync(new SessionQuery
         {
-            UserId = "u1", State = "live", AgentId = "jean", Modality = "text", Limit = 10, Cursor = "c1",
+            UserId = "u1",
+            State = "live",
+            AgentId = "jean",
+            Modality = "text",
+            Limit = 10,
+            Cursor = "c1",
         }, cancel);
         var found = await client.Sessions.SearchAsync("billing", new SessionQuery { UserId = "u1" }, cancel);
         var read = await client.Sessions.GetAsync("s1", cancel);
@@ -429,12 +438,23 @@ public sealed class ClientTests
 
     private static object Simulation() => new
     {
-        id = "sim-1", config_id = "cfg-1", name = "lunch", scenario = "Order lunch.", assertion = "One wrap.", mode = "text",
-        variations = 1, max_turns = 8, created_at = "2026-09-24T10:00:00Z", updated_at = "2026-09-24T10:00:00Z",
+        id = "sim-1",
+        config_id = "cfg-1",
+        name = "lunch",
+        scenario = "Order lunch.",
+        assertion = "One wrap.",
+        mode = "text",
+        variations = 1,
+        max_turns = 8,
+        created_at = "2026-09-24T10:00:00Z",
+        updated_at = "2026-09-24T10:00:00Z",
     };
 
     private static object Run(string state) => new
     {
-        id = "run-1", simulation_id = "sim-1", state, created_at = "2026-09-24T10:00:00Z",
+        id = "run-1",
+        simulation_id = "sim-1",
+        state,
+        created_at = "2026-09-24T10:00:00Z",
     };
 }

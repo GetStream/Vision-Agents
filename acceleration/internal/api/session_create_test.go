@@ -512,6 +512,52 @@ func (s *SessionCreateSuite) TestAForkOfARunningSessionKeepsTheInstructionsItWas
 	s.Equal(brief, value(forked.Instructions))
 }
 
+// A device is never given what its agent was told, here its config's instructions.
+func (s *SessionCreateSuite) TestADeviceReadsNoInstructionsFromTheSessionItOpens() {
+	configured := "Answer about " + s.utils.uuid()
+	request := textSession(nil)
+	request.ConfigId = s.data.instructedAgent(configured)
+
+	opened := s.client.createSession(request)
+
+	s.Nil(opened.Instructions)
+	s.Nil(s.client.getSession(opened.Id).Instructions)
+	s.Equal(configured, value(s.serverClient.actingFor(s.client).getSession(opened.Id).Instructions))
+}
+
+// The control: a backend opening a session is given the instructions it runs on.
+func (s *SessionCreateSuite) TestABackendReadsTheInstructionsOfTheSessionItOpens() {
+	configured := "Answer about " + s.utils.uuid()
+	request := textSession(nil)
+	request.ConfigId = s.data.instructedAgent(configured)
+
+	s.Equal(configured, value(s.serverClient.createSession(request).Instructions))
+}
+
+// The brief a backend hands a session stays hidden from the person practising on it.
+func (s *SessionCreateSuite) TestOnlyTheBackendReadsTheBriefOfASession() {
+	owner := s.data.createUser()
+	request, brief := s.data.briefed(textSession(nil))
+	opened := s.serverClient.actingFor(owner).createSession(request)
+
+	s.Nil(owner.getSession(opened.Id).Instructions)
+	s.Equal(brief, value(s.serverClient.actingFor(owner).getSession(opened.Id).Instructions))
+}
+
+// A fork its owner makes runs on the parent's brief without handing it to them.
+func (s *SessionCreateSuite) TestAForkADeviceMakesHidesTheBriefItKeeps() {
+	owner := s.data.createUser()
+	request, brief := s.data.briefed(textSession(nil))
+	opened := s.serverClient.actingFor(owner).createSession(request)
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, owner.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/fork", ForkSessionRequest{Messages: pointerTo(false)}, &forked))
+
+	s.Nil(forked.Instructions)
+	s.Equal(brief, value(s.serverClient.actingFor(owner).getSession(forked.Id).Instructions))
+}
+
 // What the model is told decides who the agent is, which only the backend may say.
 func (s *SessionCreateSuite) TestOnlyTheBackendMayHandASessionInstructions() {
 	s.assertPosture(serverOnly, func(as *testClient) int {

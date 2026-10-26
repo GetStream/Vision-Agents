@@ -154,10 +154,13 @@ type Settings struct {
 	STT         string `yaml:"stt"`
 	TTS         string `yaml:"tts"`
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
-	STS     *string `yaml:"sts"`
-	Voice   string  `yaml:"voice"`
-	LLM     string  `yaml:"llm"`
-	Harness string  `yaml:"harness"`
+	STS *string `yaml:"sts"`
+	// Voice is the voice the agent speaks in: a provider's own voice id, or one of your voices by
+	// id or by the name you gave it. Prefix it with custom: to mean only yours. A native (sts)
+	// agent takes the vendor's own voice name instead.
+	Voice   string `yaml:"voice"`
+	LLM     string `yaml:"llm"`
+	Harness string `yaml:"harness"`
 	// Role is what the agent is for in the app, beyond answering people: agent_moderator, or
 	// empty to leave the stored one. One live agent per app holds a role.
 	Role string `yaml:"role"`
@@ -170,21 +173,15 @@ type Settings struct {
 	Sandbox  string            `yaml:"sandbox"`
 	// SandboxOptions is how the sandbox is built and how long code may run in it.
 	SandboxOptions *SandboxSettings `yaml:"sandbox_options"`
-	// Plugins are the catalog plugins the agent reaches: with the app's own login, or
-	// with each end user's own account for one that sets user.
-	Plugins []PluginSettings `yaml:"plugins"`
 	// Connectors are the connectors whose tools the agent may call. Nil when the
 	// declaration says nothing, which leaves the bindings stored; empty when the
 	// file lists none, which removes them. A null entry is refused: dropping it
 	// would sync an empty list and wipe the stored bindings.
 	Connectors connectorList `yaml:"connectors"`
-	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
-	// a text conversation when it arrives.
-	PluginEvents []PluginEventSettings `yaml:"plugin_events"`
 	// MCPServers are MCP servers outside the plugin catalog, which the router opens by
 	// their URL, with a login when the server asks for one.
 	MCPServers []MCPServerSettings `yaml:"mcp_servers"`
-	// Tools is how plugin, MCP server and connector tools are offered. Nil when the
+	// Tools is how MCP server and connector tools are offered. Nil when the
 	// declaration says nothing about it.
 	Tools *ToolSettings `yaml:"tools"`
 	// Channels are the lines the agent answers on besides its Stream Chat channel: a
@@ -203,56 +200,11 @@ type Settings struct {
 	App map[string]any `yaml:"app"`
 }
 
-// PluginEventSettings is one MCP event the agent subscribes to on a plugin it names.
-type PluginEventSettings struct {
-	Plugin string `yaml:"plugin"`
-	Event  string `yaml:"event"`
-	// Arguments are the event's filters, as its inputSchema describes them.
-	Arguments map[string]any `yaml:"arguments"`
-	// Instructions say what the agent does with the event when it arrives.
-	Instructions string `yaml:"instructions"`
-}
-
-// ToolSettings is how plugin, MCP server and connector tools are offered.
+// ToolSettings is how MCP server and connector tools are offered.
 type ToolSettings struct {
 	// Progressive offers each tool by a summary, the first call to it returning its full
 	// description instead of running it. Nil when the declaration says nothing about it.
 	Progressive *bool `yaml:"progressive"`
-}
-
-// PluginSettings is one catalog plugin the agent names, and how it reaches it. agent.yaml
-// gives it as the plugin's id alone, or as a mapping naming it with the rest.
-type PluginSettings struct {
-	Name string `yaml:"name"`
-	// User has each end user connect the plugin with their own account, in the
-	// conversation, rather than the app once for everybody. Nil leaves it to the catalog,
-	// which has a person's own account, such as their calendar, connected by each of them.
-	User *bool `yaml:"user"`
-	// Readonly reaches the plugin's read-only endpoint, for a vendor that runs one.
-	Readonly bool `yaml:"readonly"`
-	// Scopes are asked for at consent in place of the catalog's.
-	Scopes []string `yaml:"scopes"`
-	// Toolsets limit the server to these groups of tools, such as calcom's bookings.
-	Toolsets []string `yaml:"toolsets"`
-	// Tools offer only the server's tools matching these names or path.Match patterns.
-	Tools []string `yaml:"tools"`
-}
-
-func (p *PluginSettings) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.ScalarNode {
-		*p = PluginSettings{Name: node.Value}
-		return nil
-	}
-	// A node decodes without its decoder's KnownFields, so the mapping is read again by
-	// one that refuses a key it does not know.
-	raw, err := yaml.Marshal(node)
-	if err != nil {
-		return err
-	}
-	type plain PluginSettings
-	decoder := yaml.NewDecoder(bytes.NewReader(raw))
-	decoder.KnownFields(true)
-	return decoder.Decode((*plain)(p))
 }
 
 // ConnectorSettings is one connector the agent binds. agent.yaml gives it as the alias
@@ -271,6 +223,12 @@ type ConnectorSettings struct {
 	Connection *string `yaml:"connection"`
 	// Required is whether a session needs this connector. Nil leaves it optional.
 	Required *bool `yaml:"required"`
+	// Sandbox is whether code in the agent's sandbox may call the connector's API with
+	// the binding's connection. False sends no sandbox key.
+	Sandbox bool `yaml:"sandbox"`
+	// RequireApproval are names or path.Match patterns of the tools whose every call waits for
+	// the session's user to allow it. Nil sends no require_approval key.
+	RequireApproval *[]string `yaml:"require_approval"`
 }
 
 func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
@@ -664,12 +622,19 @@ func WriteStamp(path, hash string) error {
 // declare reads agent.yaml. A key nobody knows is refused rather than dropped, since a
 // misspelled llm that goes quietly is a config running on a model the file does not name.
 func declare(raw []byte) (Settings, error) {
-	var settings Settings
+	var declared declaration
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
-	if err := decoder.Decode(&settings); err != nil && !errors.Is(err, io.EOF) {
+	if err := decoder.Decode(&declared); err != nil && !errors.Is(err, io.EOF) {
 		return Settings{}, err
 	}
+	if err := refuseReplaced("plugins", declared.Plugins); err != nil {
+		return Settings{}, err
+	}
+	if err := refuseReplaced("plugin_events", declared.PluginEvents); err != nil {
+		return Settings{}, err
+	}
+	settings := declared.Settings
 	if settings.Video != nil {
 		if settings.Video.MaxFrames == 0 {
 			settings.Video.MaxFrames = 1
@@ -691,15 +656,27 @@ func declare(raw []byte) (Settings, error) {
 	return settings, nil
 }
 
-// refuseConnectorAliases refuses an alias that is also a plugin or an MCP server name.
-// The model is offered each as <name>__<tool>, so the same name would be two tools.
-// Compared on the alias, not the connector id: issues bound to linear may sit beside a
-// linear plugin.
-func refuseConnectorAliases(settings Settings) error {
-	plugins := map[string]struct{}{}
-	for _, plugin := range settings.Plugins {
-		plugins[plugin.Name] = struct{}{}
+// declaration is agent.yaml as written: the settings, and the keys connectors replaced,
+// read only to refuse them.
+type declaration struct {
+	Settings     `yaml:",inline"`
+	Plugins      yaml.Node `yaml:"plugins"`
+	PluginEvents yaml.Node `yaml:"plugin_events"`
+}
+
+// refuseReplaced refuses a key connectors replaced, unless it declares nothing: an empty
+// or null list was never sent, so the file syncs as it did.
+func refuseReplaced(key string, value yaml.Node) error {
+	if value.Kind == 0 || value.Tag == "!!null" || (value.Kind == yaml.SequenceNode && len(value.Content) == 0) {
+		return nil
 	}
+	return fmt.Errorf("%s is no longer read: plugins were replaced by connectors, so name the provider under connectors", key)
+}
+
+// refuseConnectorAliases refuses an alias that is also an MCP server name. The model is
+// offered each as <name>__<tool>, so the same name would be two tools. Compared on the
+// alias, not the connector id.
+func refuseConnectorAliases(settings Settings) error {
 	servers := map[string]struct{}{}
 	for _, server := range settings.MCPServers {
 		servers[server.Name] = struct{}{}
@@ -707,9 +684,6 @@ func refuseConnectorAliases(settings Settings) error {
 	for _, connector := range settings.Connectors {
 		if _, named := servers[connector.Name]; named {
 			return fmt.Errorf("%q is named under both connectors and mcp_servers", connector.Name)
-		}
-		if _, named := plugins[connector.Name]; named {
-			return fmt.Errorf("%q is named under both connectors and plugins", connector.Name)
 		}
 	}
 	return nil

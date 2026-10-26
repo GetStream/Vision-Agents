@@ -120,9 +120,14 @@ processor = roboflow.RoboflowStreamingProcessor(model_id="rfdetr-nano")
 
 See the [Serverless Video Streaming docs](https://docs.roboflow.com/deploy/serverless/serverless-video-streaming).
 
-Streaming needs the WebRTC extra (`inference-sdk[webrtc]>=1.3.5`), which depends
-on NumPy 2. The workspace pins NumPy 1, so install the extra in a project of its own,
-outside the workspace, that depends on `vision-agents-plugins-roboflow[webrtc]`.
+Streaming needs `inference-sdk[webrtc]>=1.3.5`, which depends on NumPy 2, Pillow 12
+and PyAV 14.2. The workspace pins NumPy 1 and other plugins need older Pillow or newer
+PyAV, so the plugin does not declare it. Install it in a project of its own, outside the
+workspace, next to `vision-agents-plugins-roboflow`:
+
+```bash
+uv add vision-agents-plugins-roboflow 'inference-sdk[webrtc]>=1.3.5'
+```
 
 ## Testing
 

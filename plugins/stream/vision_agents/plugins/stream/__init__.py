@@ -1,3 +1,10 @@
+from vision_agents.core.llm.tool_call import (
+    CallNotHeld,
+    ToolCall,
+    ToolConversation,
+    ToolUser,
+    current_call,
+)
 from vision_agents.core.messaging import InboundMessage, MessageContext
 from vision_agents.core.telephony import CallContext, InboundCall
 
@@ -63,6 +70,7 @@ __all__ = [
     "AttachedNumber",
     "Backend",
     "CallContext",
+    "CallNotHeld",
     "ChangeGate",
     "Client",
     "DetectionProcessor",
@@ -109,9 +117,13 @@ __all__ = [
     "Simulations",
     "SkippedVendor",
     "TTS",
+    "ToolCall",
+    "ToolConversation",
+    "ToolUser",
     "Track",
     "Tracks",
     "Voice",
+    "current_call",
     "define_agent",
     "define_router",
     "define_skills",
