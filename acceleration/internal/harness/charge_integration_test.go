@@ -23,6 +23,13 @@ import (
 // messagesPerDay is the user's allowance, far more than any test spends.
 const messagesPerDay = 100
 
+// userSet is a quota source where the customer set every user's own quota.
+type userSet struct{}
+
+func (userSet) Quota(_ context.Context, _, userID string, _ quota.Limits) quota.Quota {
+	return quota.Quota{Messages: quota.Limit{PerDay: messagesPerDay, By: quota.Setter{Level: quota.LevelUser, ID: userID}}}
+}
+
 // HarnessChargeSuite covers whose day delegated work is counted on. It counts in a real
 // Redis, and what it reads back is the user's day as the limiter keeps it.
 type HarnessChargeSuite struct {
@@ -164,6 +171,23 @@ func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedStays
 
 	s.Equal(Done, s.settled().State)
 	s.EqualValues(1, s.day(), "only the reply is the user's")
+}
+
+func (s *HarnessChargeSuite) TestWorkAHeardTurnDelegatesInASessionABackendOpenedIsCountedOnTheOwner() {
+	// A heard turn names no sender, so it and its work are counted on whoever opened the
+	// session. The customer set the user's own quota, which holds the owner too.
+	limiter, err := quota.New(s.redis, quota.Limits{}, userSet{}, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.limiter = limiter
+	owner := routing.Caller{UserID: s.user.UserID, ServerSide: true}
+	s.build(owner)
+
+	s.reply(s.ctx, "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	status, err := s.limiter.Allow(s.ctx, "acme", owner)
+	s.Require().NoError(err)
+	s.EqualValues(2, messagesPerDay-status.Remaining, "the reply and the work it delegated are both the owner's")
 }
 
 func (s *HarnessChargeSuite) TestWorkAScheduledTurnHandsOverIsNotCountedOnTheUsersDay() {
