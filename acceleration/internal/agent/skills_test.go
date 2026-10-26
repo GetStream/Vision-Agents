@@ -129,7 +129,9 @@ type codeBox struct {
 	result sandbox.Result
 	// then are the results of the runs after the first, in order, the last one kept for
 	// the rest: the user connected something between runs.
-	then       []sandbox.Result
+	then []sandbox.Result
+	// connected are the late grants' bindings the user has connected (sandbox.Connecting).
+	connected  []string
 	ran        []string
 	written    []string
 	generation int
@@ -157,6 +159,8 @@ func (b *codeBox) Run(_ context.Context, code string, _ []string) (sandbox.Resul
 	}
 	return b.then[min(len(b.ran)-2, len(b.then)-1)], nil
 }
+
+func (b *codeBox) Connected() []string { return b.connected }
 
 func (b *codeBox) runs() int {
 	b.mu.Lock()
@@ -299,14 +303,42 @@ func (s *AgentSuite) answeredFrom() string {
 // it again once the user connected, so answering the repeat from it handed back the 401.
 func (s *AgentSuite) TestTheSameCodeRunsAgainOnceTheUserConnectedWhatItNeeded() {
 	s.box = &codeBox{
-		result: sandbox.Result{Output: "status: 401\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}},
-		then:   []sandbox.Result{{Output: "status: 200\n"}},
+		result:    sandbox.Result{Output: "status: 401\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}},
+		then:      []sandbox.Result{{Output: "status: 200\n"}},
+		connected: []string{"github"},
 	}
 	s.joinText()
 
 	s.repeatsRunCode(2)
 
 	s.Equal("status: 200\n", s.answeredFrom(), "the repeat after the run that worked is answered from it")
+}
+
+// TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhatItNeeded: its result tells the
+// model to run it again once the user connected github; until then the same code gets the
+// same 401, and a text conversation has no cap on tool rounds to stop the model asking.
+func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhatItNeeded() {
+	s.box = &codeBox{result: sandbox.Result{Output: "status: 401\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}}}
+	s.joinText()
+
+	s.repeatsRunCode(1)
+
+	s.Contains(s.answeredFrom(), "the user has not connected it")
+}
+
+// TestTheSameCodeIsNotRunAgainWhenTheUserConnectedAnotherBinding: every run names each late
+// grant not connected, whatever the code called, so linear connecting is no reason to run
+// again code whose result named github.
+func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhenTheUserConnectedAnotherBinding() {
+	s.box = &codeBox{
+		result:    sandbox.Result{Output: "booked\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}},
+		connected: []string{"linear"},
+	}
+	s.joinText()
+
+	s.repeatsRunCode(1)
+
+	s.Contains(s.answeredFrom(), "booked\n")
 }
 
 // TestTheSameCodeRunsAgainAfterARunThatSaidItsConnectionWasJustMade: a token reaches code some
@@ -341,7 +373,7 @@ func (s *AgentSuite) TestAToolThatIsNotRunCodeIsNotRunAgainForTheConnectLine() {
 		{Role: llm.ToolResult, ToolCallID: "1", Content: said},
 	}
 
-	_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: asked.Name, Arguments: asked.Arguments})
+	_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: asked.Name, Arguments: asked.Arguments}, []string{"github"})
 
 	s.True(repeated)
 }

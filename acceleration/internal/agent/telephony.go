@@ -182,13 +182,14 @@ const didNotWork = "That did not work: "
 // for the same call again, and run twice a dispatch or a booking is made twice. A call that
 // failed may be tried again, since what failed may not fail twice, and so may one whose result
 // says nothing was done (undoneResult), and code whose result tells the model to run it again
-// once the user connected what it needed (harness.RunAgain): answered from that result, the
-// repeat after the user connected got the 401 from before.
+// now that the user connected what it needed (harness.RunAgain, connected being the bindings
+// the user has connected): answered from that result, the repeat after the user connected got
+// the 401 from before.
 //
 // A call that changes something is matched across the whole call: Nemotron booked a table,
 // heard "Yes, please go ahead" and booked it again, and the second booking failed against the
 // first.
-func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool) {
+func answeredSinceCaller(history []llm.Message, call llm.ToolCall, connected []string) (string, bool) {
 	same := func(other llm.ToolCall) bool {
 		return other.Name == call.Name && fillsIn(other.Arguments, call.Arguments)
 	}
@@ -196,7 +197,7 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
 			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) ||
-			call.Name == sandbox.ToolName && harness.RunAgain(history[i].Content) {
+			call.Name == sandbox.ToolName && harness.RunAgain(history[i].Content, connected) {
 			continue
 		}
 		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
@@ -419,7 +420,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
-	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
+	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call, a.connected()); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
@@ -726,6 +727,16 @@ func (a *Agent) runsCode() bool {
 	}
 	_, declared := a.options.Tools.Lookup(sandbox.ToolName)
 	return !declared
+}
+
+// connected are the sandbox's late grants' bindings the user has connected by now
+// (sandbox.Connecting).
+func (a *Agent) connected() []string {
+	box, ok := a.options.Sandbox.(sandbox.Connecting)
+	if !ok {
+		return nil
+	}
+	return box.Connected()
 }
 
 // runCode runs what the model wrote in the sandbox, with the scripts of every skill it has

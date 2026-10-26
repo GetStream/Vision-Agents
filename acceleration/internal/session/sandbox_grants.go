@@ -112,6 +112,16 @@ type connecting struct {
 
 func (c *connecting) Grants() []sandbox.Grant { return c.d.grants }
 
+func (c *connecting) Connected() []string {
+	var connected []string
+	for _, grant := range c.d.grants {
+		if grant.Late && c.d.logins.byAlias[grant.Binding].loggedIn() {
+			connected = append(connected, grant.Binding)
+		}
+	}
+	return connected
+}
+
 // Run reads the logins before and after the run. A grant connected before it was bound by its
 // BeforeRun, and is opened. One connected only during the run is named as connected, not as
 // unconnected, and not opened: the next run's BeforeRun binds it, and names it again.
