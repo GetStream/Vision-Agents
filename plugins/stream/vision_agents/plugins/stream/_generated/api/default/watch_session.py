@@ -108,11 +108,11 @@ def sync_detailed(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`,
-    `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and
-    message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and
-    where all it had been sent is in the reply's message, when any of it had), `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`,
+    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id,
+    heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
+    milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
+    it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -222,7 +222,13 @@ def sync_detailed(
     user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the
     `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id`
     left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so.
-    It needs no `tool_result`.
+    It needs no `tool_result`. A `tool_approval` no call waits for (answered already, stopped, or naming
+    another `request_id` or `turn_id`) is answered with `tool_approval_ignored`: the `tool_call_id`,
+    `request_id` and `turn_id` it was sent with, each left out when it was, and `reason`, a sentence
+    saying why; the socket stays open. Every watcher is sent it. The call of a durable command answered
+    with its `request_id` and no `turn_id` is answered so too, its `reason` naming the missing
+    `turn_id`. A call outside a durable command waits for its `tool_result`, so an approval sent before
+    it without a `request_id` gets no answer.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -288,11 +294,11 @@ def sync(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`,
-    `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and
-    message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and
-    where all it had been sent is in the reply's message, when any of it had), `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`,
+    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id,
+    heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
+    milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
+    it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -402,7 +408,13 @@ def sync(
     user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the
     `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id`
     left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so.
-    It needs no `tool_result`.
+    It needs no `tool_result`. A `tool_approval` no call waits for (answered already, stopped, or naming
+    another `request_id` or `turn_id`) is answered with `tool_approval_ignored`: the `tool_call_id`,
+    `request_id` and `turn_id` it was sent with, each left out when it was, and `reason`, a sentence
+    saying why; the socket stays open. Every watcher is sent it. The call of a durable command answered
+    with its `request_id` and no `turn_id` is answered so too, its `reason` naming the missing
+    `turn_id`. A call outside a durable command waits for its `tool_result`, so an approval sent before
+    it without a `request_id` gets no answer.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -463,11 +475,11 @@ async def asyncio_detailed(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`,
-    `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and
-    message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and
-    where all it had been sent is in the reply's message, when any of it had), `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`,
+    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id,
+    heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
+    milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
+    it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -577,7 +589,13 @@ async def asyncio_detailed(
     user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the
     `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id`
     left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so.
-    It needs no `tool_result`.
+    It needs no `tool_result`. A `tool_approval` no call waits for (answered already, stopped, or naming
+    another `request_id` or `turn_id`) is answered with `tool_approval_ignored`: the `tool_call_id`,
+    `request_id` and `turn_id` it was sent with, each left out when it was, and `reason`, a sentence
+    saying why; the socket stays open. Every watcher is sent it. The call of a durable command answered
+    with its `request_id` and no `turn_id` is answered so too, its `reason` naming the missing
+    `turn_id`. A call outside a durable command waits for its `tool_result`, so an approval sent before
+    it without a `request_id` gets no answer.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -641,11 +659,11 @@ async def asyncio(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`,
-    `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and
-    message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and
-    where all it had been sent is in the reply's message, when any of it had), `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`,
+    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id,
+    heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
+    milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
+    it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -755,7 +773,13 @@ async def asyncio(
     user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the
     `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id`
     left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so.
-    It needs no `tool_result`.
+    It needs no `tool_result`. A `tool_approval` no call waits for (answered already, stopped, or naming
+    another `request_id` or `turn_id`) is answered with `tool_approval_ignored`: the `tool_call_id`,
+    `request_id` and `turn_id` it was sent with, each left out when it was, and `reason`, a sentence
+    saying why; the socket stays open. Every watcher is sent it. The call of a durable command answered
+    with its `request_id` and no `turn_id` is answered so too, its `reason` naming the missing
+    `turn_id`. A call outside a durable command waits for its `tool_result`, so an approval sent before
+    it without a `request_id` gets no answer.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.

@@ -24,6 +24,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ## Bug Fixes
 
+### A tool_approval that reaches no call is answered
+
+A `tool_approval` on the session socket that no call waits for now gets a `tool_approval_ignored` frame with the `tool_call_id`, `request_id` and `turn_id` it named and a `reason`, and the socket stays open. This covers an approval sent twice, one for a call that already stopped, one naming a call nobody made, and one naming another `request_id` or `turn_id`. An approval of a durable command's call with its `request_id` and no `turn_id` gets one too, its `reason` naming the missing `turn_id`. Before, each was dropped without a word. Clients that do not know the frame ignore it; no `error` frame is sent. An approval sent before the `tool_result` of a call outside a durable command is answered as before: with nothing (AI-1881).
+
 ### A Google Drive or Docs grant holding full Drive access no longer needs a consent
 
 `POST /v1/agents/connections/{id}/validate` answered `needs_scopes` for `drive.file` (Google Drive) or `documents` (Google Docs) when the grant held `https://www.googleapis.com/auth/drive`, which Google's tool pages take for `create_file`, `copy_file` and `update_doc`. A manifest's new `scopes.covered_by` names, per needed scope, the broader scopes that meet it; `google_drive` revision 6 and `google_docs` revision 5 say `drive` covers them. A connection moves to the new revision at its next consent.
