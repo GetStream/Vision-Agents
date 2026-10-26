@@ -491,6 +491,35 @@ func (s *LinqChannelSuite) TestALinqChatThatBecomesAGroupLosesTheToolsAndItsTask
 	s.Zero(s.scheduledTurns())
 }
 
+// Linq delivers an event at least once: a retried copy of a chat's 1:1 message, arriving after
+// the chat said it is a group, is dropped as taken and leaves the chat a group's, so the task
+// made when it was 1:1 is not delivered into it.
+func (s *LinqChannelSuite) TestARetriedOneToOneMessageLeavesAGroupChatAGroups() {
+	s.schedulingOn(&s.config)
+	s.planTool("schedule_task", stretchInTwoHours)
+	chat, person := s.utils.uuid(), "+13125550001"
+	first := s.chatSays(s.received(chat, s.line, person, "remind me to stretch in two hours"), false)
+	s.Require().Equal(http.StatusOK, s.deliver(first, time.Now()))
+	channel := s.threadChannel(chat)
+	stored := s.written(channel, 1)
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
+	s.answeredAfter(channel, 0)
+	s.took(1)
+	s.threadTurnIsFree(channel)
+	task := s.customersTasks(1)[0]
+	s.schedulingOn(&s.config)
+	s.linqTurn(chat, person, true, "I added my sister")
+	written := len(s.chat.Stored(channel))
+
+	s.Require().Equal(http.StatusOK, s.deliver(first, time.Now()))
+
+	s.Empty(s.chatPerson(chat))
+	s.Len(s.chat.Stored(channel), written, "the retried copy was dropped")
+	_, _, err := s.deliverTask(task)
+	s.failedAs(err, scheduling.ReasonThreadGone, true)
+	s.Zero(s.scheduledTurns())
+}
+
 // A Slack thread is shared by the channel's people, so it is offered no scheduling tools.
 func (s *SlackChannelSuite) TestASlackThreadIsNotOfferedTheTools() {
 	s.schedulingOn(&s.config)

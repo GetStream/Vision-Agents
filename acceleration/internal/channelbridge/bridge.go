@@ -549,14 +549,6 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	if err != nil {
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
-	if source := episodeSources[message.ConnectorID]; source.oneToOne != nil {
-		if source.oneToOne(message.Raw) {
-			thread.ChatPerson = message.AuthorID
-		}
-		if err := b.store.SetChannelThreadChatPerson(ctx, thread.ChannelID, thread.ChatPerson); err != nil {
-			return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
-		}
-	}
 	fresh, err = b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimInbound, message.ProviderMessageID)
 	if err != nil {
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
@@ -564,6 +556,17 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	if !fresh {
 		b.logger.Info("dropped a retried inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
 			"customer", app.CustomerID, "connection", connection.ID, "config", configs[0].ID, "channel", thread.ChannelID)
+	}
+	// After the claim, so a retried delivery of an older message, such as a 1:1 one after the
+	// chat became a group, does not name the chat's person again. A store that fails releases
+	// the claim, so the provider's retry records it.
+	if source := episodeSources[message.ConnectorID]; fresh && source.oneToOne != nil {
+		if source.oneToOne(message.Raw) {
+			thread.ChatPerson = message.AuthorID
+		}
+		if err := b.store.SetChannelThreadChatPerson(ctx, thread.ChannelID, thread.ChatPerson); err != nil {
+			return store.ChannelThread{}, store.AgentConfig{}, false, nil, b.unclaim(ctx, thread, *message, err)
+		}
 	}
 	// Every reply in a thread comes after the message that started it, so the replies that
 	// waited for that message are all to be answered. A link made by a reply, such as a
