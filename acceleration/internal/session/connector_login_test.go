@@ -666,7 +666,7 @@ func (s *ConnectorLoginSuite) invocations(connection string, count int) []store.
 }
 
 // pending is a connection of user's to account that was never connected.
-func (s *ConnectorLoginSuite) pending(user, account string) string {
+func (s *connectorFixture) pending(user, account string) string {
 	connection := &store.ConnectorConnection{
 		CustomerID: s.customerID, ConnectorID: s.connectorID, DefinitionRevision: s.revision,
 		OwnerType: store.OwnerUser, OwnerID: user, AuthScheme: bearer.Name, Inputs: map[string]string{"account": account},
@@ -691,7 +691,7 @@ func (s *ConnectorLoginSuite) noneConnection(user, account string) string {
 }
 
 // connect is a consent finishing on id: account's token stored, the connection connected.
-func (s *ConnectorLoginSuite) connect(id, account string) {
+func (s *connectorFixture) connect(id, account string) {
 	stored, _, err := bearer.New().Complete(s.ctx, core.CompleteInput{Supplied: map[string]string{bearer.SuppliedToken: tokenOf(account)}})
 	s.Require().NoError(err)
 	s.setState(id, func(state *core.CredentialState) {
