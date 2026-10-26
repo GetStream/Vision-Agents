@@ -134,12 +134,12 @@ func judgeQuestions() map[string]decisionmodel.Question {
 		"adds_to_request": decisionmodel.Noul(
 			"Does `heard` add to what the speaker asked for, without contradicting what the "+
 				"agent is saying in `agent_has_said`?",
-			"An addition such as \"and Saturday as well\" or \"and put us on the patio\".",
+			"An addition such as \"and the other one too\" or \"also send it by email\".",
 			"It corrects the agent, asks something unrelated, or adds nothing."),
 		"objects": decisionmodel.Noul(
 			"Does `heard` correct the agent, tell it to stop or wait, or ask it something new, "+
 				"while it is saying `agent_has_said`?",
-			"A correction such as \"no, make it six\", \"that's the wrong date\", \"wait\", "+
+			"A correction such as \"no, the other one\", \"that's not what I said\", \"wait\", "+
 				"or a new question.",
 			"It agrees, acknowledges, repeats the agent, or is not for the agent at all."),
 	}

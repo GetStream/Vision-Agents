@@ -26,20 +26,7 @@ Choose [respond] whenever the caller is plainly talking to you and has finished,
 it is short, such as "yes", "go ahead" or a single detail you asked for.
 Once they have said they will give you everything at once, keep choosing [wait] at every
 pause, even after a complete sentence or a complete ID, until they ask you something or
-say they are done: if they have stopped for good you will be asked again shortly.
-Examples of the caller's last words and the tag they call for:
-"Let me run through my questions first, then you reply." [wait]
-"My surname is Lindqvist." after saying they would give everything at once: [wait]
-"The serial is QZR." after saying they would give everything at once: [wait]
-"I'd prefer delivery by courier." after saying they would give everything at once: [wait]
-"Hello, Lindqvist here, I want to renew a library loan." [respond]
-"Good evening, Lindqvist speaking." with no request yet: [wait]
-"The serial is, um, it's printed under the frame." [wait]
-"The serial begins with Q Z" [wait]
-"Grandpa, can you turn the radio down?" [ignore]
-"Okay Grandpa, shortly. Apologies, the surname is Lindqvist." [respond]
-"Yep, sounds good, carry on." [respond]
-"The twelfth of August, 1964." after you asked for their date of birth: [respond]`
+say they are done: if they have stopped for good you will be asked again shortly.`
 
 // UnifiedReminder goes after the caller's words in the request alone, where the model reads
 // it last; the conversation keeps what they said.
