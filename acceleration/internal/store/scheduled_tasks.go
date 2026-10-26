@@ -199,6 +199,9 @@ func (s *Store) CreateScheduledTask(ctx context.Context, task *ScheduledTask, ma
 	task.UpdatedAt = now
 
 	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := refuseDeletedConfig(ctx, tx, task.CustomerID, task.ConfigID); err != nil {
+			return err
+		}
 		if maxActive > 0 {
 			count, err := tx.NewSelect().Model((*ScheduledTask)(nil)).
 				Where("customer_id = ?", task.CustomerID).
@@ -221,6 +224,64 @@ func (s *Store) CreateScheduledTask(ctx context.Context, task *ScheduledTask, ma
 		}
 		return nil
 	}))
+}
+
+// refuseDeletedConfig refuses an active task on a deleted config. The caller read
+// the config live; a delete landing after that read pauses the config's tasks
+// once its own write is in (PauseScheduledTasksForConfig), so a task written
+// meanwhile would be left active on nothing. The config row is locked FOR SHARE
+// until the task's transaction ends, which makes the two wait for each other:
+//
+//   - A delete that wrote first is waited for, and under READ COMMITTED the row
+//     is read as the delete left it, deleted, so the task is refused
+//     (https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED).
+//   - A delete that comes second waits for the task to commit, and its pause
+//     then finds the task.
+//
+// FOR SHARE, not FOR KEY SHARE as lockBoundConnections takes: the delete is a
+// plain UPDATE of deleted_at, whose FOR NO KEY UPDATE conflicts only with
+// FOR SHARE and stronger (table 13.3,
+// https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS).
+// A config is only ever soft-deleted (DeleteAgentConfig), so an id with no row
+// is not a delete and is left to the caller, which resolved it.
+func refuseDeletedConfig(ctx context.Context, tx bun.Tx, customerID, configID string) error {
+	var deleted []bool
+	err := tx.NewSelect().Model((*AgentConfig)(nil)).
+		ColumnExpr("deleted_at IS NOT NULL").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", configID).
+		For("SHARE").
+		Scan(ctx, &deleted)
+	if err != nil {
+		return fmt.Errorf("store: lock scheduled task config: %w", err)
+	}
+	if len(deleted) > 0 && deleted[0] {
+		return unknownAgentConfig(configID)
+	}
+	return nil
+}
+
+// lockScheduledTask locks a task's row before its transaction writes the
+// task's runs. Every transaction that writes both a task and its runs takes
+// the task row first: the claim (FOR UPDATE SKIP LOCKED), a postpone and the
+// pause of a config's tasks (PauseScheduledTasksForConfig) write the task
+// before its runs, so one writing the runs first would wait for them while
+// holding what they wait for, and Postgres would abort one of the two as a
+// deadlock (SQLSTATE 40P01). FOR NO KEY UPDATE is what the task's own UPDATE
+// takes, so it does not hold back a run insert's foreign key check (table
+// 13.3, https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS).
+func lockScheduledTask(ctx context.Context, tx bun.Tx, customerID, id string) error {
+	var locked []string
+	err := tx.NewSelect().Model((*ScheduledTask)(nil)).
+		Column("id").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", id).
+		For("NO KEY UPDATE").
+		Scan(ctx, &locked)
+	if err != nil {
+		return fmt.Errorf("store: lock scheduled task: %w", err)
+	}
+	return nil
 }
 
 // ScheduledTask returns one of a customer's tasks by id.
@@ -299,6 +360,14 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 		task.Channels = []string{ScheduledTaskDeliveredConversation}
 	}
 	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if task.State == ScheduledTaskActive {
+			if err := refuseDeletedConfig(ctx, tx, task.CustomerID, task.ConfigID); err != nil {
+				return err
+			}
+		}
+		if err := lockScheduledTask(ctx, tx, task.CustomerID, task.ID); err != nil {
+			return err
+		}
 		oneShot := task.RRule == "" && task.State == ScheduledTaskActive && task.NextRunAt != nil
 		// The run of a one-shot's occurrence a worker holds: its lease is live
 		// and no quiet-hours hold is on it. The task row is locked, so no
@@ -700,6 +769,9 @@ func (s *Store) FinishScheduledTaskRun(ctx context.Context, customerID, runID, c
 		if err := tx.NewSelect().Model(&run).Where("id = ?", runID).Limit(1).Scan(ctx); err != nil {
 			return fmt.Errorf("store: finish scheduled task run: %w", err)
 		}
+		if err := lockScheduledTask(ctx, tx, customerID, run.TaskID); err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		finished := now
 		run.State = outcome.RunState
@@ -943,21 +1015,40 @@ func (s *Store) UserTimezone(ctx context.Context, customerID, userID string) (st
 
 // PauseScheduledTasksForConfig pauses a config's active tasks, as deleting that
 // config must: an occurrence of one would only fail. It clears their claims, so
-// a worker finishing an occurrence in flight cannot make one active again.
+// a worker finishing an occurrence in flight cannot make one active again, and
+// writes their occurrences still running missed, as a pause by hand does
+// (SaveScheduledTask): a held one is otherwise taken up by no worker, since
+// only an active task is claimed, and stays running for good.
 func (s *Store) PauseScheduledTasksForConfig(ctx context.Context, customerID, configID string) error {
 	if configID == "" {
 		return nil
 	}
-	_, err := s.db.NewUpdate().Model((*ScheduledTask)(nil)).
-		Set("state = ?", ScheduledTaskPaused).
-		Set("claim_id = ''").
-		Set("updated_at = now()").
-		Where("customer_id = ?", customerID).
-		Where("config_id = ?", configID).
-		Where("state = ?", ScheduledTaskActive).
-		Exec(ctx)
-	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: pause scheduled tasks for config: %w", err))
-	}
-	return nil
+	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var paused []string
+		err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
+			Set("state = ?", ScheduledTaskPaused).
+			Set("claim_id = ''").
+			Set("updated_at = now()").
+			Where("customer_id = ?", customerID).
+			Where("config_id = ?", configID).
+			Where("state = ?", ScheduledTaskActive).
+			Returning("id").
+			Scan(ctx, &paused)
+		if err != nil {
+			return fmt.Errorf("store: pause scheduled tasks for config: %w", err)
+		}
+		// A run made by hand is left to the delivery that made it, which
+		// always records its outcome.
+		if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+			Set("state = ?", ScheduledTaskRunMissed).
+			Set("finished_at = now()").
+			Where("customer_id = ?", customerID).
+			Where("task_id IN (?)", bun.In(paused)).
+			Where("trigger = ?", ScheduledTaskTriggerSchedule).
+			Where("state = ?", ScheduledTaskRunRunning).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("store: settle scheduled task runs for config: %w", err)
+		}
+		return nil
+	}))
 }

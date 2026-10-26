@@ -257,6 +257,9 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 			return nil, conflict("a scheduled task with this id already exists; read it back, or choose another id")
 		case errors.Is(err, store.ErrTooManyScheduledTasks):
 			return nil, errTooManyScheduledTasks
+		case errors.Is(err, store.ErrNoAgentConfig):
+			// Deleted since it was read above.
+			return nil, errUnknownConfig
 		}
 		return nil, err
 	}
@@ -386,6 +389,9 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		}
 	}
 	if err := s.store.SaveScheduledTask(ctx, &task); err != nil {
+		if errors.Is(err, store.ErrNoAgentConfig) {
+			return nil, errUnknownConfig
+		}
 		return nil, err
 	}
 	s.kickScheduled()
@@ -540,6 +546,9 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		}
 		task.ConsecutiveFailures = 0
 		if err := s.store.SaveScheduledTask(ctx, &task); err != nil {
+			if errors.Is(err, store.ErrNoAgentConfig) {
+				return nil, errUnknownConfig
+			}
 			return nil, err
 		}
 		s.kickScheduled()

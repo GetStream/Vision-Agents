@@ -36,6 +36,10 @@ A message in a thread channel (Slack, SMS, WhatsApp, iMessage) whose session ref
 
 Delegated work (a skill, a picture to look at, a summary of a long conversation) started by a turn a scheduled task fired was counted on the end user's daily quota, though the turn itself was not. It is now counted as the turn is: on nobody's day (AI-1560).
 
+### Scheduled tasks follow config deletes and guest claims
+
+Deleting an agent config now writes its tasks' occurrences still running, such as one held through quiet hours, `missed`, as pausing a task does; before, they stayed `running` (AI-1600). A task created, resumed or edited while its config is being deleted is refused with a 404 `agent_config_not_found` (REST) or `unknown_config` (the agent's tools), instead of being left active on the deleted config; the agent's `schedule_task` on a session whose config was deleted is refused the same way (AI-1598). Claiming a guest now moves the guest's scheduled tasks to the account, with their conversations (AI-1532).
+
 ### A scheduled task's reply carries the files its code made
 
 A task delivered by SMS, WhatsApp or iMessage outside a thread now sends the files the turn's code made (`run_code` or delegated work), as an MMS or WhatsApp media after the words; before, only the words went out. A reply of files and no words is delivered on every channel, a thread's included, where it was a `no_reply` failure; a retry sends the same files without a second turn (AI-1951, AI-1950).

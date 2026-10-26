@@ -1162,6 +1162,130 @@ func (s *ScheduledTasksSuite) TestTheAgentCannotRescheduleAFailedTaskOfAConfigDe
 	s.Equal(store.ScheduledTaskFailed, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
 }
 
+func (s *ScheduledTasksSuite) TestDeletingAConfigWritesItsTasksHeldOccurrenceMissed() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	// An occurrence held through quiet hours: running, with no worker on it.
+	until := time.Now().Add(8 * time.Hour)
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &store.ScheduledTaskRun{
+		TaskID: created.Id, CustomerID: s.customerID(), ScheduledFor: time.Now().Add(-time.Minute), PostponedUntil: &until,
+	}))
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	var page ScheduledTaskRunPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks/"+created.Id+"/runs", nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Equal(store.ScheduledTaskRunMissed, page.Items[0].State, "the paused task's held occurrence is not left running for good")
+	s.NotNil(page.Items[0].FinishedAt)
+}
+
+// whileDeleting makes a request while a delete of the config is under way, as
+// another request deleting it at the same moment would: the delete's write is
+// in and not committed when the request reaches the config. It commits once the
+// request waits on that write, and returns when the request is done.
+func (s *ScheduledTasksSuite) whileDeleting(config string, request func()) {
+	ctx := context.Background()
+	deleting, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = deleting.Rollback() }()
+	_, err = deleting.ExecContext(ctx, "UPDATE agent_configs SET deleted_at = now() WHERE id = ?", config)
+	s.Require().NoError(err)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		request()
+	}()
+	// The suite's database is its own, so a backend waiting on a lock in it is the request.
+	s.Require().Eventually(func() bool {
+		var waiting int
+		err := s.store.DB().QueryRowContext(ctx, "SELECT count(*) FROM pg_stat_activity"+
+			" WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the request read the config without waiting for the delete under way")
+	s.Require().NoError(deleting.Commit())
+	<-done
+}
+
+func (s *ScheduledTasksSuite) TestATaskCreatedWhileItsConfigIsDeletedIsRefused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+
+	var status int
+	var failure string
+	s.whileDeleting(config, func() {
+		status, failure = s.serverClient.actingFor(user).failure(http.MethodPost, "/v1/agents/scheduled-tasks", taskRequest(config))
+	})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
+	s.Empty(s.tasksOf(user), "no task is left active on a config the delete's pause has already passed")
+}
+
+func (s *ScheduledTasksSuite) TestATaskResumedWhileItsConfigIsDeletedStaysPaused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, path+"/pause", nil, nil))
+
+	var status int
+	var failure string
+	s.whileDeleting(config, func() { status, failure = user.failure(http.MethodPost, path+"/resume", nil) })
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
+func (s *ScheduledTasksSuite) TestATaskEditedWhileItsConfigIsDeletedIsLeftAsItWas() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+
+	var status int
+	var failure string
+	s.whileDeleting(config, func() {
+		status, failure = user.failure(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+			UpdateScheduledTaskRequest{Title: pointerTo("Renamed")})
+	})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
+	s.Equal("Stretch", s.taskReloaded(store.ScheduledTask{ID: created.Id}).Title)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotScheduleATaskOnAConfigDeletedUnderItsSession() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H","timezone":"Europe/Amsterdam"}`})
+	s.say(user, opened.Id, "remind me to stretch in two hours")
+	s.Contains(s.ranResult(watching), `"error":"unknown_config"`)
+	s.Empty(s.tasksOf(user))
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotResumeATaskWhileItsConfigIsDeleted() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/pause", nil, nil))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"resume"}`})
+	s.whileDeleting(config, func() { s.say(user, opened.Id, "turn it back on") })
+	s.Contains(s.ranResult(watching), `"error":"unknown_config"`)
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
 func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
 	// The user agreed to the task once, not to each time it runs: the turn it
 	// fires in their own conversation is the customer's spend, and the turn
