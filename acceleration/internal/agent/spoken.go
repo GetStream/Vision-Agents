@@ -1,17 +1,10 @@
 package agent
 
 import (
-	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
-
-// spokenValueLimit is the longest argument read for numbers said as words. Anything longer
-// is prose, such as a ticket's reason, where "one of us" is not a digit.
-const spokenValueLimit = 40
 
 var (
 	spokenDigits = map[string]int{
@@ -28,36 +21,6 @@ var (
 	}
 )
 
-// withSpokenNumbers rewrites numbers a model copied into a call's arguments as the caller
-// said them ("nine eight two one", "fourteen Cedar Lane") as the digits a tool matches on.
-// Arguments that do not parse, or hold nothing to rewrite, are left as they were.
-func withSpokenNumbers(calls []llm.ToolCall) []llm.ToolCall {
-	for index, call := range calls {
-		var arguments map[string]any
-		if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
-			continue
-		}
-		changed := false
-		for key, value := range arguments {
-			text, ok := value.(string)
-			if !ok || len(text) > spokenValueLimit {
-				continue
-			}
-			if rewritten := digitsFor(text); rewritten != text {
-				arguments[key] = rewritten
-				changed = true
-			}
-		}
-		if !changed {
-			continue
-		}
-		if encoded, err := json.Marshal(arguments); err == nil {
-			calls[index].Arguments = string(encoded)
-		}
-	}
-	return calls
-}
-
 // digitsFor rewrites each run of number words in text as digits. A run of one word is only
 // rewritten when it is the whole value or opens a name, as a house number opens an address:
 // elsewhere a lone "one" is as likely a word.
@@ -72,7 +35,7 @@ func digitsFor(text string) string {
 		end := start
 		for end < len(words) && isNumberWord(words[end]) {
 			end++
-			if end < len(words) && strings.HasSuffix(words[end-1], ",") && (end-start == 1 || startsNumber(words[end])) {
+			if end < len(words) && strings.HasSuffix(words[end-1], ",") && end-start == 1 {
 				break
 			}
 		}
@@ -99,16 +62,6 @@ func digitsFor(text string) string {
 		return text
 	}
 	return strings.Join(out, " ")
-}
-
-// startsNumber reports a teen or tens word, which after a comma begins a new number: "nine
-// eight two one, fourteen Cedar Lane" is a last four and a house number, not 982114. A
-// lone number word before a comma is a label, as in "last four, nine eight two one".
-func startsNumber(word string) bool {
-	word = strings.ToLower(strings.Trim(word, ",.-"))
-	_, teen := spokenTeens[word]
-	_, ten := spokenTens[word]
-	return teen || ten
 }
 
 func startsUpper(word string) bool {
