@@ -394,6 +394,52 @@ func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIs
 	s.Empty(run.SessionID, "no call was taken on the run")
 }
 
+// retryAfterUnansweredCall delivers the task's occurrence due at due once
+// more, with left before its time runs out, after an earlier attempt rang
+// and nobody answered.
+func (s *ScheduledTasksSuite) retryAfterUnansweredCall(task store.ScheduledTask, due time.Time, left time.Duration) *scheduling.Failure {
+	run := s.runOf(task, due, "the-earlier-call")
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(context.Background(), task.CustomerID,
+		run.ID, "the-earlier-call", scheduling.ReasonNotAnswered))
+	ctx, cancel := context.WithTimeout(context.Background(), left)
+	defer cancel()
+	_, _, err := s.router.DeliverScheduledTask(ctx, store.ClaimedScheduledTask{Task: task, Run: run})
+	s.Equal("the-earlier-call", s.runsOf(task)[0].SessionID)
+	return s.failure(err)
+}
+
+func (s *ScheduledTasksSuite) TestARetryShortOfTimeAfterAnUnansweredCallIsNotAnswered() {
+	s.shortCalls(2*time.Second, 10*time.Second)
+	task := s.silentTask([]string{"phone", "whatsapp"})
+
+	failure := s.retryAfterUnansweredCall(task, time.Now(), 5*time.Second)
+
+	s.Equal(scheduling.ReasonNotAnswered, failure.Reason, "how the call went, not why the next channel failed")
+}
+
+func (s *ScheduledTasksSuite) TestARetryAQuarterHourLateAfterAnUnansweredCallIsNotAnswered() {
+	task := s.silentTask([]string{"phone"})
+
+	failure := s.retryAfterUnansweredCall(task, time.Now().Add(-16*time.Minute), time.Minute)
+
+	s.Equal(scheduling.ReasonNotAnswered, failure.Reason, "how the call went, not that it is late")
+	s.True(failure.Final, "the user was rung already")
+}
+
+func (s *ScheduledTasksSuite) TestARetryWhileTheUserIsOnACallAfterAnUnansweredCallIsNotAnswered() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, func(request *CreateSessionRequest) {
+		request.StartVoice = pointerTo(true)
+	})
+	s.taskOn(user, config, opened.Id, []string{"phone"})
+
+	failure := s.retryAfterUnansweredCall(s.tasksOf(user)[0], time.Now(), time.Minute)
+
+	s.Equal(scheduling.ReasonNotAnswered, failure.Reason, "how the call went, not that the user is on another")
+	s.True(failure.Final, "the user was rung already")
+}
+
 func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasTimeToRingAndHoldIsTried() {
 	s.shortCalls(2*time.Second, 10*time.Second)
 	task := s.phoneTask(s.data.createUser(), []string{"phone"}, time.Now())
