@@ -7,6 +7,7 @@ from ._backend import Backend
 from ._generated.api.default import (
     attach_phone_number,
     buy_phone_number,
+    detach_phone_number,
     list_phone_numbers,
     place_phone_call,
     release_phone_number,
@@ -288,6 +289,26 @@ class Phone:
 
         logger.info("attached %s, sip_uri %s", e164, attached.sip_uri)
         return attached
+
+    async def detach(self, e164: str) -> None:
+        """Stop a number taking calls, keeping it: it is still charged and still places calls.
+
+        Attach turns calls back on.
+
+        Args:
+            e164: The number to detach.
+
+        Raises:
+            RuntimeError: If the router refused to detach the number, saying why.
+        """
+        # No `is None` check: a successful detach is a 204 with no body, which parses to None.
+        detached = await detach_phone_number.asyncio(
+            e164=e164, client=self.backend.client()
+        )
+        if isinstance(detached, ErrorResponse):
+            raise RuntimeError(detached.error.message)
+
+        logger.info("detached %s", e164)
 
     async def release(self, e164: str) -> None:
         """Give a number back, which stops its monthly charge.
