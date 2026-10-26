@@ -631,6 +631,129 @@ func (s *StreamsSuite) TestWhatATooRanReachesTheModelAsItsResult() {
 	s.Equal("c1=sunny", s.told(model.answers))
 }
 
+func (s *StreamsSuite) TestAToolsUpdateIsSpokenByTheModelWhileItsCallIsOpen() {
+	conversation, model := s.converse(frame{"target": "stub/stub-sts", "sts": frame{"instructions": "Be brief."}})
+	s.calling(conversation, model, "c1")
+
+	s.Require().NoError(conversation.WriteJSON(frame{
+		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
+
+	update := s.told(model.updates)
+	s.Equal("c1", update.CallID)
+	s.Equal("Checking the book", update.Status)
+	s.False(update.Verbatim)
+	s.Contains(update.Guidance, "Checking the book")
+	s.Equal("Be brief.", update.Instructions)
+}
+
+func (s *StreamsSuite) TestWordsAToolAsksForAreSpokenAsWritten() {
+	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
+	s.calling(conversation, model, "c1")
+
+	s.Require().NoError(conversation.WriteJSON(frame{
+		"type": "tool_update", "tool_call_id": "c1", "text": "Bear with me.", "verbatim": true}))
+
+	update := s.told(model.updates)
+	s.True(update.Verbatim)
+	s.Contains(update.Guidance, "Bear with me.")
+}
+
+func (s *StreamsSuite) TestAnUpdateWaitsForTheReplyInFlight() {
+	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
+	model.emitter.Send(sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()})
+	s.Equal("response_started", s.nextConversationFrame(conversation)["type"])
+	s.calling(conversation, model, "c1")
+
+	s.Require().NoError(conversation.WriteJSON(frame{
+		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
+	s.untold(model.updates, "an update must not talk over the reply in flight")
+
+	model.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1})
+	s.Equal("Checking the book", s.told(model.updates).Status)
+}
+
+func (s *StreamsSuite) TestAnUpdateWaitsForTheCallerToStopTalking() {
+	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
+	s.calling(conversation, model, "c1")
+	model.emitter.Send(sts.SpeechStarted{})
+	s.Equal("speech_started", s.nextConversationFrame(conversation)["type"])
+
+	s.Require().NoError(conversation.WriteJSON(frame{
+		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
+	s.untold(model.updates, "an update must not talk over the caller")
+
+	model.emitter.Send(sts.SpeechStopped{})
+	s.Equal("Checking the book", s.told(model.updates).Status)
+}
+
+func (s *StreamsSuite) TestANewerUpdateReplacesOneNotYetSaid() {
+	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
+	model.emitter.Send(sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()})
+	s.Equal("response_started", s.nextConversationFrame(conversation)["type"])
+	s.calling(conversation, model, "c1")
+
+	for _, text := range []string{"Checking the book", "Nearly there"} {
+		s.Require().NoError(conversation.WriteJSON(frame{
+			"type": "tool_update", "tool_call_id": "c1", "text": text}))
+	}
+	// Frames are read in order, so once the hold is answered both updates have been taken.
+	s.Require().NoError(conversation.WriteJSON(frame{"type": "tool_hold", "tool_call_id": "c1"}))
+	s.Require().Equal("tool_held", s.nextConversationFrame(conversation)["type"])
+	model.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1})
+
+	s.Equal("Nearly there", s.told(model.updates).Status)
+	s.untold(model.updates, "the replaced update is not said as well")
+}
+
+func (s *StreamsSuite) TestTheResultDropsAnUpdateNotYetSaid() {
+	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
+	model.emitter.Send(sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()})
+	s.Equal("response_started", s.nextConversationFrame(conversation)["type"])
+	s.calling(conversation, model, "c1")
+
+	s.Require().NoError(conversation.WriteJSON(frame{
+		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
+	s.Require().NoError(conversation.WriteJSON(frame{
+		"type": "tool_result", "tool_call_id": "c1", "output": "a table at 7:30"}))
+	s.Equal("c1=a table at 7:30", s.told(model.answers))
+	model.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1})
+
+	s.untold(model.updates, "the result says more than the update did")
+}
+
+func (s *StreamsSuite) TestAnUpdateForACallThatIsNotOpenIsDropped() {
+	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
+
+	s.Require().NoError(conversation.WriteJSON(frame{
+		"type": "tool_update", "tool_call_id": "gone", "text": "Checking the book"}))
+
+	s.untold(model.updates, "nothing is waiting on a call the model never made")
+}
+
+func (s *StreamsSuite) TestAnOpenCallAskedToBeHeldIs() {
+	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
+	s.calling(conversation, model, "c1")
+
+	s.Require().NoError(conversation.WriteJSON(frame{"type": "tool_hold", "tool_call_id": "c1"}))
+
+	held := s.nextConversationFrame(conversation)
+	s.Equal("tool_held", held["type"])
+	s.Equal("c1", held["id"])
+}
+
+func (s *StreamsSuite) TestACallTheModelCancelledCannotBeHeld() {
+	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
+	s.calling(conversation, model, "c1")
+	model.emitter.Send(sts.ToolCancel{CallIDs: []string{"c1"}})
+	s.Equal("tool_cancel", s.nextConversationFrame(conversation)["type"])
+
+	s.Require().NoError(conversation.WriteJSON(frame{"type": "tool_hold", "tool_call_id": "c1"}))
+
+	refused := s.nextConversationFrame(conversation)
+	s.Equal("tool_cancel", refused["type"])
+	s.Equal([]any{"c1"}, refused["ids"])
+}
+
 func (s *StreamsSuite) TestAnInterruptionSaysHowMuchOfTheReplyWasHeard() {
 	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
 
@@ -852,6 +975,23 @@ func (s *StreamsSuite) told[T any](sent <-chan T) T {
 		s.FailNow("the model was never sent anything")
 		var nothing T
 		return nothing
+	}
+}
+
+// calling has the model make a call, and waits for the socket to pass it on.
+func (s *StreamsSuite) calling(connection *websocket.Conn, model *stubConversation, id string) {
+	model.emitter.Send(sts.ToolCall{CallID: id, Name: "check_availability", Arguments: "{}"})
+	made := s.nextConversationFrame(connection)
+	s.Require().Equal("tool_call", made["type"])
+	s.Require().Equal(id, made["id"])
+}
+
+// untold checks the model is sent nothing while the socket has time to send it.
+func (s *StreamsSuite) untold(sent <-chan sts.CallUpdate, why string) {
+	select {
+	case update := <-sent:
+		s.Failf("the model was told something", "%s: %q", why, update.Status)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 

@@ -601,12 +601,14 @@ func (s *Server) streamSTS(
 	if sampleRate <= 0 {
 		sampleRate = defaultSampleRate
 	}
+	updates := newCallUpdates(session, held.Instructions, s.logger)
 
 	var writing sync.WaitGroup
 	writing.Add(1)
 	go func() {
 		defer writing.Done()
 		for event := range session.Events() {
+			updates.heard(event)
 			if err := writeSTS(out, event); err != nil {
 				return
 			}
@@ -658,7 +660,7 @@ func (s *Server) streamSTS(
 			out.failed(fmt.Errorf("unreadable frame: %w", err))
 			continue
 		}
-		if err := command.apply(session, speaker); err != nil {
+		if err := command.apply(session, updates, out, speaker); err != nil {
 			out.failed(err)
 		}
 	}
@@ -679,10 +681,12 @@ type converse struct {
 	// ImageURL is a frame for a model that sees, as a data URI.
 	ImageURL string `json:"image_url"`
 	// ToolCallID, Output and Error answer a tool call, in the words the session socket
-	// uses for the same thing.
+	// uses for the same thing. ToolCallID also names the call a tool_update (Text, with
+	// Verbatim to say it as written) or a tool_hold is about.
 	ToolCallID string          `json:"tool_call_id"`
 	Output     json.RawMessage `json:"output"`
 	Error      string          `json:"error"`
+	Verbatim   bool            `json:"verbatim"`
 	// PlayedMs is how much of the reply the listener heard before interrupting. Zero
 	// leaves it to the provider's own count.
 	PlayedMs int `json:"played_ms"`
@@ -690,12 +694,16 @@ type converse struct {
 
 // apply carries out one frame against the session. What the model cannot do comes back as
 // an error, which the caller is told about rather than left to wonder.
-func (c converse) apply(session *stsrouter.Session, speaker stt.Participant) error {
+func (c converse) apply(session *stsrouter.Session, updates *callUpdates, out *socket, speaker stt.Participant) error {
 	switch c.Type {
 	case "text":
 		return session.SendText(c.Text, speaker)
 	case "instructions":
-		return session.SetInstructions(c.Instructions)
+		if err := session.SetInstructions(c.Instructions); err != nil {
+			return err
+		}
+		updates.setInstructions(c.Instructions)
+		return nil
 	case "tools":
 		return session.SetTools(c.Tools)
 	case "frame":
@@ -720,7 +728,18 @@ func (c converse) apply(session *stsrouter.Session, speaker stt.Participant) err
 		if c.Error != "" {
 			failure = errors.New(c.Error)
 		}
+		updates.answered(c.ToolCallID)
 		return session.Answer(c.ToolCallID, text, failure)
+	case "tool_update":
+		updates.update(c.ToolCallID, strings.TrimSpace(c.Text), c.Verbatim)
+		return nil
+	case "tool_hold":
+		// A call the model is still waiting on is held. One it cancelled or was answered
+		// for is refused as a cancel, so the function asking is not left waiting.
+		if updates.holds(c.ToolCallID) {
+			return out.frame(frame{"type": "tool_held", "id": c.ToolCallID})
+		}
+		return out.frame(frame{"type": "tool_cancel", "ids": []string{c.ToolCallID}})
 	case "interrupt":
 		return session.Interrupt(c.PlayedMs)
 	default:
