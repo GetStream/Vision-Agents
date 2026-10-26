@@ -2219,6 +2219,19 @@ type channelSink struct {
 	media map[string][]string
 	// failing is how many more sends to a person the provider refuses.
 	failing map[string]int
+	// refusingMedia is the people every file sent to is refused for, as Telnyx refuses an MMS
+	// to a number outside the US and Canada.
+	refusingMedia map[string]bool
+}
+
+// refuseMedia has the provider refuse every file sent to number, and take its words.
+func (c *channelSink) refuseMedia(number string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refusingMedia == nil {
+		c.refusingMedia = map[string]bool{}
+	}
+	c.refusingMedia[number] = true
 }
 
 // fail has the provider refuse the next times sends to number.
@@ -2252,6 +2265,11 @@ func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 		c.failing[body.To]--
 		c.mu.Unlock()
 		http.Error(w, `{"error":{"message":"the provider is down"}}`, http.StatusBadGateway)
+		return
+	}
+	if len(body.Media) > 0 && c.refusingMedia[body.To] {
+		c.mu.Unlock()
+		http.Error(w, `{"errors":[{"detail":"MMS is not supported for this destination"}]}`, http.StatusBadRequest)
 		return
 	}
 	if len(body.Media) > 0 {
@@ -2437,6 +2455,24 @@ func (s *ScheduledTasksSuite) TestATaskWhoseReplyIsOnlyAFileTextsTheFile() {
 	s.Equal("sms", run.DeliveredTo)
 	s.Equal([]string{report}, s.sink.mediaTo(writer))
 	s.Empty(s.sink.to(writer), "there were no words to text")
+}
+
+// A reply whose words went out and whose file the line refused is delivered: another attempt
+// would text the words again.
+func (s *ScheduledTasksSuite) TestATaskWhoseFileTheLineRefusesTextsItsWordsOnce() {
+	s.retryAtOnce()
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	s.codeHandsBackAReport()
+	s.sink.refuseMedia(writer)
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Never(func() bool { return len(s.sink.to(writer)) > 1 }, dropped, 20*time.Millisecond, "texted once")
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Empty(s.sink.mediaTo(writer), "the file was refused")
 }
 
 // A file the task's code wrote twice is texted once, its latest, as the conversation keeps it.

@@ -240,7 +240,14 @@ func (s *Service) Notify(ctx context.Context, notice Notice) error {
 		attribution.APIKey = OriginNotice
 	}
 	owner := routing.Owner{CustomerID: notice.CustomerID, Attribution: attribution}
-	if err := s.deliver(ctx, line, provider, to, thread, reply, owner); err != nil {
+	err = s.deliver(ctx, line, provider, to, thread, reply, owner)
+	// A notice partly sent, such as words whose file was refused, is sent: a caller trying
+	// again would send its words twice.
+	var partly partlySent
+	if errors.As(err, &partly) {
+		s.logger.Warn("a notice went out without all of its files", "channel", line.Kind,
+			"number", line.E164, "error", err)
+	} else if err != nil {
 		return stack.Wrap(err)
 	}
 	s.gate.Sent(ctx, notice.CustomerID, string(notice.Kind), address)
