@@ -254,6 +254,9 @@ namespace GetStream.VisionAgents.Models
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
         /// <summary>
         /// Absent when calls are reviewed by Stream's default guide.
         /// </summary>
@@ -406,6 +409,9 @@ namespace GetStream.VisionAgents.Models
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("review")]
         public AgentReview? Review { get; set; } = default!;
 
@@ -551,6 +557,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
+
+        /// <summary>
+        /// How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
 
         /// <summary>
         /// How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay.
@@ -4891,6 +4903,12 @@ namespace GetStream.VisionAgents.Models
         public string? ProjectId { get; set; } = default!;
 
         /// <summary>
+        /// How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
+        /// <summary>
         /// The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("return_url")]
@@ -8625,6 +8643,12 @@ namespace GetStream.VisionAgents.Models
         public bool? RequireOwnStreamApp { get; set; } = default!;
 
         /// <summary>
+        /// How the scope's sessions are handed back a conversation they carry on. The most specific level wins, field by field: a server-side session request, then its agent config, then the app's policy, then the organization's, then the router's default (text only, 100 turns, 60000 characters).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
+        /// <summary>
         /// Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
@@ -9712,6 +9736,42 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// How a conversation is handed back to the model when a session carries it on.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ResumeHistory
+    {
+
+        /// <summary>
+        /// Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("include_tools")]
+        public bool? IncludeTools { get; set; } = default!;
+
+        /// <summary>
+        /// How many characters are handed back, tool calls and results included: about four to a token. The whole of it is sent, and billed, with the first reply after the conversation is resumed, and is cached from then on by models that cache, so keep it well inside the model's context window. Omitted is 60000.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_characters")]
+        public long? MaxCharacters { get; set; } = default!;
+
+        /// <summary>
+        /// How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_messages")]
+        public long? MaxMessages { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -12881,6 +12941,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
+
+        /// <summary>
+        /// How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("role")]
         public string? Role { get; set; } = default!;

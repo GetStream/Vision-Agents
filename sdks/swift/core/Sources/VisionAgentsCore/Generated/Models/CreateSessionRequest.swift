@@ -50,6 +50,8 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     let phone: SessionPhone?
     /// What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
     let projectId: String?
+    /// How a conversation is handed back to the model when a session carries it on.
+    let resumeHistory: ResumeHistory?
     /// The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
     let returnUrl: String?
     /// Omit it and the config decides, or search-fast when there is no config.
@@ -78,7 +80,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String? = nil, backchannel: Bool? = nil, call: SessionCall? = nil, configId: String? = nil, connectorBindings: [SessionConnectorBinding]? = nil, contextTruncated: Bool? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, greeting: GreetingPayload? = nil, history: [HistoryMessage]? = nil, id: String? = nil, incognito: Bool? = nil, instructions: String? = nil, keyterms: [String]? = nil, languages: [String]? = nil, llm: String? = nil, maxTokens: Int? = nil, memory: SessionMemory? = nil, minConfidence: Double? = nil, modelOverwrites: ModelOverwrites? = nil, navigating: Bool? = nil, phone: SessionPhone? = nil, projectId: String? = nil, returnUrl: String? = nil, search: String? = nil, startVoice: Bool? = nil, sts: String? = nil, stt: String? = nil, tags: [String: String]? = nil, timezone: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil, tools: [SessionTool]? = nil, tts: String? = nil, userId: String? = "vision-agent", userName: String? = "Vision Agent", video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String? = nil, backchannel: Bool? = nil, call: SessionCall? = nil, configId: String? = nil, connectorBindings: [SessionConnectorBinding]? = nil, contextTruncated: Bool? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, greeting: GreetingPayload? = nil, history: [HistoryMessage]? = nil, id: String? = nil, incognito: Bool? = nil, instructions: String? = nil, keyterms: [String]? = nil, languages: [String]? = nil, llm: String? = nil, maxTokens: Int? = nil, memory: SessionMemory? = nil, minConfidence: Double? = nil, modelOverwrites: ModelOverwrites? = nil, navigating: Bool? = nil, phone: SessionPhone? = nil, projectId: String? = nil, resumeHistory: ResumeHistory? = nil, returnUrl: String? = nil, search: String? = nil, startVoice: Bool? = nil, sts: String? = nil, stt: String? = nil, tags: [String: String]? = nil, timezone: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil, tools: [SessionTool]? = nil, tts: String? = nil, userId: String? = "vision-agent", userName: String? = "Vision Agent", video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.backchannel = backchannel
@@ -103,6 +105,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         self.navigating = navigating
         self.phone = phone
         self.projectId = projectId
+        self.resumeHistory = resumeHistory
         self.returnUrl = returnUrl
         self.search = search
         self.startVoice = startVoice
@@ -146,6 +149,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         self.navigating = try container.decodeIfPresent(Bool.self, forKey: .navigating)
         self.phone = try container.decodeIfPresent(SessionPhone.self, forKey: .phone)
         self.projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
+        self.resumeHistory = try container.decodeIfPresent(ResumeHistory.self, forKey: .resumeHistory)
         self.returnUrl = try container.decodeIfPresent(String.self, forKey: .returnUrl)
         self.search = try container.decodeIfPresent(String.self, forKey: .search)
         self.startVoice = try container.decodeIfPresent(Bool.self, forKey: .startVoice)
@@ -189,6 +193,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(navigating, forKey: .navigating)
         try container.encodeIfPresent(phone, forKey: .phone)
         try container.encodeIfPresent(projectId, forKey: .projectId)
+        try container.encodeIfPresent(resumeHistory, forKey: .resumeHistory)
         try container.encodeIfPresent(returnUrl, forKey: .returnUrl)
         try container.encodeIfPresent(search, forKey: .search)
         try container.encodeIfPresent(startVoice, forKey: .startVoice)
@@ -234,6 +239,7 @@ extension CreateSessionRequest: Hashable {
         lhs.navigating == rhs.navigating &&
         lhs.phone == rhs.phone &&
         lhs.projectId == rhs.projectId &&
+        lhs.resumeHistory == rhs.resumeHistory &&
         lhs.returnUrl == rhs.returnUrl &&
         lhs.search == rhs.search &&
         lhs.startVoice == rhs.startVoice &&
@@ -276,6 +282,7 @@ extension CreateSessionRequest: Hashable {
         hasher.combine(navigating)
         hasher.combine(phone)
         hasher.combine(projectId)
+        hasher.combine(resumeHistory)
         hasher.combine(returnUrl)
         hasher.combine(search)
         hasher.combine(startVoice)

@@ -535,6 +535,9 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	spec.Title, spec.Description, spec.Project = row.Title, row.Description, row.Project
 	spec.Custom = row.Custom
 	spec.ModelOverwrites = row.ModelOverwrites
+	if row.ResumeHistory != (store.ResumeHistory{}) {
+		spec.ResumeHistory = row.ResumeHistory
+	}
 	spec.ForkedFrom = row.ForkedFrom
 	// The caller's connections go on with the chat; the session checks each against the
 	// config as it is now and the caller asking, as it did when the chat opened.
@@ -645,6 +648,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if request.Custom != nil {
 		spec.Custom = *request.Custom
 	}
+	spec.ResumeHistory = resumeHistoryOr(spec.ResumeHistory, request.ResumeHistory)
 	if request.ModelOverwrites != nil {
 		spec.ModelOverwrites = modelOverwritesOf(*request.ModelOverwrites)
 	}

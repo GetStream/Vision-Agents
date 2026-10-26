@@ -22,7 +22,7 @@ final class AgentResponseItem: Sendable, Codable, JSONEncodable {
     let kind: AgentResponseItemKind
     /// The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
     let ordinal: Int
-    /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+    /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording.
     let payload: [String: RawJSON]?
     let responseId: String
     let sessionId: String?

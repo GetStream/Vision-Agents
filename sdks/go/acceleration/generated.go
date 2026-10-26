@@ -2834,6 +2834,9 @@ type AgentConfig struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
+
 	// Review How a finished call under an agent is reviewed.
 	Review *AgentReview `json:"review,omitempty"`
 
@@ -2910,6 +2913,9 @@ type AgentConfigPatch struct {
 	// Plugins Deprecated: use connectors, a binding to a connector.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
 
 	// Review How a finished call under an agent is reviewed.
 	Review *AgentReview `json:"review,omitempty"`
@@ -2995,6 +3001,9 @@ type AgentConfigRequest struct {
 	// Plugins Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
 
 	// Review How a finished call under an agent is reviewed.
 	Review *AgentReview `json:"review,omitempty"`
@@ -4806,6 +4815,9 @@ type CreateSessionRequest struct {
 	// ProjectId What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
 	ProjectId *string `json:"project_id,omitempty"`
 
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
+
 	// ReturnUrl The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
 	ReturnUrl *string `json:"return_url,omitempty"`
 
@@ -6451,6 +6463,9 @@ type Policy struct {
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
 
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
+
 	// Tags Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
 	//
 	// Example: {"application":"support"}
@@ -6924,6 +6939,18 @@ type RespondRequest struct {
 	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
 	RequestId *string `json:"request_id,omitempty"`
 	Text      string  `json:"text"`
+}
+
+// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+type ResumeHistory struct {
+	// IncludeTools Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default.
+	IncludeTools *bool `json:"include_tools,omitempty"`
+
+	// MaxCharacters How many characters are handed back, tool calls and results included: about four to a token. The whole of it is sent, and billed, with the first reply after the conversation is resumed, and is cached from then on by models that cache, so keep it well inside the model's context window. Omitted is 60000.
+	MaxCharacters *int64 `json:"max_characters,omitempty"`
+
+	// MaxMessages How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
+	MaxMessages *int64 `json:"max_messages,omitempty"`
 }
 
 // ReviewActor Who moved a use case: the app, Stream staff or the vendor.
@@ -8314,6 +8341,9 @@ type SyncAgentRequest struct {
 	// Plugins Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
 
 	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 	Role *AgentRole `json:"role,omitempty"`

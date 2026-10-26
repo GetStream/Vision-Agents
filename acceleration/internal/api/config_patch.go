@@ -42,6 +42,7 @@ type AgentConfigPatch struct {
 	EpisodeCards       *bool                    `json:"episode_cards,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
+	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -207,6 +208,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, patch.Tools)
 	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, patch.Tools)
 	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
+	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, patch.ResumeHistory)
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}

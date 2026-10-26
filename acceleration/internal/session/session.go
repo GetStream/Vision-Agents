@@ -1596,7 +1596,9 @@ func (s *Session) write(event Event) {
 		if s.turnBlocked(typed.TurnID) {
 			kind = store.ItemBlocked
 		}
-		s.item(typed.TurnID, kind, typed.Text, "", nil)
+		// The turn id is what the reply's transcript message is written under, which is how
+		// a resumed conversation finds the tool calls behind it.
+		s.item(typed.TurnID, kind, typed.Text, "", map[string]any{"turn_id": typed.TurnID})
 		if !typed.PendingWork {
 			s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 		}

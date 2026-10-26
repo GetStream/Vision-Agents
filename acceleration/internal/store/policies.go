@@ -64,6 +64,10 @@ type PolicyDocument struct {
 	// written there for want of one of its own, and what it wrote there before can only be
 	// read. An organization's is set only by the operator.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
+	// ResumeHistory is how the scope's sessions are handed back a conversation they carry
+	// on, under whatever an agent config or a session says (ResumeHistory.Over). An app's
+	// wins over its organization's field by field.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
 	// BalanceWarningMicros is the balance, in micros, at or below which the organization is
 	// warned, over its tier's; on an organization's document only.
 	BalanceWarningMicros *int64 `json:"balance_warning_micros,omitempty"`

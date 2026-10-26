@@ -1141,6 +1141,8 @@ func (s *RouterSuite) sessionManager(
 		Directory:     directory,
 		Connectors:    connectors,
 		Logger:        logger,
+		// The policies a session's resume_history falls back to, as cmd/router passes them.
+		ResumeHistories: policies,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
