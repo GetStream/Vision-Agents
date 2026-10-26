@@ -341,6 +341,20 @@ func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhenTheUserConnectedAnotherBind
 	s.Contains(s.answeredFrom(), "booked\n")
 }
 
+// TestTheSameCodeIsNotRunAgainWhenTheUserConnectedABindingWhoseNameIsPartOfTheOne: the result
+// names github, so connecting git is no reason to run the code again.
+func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhenTheUserConnectedABindingWhoseNameIsPartOfTheOne() {
+	s.box = &codeBox{
+		result:    sandbox.Result{Output: "booked\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}},
+		connected: []string{"git"},
+	}
+	s.joinText()
+
+	s.repeatsRunCode(1)
+
+	s.Contains(s.answeredFrom(), "booked\n")
+}
+
 // TestTheSameCodeRunsAgainAfterARunThatSaidItsConnectionWasJustMade: a token reaches code some
 // seconds after the run began, and the result tells the model to run the code again.
 func (s *AgentSuite) TestTheSameCodeRunsAgainAfterARunThatSaidItsConnectionWasJustMade() {
