@@ -1327,6 +1327,24 @@ func (s *ConfigsSuite) TestAGrantIsJudgedByTheMCPSourceAlone() {
 	s.True(ok, complaint)
 }
 
+// TestAGrantOfAToolWhoseScopeAnAskedScopeCoversIsStored: scopes.list asks for agent:sql:all,
+// which the manifest says covers the agent:sql:run execute_sql needs, so a consent grants it.
+func (s *ConfigsSuite) TestAGrantOfAToolWhoseScopeAnAskedScopeCoversIsStored() {
+	manifest := core.Manifest{
+		Scopes:  core.ScopePolicy{List: []string{"agent:sql:all"}, CoveredBy: map[string][]string{"agent:sql:run": {"agent:sql:all"}}},
+		Sources: []core.SourceRule{{Kind: core.SourceKindMCP, Tools: []core.ToolRule{{Name: "execute_sql", NeedsScopes: []string{"agent:sql:run"}}}}},
+	}
+	binding := AgentConnectorBinding{Name: "metabase", ConnectorId: "metabase", Tools: []ConnectorToolGrant{{Name: "execute_sql"}}}
+
+	complaint, ok := leftOutGrant(binding, manifest)
+	s.True(ok, complaint)
+
+	manifest.Scopes.CoveredBy = nil
+	complaint, ok = leftOutGrant(binding, manifest)
+	s.False(ok)
+	s.Contains(complaint, "it needs agent:sql:run, which the connector never asks for")
+}
+
 // TestAGrantOnAConnectorWithNoMCPSourceIsStored: linq, slack_bot, whatsapp and telnyx have
 // no mcp source, so no filter leaves a tool out and the grant is not refused.
 func (s *ConfigsSuite) TestAGrantOnAConnectorWithNoMCPSourceIsStored() {

@@ -827,9 +827,124 @@ func (s *ManifestSuite) TestUnaskedScopesAreTheOnesScopesListLeavesOut() {
 	s.Require().NoError(err)
 	rule := m.Sources[0]
 
-	s.Equal([]string{"channels:manage"}, rule.UnaskedScopes(m.Scopes.List, "delete_channel"))
-	s.Empty(rule.UnaskedScopes(m.Scopes.List, "list_channels"), "every scope it needs is asked for")
-	s.Empty(rule.UnaskedScopes(m.Scopes.List, "post_message"), "the manifest does not name it")
+	s.Equal([]string{"channels:manage"}, rule.UnaskedScopes(m.Scopes, "delete_channel"))
+	s.Empty(rule.UnaskedScopes(m.Scopes, "list_channels"), "every scope it needs is asked for")
+	s.Empty(rule.UnaskedScopes(m.Scopes, "post_message"), "the manifest does not name it")
+}
+
+// coveredSource is a manifest asking for files.readonly and files.all, whose create_file needs
+// files.own, which files.all covers; more YAML under scopes.covered_by in extra.
+func coveredSource(extra string) []byte {
+	return minimal("endpoints:\n  mcp: https://mcp.example.com/mcp\nscopes:\n  list: [files.readonly, files.all]\n" +
+		"  covered_by:\n" + extra + "sources:\n  - kind: mcp\n    endpoint: mcp\n    tools:\n" +
+		"      - name: create_file\n        needs_scopes: [files.own]\n")
+}
+
+// TestAScopeIsMetByItselfOrByAScopeThatCoversIt: a grant of files.all meets files.own, one of
+// files.readonly does not, and covered_by reaches the resolved manifest a validate reads.
+func (s *ManifestSuite) TestAScopeIsMetByItselfOrByAScopeThatCoversIt() {
+	m, err := ParseManifest(coveredSource("    files.own: [files.all]\n"))
+	s.Require().NoError(err)
+
+	resolved, err := m.Resolve("oauth2_code", nil, nil)
+
+	s.Require().NoError(err)
+	s.Equal(map[string][]string{"files.own": {"files.all"}}, resolved.Scopes.CoveredBy)
+	s.True(resolved.Scopes.Meets([]string{"files.all"}, "files.own"))
+	s.True(resolved.Scopes.Meets([]string{"files.own"}, "files.own"))
+	s.False(resolved.Scopes.Meets([]string{"files.readonly"}, "files.own"))
+	s.False(resolved.Scopes.Meets(nil, "files.own"))
+	s.False(resolved.Scopes.Meets([]string{"files.own"}, "files.all"), "covering goes one way")
+}
+
+// TestAScopeNoEntryCoversIsMetOnlyByItself: with no covered_by, Meets is the plain membership
+// check validate made before it.
+func (s *ManifestSuite) TestAScopeNoEntryCoversIsMetOnlyByItself() {
+	var none ScopePolicy
+
+	s.True(none.Meets([]string{"files.own"}, "files.own"))
+	s.False(none.Meets([]string{"files.all"}, "files.own"))
+}
+
+// TestAToolWhoseScopeAnAskedScopeCoversIsAsked: scopes.list asks for files.all, which covers the
+// files.own create_file needs, so a consent can grant what it needs.
+func (s *ManifestSuite) TestAToolWhoseScopeAnAskedScopeCoversIsAsked() {
+	m, err := ParseManifest(coveredSource("    files.own: [files.all]\n"))
+	s.Require().NoError(err)
+	rule := m.Sources[0]
+
+	s.Empty(rule.UnaskedScopes(m.Scopes, "create_file"))
+	m.Scopes.CoveredBy = nil
+	s.Equal([]string{"files.own"}, rule.UnaskedScopes(m.Scopes, "create_file"))
+}
+
+// TestACoveringScopeTheManifestNeverAsksForIsAccepted: a grant may hold a broader scope no
+// consent of this connector asks for, such as one moved from a plugin that asked for it.
+func (s *ManifestSuite) TestACoveringScopeTheManifestNeverAsksForIsAccepted() {
+	m, err := ParseManifest(coveredSource("    files.own: [files.everything]\n"))
+	s.Require().NoError(err)
+
+	s.True(m.Scopes.Meets([]string{"files.everything"}, "files.own"))
+	s.Equal([]string{"files.own"}, m.Sources[0].UnaskedScopes(m.Scopes, "create_file"), "no consent asks for it")
+}
+
+func (s *ManifestSuite) TestACoveredByEntryForAScopeNoToolNeedsIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: [files.all]\n    files.other: [files.all]\n"))
+	s.ErrorContains(err, `scopes.covered_by.files.other: "files.other" is a scope no tool needs`)
+}
+
+func (s *ManifestSuite) TestAnEmptyCoveredByListIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: []\n"))
+	s.ErrorContains(err, "scopes.covered_by.files.own: is empty")
+}
+
+func (s *ManifestSuite) TestANullCoveredByListIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: null\n"))
+	s.ErrorContains(err, "scopes.covered_by.files.own: is empty")
+}
+
+func (s *ManifestSuite) TestAnEmptyCoveringScopeIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: [files.all, \"\"]\n"))
+	s.ErrorContains(err, "scopes.covered_by.files.own[1]: is empty")
+}
+
+func (s *ManifestSuite) TestAScopeCannotCoverItself() {
+	_, err := ParseManifest(coveredSource("    files.own: [files.own]\n"))
+	s.ErrorContains(err, "scopes.covered_by.files.own[0]: is the scope it covers")
+}
+
+func (s *ManifestSuite) TestACoveringScopeListedTwiceIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: [files.all, files.all]\n"))
+	s.ErrorContains(err, `scopes.covered_by.files.own[1]: "files.all" is listed twice`)
+}
+
+func (s *ManifestSuite) TestCoveredByThatIsNotAMapIsRejected() {
+	_, err := ParseManifest(coveredSource("    - files.all\n"))
+	s.ErrorContains(err, "cannot unmarshal !!seq into map[string][]string")
+}
+
+func (s *ManifestSuite) TestACoveringScopeThatIsNotAListIsRejected() {
+	_, err := ParseManifest(coveredSource("    files.own: files.all\n"))
+	s.ErrorContains(err, "cannot unmarshal !!str `files.all` into []string")
+}
+
+// TestAnEmptyOrNullCoveredByIsNoEntry: it parses, covers nothing, and marshals as a manifest
+// without it does, so a stored manifest's JSON stays as it was.
+func (s *ManifestSuite) TestAnEmptyOrNullCoveredByIsNoEntry() {
+	without, err := ParseManifest(toolSource("      - name: send\n        needs_scopes: [chat:write]\n"))
+	s.Require().NoError(err)
+	want, err := json.Marshal(without)
+	s.Require().NoError(err)
+	for _, value := range []string{"{}", "null"} {
+		m, err := ParseManifest([]byte(strings.Replace(string(toolSource("      - name: send\n        needs_scopes: [chat:write]\n")),
+			"sources:", "  covered_by: "+value+"\nsources:", 1)))
+		s.Require().NoError(err, value)
+		got, err := json.Marshal(m)
+		s.Require().NoError(err)
+
+		s.JSONEq(string(want), string(got), value)
+		s.False(m.Scopes.Meets([]string{"channels:read"}, "chat:write"), value)
+	}
 }
 
 // TestTheMCPSourceIsTheFirstOfThatKind: a source of another kind is not the one whose tool rules

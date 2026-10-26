@@ -208,6 +208,17 @@ type ScopePolicy struct {
 	SendOnRefresh bool `yaml:"send_on_refresh,omitempty" json:"send_on_refresh,omitempty"`
 	// StepUpUnion asks, on a step-up, for the granted scopes plus the missing ones.
 	StepUpUnion bool `yaml:"step_up_union,omitempty" json:"step_up_union,omitempty"`
+	// CoveredBy are, for a scope a tool needs, the broader scopes the provider documents as
+	// giving all it gives, so holding one meets that need (Meets). Left out of the JSON when
+	// empty, so the JSON of every manifest stored before it stays as it was.
+	CoveredBy map[string][]string `yaml:"covered_by,omitempty" json:"covered_by,omitempty"`
+}
+
+// Meets reports whether scopes hold scope or a scope that covers it (CoveredBy).
+func (p ScopePolicy) Meets(scopes []string, scope string) bool {
+	return slices.Contains(scopes, scope) || slices.ContainsFunc(p.CoveredBy[scope], func(broader string) bool {
+		return slices.Contains(scopes, broader)
+	})
 }
 
 // RefreshPolicy is what the OAuth scheme reads to decide when and how to refresh.
@@ -299,18 +310,47 @@ func MCPSource(sources []SourceRule) *SourceRule {
 	return &sources[index]
 }
 
-// UnaskedScopes are the scopes a call of tool needs that asked, the manifest's scopes.list,
-// does not hold. No consent grants them, so a tool needing any is left out: the mcp source
-// drops it from what it lists (asked in sources/mcp/source.go), and a config save refuses a
-// binding that grants it (leftOutGrant in internal/api/configs.go).
-func (r SourceRule) UnaskedScopes(asked []string, tool string) []string {
+// UnaskedScopes are the scopes a call of tool needs that the manifest's scopes.list does not
+// meet (ScopePolicy.Meets). No consent grants them, so a tool needing any is left out: the mcp
+// source drops it from what it lists (asked in sources/mcp/source.go), and a config save
+// refuses a binding that grants it (leftOutGrant in internal/api/configs.go).
+func (r SourceRule) UnaskedScopes(scopes ScopePolicy, tool string) []string {
 	index := slices.IndexFunc(r.Tools, func(rule ToolRule) bool { return rule.Name == tool })
 	if index < 0 {
 		return nil
 	}
 	return slices.DeleteFunc(slices.Clone(r.Tools[index].NeedsScopes), func(scope string) bool {
-		return slices.Contains(asked, scope)
+		return scopes.Meets(scopes.List, scope)
 	})
+}
+
+// checkCoveredBy refuses a scopes.covered_by entry that could never meet a need: one for a
+// scope no tool needs, an empty list, or a broader scope that is empty, the scope itself or
+// listed twice.
+func (m Manifest) checkCoveredBy(fail func(field, format string, args ...any)) {
+	for _, scope := range slices.Sorted(maps.Keys(m.Scopes.CoveredBy)) {
+		field := "scopes.covered_by." + scope
+		if !slices.ContainsFunc(m.Sources, func(source SourceRule) bool {
+			return slices.ContainsFunc(source.Tools, func(tool ToolRule) bool { return slices.Contains(tool.NeedsScopes, scope) })
+		}) {
+			fail(field, "%q is a scope no tool needs", scope)
+		}
+		broader := m.Scopes.CoveredBy[scope]
+		if len(broader) == 0 {
+			fail(field, "is empty")
+		}
+		for i, cover := range broader {
+			field := fmt.Sprintf("%s[%d]", field, i)
+			switch {
+			case cover == "":
+				fail(field, "is empty")
+			case cover == scope:
+				fail(field, "is the scope it covers")
+			case slices.Index(broader, cover) != i:
+				fail(field, "%q is listed twice", cover)
+			}
+		}
+	}
 }
 
 // CaptureRule reads one public value at connect time into the connection's metadata.
@@ -702,6 +742,7 @@ func (m Manifest) Validate() error {
 	if m.Scopes.Separator != "" && !slices.Contains(scopeSeparators, m.Scopes.Separator) {
 		fail("scopes.separator", "%q is not one of %q", m.Scopes.Separator, scopeSeparators)
 	}
+	m.checkCoveredBy(fail)
 
 	if m.Refresh.Margin < 0 || m.Refresh.Grace < 0 || m.Refresh.AccessTTL < 0 || m.Refresh.RefreshTTL < 0 {
 		fail("refresh", "durations cannot be negative")
