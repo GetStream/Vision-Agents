@@ -190,6 +190,18 @@ func (s *HarnessChargeSuite) TestWorkAHeardTurnDelegatesInASessionABackendOpened
 	s.EqualValues(2, messagesPerDay-status.Remaining, "the reply and the work it delegated are both the owner's")
 }
 
+func (s *HarnessChargeSuite) TestWorkTheUsersOwnTurnDelegatesAfterAScheduledTurnIsCountedOnTheirDay() {
+	// What a turn is counted as is the turn's own: the mark of the scheduled turn before it
+	// is not kept.
+	s.build(s.user)
+
+	s.reply(routing.WithScheduledTurn(s.ctx), "turn-1", "")
+	s.reply(s.ctx, "turn-2", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	s.EqualValues(2, s.day(), "the user's own reply and the work it delegated are both the user's")
+}
+
 func (s *HarnessChargeSuite) TestWorkAScheduledTurnHandsOverIsNotCountedOnTheUsersDay() {
 	s.build(s.user)
 	turn, cancel := context.WithCancel(routing.WithScheduledTurn(s.ctx))
