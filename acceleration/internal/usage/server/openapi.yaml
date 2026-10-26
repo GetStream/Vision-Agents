@@ -266,6 +266,93 @@ components:
         - items
         - has_more
       type: object
+    CustomerUsageEvent:
+      additionalProperties: true
+      properties:
+        agent_id:
+          type: string
+        api_key:
+          description: The public key the work was started with, or the origin of work no key started, such as hook:chat.
+          type: string
+        app_id:
+          type: string
+        attributes:
+          additionalProperties:
+            type: string
+          type: object
+        billable:
+          type: boolean
+        call_id:
+          type: string
+        cost_micros:
+          description: What the organization is charged for the work, in micros.
+          format: int64
+          type: integer
+        error_code:
+          type: string
+        meter:
+          description: The kind of work, such as llm or runtime.
+          type: string
+        model:
+          type: string
+        occurred_at:
+          format: date-time
+          type: string
+        provider:
+          type: string
+        purpose:
+          type: string
+        quantities:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        session_id:
+          type: string
+        success:
+          type: boolean
+        tags:
+          additionalProperties:
+            type: string
+          type: object
+        usage_categories:
+          description: The token's usage categories, its team among them as team:<name>.
+          items:
+            type: string
+          nullable: true
+          type: array
+        usage_id:
+          type: string
+        user_id:
+          type: string
+      required:
+        - usage_id
+        - occurred_at
+        - app_id
+        - api_key
+        - usage_categories
+        - meter
+        - quantities
+        - cost_micros
+        - billable
+        - success
+      type: object
+    CustomerUsagePage:
+      additionalProperties: true
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/CustomerUsageEvent'
+          nullable: true
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
     ErrorDetail:
       additionalProperties: true
       properties:
@@ -923,7 +1010,7 @@ paths:
       description: |-
         The organization's standing without `status_reason`, with the low-balance threshold in force (the account's own, else its tier's) and whose it is, and `own_limits`, every setting the operator set for the organization alone. An organization with no account is active with nothing granted or spent.
 
-        The customer view: what an organization's own dashboard reads through its router, with the ingest token, never the manage key. It writes nothing, and leaves out what only the operator reads: why an organization is suspended, and who wrote each credit entry and why.
+        The customer view: what an organization's own dashboard reads through its router, with the ingest token, never the manage key. It writes nothing, and leaves out what only the operator reads: why an organization is suspended, who wrote each credit entry and why, and each usage event's tier, cost at the vendor's rates, price version and producer.
       operationId: readAccount
       parameters:
         - description: 'The organization: 1 to 255 bytes of UTF-8, without | { } or a control character.'
@@ -987,7 +1074,7 @@ paths:
       description: |-
         Newest first, without `actor`, `note` or `idempotency_key`; `reference` only on the entries the payment processor wrote (actor `stripe`), so no staff reference reaches the customer.
 
-        The customer view: what an organization's own dashboard reads through its router, with the ingest token, never the manage key. It writes nothing, and leaves out what only the operator reads: why an organization is suspended, and who wrote each credit entry and why.
+        The customer view: what an organization's own dashboard reads through its router, with the ingest token, never the manage key. It writes nothing, and leaves out what only the operator reads: why an organization is suspended, who wrote each credit entry and why, and each usage event's tier, cost at the vendor's rates, price version and producer.
       operationId: readAccountCredits
       parameters:
         - description: 'The organization: 1 to 255 bytes of UTF-8, without | { } or a control character.'
@@ -1062,7 +1149,7 @@ paths:
       description: |-
         Every team whose work was recorded this calendar month (UTC), by name: its category `team:<name>` across the organization in the current window of every interval, and the same within each app whose work carried it this month. A window nobody spent in is at zero.
 
-        The customer view: what an organization's own dashboard reads through its router, with the ingest token, never the manage key. It writes nothing, and leaves out what only the operator reads: why an organization is suspended, and who wrote each credit entry and why.
+        The customer view: what an organization's own dashboard reads through its router, with the ingest token, never the manage key. It writes nothing, and leaves out what only the operator reads: why an organization is suspended, who wrote each credit entry and why, and each usage event's tier, cost at the vendor's rates, price version and producer.
       operationId: readAccountTeams
       parameters:
         - description: 'The organization: 1 to 255 bytes of UTF-8, without | { } or a control character.'
@@ -1112,6 +1199,135 @@ paths:
       security:
         - IngestToken: []
       summary: Read what an organization's teams spent
+      tags:
+        - Staff
+  /v1/accounts/{organization_id}/usage:
+    get:
+      description: |-
+        The events `listUsage` answers, with its filters, order (newest first) and cursor, without `organization_id`, `organization_tier`, `base_cost_micros`, `price_version` or `source`. `team` is the category `team:<name>`, so it cannot be given with `category`; `user_id` needs `app_id`, since a user id is only unique within its app.
+
+        The customer view: what an organization's own dashboard reads through its router, with the ingest token, never the manage key. It writes nothing, and leaves out what only the operator reads: why an organization is suspended, who wrote each credit entry and why, and each usage event's tier, cost at the vendor's rates, price version and producer.
+      operationId: readAccountUsage
+      parameters:
+        - description: 'The organization: 1 to 255 bytes of UTF-8, without | { } or a control character.'
+          in: path
+          name: organization_id
+          required: true
+          schema:
+            description: 'The organization: 1 to 255 bytes of UTF-8, without | { } or a control character.'
+            type: string
+        - description: The most items one page answers.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            description: The most items one page answers.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the page before; absent for the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the page before; absent for the first page.
+            type: string
+        - description: Events that happened at or after this instant.
+          explode: false
+          in: query
+          name: from
+          schema:
+            description: Events that happened at or after this instant.
+            format: date-time
+            type: string
+        - description: Events that happened before this instant.
+          explode: false
+          in: query
+          name: to
+          schema:
+            description: Events that happened before this instant.
+            format: date-time
+            type: string
+        - description: The event's kind of work, such as llm or runtime.
+          explode: false
+          in: query
+          name: meter
+          schema:
+            description: The event's kind of work, such as llm or runtime.
+            type: string
+        - explode: false
+          in: query
+          name: app_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: api_key
+          schema:
+            type: string
+        - description: 'Needs app_id: a user id is only unique within its app.'
+          explode: false
+          in: query
+          name: user_id
+          schema:
+            description: 'Needs app_id: a user id is only unique within its app.'
+            type: string
+        - description: 'A team name, 1 to 64 characters of A-Z, a-z, 0-9, _ . -: the events with the category team:<name>. Not with category.'
+          explode: false
+          in: query
+          name: team
+          schema:
+            description: 'A team name, 1 to 64 characters of A-Z, a-z, 0-9, _ . -: the events with the category team:<name>. Not with category.'
+            type: string
+        - description: Events with this usage category among theirs.
+          explode: false
+          in: query
+          name: category
+          schema:
+            description: Events with this usage category among theirs.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerUsagePage'
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorModel'
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorModel'
+          description: Unauthorized
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorModel'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorModel'
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorModel'
+          description: Service Unavailable
+      security:
+        - IngestToken: []
+      summary: List an organization's usage events, as the organization may
       tags:
         - Staff
   /v1/events:
