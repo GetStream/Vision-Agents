@@ -82,17 +82,10 @@ func usageCounters(settings config.Config, usageClient *usageservice.Client, log
 	if settings.Usage.RedisURL == "" || usageClient == nil || settings.Limits.Mode == config.LimitsOff {
 		return nil, nil
 	}
-	address := settings.Usage.RedisURL
-	if !strings.Contains(address, "://") {
-		address = "redis://" + address
-	}
-	options, err := rueidis.ParseURL(address)
+	options, err := usageRedisOptions(settings.Usage.RedisURL)
 	if err != nil {
-		// Not wrapped: the parse error quotes the URL, and so its password.
-		return nil, errors.New("ROUTER_USAGE_REDIS_URL does not parse: want redis://[user:password@]host:port[/db], rediss:// for TLS, or host:port")
+		return nil, err
 	}
-	options.DisableCache = true
-	options.Dialer.Timeout = 2 * time.Second
 	client, err := rueidis.NewClient(options)
 	if err != nil {
 		logger.Warn("could not reach the usage service's Redis, so spend limits read the usage service itself",
@@ -100,4 +93,19 @@ func usageCounters(settings config.Config, usageClient *usageservice.Client, log
 		return nil, nil
 	}
 	return client, nil
+}
+
+// usageRedisOptions reads ROUTER_USAGE_REDIS_URL.
+func usageRedisOptions(address string) (rueidis.ClientOption, error) {
+	if !strings.Contains(address, "://") {
+		address = "redis://" + address
+	}
+	options, err := rueidis.ParseURL(address)
+	if err != nil {
+		// Not wrapped: the parse error quotes the URL, and so its password.
+		return rueidis.ClientOption{}, errors.New("ROUTER_USAGE_REDIS_URL does not parse: want redis://[user:password@]host:port[/db], rediss:// for TLS, or host:port")
+	}
+	options.DisableCache = true
+	options.Dialer.Timeout = 2 * time.Second
+	return options, nil
 }

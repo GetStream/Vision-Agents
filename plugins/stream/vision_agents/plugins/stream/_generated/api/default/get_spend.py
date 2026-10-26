@@ -9,6 +9,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_response import ErrorResponse
 from ...models.granularity import Granularity
 from ...models.spend_bucket import SpendBucket
+from ...models.spend_scope import SpendScope
 from ...types import UNSET, Response, Unset
 
 
@@ -16,6 +17,7 @@ def _get_kwargs(
     *,
     group_by: str | Unset = "modality",
     limit: int | Unset = 6,
+    scope: SpendScope | Unset = UNSET,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
@@ -31,6 +33,12 @@ def _get_kwargs(
     params["group_by"] = group_by
 
     params["limit"] = limit
+
+    json_scope: str | Unset = UNSET
+    if not isinstance(scope, Unset):
+        json_scope = scope.value
+
+    params["scope"] = json_scope
 
     json_granularity: str | Unset = UNSET
     if not isinstance(granularity, Unset):
@@ -138,6 +146,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     group_by: str | Unset = "modality",
     limit: int | Unset = 6,
+    scope: SpendScope | Unset = UNSET,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
@@ -150,7 +159,14 @@ def sync_detailed(
     """What the calling customer spent, grouped
 
      Spend across every modality at once, which is what a bill is. group_by decides what the series are:
-    "modality" for where the money went, or a cost label for what it was spent on.
+    "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user",
+    "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':',
+    so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's
+    token named, work with none under the empty value; "who:category" by the other usage categories, and
+    a request carrying several counts once in each, so those rows add up to more than the total.
+    scope=organization counts every app of the caller's organization rather than the caller's app alone;
+    grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within
+    its app.
     Only the biggest values keep a series of their own, because a label such as customer_id has as many
     values as the customer has customers. The rest are summed into "other", and spend carrying no such
     label at all into the empty value, so the rows still add up to the total.
@@ -160,6 +176,8 @@ def sync_detailed(
     Args:
         group_by (str | Unset):  Default: 'modality'.
         limit (int | Unset):  Default: 6.
+        scope (SpendScope | Unset): Whose spend is counted: the calling app's, or every app's of
+            its organization. organization is server-side only.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -184,6 +202,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         group_by=group_by,
         limit=limit,
+        scope=scope,
         granularity=granularity,
         from_=from_,
         to=to,
@@ -206,6 +225,7 @@ def sync(
     client: AuthenticatedClient | Client,
     group_by: str | Unset = "modality",
     limit: int | Unset = 6,
+    scope: SpendScope | Unset = UNSET,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
@@ -218,7 +238,14 @@ def sync(
     """What the calling customer spent, grouped
 
      Spend across every modality at once, which is what a bill is. group_by decides what the series are:
-    "modality" for where the money went, or a cost label for what it was spent on.
+    "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user",
+    "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':',
+    so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's
+    token named, work with none under the empty value; "who:category" by the other usage categories, and
+    a request carrying several counts once in each, so those rows add up to more than the total.
+    scope=organization counts every app of the caller's organization rather than the caller's app alone;
+    grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within
+    its app.
     Only the biggest values keep a series of their own, because a label such as customer_id has as many
     values as the customer has customers. The rest are summed into "other", and spend carrying no such
     label at all into the empty value, so the rows still add up to the total.
@@ -228,6 +255,8 @@ def sync(
     Args:
         group_by (str | Unset):  Default: 'modality'.
         limit (int | Unset):  Default: 6.
+        scope (SpendScope | Unset): Whose spend is counted: the calling app's, or every app's of
+            its organization. organization is server-side only.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -253,6 +282,7 @@ def sync(
         client=client,
         group_by=group_by,
         limit=limit,
+        scope=scope,
         granularity=granularity,
         from_=from_,
         to=to,
@@ -269,6 +299,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     group_by: str | Unset = "modality",
     limit: int | Unset = 6,
+    scope: SpendScope | Unset = UNSET,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
@@ -281,7 +312,14 @@ async def asyncio_detailed(
     """What the calling customer spent, grouped
 
      Spend across every modality at once, which is what a bill is. group_by decides what the series are:
-    "modality" for where the money went, or a cost label for what it was spent on.
+    "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user",
+    "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':',
+    so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's
+    token named, work with none under the empty value; "who:category" by the other usage categories, and
+    a request carrying several counts once in each, so those rows add up to more than the total.
+    scope=organization counts every app of the caller's organization rather than the caller's app alone;
+    grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within
+    its app.
     Only the biggest values keep a series of their own, because a label such as customer_id has as many
     values as the customer has customers. The rest are summed into "other", and spend carrying no such
     label at all into the empty value, so the rows still add up to the total.
@@ -291,6 +329,8 @@ async def asyncio_detailed(
     Args:
         group_by (str | Unset):  Default: 'modality'.
         limit (int | Unset):  Default: 6.
+        scope (SpendScope | Unset): Whose spend is counted: the calling app's, or every app's of
+            its organization. organization is server-side only.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -315,6 +355,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         group_by=group_by,
         limit=limit,
+        scope=scope,
         granularity=granularity,
         from_=from_,
         to=to,
@@ -335,6 +376,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     group_by: str | Unset = "modality",
     limit: int | Unset = 6,
+    scope: SpendScope | Unset = UNSET,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
@@ -347,7 +389,14 @@ async def asyncio(
     """What the calling customer spent, grouped
 
      Spend across every modality at once, which is what a bill is. group_by decides what the series are:
-    "modality" for where the money went, or a cost label for what it was spent on.
+    "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user",
+    "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':',
+    so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's
+    token named, work with none under the empty value; "who:category" by the other usage categories, and
+    a request carrying several counts once in each, so those rows add up to more than the total.
+    scope=organization counts every app of the caller's organization rather than the caller's app alone;
+    grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within
+    its app.
     Only the biggest values keep a series of their own, because a label such as customer_id has as many
     values as the customer has customers. The rest are summed into "other", and spend carrying no such
     label at all into the empty value, so the rows still add up to the total.
@@ -357,6 +406,8 @@ async def asyncio(
     Args:
         group_by (str | Unset):  Default: 'modality'.
         limit (int | Unset):  Default: 6.
+        scope (SpendScope | Unset): Whose spend is counted: the calling app's, or every app's of
+            its organization. organization is server-side only.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -383,6 +434,7 @@ async def asyncio(
             client=client,
             group_by=group_by,
             limit=limit,
+            scope=scope,
             granularity=granularity,
             from_=from_,
             to=to,
