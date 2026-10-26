@@ -4818,20 +4818,6 @@ func (s *AgentSuite) TestThinkingInWritingIsReportedApartFromTheReply() {
 	s.Equal("The user greets; greet back.", thought.String())
 }
 
-func TestCountedDigitsArePausedBeforeTheyAreSpoken(t *testing.T) {
-	cases := map[string]string{
-		"Verified, last four 9821 on file.": "Verified, last four digits, 9821 on file.",
-		"The last 4 9821 match.":            "The last 4 digits, 9821 match.",
-		"Last four digits, please.":         "Last four digits, please.",
-		"Party of four 7:30 on the patio.":  "Party of four 7:30 on the patio.",
-	}
-	for in, want := range cases {
-		if got := pauseCounted(in); got != want {
-			t.Errorf("%q = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestADescribedStepIsTheToolNotYetCalled(t *testing.T) {
 	tools := harness.Tools{Tools: []harness.Tool{{Name: "walk_reboot"}, {Name: "check_outage"}, {Name: "create_ticket"}}}
 	checked := []llm.Message{{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{Name: "check_outage"}}}}

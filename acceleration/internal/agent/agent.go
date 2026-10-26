@@ -3947,15 +3947,6 @@ func (a *Agent) delegating() bool {
 	return current != nil && current.Delegating()
 }
 
-// countedDigits is "last four 9821" in a reply. Read straight through it is heard as "last
-// 49821", and a comma's pause in the voice is too short to stop that, so pauseCounted says
-// what the count is of.
-var countedDigits = regexp.MustCompile(`(?i)\b(last|first|final)\s+(two|three|four|five|six|[2-6])\s+(\d)`)
-
-func pauseCounted(text string) string {
-	return countedDigits.ReplaceAllString(text, "$1 $2 digits, $3")
-}
-
 // speakSentence sends one sentence of a reply to the voice, from where it is in the reply's
 // message.
 //
@@ -3972,7 +3963,6 @@ func (a *Agent) speakSentence(turnID, text string, message MessageSpan) error {
 	if strings.TrimSpace(tts.Unperformed(text)) == "" {
 		return nil
 	}
-	text = pauseCounted(text)
 	a.turns.ttsStarted(turnID, time.Now())
 
 	if !voice.Streaming() {
