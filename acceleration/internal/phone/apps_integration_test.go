@@ -266,6 +266,32 @@ func (s *AppsSuite) TestReleasingANumberDeletesItsTrunkAndRouteInItsApp() {
 	s.Empty(s.own.Rules())
 }
 
+func (s *AppsSuite) TestReleasingStopsTheVendorSendingCallsFirst() {
+	s.ownApp()
+	s.sealed()
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.Equal([]string{s.e164}, s.vendor.stopped)
+	_, err = s.store.Number(s.ctx, s.customer, s.e164)
+	s.ErrorIs(err, store.ErrNoNumber, "the number is released")
+}
+
+func (s *AppsSuite) TestAReleaseTheVendorWillNotStopKeepsTheNumber() {
+	s.ownApp()
+	s.sealed()
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.vendor.err = errors.New("the vendor refused")
+
+	s.Require().Error(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.NotNil(s.number().AttachedAt, "the vendor may still send callers, so the agent still answers")
+	s.Equal([]string{s.e164}, s.own.TrunkNumbers(attached.TrunkID))
+}
+
 func (s *AppsSuite) TestReattachingAfterRegistrationMovesTheTrunk() {
 	// The number was attached while the customer acted in the deployment's app, and is
 	// attached again once it has its own: the old trunk goes from the old app.

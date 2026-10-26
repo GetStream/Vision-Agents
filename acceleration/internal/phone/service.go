@@ -429,11 +429,13 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 
 // Release gives a number back and stops the monthly charge.
 func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
-	if s.store == nil {
-		return stack.Wrap(errors.New("phone: releasing a number needs a database to know who holds it"))
-	}
-	held, err := s.store.Number(ctx, customerID, e164)
+	held, err := s.number(ctx, customerID, e164, "releasing")
 	if err != nil {
+		return err
+	}
+	// Callers stop first: a vendor that refuses fails the release before anything changes,
+	// so it can be tried again.
+	if err := s.detach(ctx, held); err != nil {
 		return err
 	}
 	// Off its trunk first: a trunk Stream would not delete fails the release before the
@@ -441,14 +443,14 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 	if err := s.unline(ctx, held, "released a number", false); err != nil {
 		return err
 	}
+	seller, err := s.seller(held.Vendor)
+	if err != nil {
+		return err
+	}
 	// A number on the customer's own trunk was never bought here, so there is nobody to
 	// give it back to.
-	if held.Vendor != SIPTrunkVendor {
-		provider, err := s.registry.Open(held.Vendor)
-		if err != nil {
-			return err
-		}
-		if err := provider.ReleaseNumber(ctx, e164); err != nil {
+	if seller != nil {
+		if err := seller.ReleaseNumber(ctx, e164); err != nil {
 			return err
 		}
 	}
@@ -460,38 +462,55 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 // Detach stops a number's callers reaching the agent. The number keeps its trunk and rule,
 // so its calls still go out on them and attaching it again picks them up.
 func (s *Service) Detach(ctx context.Context, customerID, e164 string) error {
-	if s.store == nil {
-		return stack.Wrap(errors.New("phone: detaching a number needs a database to know who holds it"))
+	held, err := s.number(ctx, customerID, e164, "detaching")
+	if err != nil {
+		return err
 	}
-	held, err := s.store.Number(ctx, customerID, e164)
+	return s.detach(ctx, held)
+}
+
+// number is a number the customer holds, looked up for doing something to it.
+func (s *Service) number(ctx context.Context, customerID, e164, doing string) (store.PhoneNumber, error) {
+	if s.store == nil {
+		return store.PhoneNumber{}, stack.Wrap(fmt.Errorf("phone: %s a number needs a database to know who holds it", doing))
+	}
+	return s.store.Number(ctx, customerID, e164)
+}
+
+// detach stops the vendor sending a held number's callers, then forgets it was attached.
+func (s *Service) detach(ctx context.Context, held store.PhoneNumber) error {
+	seller, err := s.seller(held.Vendor)
 	if err != nil {
 		return err
 	}
 	// The vendor first: one that refuses still sends callers, so the number stays attached
 	// for them and the detach can be tried again. A number on the customer's own trunk was
 	// never pointed anywhere by a vendor here.
-	if held.Vendor != SIPTrunkVendor {
-		provider, err := s.registry.Open(held.Vendor)
-		if err != nil {
+	if stopper, ok := seller.(InboundStopper); ok {
+		if err := stopper.StopInbound(ctx, held.E164); err != nil {
 			return err
 		}
-		if stopper, ok := provider.(InboundStopper); ok {
-			if err := stopper.StopInbound(ctx, e164); err != nil {
-				return err
-			}
-		}
 	}
-	group := store.TrunkGroup{CustomerID: customerID, StreamAppPK: held.StreamAppPK, Vendor: held.Vendor}
+	group := store.TrunkGroup{CustomerID: held.CustomerID, StreamAppPK: held.StreamAppPK, Vendor: held.Vendor}
 	return s.inTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
-		number, err := tx.Number(e164)
+		number, err := tx.Number(held.E164)
 		if err != nil {
 			return err
 		}
 		if number.AttachedAt == nil {
 			return nil
 		}
-		return tx.Detach(e164)
+		return tx.Detach(held.E164)
 	})
+}
+
+// seller is the vendor that sold a number, or none for one on the customer's own trunk,
+// which was never bought here.
+func (s *Service) seller(vendor string) (Provider, error) {
+	if vendor == SIPTrunkVendor {
+		return nil, nil
+	}
+	return s.registry.Open(vendor)
 }
 
 // unline takes a number off its trunk and deletes its rule, in the app they are in, and
