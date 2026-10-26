@@ -1008,9 +1008,6 @@ func (s *Store) PauseScheduledTasksForConfig(ctx context.Context, customerID, co
 		if err != nil {
 			return fmt.Errorf("store: pause scheduled tasks for config: %w", err)
 		}
-		if len(paused) == 0 {
-			return nil
-		}
 		// A run made by hand is left to the delivery that made it, which
 		// always records its outcome.
 		if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
