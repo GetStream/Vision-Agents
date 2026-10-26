@@ -887,6 +887,96 @@ func (s *StoreSuite) TestDeletingAConfigPausesOnlyItsActiveTasks() {
 	s.Equal(ScheduledTaskActive, other.State, "another customer's config of the same id is not this one")
 }
 
+func (s *StoreSuite) TestDeletingAConfigWritesItsTasksHeldOccurrenceMissed() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	s.task("elsewhere", func(task *ScheduledTask) { task.ConfigID, task.NextRunAt = "config-2", nil })
+	s.task("one", func(task *ScheduledTask) { task.CustomerID, task.NextRunAt = "globex", nil })
+	claim := s.held("one", time.Now().Add(8*time.Hour))
+	// What the pause must leave alone: a run made by hand, the running run of a
+	// task on another config, and that of another customer's task under the
+	// same id and config.
+	manual := &ScheduledTaskRun{TaskID: "one", CustomerID: "acme", ScheduledFor: due, Trigger: ScheduledTaskTriggerManual}
+	elsewhere := &ScheduledTaskRun{TaskID: "elsewhere", CustomerID: "acme", ScheduledFor: due}
+	theirs := &ScheduledTaskRun{TaskID: "one", CustomerID: "globex", ScheduledFor: due}
+	for _, run := range []*ScheduledTaskRun{manual, elsewhere, theirs} {
+		s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, run))
+	}
+
+	s.Require().NoError(s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1"))
+
+	missed := s.run(claim.Run.ID)
+	s.Equal(ScheduledTaskRunMissed, missed.State, "no worker claims a paused task, so the held occurrence is settled now")
+	s.NotNil(missed.FinishedAt)
+	s.Equal(ScheduledTaskRunRunning, s.run(manual.ID).State, "a run by hand records its own outcome")
+	s.Equal(ScheduledTaskRunRunning, s.run(elsewhere.ID).State)
+	s.Equal(ScheduledTaskRunRunning, s.run(theirs.ID).State)
+	s.Require().NoError(s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1"),
+		"a config with no active task left pauses nothing")
+}
+
+func (s *StoreSuite) TestATaskOnADeletedConfigIsRefused() {
+	deleted := s.boundConfig("acme")
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, "acme", deleted.ID))
+
+	err := s.store.CreateScheduledTask(s.ctx, &ScheduledTask{
+		CustomerID: "acme", ConfigID: deleted.ID, UserID: "sam", CallerKind: "authenticated",
+		Title: "Stretch", Instructions: "Remind Sam to stretch.", StartLocal: s.base, Timezone: "UTC",
+	}, 25)
+	s.ErrorIs(err, ErrNoAgentConfig)
+	tasks, err := s.store.ScheduledTasks(s.ctx, "acme", ScheduledTaskFilter{}, 25, nil)
+	s.Require().NoError(err)
+	s.Empty(tasks)
+
+	live := s.boundConfig("acme")
+	s.task("live", func(task *ScheduledTask) { task.ConfigID = live.ID })
+}
+
+func (s *StoreSuite) TestACreateWaitsForAConfigDeleteUnderWayAndIsRefused() {
+	config := s.boundConfig("acme")
+	deleting, err := s.store.db.BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = deleting.Rollback() }()
+	_, err = deleting.ExecContext(s.ctx, "UPDATE agent_configs SET deleted_at = now() WHERE id = ?", config.ID)
+	s.Require().NoError(err)
+
+	created := make(chan error, 1)
+	go func() {
+		created <- s.store.CreateScheduledTask(s.ctx, &ScheduledTask{
+			CustomerID: "acme", ConfigID: config.ID, UserID: "sam", CallerKind: "authenticated",
+			Title: "Stretch", Instructions: "Remind Sam to stretch.", StartLocal: s.base, Timezone: "UTC",
+		}, 25)
+	}()
+	// The suite's database is its own, so a backend waiting on a lock in it is the create.
+	s.Require().Eventually(func() bool {
+		var waiting int
+		s.Require().NoError(s.store.db.QueryRowContext(s.ctx, "SELECT count(*) FROM pg_stat_activity"+
+			" WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting))
+		return waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the create read the config without waiting for the delete under way")
+	s.Require().NoError(deleting.Commit())
+
+	s.ErrorIs(<-created, ErrNoAgentConfig)
+}
+
+func (s *StoreSuite) TestATaskOfADeletedConfigIsNotMadeActiveAgain() {
+	config := s.boundConfig("acme")
+	s.task("one", func(task *ScheduledTask) { task.ConfigID, task.State = config.ID, ScheduledTaskPaused })
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, "acme", config.ID))
+	stored, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+
+	stored.Title = "Renamed"
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &stored), "a paused task's edit stands")
+	stored.State = ScheduledTaskActive
+	s.ErrorIs(s.store.SaveScheduledTask(s.ctx, &stored), ErrNoAgentConfig)
+
+	after, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskPaused, after.State)
+	s.Equal("Renamed", after.Title)
+}
+
 func (s *StoreSuite) TestAClaimInFlightCannotResumeADeletedConfigsTask() {
 	due := s.base.Add(-time.Minute)
 	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })

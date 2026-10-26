@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -134,6 +135,25 @@ func (s *GuestsSuite) TestOnlyTheAppsOwnBackendMayClaimAGuest() {
 			ClaimGuestRequest{GuestId: guest, UserId: s.utils.uuid()})
 		return status
 	})
+}
+
+func (s *GuestsSuite) TestAClaimMovesTheGuestsScheduledTasks() {
+	guest := s.recordGuest()
+	ctx := context.Background()
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), UserID: guest, CallerKind: string(auth.KindServer), APIKey: s.app.key,
+		Title: "Stretch", Instructions: "Remind them to stretch.",
+		StartLocal: time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second), Timezone: "UTC",
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(ctx, &task, 0))
+	s.T().Cleanup(func() { _ = s.store.DeleteScheduledTask(ctx, task.CustomerID, task.ID) })
+	account := s.utils.uuid()
+
+	s.claim(guest, account)
+
+	moved, err := s.store.ScheduledTask(ctx, s.customerID(), task.ID)
+	s.Require().NoError(err)
+	s.Equal(account, moved.UserID, "the task follows up for the account the guest turned out to be")
 }
 
 // recordGuest is a guest of the suite's app, written the way minting one writes it. Minting
