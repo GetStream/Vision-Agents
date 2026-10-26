@@ -4944,16 +4944,6 @@ func (s *AgentSuite) TestAClaimIsNotBackedByACallTheRouterHeldBack() {
 	s.True(toolRanSinceCaller(history(done)))
 }
 
-func (s *AgentSuite) TestANameSpelledOutIsCalledWithTheNameAlone() {
-	s.JSONEq(`{"name": "Patel", "party_size": 4}`, unspelled(`{"name": "Patel P A T E L", "party_size": 4}`))
-	s.JSONEq(`{"name": "Ana Lopez"}`, unspelled(`{"name": "Ana Lopez L-O-P-E-Z"}`))
-	s.JSONEq(`{"pin": "4471", "address": "14 Cedar Lane"}`, unspelled(`{"pin": "four four seven one", "address": "one four Cedar Lane"}`))
-	s.JSONEq(`{"address": "14 Cedar Lane", "reason": "down since 6, error 840"}`, unspelled(`{"address": "fourteen Cedar Lane", "reason": "down since 6, error 840"}`))
-	s.JSONEq(`{"address": "42 Elm Street"}`, unspelled(`{"address": "forty-two Elm Street"}`))
-	s.JSONEq(`{"notes": "one high chair"}`, unspelled(`{"notes": "one high chair"}`), "a lone number word")
-	s.Equal(`{"address": "14 Cedar Lane A B"}`, unspelled(`{"address": "14 Cedar Lane A B"}`), "letters that spell nothing before them")
-}
-
 func (s *AgentSuite) TestACallThatOnlyFillsInABlankIsTheSameCall() {
 	s.True(fillsIn(`{"name": "Alvarez", "phone": ""}`, `{"name": "Alvarez", "phone": "512-550-1422"}`))
 	s.False(fillsIn(`{"party_size": 4, "phone": ""}`, `{"party_size": 6, "phone": ""}`))

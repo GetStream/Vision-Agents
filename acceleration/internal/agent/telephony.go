@@ -7,12 +7,9 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -341,87 +338,6 @@ func blankRequired(tool harness.Tool, arguments string) []string {
 	return blank
 }
 
-// digitWords are the digits as a caller reads them out, in order.
-var digitWords = []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}
-
-// digitWordRun is two or more digits read out as words, as in "four four seven one".
-var digitWordRun = regexp.MustCompile(`(?i)\b(?:zero|one|two|three|four|five|six|seven|eight|nine)(?:[ -]+(?:zero|one|two|three|four|five|six|seven|eight|nine))+\b`)
-
-// spokenNumbers are the numbers from ten to ninety read out as one word, as the house
-// number in "fourteen Cedar Lane" that failed verify_account.
-var spokenNumbers = map[string]string{
-	"ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
-	"fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19",
-	"twenty": "20", "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60",
-	"seventy": "70", "eighty": "80", "ninety": "90",
-}
-
-// spokenNumber is a number from ten to ninety-nine read out in words.
-var spokenNumber = regexp.MustCompile(`(?i)\b(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[ -](one|two|three|four|five|six|seven|eight|nine))?\b`)
-
-// spelledAfterName is a word followed by its letters, as in "Patel P A T E L".
-var spelledAfterName = regexp.MustCompile(`\b([A-Za-z]{2,})((?:[ ,.-]+[A-Za-z]\b){2,})`)
-
-// unspelled drops the letters a caller spelled a name out with from a call's string
-// arguments, which a model copies in after the name, and writes digits read out as words
-// as digits: verify_account went out with the address "one four Cedar Lane" and failed.
-func unspelled(arguments string) string {
-	var values map[string]any
-	if json.Unmarshal([]byte(arguments), &values) != nil {
-		return arguments
-	}
-	changed := false
-	for key, value := range values {
-		text, ok := value.(string)
-		if !ok {
-			continue
-		}
-		cleaned := digitWordRun.ReplaceAllStringFunc(text, func(match string) string {
-			var digits strings.Builder
-			for word := range strings.FieldsFuncSeq(strings.ToLower(match), func(r rune) bool { return r == ' ' || r == '-' }) {
-				digits.WriteByte(byte('0' + slices.Index(digitWords, word)))
-			}
-			return digits.String()
-		})
-		cleaned = spokenNumber.ReplaceAllStringFunc(cleaned, func(match string) string {
-			parts := spokenNumber.FindStringSubmatch(strings.ToLower(match))
-			number := spokenNumbers[parts[1]]
-			if parts[2] != "" && strings.HasSuffix(number, "0") {
-				return number[:1] + strconv.Itoa(slices.Index(digitWords, parts[2]))
-			}
-			if parts[2] != "" {
-				return number + " " + parts[2]
-			}
-			return number
-		})
-		cleaned = spelledAfterName.ReplaceAllStringFunc(cleaned, func(match string) string {
-			parts := spelledAfterName.FindStringSubmatch(match)
-			letters := strings.Map(func(r rune) rune {
-				if unicode.IsLetter(r) {
-					return r
-				}
-				return -1
-			}, parts[2])
-			if !strings.EqualFold(letters, parts[1]) {
-				return match
-			}
-			return parts[1]
-		})
-		if cleaned != text {
-			values[key] = cleaned
-			changed = true
-		}
-	}
-	if !changed {
-		return arguments
-	}
-	rendered, err := json.Marshal(values)
-	if err != nil {
-		return arguments
-	}
-	return string(rendered)
-}
-
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
 	cancels := telephonyTool(requested.Call.Name) ||
@@ -477,7 +393,6 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		a.mu.Unlock()
 	}()
 	began := time.Now()
-	requested.Call.Arguments = unspelled(requested.Call.Arguments)
 	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, Arguments: requested.Call.Arguments, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
 	started.PreSpeech = a.preSpeech([]llm.ToolCall{requested.Call})
