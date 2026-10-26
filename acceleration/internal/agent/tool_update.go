@@ -14,17 +14,6 @@ const statusPurpose = "What they asked for is still being worked on, and whoever
 	"reports: %q. Tell them where it has got to, in terms of what they asked for. It is still " +
 	"running, so do not guess its result."
 
-// nativeStatusPrompt and nativeSayPrompt are what a speech-to-speech model is asked to say
-// about a call that is still open: a status in its own words, or words as written, which a
-// native model can only be asked for.
-const (
-	nativeStatusPrompt = "Something the caller asked for is still being worked on, and whoever is doing it " +
-		"reports: %q. Tell the caller where it has got to in one short sentence, in your own words. It is " +
-		"still running: do not call it again and do not guess its result."
-	nativeSayPrompt = "Something the caller asked for is still being worked on. Say this to the caller now, " +
-		"in these words or close to them: %q. It is still running: do not call it again and do not guess its result."
-)
-
 // toolSaidPurpose marks words whoever runs a call asked to be said as written.
 const toolSaidPurpose = "tool-said"
 
@@ -149,13 +138,9 @@ func (a *Agent) sayNativeToolUpdate() {
 		a.mu.Unlock()
 		return
 	}
-	guidance := nativeStatusPrompt
-	if update.verbatim {
-		guidance = nativeSayPrompt
-	}
 	told := sts.CallUpdate{
 		CallID: id, Status: update.text, Verbatim: update.verbatim,
-		Guidance: fmt.Sprintf(guidance, update.text), Instructions: a.instructions(),
+		Guidance: sts.Guidance(update.text, update.verbatim), Instructions: a.instructions(),
 	}
 	a.generating = true
 	model := a.sts
