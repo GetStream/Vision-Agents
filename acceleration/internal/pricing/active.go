@@ -31,6 +31,15 @@ type UpcomingEntry struct {
 	Reason string
 }
 
+// UpcomingMarkup is a scheduled change of the list's markup.
+type UpcomingMarkup struct {
+	// Change is the change's name.
+	Change      string
+	EffectiveAt time.Time
+	MarkupBps   int64
+	Reason      string
+}
+
 // Source is where the list in force is read from: the shared database, through the store.
 type Source interface {
 	// Active is every entry in force at at, at the vendor's rates and each with its version,
@@ -39,6 +48,9 @@ type Source interface {
 	Active(ctx context.Context, at time.Time) (entries []Entry, markupBps int64, next time.Time, err error)
 	// Upcoming is every entry of a change not cancelled that takes effect after after.
 	Upcoming(ctx context.Context, after time.Time) ([]UpcomingEntry, error)
+	// UpcomingMarkups is the markup of every change not cancelled that takes effect after
+	// after and sets one, soonest first.
+	UpcomingMarkups(ctx context.Context, after time.Time) ([]UpcomingMarkup, error)
 }
 
 // ActiveOptions configures an Active.
@@ -70,6 +82,7 @@ type Active struct {
 
 	current  atomic.Pointer[List]
 	upcoming atomic.Pointer[[]UpcomingEntry]
+	markups  atomic.Pointer[[]UpcomingMarkup]
 	// unpriced is when each unpriced item was last logged, shared by every list read.
 	unpriced *unpricedLog
 	// read is whether any read succeeded, and entries whether one answered an entry.
@@ -149,8 +162,12 @@ func (a *Active) reload(ctx context.Context, at time.Time) error {
 	defer cancel()
 	entries, markup, next, err := a.source.Active(ctx, at)
 	var upcoming []UpcomingEntry
+	var markups []UpcomingMarkup
 	if err == nil {
 		upcoming, err = a.source.Upcoming(ctx, at)
+	}
+	if err == nil {
+		markups, err = a.source.UpcomingMarkups(ctx, at)
 	}
 	var list *List
 	if err == nil && len(entries) > 0 {
@@ -172,6 +189,7 @@ func (a *Active) reload(ctx context.Context, at time.Time) error {
 	}
 	a.read.Store(true)
 	a.upcoming.Store(&upcoming)
+	a.markups.Store(&markups)
 	a.arm(next)
 	if list == nil {
 		if now := time.Now(); now.Sub(a.emptyLogged) >= emptyEvery {
@@ -245,6 +263,15 @@ func (a *Active) List() *List { return a.current.Load() }
 func (a *Active) Upcoming() []UpcomingEntry {
 	if upcoming := a.upcoming.Load(); upcoming != nil {
 		return *upcoming
+	}
+	return nil
+}
+
+// UpcomingMarkups is the markups of the changes not cancelled and not yet in force, as the
+// last read found them.
+func (a *Active) UpcomingMarkups() []UpcomingMarkup {
+	if markups := a.markups.Load(); markups != nil {
+		return *markups
 	}
 	return nil
 }

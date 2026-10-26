@@ -354,6 +354,8 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerUserPolicies(api)
 	s.registerLimitGrants(api)
 	s.registerLimits(api)
+	s.registerAccount(api)
+	s.registerPrices(api)
 	s.registerSettings(api)
 	s.registerSessionQuery(api)
 	s.registerSessionUpdate(api)

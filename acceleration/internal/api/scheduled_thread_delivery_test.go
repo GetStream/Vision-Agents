@@ -301,6 +301,47 @@ func (s *TelnyxChannelSuite) TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry()
 	s.Equal(1, s.scheduledTurns())
 }
 
+// reportReply is the text of a turn that ran code handing back the report at link: the words of
+// its two rounds (the run of code, then the answer to its result), each "Done." in the scheduling
+// model, then the file's link.
+func reportReply(link string) string {
+	return "Done.\n\nDone.\n\n" + link
+}
+
+// The file the task's code made is texted with the reply's words, as its link after them.
+func (s *TelnyxChannelSuite) TestATaskTextsTheFileItsCodeMadeWithItsWords() {
+	person := "+13125550001"
+	s.config.Sandbox = string(Daytona)
+	task, _ := s.scheduledInThread(person)
+	report := s.codeHandsBackAReport()
+	sent := len(s.telnyx.sent())
+
+	run := s.deliveredByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunDelivered, run.State, "error %v", run.Error)
+	s.Equal(telnyxMessage{from: s.line, to: person, text: reportReply(report)}, s.took(sent + 1)[sent].withoutAuthorization())
+}
+
+// A retry after the line refused the reply texts the file the first attempt's turn made, read
+// back from the thread's conversation, without running the task again.
+func (s *TelnyxChannelSuite) TestATaskWhoseReplyTheLineRefusesTextsItsFileOnTheRetry() {
+	person := "+13125550001"
+	s.config.Sandbox = string(Daytona)
+	task, _ := s.scheduledInThread(person)
+	report := s.codeHandsBackAReport()
+	sent := len(s.telnyx.sent())
+	s.telnyx.refuse(http.StatusUnprocessableEntity, nil)
+	run, _, err := s.deliverTask(task)
+	s.Require().Error(err)
+
+	deliveredTo, err := s.deliverRun(task, run)
+
+	s.Require().NoError(err)
+	s.Equal("sms", deliveredTo)
+	s.Equal(telnyxMessage{from: s.line, to: person, text: reportReply(report)}, s.took(sent + 1)[sent].withoutAuthorization())
+	s.Equal(1, s.scheduledTurns(), "the retry ran no second turn")
+}
+
 // A person who texts STOP while the reply is being sent is texted nothing, and the run is
 // final: the line answers the first send 503, the STOP lands, and the bridge sends no more.
 func (s *TelnyxChannelSuite) TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotTextedAndTheTaskIsNotRetried() {

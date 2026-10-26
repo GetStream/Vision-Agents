@@ -278,7 +278,43 @@ func upsertWindows(ctx context.Context, tx bun.Tx, windows []UsageWindow) ([]Usa
 // Current reads each subject's current windows, at the ledger's now, a window nobody has
 // spent in answered at zero, and writes them to the mirror.
 func (l *Ledger) Current(ctx context.Context, refs []usage.SubjectRef) ([]UsageWindow, error) {
+	wanted, err := l.current(ctx, refs, l.now())
+	if err != nil {
+		return nil, err
+	}
+	l.mirror.Write(ctx, wanted)
+	return wanted, nil
+}
+
+// TeamWindows is the current windows, at the ledger's now, of every team subject of the
+// organization whose work was recorded this calendar month: each team's category across the
+// organization and within each app, every interval, by subject and then interval, a window
+// nobody spent in at zero.
+func (l *Ledger) TeamWindows(ctx context.Context, organization string) ([]UsageWindow, error) {
 	now := l.now()
+	month, _ := usage.Window(usage.Monthly, now)
+	var carried []UsageWindow
+	err := l.db.NewSelect().Model(&carried).
+		Where("organization_id = ?", organization).
+		Where("subject IN (?)", bun.In([]usage.Subject{usage.SubjectCategory, usage.SubjectAppCategory})).
+		Where("category ILIKE ?", usage.TeamPrefix+"%").
+		Where("interval = ?", usage.Monthly).
+		Where("window_start = ?", month).
+		Order("subject", "app_id", "category").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: team windows: %w", err)
+	}
+	refs := make([]usage.SubjectRef, 0, len(carried))
+	for _, window := range carried {
+		refs = append(refs, window.Ref())
+	}
+	return l.current(ctx, refs, now)
+}
+
+// current is each subject's window of every interval that holds now, from the table, a window
+// it has no row for at zero.
+func (l *Ledger) current(ctx context.Context, refs []usage.SubjectRef, now time.Time) ([]UsageWindow, error) {
 	wanted := make([]UsageWindow, 0, len(refs)*len(usage.Intervals))
 	for _, ref := range refs {
 		for _, interval := range usage.Intervals {
@@ -301,7 +337,6 @@ func (l *Ledger) Current(ctx context.Context, refs []usage.SubjectRef) ([]UsageW
 			wanted[i] = row
 		}
 	}
-	l.mirror.Write(ctx, wanted)
 	return wanted, nil
 }
 
