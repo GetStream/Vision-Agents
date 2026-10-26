@@ -615,6 +615,95 @@ func (s *DataMoveSuite) TestAChangeToAConnectorConnectionLeavesItsCredentialsBeh
 	s.assertArrivedWithoutCredentials(id, "acme")
 }
 
+// seedScheduledTask stores a task on the source in a state, claimed by a worker there, with a
+// finished run.
+func (s *DataMoveSuite) seedScheduledTask(id, customerID, state string) {
+	next := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	task := &ScheduledTask{
+		ID: id, CustomerID: customerID, ConfigID: "config-1", UserID: "sam", CallerKind: "authenticated",
+		Title: "Stretch", Instructions: "Remind Sam to stretch.", StartLocal: next, Timezone: "UTC",
+		State: state, NextRunAt: &next, CreatedBy: "api",
+	}
+	s.Require().NoError(s.source.CreateScheduledTask(s.ctx, task, 25))
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE scheduled_tasks SET claim_id = 'claim-1', lease_until = now() + interval '1 hour' WHERE id = ?", id)
+	s.Require().NoError(err)
+	_, err = s.source.DB().ExecContext(s.ctx, `
+INSERT INTO scheduled_task_runs (id, task_id, customer_id, scheduled_for, state, finished_at)
+VALUES (?, ?, ?, ?, 'delivered', now())`, id+"-run", id, customerID, next.Add(-day))
+	s.Require().NoError(err)
+}
+
+// scheduledTaskOn reads a task's state, claim and next run from a deployment.
+func (s *DataMoveSuite) scheduledTaskOn(store *Store, id string) (state, claim string, leased bool, next time.Time) {
+	var lease sql.NullTime
+	s.Require().NoError(store.DB().QueryRowContext(s.ctx,
+		"SELECT state, claim_id, lease_until, next_run_at FROM scheduled_tasks WHERE id = ?", id).
+		Scan(&state, &claim, &lease, &next))
+	return state, claim, lease.Valid, next
+}
+
+func (s *DataMoveSuite) TestAnActiveScheduledTaskArrivesPausedAndUnclaimed() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+
+	s.move("acme", "moved")
+
+	state, claim, leased, next := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+	s.Empty(claim)
+	s.False(leased)
+	s.Equal(time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC), next.UTC(), "its schedule is the one it had")
+	var runs int
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT count(*) FROM scheduled_task_runs WHERE task_id = 'st-active' AND customer_id = 'moved'").Scan(&runs))
+	s.Equal(1, runs, "its history comes with it")
+
+	state, claim, leased, _ = s.scheduledTaskOn(s.source, "st-active")
+	s.Equal(ScheduledTaskActive, state, "the deployment it left goes on delivering it")
+	s.Equal("claim-1", claim)
+	s.True(leased)
+}
+
+func (s *DataMoveSuite) TestAScheduledTaskThatIsNotActiveKeepsItsState() {
+	for _, state := range []string{ScheduledTaskPaused, ScheduledTaskCompleted, ScheduledTaskFailed} {
+		s.seedScheduledTask("st-"+state, "acme", state)
+	}
+
+	s.move("acme", "moved")
+
+	for _, want := range []string{ScheduledTaskPaused, ScheduledTaskCompleted, ScheduledTaskFailed} {
+		state, claim, leased, _ := s.scheduledTaskOn(s.destination, "st-"+want)
+		s.Equal(want, state)
+		s.Empty(claim, "a worker's claim there is nothing here")
+		s.False(leased)
+	}
+}
+
+func (s *DataMoveSuite) TestAScheduledTaskChangeAppliedLaterArrivesPausedToo() {
+	s.capture("acme")
+	s.seedScheduledTask("st-first", "acme", ScheduledTaskActive)
+	cursor := s.move("acme", "moved")
+
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET title = 'Stretch more' WHERE id = 'st-first'")
+	s.Require().NoError(err)
+	s.seedScheduledTask("st-second", "acme", ScheduledTaskActive)
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+
+	for _, id := range []string{"st-first", "st-second"} {
+		state, claim, leased, _ := s.scheduledTaskOn(s.destination, id)
+		s.Equal(ScheduledTaskPaused, state, id)
+		s.Empty(claim, id)
+		s.False(leased, id)
+	}
+	var title string
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT title FROM scheduled_tasks WHERE id = 'st-first'").Scan(&title))
+	s.Equal("Stretch more", title, "the rest of the change is applied")
+}
+
 // assertArrivedWithoutCredentials checks a connection the destination received holds what a
 // connection with no credentials holds: none, key version 0, no expiry, and a status asking
 // for a reconnect.

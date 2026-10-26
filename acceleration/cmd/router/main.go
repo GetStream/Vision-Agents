@@ -1192,6 +1192,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if pgStore != nil {
 		go pruneDataChanges(ctx, pgStore, settings.DataMove.Retention, logger)
 	}
+	// A scheduled task's finished runs, and the tasks that completed or failed, are kept for
+	// store.ScheduledTasksKept.
+	if pgStore != nil {
+		go pruneScheduledTasks(ctx, pgStore, logger)
+	}
 	// A tool item's output is taken out once the retention its session was held to runs out.
 	if pgStore != nil {
 		go redactToolOutput(ctx, pgStore, logger)
@@ -1681,6 +1686,26 @@ func pruneDataChanges(ctx context.Context, pgStore *store.Store, retention time.
 			logger.Error("could not prune the uses of ended grants", "error", err)
 		} else if removed > 0 {
 			logger.Debug("pruned the uses of ended grants", "rows", removed)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// pruneScheduledTasks deletes the runs and tasks of scheduled tasks that are past
+// store.ScheduledTasksKept, daily until the process stops.
+func pruneScheduledTasks(ctx context.Context, pgStore *store.Store, logger *slog.Logger) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		runs, tasks, err := pgStore.PruneScheduledTasks(ctx)
+		if err != nil {
+			logger.Error("could not prune scheduled tasks", "error", err)
+		} else if runs > 0 || tasks > 0 {
+			logger.Info("pruned scheduled tasks", "runs", runs, "tasks", tasks)
 		}
 		select {
 		case <-ctx.Done():
