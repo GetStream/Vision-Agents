@@ -186,8 +186,12 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			a.mu.Unlock()
 			continue
 		case sts.SpeechStarted:
+			// The caller is heard, so the turn is no longer the scheduled task's. Cleared
+			// here rather than in consumeSTS: a tool call that follows runs at once, ahead
+			// of the queue.
 			a.mu.Lock()
 			a.nativeListening = true
+			a.scheduled = false
 			a.mu.Unlock()
 		case sts.SpeechStopped:
 			a.mu.Lock()
@@ -248,7 +252,6 @@ func (a *Agent) consumeSTS(p *pipeline, speech *stsrouter.Session, events <-chan
 			a.mu.Lock()
 			a.lastParticipant = a.participantOr(typed.Participant)
 			a.lastHeardAt = typed.At
-			a.scheduled = false
 			a.mu.Unlock()
 
 		case sts.SpeechStopped:
