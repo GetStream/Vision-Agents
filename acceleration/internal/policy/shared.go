@@ -199,6 +199,11 @@ func (m *money) sharing(h *hold, now time.Time) bool {
 	return m.sharedUntil(h).After(now) || len(h.grants) > 0 && m.grantSharedUntil(h).After(now)
 }
 
+// HoldKey is the key of a subject's shared holds.
+func HoldKey(ref usage.SubjectRef) string {
+	return ref.Key(holdPrefix)
+}
+
 // holdKey is the key of a subject's shared holds, from the key of its counters.
 func holdKey(counter string) string {
 	return holdPrefix + strings.TrimPrefix(counter, usage.CounterPrefix)

@@ -410,6 +410,19 @@ func userKey(customerID, userID string, now time.Time) string {
 	return "quota:" + day(now) + ":user:" + customerID + ":" + userID
 }
 
+// UserKeys are the buckets one of a customer's users is counted in, for every day whose
+// buckets may not have expired by now, by name.
+func UserKeys(customerID, userID string, now time.Time) []string {
+	var keys []string
+	for back := retention; back >= 0; back -= 24 * time.Hour {
+		at := now.Add(-back)
+		if key := customerKey(customerID, userID, at); key != "" {
+			keys = append(keys, key, userKey(customerID, userID, at))
+		}
+	}
+	return keys
+}
+
 // addressKey is a device caller's bucket by address. It is keyed by the customer as well, since
 // each customer sets its own limit for an address.
 func addressKey(customerID, ip string, now time.Time) string {

@@ -42,6 +42,7 @@ const (
 	ActionSuspend    = "suspend"
 	ActionRestore    = "restore"
 	ActionAddCredit  = "add_credit"
+	ActionForgetUser = "forget_user"
 )
 
 var (

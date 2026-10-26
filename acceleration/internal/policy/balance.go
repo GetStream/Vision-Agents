@@ -22,6 +22,9 @@ type Balance struct {
 	State           BalanceState
 }
 
+// StateOf is where available stands against threshold, as every answer's balance warning says.
+func StateOf(available int64, threshold *int64) BalanceState { return stateOf(available, threshold) }
+
 // stateOf is where available stands: exhausted at or below 0, low at or below the threshold.
 func stateOf(available int64, threshold *int64) BalanceState {
 	switch {

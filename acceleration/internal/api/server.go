@@ -1680,6 +1680,16 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 	if s.store == nil {
 		return nil, invalidRequest("statistics are not available: no database configured")
 	}
+	if scope := request.Scope.ptr(); scope != nil && *scope == spendScopeOrganization {
+		// An app in no organization is its own.
+		if organization := OrganizationFrom(ctx); organization != "" {
+			apps, err := s.store.OrganizationApps(ctx, organization)
+			if err != nil {
+				return nil, err
+			}
+			who.OrganizationID, who.Apps = organization, apps
+		}
+	}
 
 	groupBy := defaultSpendGroupBy
 	if request.GroupBy.ptr() != nil && *request.GroupBy.ptr() != "" {
@@ -2079,8 +2089,15 @@ func (s *Server) registerServer(api huma.API) {
 		Path:        "/v1/stats/spend",
 		Summary:     "What the calling customer spent, grouped",
 		Description: "Spend across every modality at once, which is what a bill is. group_by decides what the " +
-			"series are: \"modality\" for where the money went, or a cost label for what it was spent " +
-			"on.\n" +
+			"series are: \"modality\" for where the money went, who asked for it (\"who:app\", " +
+			"\"who:api_key\", \"who:user\", \"who:team\" or \"who:category\"), or a cost label for what it " +
+			"was spent on. A label key holds no ':', so a label named app is still grouped by as " +
+			"group_by=app. \"who:team\" groups by the team the user's token named, work with none under the " +
+			"empty value; \"who:category\" by the other usage categories, and a request carrying several " +
+			"counts once in each, so those rows add up to more than the total.\n" +
+			"scope=organization counts every app of the caller's organization rather than the caller's " +
+			"app alone; grouped by \"who:user\" the value is then <app_id>/<user_id>, since a user id is " +
+			"only unique within its app.\n" +
 			"Only the biggest values keep a series of their own, because a label such as customer_id " +
 			"has as many values as the customer has customers. The rest are summed into \"other\", and " +
 			"spend carrying no such label at all into the empty value, so the rows still add up to " +
@@ -2090,7 +2107,7 @@ func (s *Server) registerServer(api huma.API) {
 		// Declared rather than read off the input, so the default is documented without
 		// being filled in: the handler tells a parameter left out from one sent.
 		Parameters: []*huma.Param{
-			{Name: "group_by", In: "query", Description: "\"modality\", or the cost label to group by.", Schema: &huma.Schema{Type: huma.TypeString, Default: "modality"}},
+			{Name: "group_by", In: "query", Description: "\"modality\", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.", Schema: &huma.Schema{Type: huma.TypeString, Default: "modality"}},
 			{Name: "limit", In: "query", Description: "How many values keep a series of their own.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Maximum: bound(50), Default: 6}},
 		},
 		Responses: map[string]*huma.Response{
@@ -2219,8 +2236,22 @@ type getTurnStatsResponse struct {
 	Body []TurnStatsBucket `nullable:"false"`
 }
 
+// SpendScope is whose spend a spend read counts.
+type SpendScope string
+
+const (
+	spendScopeApp          SpendScope = "app"
+	spendScopeOrganization SpendScope = "organization"
+)
+
+func (SpendScope) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SpendScope", "Whose spend is counted: the calling app's, or every app's of its "+
+		"organization. organization is server-side only.", string(spendScopeApp), string(spendScopeOrganization))
+}
+
 type getSpendRequest struct {
-	GroupBy     optionalParam[string]      `query:"group_by" doc:"\"modality\", or the cost label to group by."`
+	GroupBy     optionalParam[string]      `query:"group_by" doc:"\"modality\", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by."`
+	Scope       optionalParam[SpendScope]  `query:"scope" doc:"Whose spend: app, the default, or organization."`
 	Granularity optionalParam[Granularity] `query:"granularity"`
 	From        time.Time                  `query:"from" doc:"Start of the window, inclusive." required:"true"`
 	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
