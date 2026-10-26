@@ -2,6 +2,16 @@
 
 ## Features
 
+### Juno on Android
+
+`examples/voice_agents/android_assistant` is the Android half of swift_assistant: Juno, talked
+to from an Android app with swift_assistant's agent, `configure` and backend. Its conversations
+are the router's, in a drawer that lists, searches, opens and deletes them, and a new one has no
+session until it is first written to. The chat is Stream Chat's AI components, with the reply's
+reasoning and steps, copy, share and rating under it, and the composer floating over the
+conversation. Each new conversation's session names `io.getstream.visionagents.androidassistant:/connected`
+as its `return_url`. CI builds it beside the Kotlin SDK.
+
 ### Kotlin sessions name where a sign-in goes back to
 
 `SessionOptions.returnUrl` in the Kotlin SDK is sent as the session's `return_url`, as Swift's
