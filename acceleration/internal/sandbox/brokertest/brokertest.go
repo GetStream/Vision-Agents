@@ -48,11 +48,11 @@ type Subject struct {
 	Push func(ref, content string) (authorizations []string, pushed string, elsewhere []string)
 }
 
-// BrokerContract is the suite. New builds a broker for session over tokens, logging to
-// logger; every test may build several, one per session, on one provider.
+// BrokerContract is the suite. New builds a broker for session over tokens and bind, logging
+// to logger; every test may build several, one per session, on one provider.
 type BrokerContract struct {
 	suite.Suite
-	New func(t *testing.T, session string, tokens sandbox.Tokens, logger *slog.Logger) Subject
+	New func(t *testing.T, session string, tokens sandbox.Tokens, bind sandbox.Bind, logger *slog.Logger) Subject
 
 	ctx    context.Context
 	logs   *bytes.Buffer
@@ -63,6 +63,8 @@ type BrokerContract struct {
 	// binding's connection gives instead, if any.
 	tokens  map[string]sandbox.Token
 	refused map[string]error
+	// bound are the connections Bind gives late grants, by binding.
+	bound map[string]sandbox.Grant
 	// issued are every token handed out, quoted every provider answer a connection's error
 	// quotes, and errs every error a broker returned: none may hold one.
 	issued []string
@@ -74,7 +76,7 @@ func (s *BrokerContract) SetupTest() {
 	s.ctx = context.Background()
 	s.logs = &bytes.Buffer{}
 	s.logger = slog.New(slog.NewMultiHandler(slog.NewJSONHandler(s.logs, nil), slog.NewTextHandler(s.logs, nil)))
-	s.tokens, s.refused, s.issued, s.quoted, s.errs = map[string]sandbox.Token{}, map[string]error{}, nil, nil, nil
+	s.tokens, s.refused, s.bound, s.issued, s.quoted, s.errs = map[string]sandbox.Token{}, map[string]error{}, map[string]sandbox.Grant{}, nil, nil, nil
 	s.connect("github", "gho_first", 1)
 }
 
@@ -136,14 +138,25 @@ func (s *BrokerContract) refuse(binding string, err error) {
 func (s *BrokerContract) resolve(_ context.Context, grant sandbox.Grant) (sandbox.Token, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if grant.Late {
+		s.Fail("a late grant's token is asked for before its bind", grant.Binding)
+	}
 	if err := s.refused[grant.Binding]; err != nil {
 		return sandbox.Token{}, err
 	}
 	return s.tokens[grant.Binding], nil
 }
 
+// bind is sandbox.Bind over bound.
+func (s *BrokerContract) bind(_ context.Context, grant sandbox.Grant) (sandbox.Grant, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bound, ok := s.bound[grant.Binding]
+	return bound, ok
+}
+
 func (s *BrokerContract) subject(session string) Subject {
-	subject := s.New(s.T(), session, s.resolve, s.logger)
+	subject := s.New(s.T(), session, s.resolve, s.bind, s.logger)
 	s.T().Cleanup(func() { _ = subject.Broker.Close(context.Background()) })
 	return subject
 }
@@ -456,4 +469,61 @@ func (s *BrokerContract) TestAGitPushCarriesTheTokenInAuthorizationAlone() {
 	for _, value := range elsewhere {
 		s.NotContains(value, "gho_first", "the token is in Authorization alone")
 	}
+}
+
+// late is a grant of binding whose connection the user has not made yet.
+func late(binding, env string) sandbox.Grant {
+	grant := grant(binding, env)
+	grant.Connection, grant.Late = core.ConnectionRef{}, true
+	return grant
+}
+
+// TestALateGrantGetsATokenOnlyOnceBound is connect-on-demand: a grant whose connection the user
+// makes after the sandbox starts has its env var from the start, and no request gets a token for
+// it, its own or another grant's, until a run after Bind gives its connection. Bind gives the
+// connection alone: a grant naming another binding, env var and hosts changes none of them.
+func (s *BrokerContract) TestALateGrantGetsATokenOnlyOnceBound() {
+	subject := s.subject("session-1")
+	// What a broker that asked for the token before the bind would get.
+	s.connect("linear", "lin_late", 1)
+
+	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN"), late("linear", "LINEAR_TOKEN")})
+	s.Require().NoError(s.returned(err))
+	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
+
+	reference := ref(mount, "LINEAR_TOKEN")
+	s.Require().NotEmpty(reference)
+	value, _, ok := subject.Held(reference)
+	if subject.Live {
+		s.False(ok, "the egress has no token for it")
+	} else {
+		s.Require().True(ok, "the provider holds every secret the sandbox names")
+		s.NotContains(s.issued, value)
+	}
+
+	bound := grant("github", "OTHER_TOKEN")
+	bound.Connection.ConnectionID, bound.Scheme, bound.Hosts = "connection-linear", "bearer", []string{"elsewhere.example.com"}
+	s.mu.Lock()
+	s.bound["linear"] = bound
+	s.mu.Unlock()
+	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
+
+	value, hosts, ok := subject.Held(reference)
+	s.Require().True(ok)
+	s.Equal("lin_late", value)
+	s.Equal([]string{"api.github.com", "uploads.github.com"}, hosts, "the hosts the sandbox was created with")
+	value, _, _ = subject.Held(ref(mount, "GITHUB_TOKEN"))
+	s.Equal("gho_first", value)
+}
+
+// TestALateGrantWithoutBindRefusesTheSandbox: nothing would ever bind it.
+func (s *BrokerContract) TestALateGrantWithoutBindRefusesTheSandbox() {
+	subject := s.New(s.T(), "session-1", s.resolve, nil, s.logger)
+	s.T().Cleanup(func() { _ = subject.Broker.Close(context.Background()) })
+
+	_, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN"), late("linear", "LINEAR_TOKEN")})
+
+	s.Require().Error(s.returned(err))
+	s.ErrorContains(err, "linear")
+	s.Empty(subject.Left())
 }

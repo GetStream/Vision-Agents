@@ -289,7 +289,7 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			forward.ServeHTTP(w, r)
 			return
 		}
-		token, err := p.tokens(r.Context(), grant)
+		token, err := p.token(r.Context(), grant)
 		if err != nil {
 			// A provider's refresh error may quote its answer (resolver.statusAfter wraps it),
 			// so only its class is logged.
@@ -496,6 +496,15 @@ func (r Record) placed(host, value string) (Grant, authorization, bool) {
 		}
 	}
 	return Grant{}, authorization{}, false
+}
+
+// token is grant's token as its connection gives it now. A late grant the broker has not bound
+// yet has no connection, and gets no token whatever Tokens would make of an empty one.
+func (p *Proxy) token(ctx context.Context, grant Grant) (string, error) {
+	if grant.Connection.ConnectionID == "" {
+		return "", stack.Wrap(fmt.Errorf("%w: egress: the grant has no connection yet", sandbox.ErrNoCredential))
+	}
+	return p.tokens(ctx, grant)
 }
 
 func (p *Proxy) lookup(ctx context.Context, credential string) (Record, bool, error) {

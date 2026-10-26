@@ -79,7 +79,9 @@ type BrokerOptions struct {
 	Session string
 	Allowed []string
 	Tokens  sandbox.Tokens
-	Logger  *slog.Logger
+	// Bind gives a late grant its connection before each run. A late grant needs it.
+	Bind   sandbox.Bind
+	Logger *slog.Logger
 }
 
 // Broker is the sandbox.CredentialBroker over the router's egress proxy: the sandbox holds a
@@ -151,9 +153,16 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 	env := map[string]string{}
 	var prepared []held
 	for _, grant := range grants {
+		if grant.Late && b.options.Bind == nil {
+			return sandbox.Mount{}, stack.Wrap(fmt.Errorf("egress: connector %q is bound late, and the broker has no Bind", grant.Binding))
+		}
 		// A provider's refresh error may quote its answer, so only its class is logged, and a
-		// required grant's error carries none of it.
-		_, err := b.options.Tokens(ctx, grant)
+		// required grant's error carries none of it. A late grant has no connection to ask yet:
+		// the proxy refuses its placeholder until BeforeRun binds it.
+		var err error
+		if !grant.Late {
+			_, err = b.options.Tokens(ctx, grant)
+		}
 		if errors.Is(err, sandbox.ErrNoCredential) {
 			if grant.Required {
 				return sandbox.Mount{}, fmt.Errorf("egress: required connector %q gives the sandbox no credential: %w", grant.Binding, sandbox.ErrNoCredential)
@@ -206,9 +215,10 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 	return mount, nil
 }
 
-// BeforeRun withdraws a grant whose connection gives sandbox.ErrNoCredential and stores the
-// record again, so it outlives the run whatever time passed since the last one. A newer
-// revision needs nothing: the proxy asks for the token on every request.
+// BeforeRun binds each late grant Bind has a connection for, withdraws a grant whose connection
+// gives sandbox.ErrNoCredential, and stores the record again, so the proxy sends a bound grant's
+// token from the next request on, and the record outlives the run whatever time passed since the
+// last one. A newer revision needs nothing: the proxy asks for the token on every request.
 func (b *Broker) BeforeRun(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -220,6 +230,15 @@ func (b *Broker) BeforeRun(ctx context.Context) error {
 	}
 	var kept []held
 	for _, h := range b.held {
+		if h.grant.Late {
+			bound, ok := b.options.Bind(ctx, h.grant)
+			if !ok {
+				kept = append(kept, h)
+				continue
+			}
+			h.grant = h.grant.Bound(bound)
+			h.entry.Connection, h.entry.Scheme = h.grant.Connection, h.grant.Scheme
+		}
 		_, err := b.options.Tokens(ctx, h.grant)
 		if errors.Is(err, sandbox.ErrNoCredential) {
 			b.options.Logger.Warn("a connector's credential is withdrawn from the sandbox", "connector", h.grant.Binding,
