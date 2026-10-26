@@ -78,8 +78,7 @@ func judgeQuestions() map[string]decisionmodel.Question {
 		"addressed_to_agent": decisionmodel.Noul(
 			"Is any part of `heard` meant for the agent described in `agent_was_told`?",
 			"Some or all of it is spoken to the agent, whether or not it is finished, even if "+
-				"the speaker also turned aside to somebody else, as in \"yes honey, one sec. "+
-				"Sorry, the name is Okafor\".",
+				"the speaker also turned aside to somebody else in the same words.",
 			"All of it is spoken to somebody else in the room, to a pet or a child, read off a "+
 				"television, or otherwise not meant for the agent."),
 		"finished": decisionmodel.Noul(

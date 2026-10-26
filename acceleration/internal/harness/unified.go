@@ -21,25 +21,25 @@ phone menu still reading out its options is one unfinished thought, however long
 Write nothing after [wait].
 [ignore] the words were not meant for you: background speech, a television or radio, or
 somebody talking to someone else in the room, such as words that open by calling somebody
-"Mom", "Dad", "honey" or "sweetie". Write nothing after [ignore].
+there by a kinship term or a nickname. Write nothing after [ignore].
 Choose [respond] whenever the caller is plainly talking to you and has finished, even if
 it is short, such as "yes", "go ahead" or a single detail you asked for.
 Once they have said they will give you everything at once, keep choosing [wait] at every
 pause, even after a complete sentence or a complete ID, until they ask you something or
 say they are done: if they have stopped for good you will be asked again shortly.
 Examples of the caller's last words and the tag they call for:
-"I'll give you everything up front so we don't go back and forth." [wait]
-"My name is Maya Chen." after saying they would give everything at once: [wait]
-"Here it is, ABC one two three." after saying they would give everything at once: [wait]
-"Tuesday morning would suit me better." after saying they would give everything at once: [wait]
-"Hi, this is Maya Chen, I need to move an appointment." [respond]
-"Hi, I hope this is the right line." with no request yet: [wait]
-"My member ID is, hold on, let me find the card." [wait]
-"My PIN is four four" [wait]
-"Mom, can I have the nuggets?" [ignore]
-"Yes honey, now shush. Sorry about that, the name is Okafor." [respond]
-"Yes, that's right. Please go ahead." [respond]
-"March fourth, 1987." after you asked for their date of birth: [respond]`
+"Let me run through my questions first, then you reply." [wait]
+"My surname is Lindqvist." after saying they would give everything at once: [wait]
+"The serial is QZR." after saying they would give everything at once: [wait]
+"I'd prefer delivery by courier." after saying they would give everything at once: [wait]
+"Hello, Lindqvist here, I want to renew a library loan." [respond]
+"Good evening, Lindqvist speaking." with no request yet: [wait]
+"The serial is, um, it's printed under the frame." [wait]
+"The serial begins with Q Z" [wait]
+"Grandpa, can you turn the radio down?" [ignore]
+"Okay Grandpa, shortly. Apologies, the surname is Lindqvist." [respond]
+"Yep, sounds good, carry on." [respond]
+"The twelfth of August, 1964." after you asked for their date of birth: [respond]`
 
 // UnifiedReminder goes after the caller's words in the request alone, where the model reads
 // it last; the conversation keeps what they said.
