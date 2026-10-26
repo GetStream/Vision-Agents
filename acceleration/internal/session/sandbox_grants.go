@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
@@ -87,6 +88,71 @@ func (d *dispatcher) boundLate(_ context.Context, grant sandbox.Grant) (sandbox.
 		return sandbox.Grant{}, false
 	}
 	return opened, true
+}
+
+// connecting is the session's sandbox while one of its grants is late: each run's result names
+// the late grants whose user has not connected them (Result.Unconnected), as the model reads
+// a tool's result more surely than its description, and, once, those whose token is still on
+// its way (Result.Connected).
+type connecting struct {
+	sandbox.Sandbox
+	d *dispatcher
+	// delayed is a broker whose bound token reaches code some time after the run began: a
+	// Daytona secret's update took 18 to 24 seconds (probe against Daytona's API, 2026-10-25),
+	// where the egress proxy reads it on every request.
+	delayed bool
+	mu      sync.Mutex
+	// opened are the late grants' bindings a run's BeforeRun found connected, which no result
+	// names again.
+	opened map[string]bool
+}
+
+func (c *connecting) Grants() []sandbox.Grant { return c.d.grants }
+
+// Run reads the logins before and after the run. A grant connected before it was bound by its
+// BeforeRun, and is opened. One connected only during the run is named as connected, not as
+// unconnected, and not opened: the next run's BeforeRun binds it, and names it again.
+func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sandbox.Result, error) {
+	before := map[string]bool{}
+	for _, grant := range c.d.grants {
+		if grant.Late {
+			before[grant.Binding] = c.d.logins.byAlias[grant.Binding].loggedIn()
+		}
+	}
+	result, err := c.Sandbox.Run(ctx, code, outputs)
+	if err != nil {
+		return result, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, grant := range c.d.grants {
+		if !grant.Late || c.opened[grant.Binding] {
+			continue
+		}
+		if !c.d.logins.byAlias[grant.Binding].loggedIn() {
+			result.Unconnected = append(result.Unconnected, grant)
+			continue
+		}
+		if before[grant.Binding] {
+			c.opened[grant.Binding] = true
+		}
+		if !c.delayed {
+			continue
+		}
+		if _, bound := c.d.boundLate(ctx, grant); bound {
+			result.Connected = append(result.Connected, grant.Binding)
+		}
+	}
+	return result, nil
+}
+
+// loggedIn is whether the login has opened the binding. A connection whose revision gives the
+// sandbox nothing, or another env var or hosts, is logged in and still unbound (boundLate): a
+// login cannot bind it, a reconnect on the latest revision can.
+func (l *login) loggedIn() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.opened != nil
 }
 
 // broker is the code_sandbox.broker setting's broker for the session's grants.

@@ -1593,7 +1593,11 @@ func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (s
 		}
 		asked.Grants, asked.Broker = connectors.grants, broker
 	}
-	return m.options.Sandboxes.Open(owner(spec), asked)
+	box, err := m.options.Sandboxes.Open(owner(spec), asked)
+	if err != nil || !slices.ContainsFunc(asked.Grants, func(grant sandbox.Grant) bool { return grant.Late }) {
+		return box, err
+	}
+	return &connecting{Sandbox: box, d: connectors, delayed: m.options.SandboxBroker != egress.BrokerName, opened: map[string]bool{}}, nil
 }
 
 // reading reports whether this session has anything to look things up in, which is a

@@ -20,7 +20,7 @@ Before billable work starts the router now reserves what it may cost: a search, 
 
 ### Sandbox code can ask a user who has not connected yet to connect
 
-A `session` binding with `sandbox: true` whose user has no connection yet, in a chat session, now gives the sandbox its env var at once. A request with it is refused with a 401 until the user connects; `run_code`'s description tells the model to call `<alias>__list_tools`, which shows the user the connect card and waits. After the consent, the next run sends the user's token, within about 20 seconds under the Daytona broker. A required binding still refuses the session, and a voice session gets nothing, as before (AI-1960).
+A `session` binding with `sandbox: true` whose user has no connection yet, in a chat session, now gives the sandbox its env var at once. A request with it is refused with a 401 until the user connects; `run_code`'s description tells the model to call `<alias>__list_tools`, which shows the user the connect card and waits. After the consent, the next run sends the user's token, within about 20 seconds under the Daytona broker. A required binding still refuses the session, and a voice session gets nothing, as before (AI-1960). Each `run_code` result also names, until the user logs in, every such binding not yet connected and tells the model, if the code needed it (a 401 from its hosts), to call its `<alias>__list_tools`; under the Daytona broker the run that binds the login says to wait 20 seconds on a 401 (AI-1969).
 
 ## Bug Fixes
 
