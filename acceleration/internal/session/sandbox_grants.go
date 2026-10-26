@@ -93,10 +93,13 @@ func (d *dispatcher) boundLate(_ context.Context, grant sandbox.Grant) (sandbox.
 // connecting is the session's sandbox while one of its grants is late: each run's result names
 // the late grants whose user has not connected them (Result.Unconnected), as the model reads
 // a tool's result more surely than its description, and, once, those whose token is still on
-// its way (Result.Connected).
+// its way (Result.Connected). In a written session the run also shows the user the consent
+// of each one unconnected (offerConsent), as many models never call list_tools for them.
 type connecting struct {
 	sandbox.Sandbox
 	d *dispatcher
+	// asks is whether a run shows it: in writing (Spec.Text), not on a call, where nobody taps.
+	asks bool
 	// delayed is a broker whose bound token reaches code some time after the run began: a
 	// Daytona secret's update took 18 to 24 seconds (probe against Daytona's API, 2026-10-25),
 	// where the egress proxy reads it on every request.
@@ -131,6 +134,9 @@ func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sa
 		}
 		if !c.d.logins.byAlias[grant.Binding].loggedIn() {
 			result.Unconnected = append(result.Unconnected, grant)
+			if c.asks {
+				c.d.offerConsent(ctx, c.d.logins.byAlias[grant.Binding])
+			}
 			continue
 		}
 		if before[grant.Binding] {
