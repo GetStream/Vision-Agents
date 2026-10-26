@@ -1209,8 +1209,8 @@ func (s *StoreSuite) appWith(settings AppSettings) string {
 }
 
 // acmeSeenBy is, for each read that hands an app a definition, whether it finds acme for the
-// customer. Revision 2 is stored first, so a connection pinned to revision 1 is outdated
-// exactly when the statuses read sees acme.
+// customer. Revision 2 changes what a connection reads, so a connection pinned to revision 1
+// is outdated exactly when the statuses read sees acme.
 func (s *StoreSuite) acmeSeenBy(customerID string) map[string]bool {
 	seen := map[string]bool{}
 
@@ -1283,10 +1283,14 @@ func (s *StoreSuite) TestOneAppsFlagDoesNotShowAnInternalBuiltInToAnother() {
 	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{})))
 }
 
-// seedAcmeRevisions stores internalAcme at revisions 1 and 2, each internal or not as given.
+// seedAcmeRevisions stores internalAcme at revisions 1 and 2, each internal or not as given,
+// revision 2 under another name, which a connection reads.
 func (s *StoreSuite) seedAcmeRevisions(firstInternal, secondInternal bool) {
 	revision := func(n string, internal bool) string {
 		raw := strings.Replace(internalAcme, "revision: 1", "revision: "+n, 1)
+		if n == "2" {
+			raw = strings.Replace(raw, "name: Acme", "name: Acme Two", 1)
+		}
 		if !internal {
 			raw = strings.Replace(raw, "internal: true\n", "", 1)
 		}
