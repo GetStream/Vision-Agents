@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for AccountBalanceState.
@@ -8318,7 +8319,7 @@ type SpendHardLimitWindow struct {
 	WindowEnd   time.Time `json:"window_end"`
 }
 
-// SpendScope Whose spend is counted: the calling app's, or every app's of its organization. organization is server-side only.
+// SpendScope Whose spend is counted, or whose usage events are listed: the calling app's, or every app's of its organization. organization is server-side only.
 type SpendScope string
 
 // StartSessionVoiceRequest defines model for StartSessionVoiceRequest.
@@ -9222,6 +9223,81 @@ type UpdateSipTrunkRequest struct {
 	// Transport udp, tcp or tls.
 	Transport *string `json:"transport,omitempty"`
 	Username  *string `json:"username,omitempty"`
+}
+
+// UsageEvent One unit of work recorded for the organization: who it was for, what it was, how much of it there was and what it cost. What Stream pays for it is Stream's, and is not here.
+type UsageEvent struct {
+	// AgentId The agent the work was done for.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// ApiKey The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
+	ApiKey string `json:"api_key"`
+
+	// AppId The app the work was for.
+	AppId string `json:"app_id"`
+
+	// Attributes What chose the price or explains the work, such as country or direction.
+	Attributes *map[string]string `json:"attributes,omitempty"`
+
+	// Billable Whether cost_micros counts against the organization's credit and limits.
+	Billable bool `json:"billable"`
+
+	// CallId The call the work was done in.
+	CallId *string `json:"call_id,omitempty"`
+
+	// CostMicros What the organization is charged for the work, in millionths of a dollar.
+	CostMicros int64 `json:"cost_micros"`
+
+	// ErrorCode Why it failed, when it did.
+	ErrorCode *string `json:"error_code,omitempty"`
+
+	// Meter The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added.
+	Meter string `json:"meter"`
+
+	// Model The model that did it.
+	Model *string `json:"model,omitempty"`
+
+	// OccurredAt When the work happened.
+	OccurredAt time.Time `json:"occurred_at"`
+
+	// Provider Who did the work, such as openai.
+	Provider *string `json:"provider,omitempty"`
+
+	// Purpose What within the request the work was for, such as subagent.
+	Purpose *string `json:"purpose,omitempty"`
+
+	// Quantities How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and the like.
+	Quantities map[string]int64 `json:"quantities"`
+
+	// SessionId The session the work was done in.
+	SessionId *string `json:"session_id,omitempty"`
+
+	// Success Whether the work succeeded.
+	Success bool `json:"success"`
+
+	// Tags The cost labels the request carried.
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// Team The team the user's token named, the name of the team:<name> category among usage_categories. Absent with none.
+	Team *string `json:"team,omitempty"`
+
+	// UsageCategories The usage categories the token named, its team among them as team:<name>.
+	UsageCategories []string `json:"usage_categories"`
+
+	// UsageId The event's id: the unit of work is recorded once under it.
+	UsageId openapi_types.UUID `json:"usage_id"`
+
+	// UserId The end user the work was for, by the id the app's tokens name them with; only unique within the app. Absent when there was none, or the caller was anonymous.
+	UserId *string `json:"user_id,omitempty"`
+}
+
+// UsageEventPage One page of the organization's usage events, newest first: by occurred_at, then by usage_id.
+type UsageEventPage struct {
+	HasMore bool         `json:"has_more"`
+	Items   []UsageEvent `json:"items"`
+
+	// NextCursor Where the next page starts, for cursor; absent on the last page.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // UseCase A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.
@@ -10149,6 +10225,42 @@ type GetTurnStatsParams struct {
 
 	// To End of the window, exclusive.
 	To time.Time `form:"to" json:"to"`
+}
+
+// ListUsageEventsParams defines parameters for ListUsageEvents.
+type ListUsageEventsParams struct {
+	// Scope Whose events: app, the default, or organization.
+	Scope *SpendScope `form:"scope,omitempty" json:"scope,omitempty"`
+
+	// AppId With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused.
+	AppId *string `form:"app_id,omitempty" json:"app_id,omitempty"`
+
+	// From Only events that happened at or after this, inclusive.
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Only events that happened before this, exclusive.
+	To *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// Meter Only this kind of work, such as llm or runtime.
+	Meter *string `form:"meter,omitempty" json:"meter,omitempty"`
+
+	// ApiKey Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
+	ApiKey *string `form:"api_key,omitempty" json:"api_key,omitempty"`
+
+	// UserId Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
+	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// Team Only work for this team: its users' tokens name it in their team claim. Not with category.
+	Team *string `form:"team,omitempty" json:"team,omitempty"`
+
+	// Category Only work carrying this usage category, as the tokens name it. Not with team.
+	Category *string `form:"category,omitempty" json:"category,omitempty"`
+
+	// Limit The most events one page holds.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page, sent with the same filters.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ResolveTargetParams defines parameters for ResolveTarget.
@@ -13672,6 +13784,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/turns/stats (the `GetTurnStats` operationId).
 	GetTurnStats(ctx context.Context, params *GetTurnStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListUsageEvents List the usage events
+	//
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Corresponds with GET /v1/usage/events (the `ListUsageEvents` operationId).
+	ListUsageEvents(ctx context.Context, params *ListUsageEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListProviders List the providers configured for a modality and their live health
 	//
@@ -19772,6 +19893,25 @@ func (c *Client) GetSpeech(ctx context.Context, id string, reqEditors ...Request
 // Corresponds with GET /v1/turns/stats (the `GetTurnStats` operationId).
 func (c *Client) GetTurnStats(ctx context.Context, params *GetTurnStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTurnStatsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListUsageEvents List the usage events
+//
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Corresponds with GET /v1/usage/events (the `ListUsageEvents` operationId).
+func (c *Client) ListUsageEvents(ctx context.Context, params *ListUsageEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListUsageEventsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -30937,6 +31077,180 @@ func NewGetTurnStatsRequest(server string, params *GetTurnStatsParams) (*http.Re
 	return req, nil
 }
 
+// NewListUsageEventsRequest constructs an http.Request for the ListUsageEvents method
+func NewListUsageEventsRequest(server string, params *ListUsageEventsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/usage/events")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Scope != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "scope", *params.Scope, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AppId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "app_id", *params.AppId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.From != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.To != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Meter != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "meter", *params.Meter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ApiKey != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UserId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Team != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "team", *params.Team, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Category != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "category", *params.Category, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListProvidersRequest constructs an http.Request for the ListProviders method
 func NewListProvidersRequest(server string, modality Modality) (*http.Request, error) {
 	var err error
@@ -34512,6 +34826,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/turns/stats (the `GetTurnStats` operationId).
 	GetTurnStatsWithResponse(ctx context.Context, params *GetTurnStatsParams, reqEditors ...RequestEditorFn) (*GetTurnStatsResponse, error)
+
+	// ListUsageEventsWithResponse List the usage events
+	//
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/usage/events (the `ListUsageEvents` operationId).
+	ListUsageEventsWithResponse(ctx context.Context, params *ListUsageEventsParams, reqEditors ...RequestEditorFn) (*ListUsageEventsResponse, error)
 
 	// ListProvidersWithResponse List the providers configured for a modality and their live health
 	//
@@ -58692,6 +59017,114 @@ func (r GetTurnStatsResponse) ContentType() string {
 	return ""
 }
 
+// ListUsageEventsResponse200Headers the declared response headers of an HTTP 200 response for ListUsageEvents
+type ListUsageEventsResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ListUsageEventsResponse402Headers the declared response headers of an HTTP 402 response for ListUsageEvents
+type ListUsageEventsResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ListUsageEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UsageEventPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListUsageEventsResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ListUsageEventsResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListUsageEventsResponse) GetJSON200() *UsageEventPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListUsageEventsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListUsageEventsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListUsageEventsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListUsageEventsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListUsageEventsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListUsageEventsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListUsageEventsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListUsageEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListUsageEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListUsageEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListUsageEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListProvidersResponse200Headers the declared response headers of an HTTP 200 response for ListProviders
 type ListProvidersResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -64352,6 +64785,23 @@ func (c *ClientWithResponses) GetTurnStatsWithResponse(ctx context.Context, para
 		return nil, err
 	}
 	return ParseGetTurnStatsResponse(rsp)
+}
+
+// ListUsageEventsWithResponse List the usage events
+//
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/usage/events (the `ListUsageEvents` operationId).
+func (c *ClientWithResponses) ListUsageEventsWithResponse(ctx context.Context, params *ListUsageEventsParams, reqEditors ...RequestEditorFn) (*ListUsageEventsResponse, error) {
+	rsp, err := c.ListUsageEvents(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListUsageEventsResponse(rsp)
 }
 
 // ListProvidersWithResponse List the providers configured for a modality and their live health
@@ -92559,6 +93009,132 @@ func ParseGetTurnStatsResponse(rsp *http.Response) (*GetTurnStatsResponse, error
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GetTurnStatsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListUsageEventsResponse parses an HTTP response from a ListUsageEventsWithResponse call
+func ParseListUsageEventsResponse(rsp *http.Response) (*ListUsageEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListUsageEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UsageEventPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListUsageEventsResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ListUsageEventsResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

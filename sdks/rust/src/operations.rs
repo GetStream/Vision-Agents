@@ -3899,6 +3899,22 @@ impl Client {
         )
         .await
     }
+    /// List the usage events
+    ///
+    /// `GET /v1/usage/events` (`listUsageEvents`).
+    pub async fn list_usage_events(
+        &self,
+        query: &ListUsageEventsQuery,
+    ) -> Result<types::UsageEventPage> {
+        self.send(
+            Method::GET,
+            "/v1/usage/events",
+            Some(query),
+            None::<&()>,
+            "listUsageEvents",
+        )
+        .await
+    }
     /// List the providers configured for a modality and their live health
     ///
     /// `GET /v1/{modality}/providers` (`listProviders`).
@@ -4658,6 +4674,43 @@ pub struct GetTurnStatsQuery {
     /// End of the window, exclusive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+}
+/// The query string `listUsageEvents` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListUsageEventsQuery {
+    /// Whose events: app, the default, or organization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    /// Only events that happened at or after this, inclusive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// Only events that happened before this, exclusive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// Only this kind of work, such as llm or runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meter: Option<String>,
+    /// Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    /// Only work for this team: its users' tokens name it in their team claim. Not with category.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    /// Only work carrying this usage category, as the tokens name it. Not with team.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// The most events one page holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same filters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 /// The query string `resolveTarget` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

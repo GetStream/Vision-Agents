@@ -8563,7 +8563,7 @@ components:
         - window_end
       type: object
     SpendScope:
-      description: 'Whose spend is counted: the calling app''s, or every app''s of its organization. organization is server-side only.'
+      description: 'Whose spend is counted, or whose usage events are listed: the calling app''s, or every app''s of its organization. organization is server-side only.'
       enum:
         - app
         - organization
@@ -9934,6 +9934,112 @@ components:
           type: string
         username:
           type: string
+      type: object
+    UsageEvent:
+      description: 'One unit of work recorded for the organization: who it was for, what it was, how much of it there was and what it cost. What Stream pays for it is Stream''s, and is not here.'
+      properties:
+        agent_id:
+          description: The agent the work was done for.
+          type: string
+        api_key:
+          description: The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
+          type: string
+        app_id:
+          description: The app the work was for.
+          type: string
+        attributes:
+          additionalProperties:
+            type: string
+          description: What chose the price or explains the work, such as country or direction.
+          type: object
+        billable:
+          description: Whether cost_micros counts against the organization's credit and limits.
+          type: boolean
+        call_id:
+          description: The call the work was done in.
+          type: string
+        cost_micros:
+          description: What the organization is charged for the work, in millionths of a dollar.
+          format: int64
+          type: integer
+        error_code:
+          description: Why it failed, when it did.
+          type: string
+        meter:
+          description: 'The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added.'
+          type: string
+        model:
+          description: The model that did it.
+          type: string
+        occurred_at:
+          description: When the work happened.
+          format: date-time
+          type: string
+        provider:
+          description: Who did the work, such as openai.
+          type: string
+        purpose:
+          description: What within the request the work was for, such as subagent.
+          type: string
+        quantities:
+          additionalProperties:
+            format: int64
+            type: integer
+          description: 'How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and the like.'
+          type: object
+        session_id:
+          description: The session the work was done in.
+          type: string
+        success:
+          description: Whether the work succeeded.
+          type: boolean
+        tags:
+          additionalProperties:
+            type: string
+          description: The cost labels the request carried.
+          type: object
+        team:
+          description: The team the user's token named, the name of the team:<name> category among usage_categories. Absent with none.
+          type: string
+        usage_categories:
+          description: The usage categories the token named, its team among them as team:<name>.
+          items:
+            type: string
+          type: array
+        usage_id:
+          description: 'The event''s id: the unit of work is recorded once under it.'
+          format: uuid
+          type: string
+        user_id:
+          description: The end user the work was for, by the id the app's tokens name them with; only unique within the app. Absent when there was none, or the caller was anonymous.
+          type: string
+      required:
+        - usage_id
+        - occurred_at
+        - app_id
+        - api_key
+        - usage_categories
+        - meter
+        - quantities
+        - cost_micros
+        - billable
+        - success
+      type: object
+    UsageEventPage:
+      description: 'One page of the organization''s usage events, newest first: by occurred_at, then by usage_id.'
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/UsageEvent'
+          type: array
+        next_cursor:
+          description: Where the next page starts, for cursor; absent on the last page.
+          type: string
+      required:
+        - items
+        - has_more
       type: object
     UseCase:
       description: 'A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.'
@@ -23837,6 +23943,133 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Conversational latency for the calling customer
+  /v1/usage/events:
+    get:
+      description: |-
+        Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+
+        Server-side only: a request that is not server-side answers 403 server_side_only.
+      operationId: listUsageEvents
+      parameters:
+        - description: 'Whose events: app, the default, or organization.'
+          explode: false
+          in: query
+          name: scope
+          schema:
+            $ref: '#/components/schemas/SpendScope'
+            description: 'Whose events: app, the default, or organization.'
+        - description: With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused.
+          explode: false
+          in: query
+          name: app_id
+          schema:
+            description: With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused.
+            maxLength: 255
+            type: string
+        - description: Only events that happened at or after this, inclusive.
+          explode: false
+          in: query
+          name: from
+          schema:
+            description: Only events that happened at or after this, inclusive.
+            format: date-time
+            type: string
+        - description: Only events that happened before this, exclusive.
+          explode: false
+          in: query
+          name: to
+          schema:
+            description: Only events that happened before this, exclusive.
+            format: date-time
+            type: string
+        - description: Only this kind of work, such as llm or runtime.
+          explode: false
+          in: query
+          name: meter
+          schema:
+            description: Only this kind of work, such as llm or runtime.
+            maxLength: 255
+            type: string
+        - description: Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
+          explode: false
+          in: query
+          name: api_key
+          schema:
+            description: Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
+            maxLength: 255
+            type: string
+        - description: Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
+          explode: false
+          in: query
+          name: user_id
+          schema:
+            description: Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
+            maxLength: 255
+            type: string
+        - description: 'Only work for this team: its users'' tokens name it in their team claim. Not with category.'
+          explode: false
+          in: query
+          name: team
+          schema:
+            description: 'Only work for this team: its users'' tokens name it in their team claim. Not with category.'
+            pattern: ^[A-Za-z0-9_.-]{1,59}$
+            type: string
+        - description: Only work carrying this usage category, as the tokens name it. Not with team.
+          explode: false
+          in: query
+          name: category
+          schema:
+            description: Only work carrying this usage category, as the tokens name it. Not with team.
+            type: string
+        - description: The most events one page holds.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            description: The most events one page holds.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page, sent with the same filters.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page, sent with the same filters.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageEventPage'
+          description: OK
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: List the usage events
 security:
   - CustomerId: []
   - ApiKey: []

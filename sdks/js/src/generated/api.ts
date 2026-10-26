@@ -4092,6 +4092,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/usage/events": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the usage events
+         * @description Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+         *
+         *     Server-side only: a request that is not server-side answers 403 server_side_only.
+         */
+        readonly get: operations["listUsageEvents"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
 };
 export type webhooks = Record<string, never>;
 export type components = {
@@ -8955,7 +8977,7 @@ export type components = {
             readonly window_end: string;
         };
         /**
-         * @description Whose spend is counted: the calling app's, or every app's of its organization. organization is server-side only.
+         * @description Whose spend is counted, or whose usage events are listed: the calling app's, or every app's of its organization. organization is server-side only.
          * @enum {string}
          */
         readonly SpendScope: "app" | "organization";
@@ -9840,6 +9862,73 @@ export type components = {
             /** @description udp, tcp or tls. */
             readonly transport?: string;
             readonly username?: string;
+        };
+        /** @description One unit of work recorded for the organization: who it was for, what it was, how much of it there was and what it cost. What Stream pays for it is Stream's, and is not here. */
+        readonly UsageEvent: {
+            /** @description The agent the work was done for. */
+            readonly agent_id?: string;
+            /** @description The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>. */
+            readonly api_key: string;
+            /** @description The app the work was for. */
+            readonly app_id: string;
+            /** @description What chose the price or explains the work, such as country or direction. */
+            readonly attributes?: {
+                readonly [key: string]: string;
+            };
+            /** @description Whether cost_micros counts against the organization's credit and limits. */
+            readonly billable: boolean;
+            /** @description The call the work was done in. */
+            readonly call_id?: string;
+            /**
+             * Format: int64
+             * @description What the organization is charged for the work, in millionths of a dollar.
+             */
+            readonly cost_micros: number;
+            /** @description Why it failed, when it did. */
+            readonly error_code?: string;
+            /** @description The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added. */
+            readonly meter: string;
+            /** @description The model that did it. */
+            readonly model?: string;
+            /**
+             * Format: date-time
+             * @description When the work happened.
+             */
+            readonly occurred_at: string;
+            /** @description Who did the work, such as openai. */
+            readonly provider?: string;
+            /** @description What within the request the work was for, such as subagent. */
+            readonly purpose?: string;
+            /** @description How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and the like. */
+            readonly quantities: {
+                readonly [key: string]: number;
+            };
+            /** @description The session the work was done in. */
+            readonly session_id?: string;
+            /** @description Whether the work succeeded. */
+            readonly success: boolean;
+            /** @description The cost labels the request carried. */
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+            /** @description The team the user's token named, the name of the team:<name> category among usage_categories. Absent with none. */
+            readonly team?: string;
+            /** @description The usage categories the token named, its team among them as team:<name>. */
+            readonly usage_categories: readonly string[];
+            /**
+             * Format: uuid
+             * @description The event's id: the unit of work is recorded once under it.
+             */
+            readonly usage_id: string;
+            /** @description The end user the work was for, by the id the app's tokens name them with; only unique within the app. Absent when there was none, or the caller was anonymous. */
+            readonly user_id?: string;
+        };
+        /** @description One page of the organization's usage events, newest first: by occurred_at, then by usage_id. */
+        readonly UsageEventPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["UsageEvent"][];
+            /** @description Where the next page starts, for cursor; absent on the last page. */
+            readonly next_cursor?: string;
         };
         /** @description A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from. */
         readonly UseCase: {
@@ -19605,6 +19694,60 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly listUsageEvents: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Only work started with this public API key, or by this origin of work no key started, such as hook:chat. */
+                readonly api_key?: string;
+                /** @description With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused. */
+                readonly app_id?: string;
+                /** @description Only work carrying this usage category, as the tokens name it. Not with team. */
+                readonly category?: string;
+                /** @description The next_cursor of the previous page, sent with the same filters. */
+                readonly cursor?: string;
+                /** @description Only events that happened at or after this, inclusive. */
+                readonly from?: string;
+                /** @description The most events one page holds. */
+                readonly limit?: number;
+                /** @description Only this kind of work, such as llm or runtime. */
+                readonly meter?: string;
+                /** @description Whose events: app, the default, or organization. */
+                readonly scope?: components["schemas"]["SpendScope"];
+                /** @description Only work for this team: its users' tokens name it in their team claim. Not with category. */
+                readonly team?: string;
+                /** @description Only events that happened before this, exclusive. */
+                readonly to?: string;
+                /** @description Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app. */
+                readonly user_id?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UsageEventPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };

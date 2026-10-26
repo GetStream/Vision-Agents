@@ -1064,6 +1064,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "listUsageEvents" => {
+          method: :get, path: "/v1/usage/events",
+          path_params: [].freeze, query: %w[scope app_id from to meter api_key user_id team category limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "listUseCaseReviews" => {
           method: :get, path: "/v1/phone/use-cases/{id}/reviews",
           path_params: %w[id].freeze, query: %w[limit cursor].freeze,
@@ -2908,6 +2914,14 @@ module GetStream
         "UpdateSipTrunkRequest" => {
           properties: %w[codecs host late_offer name password port transport username].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "UsageEvent" => {
+          properties: %w[agent_id api_key app_id attributes billable call_id cost_micros error_code meter model occurred_at provider purpose quantities session_id success tags team usage_categories usage_id user_id].freeze,
+          required: %w[usage_id occurred_at app_id api_key usage_categories meter quantities cost_micros billable success].freeze, open: false
+        }.freeze,
+        "UsageEventPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[items has_more].freeze, open: false
         }.freeze,
         "UseCase" => {
           properties: %w[age_gated approved_at channels created_at description direct_lending embedded_links embedded_phone help_message id is_default message_flow message_samples name numbers opt_in_message opt_out_message status submitted_at updated_at use_case_type vendor vendor_campaign_id vendor_status].freeze,

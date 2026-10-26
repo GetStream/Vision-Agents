@@ -30,7 +30,10 @@ var (
 	errBillingNotEnabled = APIError{Type: ErrorTypeNotFound, Code: codeBillingNotEnabled,
 		Message: "billing is not enabled here: this deployment has no usage service, or the app is in no organization it bills"}
 	errUsageUnavailable = unavailable("the usage service did not answer; try again shortly")
-	errCreditsCursor    = invalidRequest("cursor is not one this list answered")
+	errPageCursor       = invalidRequest("cursor is not one this list answered")
+	errOtherApp         = invalidRequest("app_id names another app: with scope=app the app is the caller's; read another app of the organization with scope=organization")
+	errUserWithoutApp   = invalidRequest("user_id needs app_id with scope=organization: a user id is only unique within its app")
+	errTeamAndCategory  = invalidRequest("team is the category team:<name>: give team or category, not both")
 )
 
 // Account is the calling organization's money, as its dashboard shows it.
@@ -72,6 +75,49 @@ type CreditPage struct {
 	NextCursor *string       `json:"next_cursor,omitempty"`
 }
 
+// UsageEvent is one unit of work recorded for the organization, as its dashboard lists it.
+type UsageEvent struct {
+	UsageId         string            `json:"usage_id" format:"uuid" doc:"The event's id: the unit of work is recorded once under it."`
+	OccurredAt      time.Time         `json:"occurred_at" doc:"When the work happened."`
+	AppId           string            `json:"app_id" doc:"The app the work was for."`
+	ApiKey          string            `json:"api_key" doc:"The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>."`
+	UserId          string            `json:"user_id,omitempty" doc:"The end user the work was for, by the id the app's tokens name them with; only unique within the app. Absent when there was none, or the caller was anonymous."`
+	Team            string            `json:"team,omitempty" doc:"The team the user's token named, the name of the team:<name> category among usage_categories. Absent with none."`
+	UsageCategories []string          `json:"usage_categories" nullable:"false" doc:"The usage categories the token named, its team among them as team:<name>."`
+	AgentId         string            `json:"agent_id,omitempty" doc:"The agent the work was done for."`
+	CallId          string            `json:"call_id,omitempty" doc:"The call the work was done in."`
+	SessionId       string            `json:"session_id,omitempty" doc:"The session the work was done in."`
+	Meter           string            `json:"meter" doc:"The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added."`
+	Provider        string            `json:"provider,omitempty" doc:"Who did the work, such as openai."`
+	Model           string            `json:"model,omitempty" doc:"The model that did it."`
+	Purpose         string            `json:"purpose,omitempty" doc:"What within the request the work was for, such as subagent."`
+	Quantities      map[string]int64  `json:"quantities" doc:"How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and the like."`
+	Attributes      map[string]string `json:"attributes,omitempty" doc:"What chose the price or explains the work, such as country or direction."`
+	CostMicros      int64             `json:"cost_micros" doc:"What the organization is charged for the work, in millionths of a dollar."`
+	Billable        bool              `json:"billable" doc:"Whether cost_micros counts against the organization's credit and limits."`
+	Success         bool              `json:"success" doc:"Whether the work succeeded."`
+	ErrorCode       string            `json:"error_code,omitempty" doc:"Why it failed, when it did."`
+	Tags            map[string]string `json:"tags,omitempty" doc:"The cost labels the request carried."`
+}
+
+func (*UsageEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One unit of work recorded for the organization: who it was for, what it was, how much of " +
+		"it there was and what it cost. What Stream pays for it is Stream's, and is not here."
+	return schema
+}
+
+// UsageEventPage is one page of the organization's usage events, newest first.
+type UsageEventPage struct {
+	Items      []UsageEvent `json:"items" nullable:"false"`
+	HasMore    bool         `json:"has_more"`
+	NextCursor *string      `json:"next_cursor,omitempty" doc:"Where the next page starts, for cursor; absent on the last page."`
+}
+
+func (*UsageEventPage) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One page of the organization's usage events, newest first: by occurred_at, then by usage_id."
+	return schema
+}
+
 // WindowSpend is what a subject spent in its current window of one interval.
 type WindowSpend struct {
 	Interval    LimitInterval `json:"interval"`
@@ -103,6 +149,22 @@ type listCreditsRequest struct {
 }
 
 type creditPageResponse struct{ Body CreditPage }
+
+type listUsageEventsRequest struct {
+	Scope    optionalParam[SpendScope] `query:"scope" doc:"Whose events: app, the default, or organization."`
+	AppId    string                    `query:"app_id" maxLength:"255" doc:"With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused."`
+	From     optionalParam[time.Time]  `query:"from" doc:"Only events that happened at or after this, inclusive."`
+	To       optionalParam[time.Time]  `query:"to" doc:"Only events that happened before this, exclusive."`
+	Meter    string                    `query:"meter" maxLength:"255" doc:"Only this kind of work, such as llm or runtime."`
+	ApiKey   string                    `query:"api_key" maxLength:"255" doc:"Only work started with this public API key, or by this origin of work no key started, such as hook:chat."`
+	UserId   string                    `query:"user_id" maxLength:"255" doc:"Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app."`
+	Team     string                    `query:"team" pattern:"^[A-Za-z0-9_.-]{1,59}$" doc:"Only work for this team: its users' tokens name it in their team claim. Not with category."`
+	Category string                    `query:"category" doc:"Only work carrying this usage category, as the tokens name it. Not with team."`
+	Limit    int                       `query:"limit" minimum:"1" maximum:"200" default:"50" doc:"The most events one page holds."`
+	Cursor   string                    `query:"cursor" doc:"The next_cursor of the previous page, sent with the same filters."`
+}
+
+type usageEventPageResponse struct{ Body UsageEventPage }
 
 // ListTeamsParams narrow a list of teams to one app.
 type ListTeamsParams struct {
@@ -138,6 +200,17 @@ func (s *Server) registerAccount(api huma.API) {
 		Description: "Newest first: top-ups, grants, refunds, disputes and adjustments." + notEnabled + serverSide,
 		Errors:      errs,
 	}, s.listCredits)
+	huma.Register(api, huma.Operation{
+		OperationID: "listUsageEvents", Method: http.MethodGet, Path: "/v1/usage/events",
+		Summary: "List the usage events",
+		Description: "Every unit of work recorded for the calling app, or with scope=organization for every app of " +
+			"its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each " +
+			"names who it was for, what it was, how much of it there was and what the organization is charged. " +
+			"Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with " +
+			"cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so " +
+			"the newest may take a moment to appear." + notEnabled + serverSide,
+		Errors: errs,
+	}, s.listUsageEvents)
 	list := huma.Operation{
 		OperationID: "listTeams", Method: http.MethodGet, Path: "/v1/teams",
 		Summary: "List the organization's teams",
@@ -232,7 +305,7 @@ func (s *Server) listCredits(ctx context.Context, request *listCreditsRequest) (
 	read, ok, err := s.policies.Credits(ctx, organization, limit, request.Cursor)
 	var refused *usage.StatusError
 	if errors.As(err, &refused) && refused.Status == http.StatusBadRequest && request.Cursor != "" {
-		return nil, errCreditsCursor
+		return nil, errPageCursor
 	}
 	if !ok {
 		return nil, s.usageFailure(err, "credits", organization)
@@ -247,6 +320,85 @@ func (s *Server) listCredits(ctx context.Context, request *listCreditsRequest) (
 		page.NextCursor = &read.NextCursor
 	}
 	return &creditPageResponse{Body: page}, nil
+}
+
+func (s *Server) listUsageEvents(ctx context.Context, request *listUsageEventsRequest) (*usageEventPageResponse, error) {
+	organization, err := s.accountCaller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	app, _ := CustomerFrom(ctx)
+	query := usage.UsageQuery{
+		AppID: app, Meter: request.Meter, APIKey: request.ApiKey, UserID: request.UserId, Team: request.Team,
+		Category: request.Category, Limit: request.Limit, Cursor: request.Cursor,
+	}
+	if scope := request.Scope.ptr(); scope != nil && *scope == spendScopeOrganization {
+		query.AppID = request.AppId
+	} else if request.AppId != "" && request.AppId != app {
+		return nil, errOtherApp
+	}
+	if from := request.From.ptr(); from != nil {
+		query.From = *from
+	}
+	if to := request.To.ptr(); to != nil {
+		query.To = *to
+	}
+	switch {
+	case query.UserID != "" && query.AppID == "":
+		return nil, errUserWithoutApp
+	case query.Team != "" && query.Category != "":
+		return nil, errTeamAndCategory
+	case !query.From.IsZero() && !query.To.IsZero() && !query.To.After(query.From):
+		return nil, invalidRequest("to must be after from")
+	}
+	if query.Category != "" {
+		if err := usage.CheckCategories([]string{query.Category}); err != nil {
+			return nil, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidUsageCategories,
+				Message: strings.TrimPrefix(err.Error(), "usage: ")}
+		}
+	}
+	read, ok, err := s.policies.Usage(ctx, organization, query)
+	var refused *usage.StatusError
+	if errors.As(err, &refused) && refused.Status == http.StatusBadRequest && request.Cursor != "" {
+		return nil, errPageCursor
+	}
+	if !ok {
+		return nil, s.usageFailure(err, "usage events", organization)
+	}
+	page := UsageEventPage{Items: make([]UsageEvent, 0, len(read.Items)), HasMore: read.HasMore}
+	for _, event := range read.Items {
+		page.Items = append(page.Items, usageEventOf(event))
+	}
+	if read.NextCursor != "" {
+		page.NextCursor = &read.NextCursor
+	}
+	return &usageEventPageResponse{Body: page}, nil
+}
+
+// usageEventOf is the event as the organization's dashboard lists it, its team read off its
+// categories.
+func usageEventOf(event usage.CustomerUsageEvent) UsageEvent {
+	listed := UsageEvent{
+		UsageId: event.UsageID.String(), OccurredAt: event.OccurredAt, AppId: event.AppID, ApiKey: event.APIKey,
+		UserId: event.UserID, UsageCategories: event.UsageCategories, AgentId: event.AgentID, CallId: event.CallID,
+		SessionId: event.SessionID, Meter: event.Meter, Provider: event.Provider, Model: event.Model,
+		Purpose: event.Purpose, Quantities: event.Quantities, Attributes: event.Attributes,
+		CostMicros: event.CostMicros, Billable: event.Billable, Success: event.Success, ErrorCode: event.ErrorCode,
+		Tags: event.Tags,
+	}
+	if listed.UsageCategories == nil {
+		listed.UsageCategories = []string{}
+	}
+	if listed.Quantities == nil {
+		listed.Quantities = map[string]int64{}
+	}
+	for _, category := range listed.UsageCategories {
+		if team, ok := usage.TeamOf(category); ok {
+			listed.Team = team
+			break
+		}
+	}
+	return listed
 }
 
 // usageFailure is the answer to a read of the usage service that did not answer, logged with
