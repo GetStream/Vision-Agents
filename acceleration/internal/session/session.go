@@ -134,6 +134,14 @@ type ToolHeld struct {
 	ID string
 }
 
+// ToolApprovalIgnored is a tool_approval no call took, with the ids it named and why.
+type ToolApprovalIgnored struct {
+	ID        string
+	CommandID string
+	TurnID    string
+	Reason    string
+}
+
 // ToolUser is who a tool call was made for.
 type ToolUser struct {
 	ID   string
@@ -760,16 +768,27 @@ func (s *Session) Report(err error, context string) {
 	s.broadcast(agent.Error{Err: err, Context: context})
 }
 
-// ReportTool is Report for a command about the call id, which the failure names so the
-// watcher that sent it can tell which of its answers it is.
-func (s *Session) ReportTool(id string, err error) {
-	s.broadcast(agent.Error{Err: err, Context: "tool", ToolCallID: id})
+// IgnoreApproval tells the watchers a tool_approval reached no call, naming the ids it sent so
+// its sender can tell which of its answers it is.
+func (s *Session) IgnoreApproval(id, commandID, turnID string, reason error) {
+	s.broadcast(ToolApprovalIgnored{ID: id, CommandID: commandID, TurnID: turnID, Reason: reason.Error()})
 }
 
 // WaitsForResult reports whether the call id waits for a watcher's tool_result.
 func (s *Session) WaitsForResult(id string) bool {
 	_, waiting := s.tools.nameOf(id)
 	return waiting
+}
+
+// WaitsOnCommand reports whether the call id waits for its result on a turn of a durable
+// command.
+func (s *Session) WaitsOnCommand(id string) bool {
+	turnID, waiting := s.tools.turnOf(id)
+	if s.persisted == nil || !waiting || turnID == "" {
+		return false
+	}
+	_, bound := s.persisted.CommandForTurn(turnID)
+	return bound
 }
 
 // Ask answers a piece of text in writing, without speaking any of it, and writes the answer
@@ -1339,14 +1358,14 @@ func (s *Session) ResolveCommandTool(id, commandID, turnID string, parts []llm.C
 }
 
 // DecideCommandTool records a person's answer to a call of a durable command that waited
-// for their approval, reporting whether the call's command and turn match. The call still
-// needs its result.
+// for their approval, reporting whether the call's command and turn match and the call still
+// waits on that turn. The call still needs its result.
 func (s *Session) DecideCommandTool(id, commandID, turnID string, allowed bool, summary string) bool {
 	if s.persisted == nil || id == "" || commandID == "" || turnID == "" {
 		return false
 	}
 	expected, bound := s.persisted.CommandForTurn(turnID)
-	if !bound || expected != commandID {
+	if !bound || expected != commandID || !s.tools.waitsOn(id, turnID) {
 		return false
 	}
 	s.persisted.Observe(agent.ToolApprovalDecided{ID: id, TurnID: turnID, Allowed: allowed, Summary: summary})

@@ -53,7 +53,7 @@ func documentHandWritten(api huma.API) {
 			"`decision`, `delegated`, `task_settled` (files " +
 			"lists what the work's code handed back, each a name, mime_type, url and size, uploaded " +
 			"to a persistent conversation's channel and attached to the reply), " +
-			"`task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
+			"`task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
 			"`backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and " +
 			"message_end, the utterance being heard when it was cut, how many milliseconds of it had been, " +
 			"and where all it had been sent is in the reply's message, when any of it had), " +
@@ -186,11 +186,14 @@ func documentHandWritten(api huma.API) {
 			"with its `tool_call_id`, the `request_id` of the command it answers and `allowed`, from " +
 			"that user or their backend, `turn_id` left out or not. Declined, or not answered in 10 " +
 			"minutes, it is not sent and the model is told so. It needs no `tool_result`. " +
-			"A `tool_approval` without `allowed`, or one no call waits for (answered already, " +
-			"stopped, or naming another `request_id` or `turn_id`), is answered with an `error` " +
-			"frame with `context` `tool` and its `tool_call_id`, and the socket stays open. A call " +
-			"outside a durable command waits for its `tool_result`, so an approval sent before it " +
-			"without a `request_id` gets no answer.\n" +
+			"A `tool_approval` no call waits for (answered already, stopped, or naming another " +
+			"`request_id` or `turn_id`) is answered with `tool_approval_ignored`: the " +
+			"`tool_call_id`, `request_id` and `turn_id` it was sent with, each left out when it was, " +
+			"and `reason`, a sentence saying why; the socket stays open. Every watcher is sent it. " +
+			"The call of a durable command answered with its `request_id` and no `turn_id` is " +
+			"answered so too, its `reason` naming the missing `turn_id`. A call outside a durable " +
+			"command waits for its `tool_result`, so an approval sent before it without a " +
+			"`request_id` gets no answer.\n" +
 			"`tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. " +
 			"An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally " +
 			"with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.\n" +

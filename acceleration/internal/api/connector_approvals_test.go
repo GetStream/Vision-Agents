@@ -138,20 +138,7 @@ func (s *SessionConnectorsSuite) TestACallNeedingApprovalRunsOnceTheUserAllowsIt
 // its step and leave the call refused as stopped.
 func (s *SessionConnectorsSuite) TestAnAnswerWithTheTurnsIDRunsTheCall() {
 	held := s.heldCall(s.client)
-	turnID := ""
-	var step map[string]any
-	s.Require().NoError(held.events.SetReadDeadline(time.Now().Add(settleFor)))
-	for step == nil {
-		var frame map[string]any
-		s.Require().NoError(held.events.ReadJSON(&frame))
-		if frame["type"] == "tool_started" && frame["tool"] == connectorEcho {
-			turnID, _ = frame["turn_id"].(string)
-		}
-		if found := echoStepIn(frame); frame["type"] == "conversation_updated" && found != nil && found["status"] == "awaiting_approval" {
-			step = found
-		}
-	}
-	s.Require().NotEmpty(turnID)
+	step, turnID := s.awaitingApprovalWithTurnOn(held.events)
 
 	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
 		"request_id": held.request, "turn_id": turnID, "allowed": true}))
@@ -213,9 +200,25 @@ func (s *SessionConnectorsSuite) TestASecondAnswerToAHeldCallIsAnswered() {
 
 	s.Require().NoError(held.events.WriteJSON(answer))
 
-	refused := s.await(held.events, "error")
-	s.Equal(step["id"], refused["tool_call_id"])
-	s.Equal(errNoApprovalWaits.Error(), refused["error"])
+	s.Equal(frame{"type": "tool_approval_ignored", "tool_call_id": step["id"], "request_id": held.request,
+		"reason": errNoApprovalWaits.Error()}, frame(s.await(held.events, "tool_approval_ignored")))
+}
+
+// The SDKs send the turn's id too: a second answer carrying it reaches nothing either, rather
+// than being taken for a client call's approval on that turn.
+func (s *SessionConnectorsSuite) TestASecondAnswerWithTheTurnsIDIsAnswered() {
+	held := s.heldCall(s.client)
+	step, turnID := s.awaitingApprovalWithTurnOn(held.events)
+	answer := map[string]any{"type": "tool_approval", "tool_call_id": step["id"], "request_id": held.request,
+		"turn_id": turnID, "allowed": true}
+	s.Require().NoError(held.events.WriteJSON(answer))
+	s.await(held.events, "tool_ran")
+
+	answer["allowed"] = false
+	s.Require().NoError(held.events.WriteJSON(answer))
+
+	s.Equal(frame{"type": "tool_approval_ignored", "tool_call_id": step["id"], "request_id": held.request,
+		"turn_id": turnID, "reason": errNoApprovalWaits.Error()}, frame(s.await(held.events, "tool_approval_ignored")))
 }
 
 // An answer naming another command reaches nothing and is answered; the call goes on waiting
@@ -227,7 +230,7 @@ func (s *SessionConnectorsSuite) TestAnAnswerNamingAnotherRequestIsAnsweredAndTh
 	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
 		"request_id": s.utils.uuid(), "allowed": true}))
 
-	refused := s.await(held.events, "error")
+	refused := s.await(held.events, "tool_approval_ignored")
 	s.Equal(step["id"], refused["tool_call_id"])
 	s.Equal(held.before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider")
 	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
@@ -330,6 +333,23 @@ func (s *SessionConnectorsSuite) awaitingApprovalOn(events *websocket.Conn) map[
 			}
 		case "tool_ran":
 			s.Require().NotEqual(connectorEcho, frame["tool"], "the call waits for the person")
+		}
+	}
+}
+
+// awaitingApprovalWithTurnOn is awaitingApprovalOn with the turn_id of the call's tool_started.
+func (s *SessionConnectorsSuite) awaitingApprovalWithTurnOn(events *websocket.Conn) (map[string]any, string) {
+	turnID := ""
+	s.Require().NoError(events.SetReadDeadline(time.Now().Add(settleFor)))
+	for {
+		var frame map[string]any
+		s.Require().NoError(events.ReadJSON(&frame))
+		if frame["type"] == "tool_started" && frame["tool"] == connectorEcho {
+			turnID, _ = frame["turn_id"].(string)
+		}
+		if found := echoStepIn(frame); frame["type"] == "conversation_updated" && found != nil && found["status"] == "awaiting_approval" {
+			s.Require().NotEmpty(turnID)
+			return found, turnID
 		}
 	}
 }

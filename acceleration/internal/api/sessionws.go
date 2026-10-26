@@ -331,6 +331,11 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 var errNoApprovalWaits = errors.New("tool_approval reached no call waiting for it: the call was already " +
 	"answered or stopped, or its tool_call_id, request_id or turn_id names none")
 
+// errApprovalNeedsTurn answers a tool_approval with a request_id and no turn_id for a call of a
+// durable command, whose answer must repeat both.
+var errApprovalNeedsTurn = errors.New("tool_approval reached no call: the call of a durable command " +
+	"needs the turn_id of its tool_call with the request_id")
+
 // errUnreadableFrame ends a socket on a frame that is not JSON of the shape it reads.
 var errUnreadableFrame = invalidRequest("a frame on this socket is not JSON it can read")
 
@@ -404,7 +409,7 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 
 	case "tool_approval":
 		if command.Allowed == nil {
-			found.ReportTool(command.ToolCallID, fmt.Errorf("tool_approval needs allowed"))
+			found.Report(fmt.Errorf("tool_approval needs allowed"), "tool")
 			return true
 		}
 		// A connector call the router holds for the person's approval is sent only once they
@@ -425,7 +430,11 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 			return true
 		}
 		// The sender cannot tell otherwise that the person's answer reached nothing.
-		found.ReportTool(command.ToolCallID, errNoApprovalWaits)
+		if command.TurnID == "" && found.WaitsOnCommand(command.ToolCallID) {
+			found.IgnoreApproval(command.ToolCallID, command.CommandID, command.TurnID, errApprovalNeedsTurn)
+			return true
+		}
+		found.IgnoreApproval(command.ToolCallID, command.CommandID, command.TurnID, errNoApprovalWaits)
 
 	case "say":
 		if err := found.Say(context.Background(), command.Text); err != nil {
@@ -536,6 +545,15 @@ func frameOf(event session.Event) (frame, bool) {
 
 	case session.ToolHeld:
 		return frame{"type": "tool_held", "id": typed.ID}, true
+
+	case session.ToolApprovalIgnored:
+		ignored := frame{"type": "tool_approval_ignored", "reason": typed.Reason}
+		for key, id := range map[string]string{"tool_call_id": typed.ID, "request_id": typed.CommandID, "turn_id": typed.TurnID} {
+			if id != "" {
+				ignored[key] = id
+			}
+		}
+		return ignored, true
 
 	case agent.ToolUpdated:
 		return frame{
@@ -811,11 +829,7 @@ func frameOf(event session.Event) (frame, bool) {
 		}, true
 
 	case agent.Error:
-		failed := frame{"type": "error", "context": typed.Context, "error": errorText(typed.Err)}
-		if typed.ToolCallID != "" {
-			failed["tool_call_id"] = typed.ToolCallID
-		}
-		return failed, true
+		return frame{"type": "error", "context": typed.Context, "error": errorText(typed.Err)}, true
 
 	case agent.Left:
 		return frame{"type": "left", "at": typed.At}, true

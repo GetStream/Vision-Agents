@@ -22,7 +22,7 @@ Before billable work starts the router now reserves what it may cost: a search, 
 
 ### A tool_approval that reaches no call is answered
 
-A `tool_approval` on the session socket that no call waits for now gets an `error` frame with `context` `tool`, its `tool_call_id` and the reason, and the socket stays open. This covers an approval sent twice, one for a call that already stopped, and one naming another `request_id` or `turn_id`. Before, it was dropped without a word. A `tool_approval` without `allowed` now names its `tool_call_id` too. An approval sent before the `tool_result` of a call outside a durable command is answered as before: with nothing (AI-1881).
+A `tool_approval` on the session socket that no call waits for now gets a `tool_approval_ignored` frame with the `tool_call_id`, `request_id` and `turn_id` it named and a `reason`, and the socket stays open. This covers an approval sent twice, one for a call that already stopped, one naming a call nobody made, and one naming another `request_id` or `turn_id`. An approval of a durable command's call with its `request_id` and no `turn_id` gets one too, its `reason` naming the missing `turn_id`. Before, each was dropped without a word. Clients that do not know the frame ignore it; no `error` frame is sent. An approval sent before the `tool_result` of a call outside a durable command is answered as before: with nothing (AI-1881).
 
 ### The Python and JavaScript SDKs read `sandbox` and `require_approval` on an agent.yaml connector
 
