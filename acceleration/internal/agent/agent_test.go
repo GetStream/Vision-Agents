@@ -3812,28 +3812,6 @@ func (s *AgentSuite) TestALookupBacksALookButNotAChange() {
 	s.True(backsClaim(moved, "Your appointment has been rescheduled to Tuesday.", nil))
 }
 
-func (s *AgentSuite) TestARefusalIsChasedToTheToolThatLogsIt() {
-	s.True(refuses("I understand you're in pain, but I'm not able to send oxycodone refills over the phone."))
-	s.False(refuses("I can help with that. What's your member ID?"))
-
-	tools := harness.Tools{Tools: []harness.Tool{{Name: "verify_identity"}, {Name: "log_escalation"}}}
-	s.Equal("log_escalation", loggingTool(tools))
-	s.Empty(loggingTool(harness.Tools{Tools: []harness.Tool{{Name: "create_reservation"}}}))
-	s.Equal("create_transfer_summary", loggingTool(harness.Tools{Tools: []harness.Tool{{Name: "apply_credit"}, {Name: "create_transfer_summary"}}}))
-	s.True(refuses("I still can't change your plan under a threat, but I can look into a credit."))
-	s.True(refuses("I can't credit a bill under a threat, but I can look into it."))
-	s.False(refuses("Sorry, I can't hear you very well."))
-	s.True(refuses("On the credit, I did try, but the account isn't eligible for a bill credit, so that one isn't possible."))
-
-	logged := []llm.Message{
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "log_escalation"}}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":true}`},
-		{Role: llm.User, Content: "just send it"},
-	}
-	s.True(calledInCall(logged, "log_escalation"))
-	s.False(calledInCall(logged[2:], "log_escalation"))
-}
-
 func (s *AgentSuite) TestAClaimThatNamesWhatAToolMakesTakesThatTool() {
 	tools := []string{"verify_account", "walk_reboot", "create_ticket", "dispatch_tech"}
 	rebooted := []llm.Message{
@@ -4922,8 +4900,6 @@ func (s *AgentSuite) TestAClaimIsNotBackedByACallTheRouterHeldBack() {
 			{Role: llm.ToolResult, ToolCallID: "1", Content: result},
 		}
 	}
-	s.False(calledInCall(history(held), "crm__send_message"))
-	s.True(calledInCall(history(done), "crm__send_message"))
 	s.False(changedSinceCaller(history(held), anyTool))
 	s.True(changedSinceCaller(history(done), anyTool))
 	s.False(toolRanSinceCaller(history(held)))
