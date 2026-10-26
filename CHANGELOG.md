@@ -32,6 +32,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 Delegated work (a skill, a picture to look at, a summary of a long conversation) started by a turn a scheduled task fired was counted on the end user's daily quota, though the turn itself was not. It is now counted as the turn is: a scheduled turn's work on nobody's day, and in a session a backend opened for a user, the work of a turn the user typed on that user's day (AI-1560).
 
+### A draining router no longer waits out a scheduled task's retry
+
+A scheduled delivery that failed and was waiting to try again held the router's drain for up to 12.5 minutes, as long as the waits last. Once the router drains, the wait ends and the run is left to its lease: another router takes it up under the same run (AI-1561).
+
 ### A tool_approval that reaches no call is answered
 
 A `tool_approval` on the session socket that no call waits for now gets a `tool_approval_ignored` frame with the `tool_call_id`, `request_id` and `turn_id` it named and a `reason`, and the socket stays open. This covers an approval sent twice, one for a call that already stopped, one naming a call nobody made, and one naming another `request_id` or `turn_id`. An approval of a durable command's call with its `request_id` and no `turn_id` gets one too, its `reason` naming the missing `turn_id`. Before, each was dropped without a word. Clients that do not know the frame ignore it; no `error` frame is sent. An approval sent before the `tool_result` of a call outside a durable command is answered as before: with nothing (AI-1881).
