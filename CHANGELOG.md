@@ -40,6 +40,14 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ## Bug Fixes
 
+### An error in an agent.yaml connector entry names its line in the file
+
+In the Go SDK, a connector entry with a key nobody knows, or a value of the wrong type, named a line counted from the start of the entry. It now names its line in `agent.yaml`, and a key nobody knows is refused with the keys a connector takes (AI-1767).
+
+### The check before a sandbox run no longer shortens the code's run
+
+Under the egress proxy broker with an `https://` proxy, the check of the TLS tunnel before each `run_code` used up part of the code's run timeout, so code that ended within its timeout could be cut short. The check is now bounded on its own, by the sandbox's timeout for any call to Daytona, and the code has its whole run timeout (AI-1777).
+
 ### Code run again after the user connects a connector runs, instead of returning the old 401
 
 When sandbox code got a 401 because the user had not connected a connector, its result tells the model to run the code again once they connect. The agent's repeat-call guard answered that identical second `run_code` from the first result, so the turn ended on the old 401 although the connection was live. A `run_code` result that says a connector was just connected, or that it is not connected and the user has connected it since, no longer answers a repeat; while the user has not connected it, the repeat is still answered from that result. Every other repeated call is still answered from its earlier result (AI-1987).
