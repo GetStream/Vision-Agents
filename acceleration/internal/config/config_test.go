@@ -603,6 +603,18 @@ func (s *ConfigSuite) TestTheUsageServiceIsReadAndExported() {
 	s.Equal("http://usage:8070", os.Getenv("ROUTER_USAGE_URL"), "what a file sets reaches the environment")
 }
 
+func (s *ConfigSuite) TestTheUsageManageKeyIsReadAndExported() {
+	s.T().Setenv("ROUTER_USAGE_URL", "http://usage:8070")
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "token")
+	s.T().Setenv("ROUTER_USAGE_MANAGE_KEY", "the-manage-key")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal("the-manage-key", config.Usage.ManageKey)
+	s.Equal("the-manage-key", os.Getenv("ROUTER_USAGE_MANAGE_KEY"))
+}
+
 func (s *ConfigSuite) TestNoUsageServiceIsTheDefault() {
 	config, _, err := Load("")
 

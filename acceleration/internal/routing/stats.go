@@ -346,15 +346,22 @@ func (r *Recorder) moneyGate() Gate {
 // holds nothing, and one whose writer records nothing (so no row would settle it) reserve
 // nothing.
 func (r *Recorder) Reserve(config ProviderConfig, owner Owner, usageID uuid.UUID, estimate pricing.Quantities, ttl time.Duration) error {
-	if r == nil || usageID == uuid.Nil || !r.writer.records() || !r.Billable(config) {
+	var entry Stat
+	entry.Use(estimate)
+	return r.ReserveStat(config, owner, usageID, entry, ttl)
+}
+
+// ReserveStat is Reserve for work whose price depends on the attributes its row will carry,
+// such as a sandbox's class: the stat's quantities and attributes are priced as Record prices
+// its row.
+func (r *Recorder) ReserveStat(config ProviderConfig, owner Owner, usageID uuid.UUID, entry Stat, ttl time.Duration) error {
+	if r == nil || usageID == uuid.Nil || !r.writer.records() || !r.billableFor(config, entry.Attributes) {
 		return nil
 	}
 	reserver, ok := r.moneyGate().(Reserver)
 	if !ok {
 		return nil
 	}
-	var entry Stat
-	entry.Use(estimate)
 	micros := r.QuoteStat(config, entry).CostMicros
 	if micros <= 0 {
 		return nil
@@ -375,10 +382,15 @@ func (r *Recorder) Release(usageID uuid.UUID) {
 // Billable reports whether work on the provider counts toward spend, as its rows are priced: a
 // customer's own model never does, and one the price list has no entry for does.
 func (r *Recorder) Billable(config ProviderConfig) bool {
+	return r.billableFor(config, nil)
+}
+
+// billableFor is Billable for work whose row carries attributes.
+func (r *Recorder) billableFor(config ProviderConfig, attributes map[string]string) bool {
 	if config.Provider == CustomProvider {
 		return false
 	}
-	return r.pricer.Billable(ItemOf(r.modality, config, nil))
+	return r.pricer.Billable(ItemOf(r.modality, config, attributes))
 }
 
 // lose prices the stat as Record would and loses its row at once, logged in full and counted

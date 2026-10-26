@@ -6,6 +6,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"time"
 )
 
 // Meter is a unit work is measured and priced in.
@@ -198,6 +199,9 @@ type Entry struct {
 	// Version names the change to the price list that wrote the entry. Empty takes the
 	// list's own version.
 	Version string `json:"version,omitempty"`
+	// EffectiveAt is when the change that wrote the entry took effect, as the source read it;
+	// zero for an entry no change wrote.
+	EffectiveAt time.Time `json:"-" yaml:"-"`
 }
 
 // QuotedVersion is the version of a quote for an amount the vendor quoted outright, such as

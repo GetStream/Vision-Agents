@@ -151,9 +151,14 @@ func decodeCursor(cursor string, position any) error {
 // checkOrganization refuses an organization id no event could carry. Postgres would store a
 // NUL stripped and invalid UTF-8 replaced, so the call would reach another organization.
 func checkOrganization(id string) error {
+	return checkID("organization_id", id)
+}
+
+// checkID refuses an id of field no event could carry, as checkOrganization does.
+func checkID(field, id string) error {
 	if id == "" || len(id) > usage.MaxIDLength || strings.ContainsAny(id, "|{}") ||
 		!utf8.ValidString(id) || strings.ContainsFunc(id, unicode.IsControl) {
-		return invalidRequest(fmt.Sprintf("organization_id is 1 to %d bytes of UTF-8, without | { } or a control character", usage.MaxIDLength))
+		return invalidRequest(fmt.Sprintf("%s is 1 to %d bytes of UTF-8, without | { } or a control character", field, usage.MaxIDLength))
 	}
 	return nil
 }
@@ -278,6 +283,41 @@ func (s *Server) registerManage(api huma.API) {
 	}, "The organization's events, newest first, each with its tier, app, key, user and categories. `team` is the "+
 		"category `team:<name>`, so it cannot be given with `category`; `user_id` needs `app_id`, since a user id is "+
 		"only unique within its app."), s.listUsage)
+	huma.Register(api, register(huma.Operation{
+		OperationID: "forgetUser", Method: http.MethodPost, Path: usage.PathForgetUser,
+		Summary: "Forget an end user's id",
+	}, "Replaces the app's end user id with `replacement` in every event and in the user's own windows, in one "+
+		"transaction, and answers how many of each it rewrote. Usage and cost stay where they were: a window the "+
+		"replacement already has takes the forgotten one's spend. Each organization rewritten gets one audit row, "+
+		"naming the replacement and never the id. With `dry_run` it answers the counts and changes nothing. Making it "+
+		"again rewrites what still names the id, such as a batch that landed since, so it takes no Idempotency-Key. "+
+		"Called inside the cluster by the router's `router usage forget-user`, which rewrites the router's records."), s.forgetUser)
+}
+
+type forgetUserInput struct {
+	Body usage.ForgetUser
+}
+
+type forgetUserOutput struct {
+	Body usage.ForgottenUser
+}
+
+func (s *Server) forgetUser(ctx context.Context, input *forgetUserInput) (*forgetUserOutput, error) {
+	forget := input.Body
+	if err := checkID("app_id", forget.AppID); err != nil {
+		return nil, err
+	}
+	if err := checkID("user_id", forget.UserID); err != nil {
+		return nil, err
+	}
+	if !usage.IsReplacement(forget.Replacement) || forget.Replacement == forget.UserID {
+		return nil, invalidRequest("replacement is " + usage.ForgottenPrefix + " and 32 lowercase hex characters, and not the id forgotten")
+	}
+	forgotten, err := s.ledger.ForgetUser(ctx, forget, actorFrom(ctx))
+	if err != nil {
+		return nil, s.failed(err, "forget user")
+	}
+	return &forgetUserOutput{Body: forgotten}, nil
 }
 
 // keyedFailures are the failures of an account write made once per Idempotency-Key.
