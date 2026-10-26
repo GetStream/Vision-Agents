@@ -28,6 +28,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ## Bug Fixes
 
+### A scheduled task whose reply was cut off runs again once
+
+A scheduled task's reply that was cancelled or interrupted, such as by a router restart, made every retry of the occurrence fail with `reply_failed`, and the user got nothing. Its turn now runs again once, under a new command id (`st_<run>_r1`), on the retry or on the next channel. A reply that finished is still read back on a retry, not written again. A reply cut off a second time fails as before. A scheduled message on SMS, WhatsApp or iMessage now carries only the agent's reply, not the raw text of work it delegated, so the first attempt and a retry send the same words (AI-1558, AI-1559).
+
 ### Code run again after the user connects a connector runs, instead of returning the old 401
 
 When sandbox code got a 401 because the user had not connected a connector, its result tells the model to run the code again once they connect. The agent's repeat-call guard answered that identical second `run_code` from the first result, so the turn ended on the old 401 although the connection was live. A `run_code` result that says a connector was just connected, or that it is not connected and the user has connected it since, no longer answers a repeat; while the user has not connected it, the repeat is still answered from that result. Every other repeated call is still answered from its earlier result (AI-1987).

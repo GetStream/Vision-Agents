@@ -47,10 +47,10 @@ func (s *RouterSuite) deliverRun(task store.ScheduledTask, run store.ScheduledTa
 	return deliveredTo, err
 }
 
-// cutOff has the router deliver run while the task's turn is held, has cut end that turn once
-// it started, as the user interrupting it or the router stopping does, and returns what the
-// attempt answered.
-func (s *RouterSuite) cutOff(task store.ScheduledTask, run store.ScheduledTaskRun, cut func()) (string, error) {
+// cutOff has the router on deliver run while the task's turn is held, has cut end that turn
+// once it started, as the user interrupting it or the router stopping does, and returns what
+// the attempt answered.
+func (s *RouterSuite) cutOff(on *Server, task store.ScheduledTask, run store.ScheduledTaskRun, cut func()) (string, error) {
 	release := s.schedulingScript.holdScheduled()
 	defer release()
 	turns := s.scheduledTurns()
@@ -60,7 +60,7 @@ func (s *RouterSuite) cutOff(task store.ScheduledTask, run store.ScheduledTaskRu
 	}
 	answered := make(chan answer, 1)
 	go func() {
-		deliveredTo, err := s.deliverRun(task, run)
+		deliveredTo, _, err := on.DeliverScheduledTask(context.Background(), store.ClaimedScheduledTask{Task: task, Run: run})
 		answered <- answer{deliveredTo, err}
 	}()
 	s.Require().Eventually(func() bool { return s.scheduledTurns() > turns },
@@ -339,7 +339,7 @@ func (s *TelnyxChannelSuite) TestATaskWhoseTurnWasCancelledRunsAgainOnTheRetry()
 	sent := len(s.telnyx.sent())
 	run := s.manualRun(task)
 
-	_, err := s.cutOff(task, run, func() {
+	_, err := s.cutOff(s.router, task, run, func() {
 		found, running := s.router.sessions.ByConversationWhere("agent:"+channel, nil)
 		s.Require().True(running)
 		found.Interrupt()

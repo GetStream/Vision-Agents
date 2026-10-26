@@ -36,7 +36,7 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
                  |   | ended: reopen from its row | none yet: open one
                  v
         deliver_to, in order, first that lands:
-          conversation  Session.FollowUp(command id "st_<run id>")
+          conversation  Session.FollowUp(command id "st_<run id>", or "st_<run id>_r1")
           sms | whatsapp | imessage   same turn's words and files -> channels.Service.Notify
           phone         phone.Service.Call -> call session -> task as first turn
 
@@ -45,7 +45,7 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
           channelbridge.Bridge.Reachable: connection, opt-out, sandbox gate, WhatsApp 24 h
           lease the thread's turn (store.TakeChannelThreadTurn)
           the session on the thread channel, else one opened as answerThread opens it
-          Session.FollowUp("st_<run id>"), wait for the reply   -> Bridge.Reply texts it
+          Session.FollowUp("st_<run id>" or "_r1"), wait for the reply   -> Bridge.Reply texts it
           delivered_to sms (telnyx) | whatsapp
 ```
 
@@ -67,7 +67,7 @@ One word, one meaning, in code, docs and API alike.
 | schedule, RRULE subset | `at` or `in`, an optional `repeat` (FREQ DAILY, WEEKLY, MONTHLY, YEARLY; INTERVAL; BYDAY; BYMONTHDAY; COUNT ≤ 1000) and `until`, an inclusive local date. `start_local` is stored as the wall clock with no zone | `Input`, `Schedule`, `Parse`, `FromStored`, `parseRepeat` (`scheduling.go:436`) | `at: "09:00"`, `repeat: "FREQ=MONTHLY;BYDAY=-1FR"`: last Friday of every month |
 | zone resolution | Which IANA zone a new task takes, first match wins: the call's argument, the session's, `users.timezone`, the config's `default_timezone`; none is `timezone_unknown`. `Local` is refused | `ResolveZone` (`scheduling.go:153`), `LoadZone` | Session opened with `timezone: "America/New_York"`, no argument: the task is in New York time |
 | due | When an occurrence came due, or when the hold on it ended; the worker's missed check and the call grace count lateness from it. The prompt's `late=` counts from the run's `scheduled_for` instead (`scheduled_delivery.go:470`, AI-1597) | `scheduledDelivery.Due`, `Scheduler.missed` | Held until 07:00: a 07:05 delivery is 5 min late to the worker, not 7 h 35 min |
-| command id | The id the follow-up turn is sent under, so a conversation runs it once | `"st_" + run.ID` (`scheduled_delivery.go:161`); a call's turn adds `_call` | `st_01JB...` |
+| command id | The id the follow-up turn is sent under, so a conversation runs it once | `"st_" + run.ID` (`DeliverScheduledTask`); a call's turn adds `_call`; a turn run again adds `_r1` (`replyCommand`) | `st_01JB...`, `st_01JB..._r1` |
 
 ## Rules
 
@@ -139,6 +139,22 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered`,
   `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`.
+- **A reply that was cancelled or interrupted runs again once; a finished one is read back
+  (AI-1558).** `replyCommand` reads the follow-up's state in the conversation (rebuilt from
+  Stream after a restart), not the run's `attempts`, which also count attempts that never
+  reached the turn. `st_<run>` cancelled or interrupted: the turn runs under `st_<run>_r1`, on
+  the retry or on the next channel; `_r1` cut off as well is read back as `reply_failed`. A
+  failed reply is not run again. A call's turn keeps `st_<run>_call`. A channel carries the
+  agent's reply only, never settled work's own words (`spokenOf`, AI-1559), so the first
+  attempt and a read-back send the same words.
+  `TestScheduledTasksSuite/TestATurnCancelledBeforeItsReplyRunsAgainOnTheRetry`,
+  `TestScheduledTasksSuite/TestATurnInterruptedByItsRouterStoppingRunsAgainOnTheRetry`,
+  `TestScheduledTasksSuite/TestATurnCancelledTwiceIsNotRunAThirdTime`,
+  `TestScheduledTasksSuite/TestTheConversationAfterACutOffTextChannelRunsTheTurnAgain`,
+  `TestScheduledTasksSuite/TestAReplyThatFailedIsNotWaitedOnWhenTheOccurrenceIsRetried`,
+  `TestScheduledTasksSuite/TestARetriedOccurrenceTextsTheReplyItAlreadyHas`,
+  `TestTelnyxChannelSuite/TestATaskWhoseTurnWasCancelledRunsAgainOnTheRetry`,
+  `TestSettledWorksOwnWordsAreNotCarriedButTheAgentsReplyIs` (unit).
 - **A repeat `Describe` would misstate is refused (S18)**; a stored one still runs.
   `TestARepeatItsDescriptionWouldMisstateIsRefused` (unit and `ScheduledTasksSuite`),
   `TestAStoredRepeatNowRefusedStillRuns` (unit).

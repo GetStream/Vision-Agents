@@ -28,6 +28,7 @@ import (
 //	lease the thread's turn (store.TakeChannelThreadTurn)       another turn: wait
 //	the session on the channel, else threadSpec on the task's config
 //	Session.FollowUp("st_<run>"), wait for its reply            no_reply, reply_failed
+//	  ("st_<run>_r1" once st_<run> was cancelled or interrupted: replyCommand)
 //	Bridge.Send the reply, held from Bridge.Reply                opted out: channel_unreachable, final
 //	                                                            thread removed meanwhile: thread_gone, final
 //	                                                            refused: delivery_failed
