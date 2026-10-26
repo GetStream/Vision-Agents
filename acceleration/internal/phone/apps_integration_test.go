@@ -1335,6 +1335,27 @@ func (s *AppsSuite) TestATrunkStreamWouldNotDeleteIsKeptForTheReleaseToBeRetried
 	s.Equal([]string{s.e164}, s.vendor.released)
 }
 
+func (s *AppsSuite) TestANumberWhoseTrunkIsAlreadyGoneAtStreamIsReleased() {
+	s.sealed()
+	_, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	held := s.number()
+	stream, err := s.service.streamToRemove(s.ctx, s.customer, held.StreamAppPK)
+	s.Require().NoError(err)
+	_, err = stream.Client().Video().DeleteSIPTrunk(s.ctx, held.StreamTrunkID, nil)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.Equal([]string{s.e164}, s.vendor.released)
+	group := store.TrunkGroup{CustomerID: s.customer, StreamAppPK: held.StreamAppPK, Vendor: held.Vendor}
+	s.Require().NoError(s.store.InTrunkGroup(s.ctx, group, func(_ context.Context, tx *store.TrunkGroupTx) error {
+		trunks, err := tx.Trunks()
+		s.Empty(trunks)
+		return err
+	}))
+}
+
 func (s *AppsSuite) TestAFreedPlaceOnAFullTrunkIsTakenBeforeASiblingIsOpened() {
 	s.sealed()
 	first, err := s.lineFor(s.customer, s.e164)

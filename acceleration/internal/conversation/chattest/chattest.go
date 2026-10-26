@@ -604,6 +604,13 @@ func (db *store) upload(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"file": "https://cdn.fake/" + stored.Endpoint + "/" + stored.Name})
 }
 
+// gone answers a delete of something the app does not hold with a 404. The body's code is
+// unverified; the status is what the router reads.
+func gone(w http.ResponseWriter, what string) {
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": what + " not found", "StatusCode": http.StatusNotFound})
+}
+
 func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	db.wait(r.URL.Path)
 	db.mu.Lock()
@@ -766,8 +773,16 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		db.rules[id] = body
 		result["id"] = id
 	case strings.Contains(r.URL.Path, "/sip/inbound_trunks/") && r.Method == http.MethodDelete:
+		if _, ok := db.trunks[parts[len(parts)-1]]; !ok {
+			gone(w, "sip trunk")
+			return
+		}
 		delete(db.trunks, parts[len(parts)-1])
 	case strings.Contains(r.URL.Path, "/sip/inbound_routing_rules/") && r.Method == http.MethodDelete:
+		if _, ok := db.rules[parts[len(parts)-1]]; !ok {
+			gone(w, "sip inbound routing rule")
+			return
+		}
 		delete(db.rules, parts[len(parts)-1])
 	case strings.HasSuffix(r.URL.Path, "/users") && r.Method == http.MethodGet:
 		var payload struct {

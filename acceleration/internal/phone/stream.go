@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -257,7 +258,7 @@ func (s *Stream) DeleteTrunk(ctx context.Context, id string) error {
 	if id == "" {
 		return nil
 	}
-	if _, err := s.client.Video().DeleteSIPTrunk(ctx, id, nil); err != nil {
+	if _, err := s.client.Video().DeleteSIPTrunk(ctx, id, nil); err != nil && !notFound(err) {
 		return stack.Wrap(fmt.Errorf("phone: delete sip trunk: %w", err))
 	}
 	return nil
@@ -269,10 +270,17 @@ func (s *Stream) DeleteRoute(ctx context.Context, id string) error {
 	if id == "" {
 		return nil
 	}
-	if _, err := s.client.Video().DeleteSIPInboundRoutingRule(ctx, id, nil); err != nil {
+	if _, err := s.client.Video().DeleteSIPInboundRoutingRule(ctx, id, nil); err != nil && !notFound(err) {
 		return stack.Wrap(fmt.Errorf("phone: delete sip routing rule: %w", err))
 	}
 	return nil
+}
+
+// notFound is Stream saying what was to be deleted is not there, which is what deleting it
+// wanted: removed by hand at Stream, or by an earlier attempt that failed after Stream took it.
+func notFound(err error) bool {
+	var refused *getstream.StreamError
+	return errors.As(err, &refused) && refused.StatusCode == http.StatusNotFound
 }
 
 // Client exposes the Stream client, so a caller can reach the parts of the SIP API this
