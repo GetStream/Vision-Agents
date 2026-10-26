@@ -457,6 +457,43 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 	return s.unline(ctx, held, "released a number", true)
 }
 
+// Detach stops a number's callers reaching the agent. The number keeps its trunk and rule,
+// so its calls still go out on them and attaching it again picks them up.
+func (s *Service) Detach(ctx context.Context, customerID, e164 string) error {
+	if s.store == nil {
+		return stack.Wrap(errors.New("phone: detaching a number needs a database to know who holds it"))
+	}
+	held, err := s.store.Number(ctx, customerID, e164)
+	if err != nil {
+		return err
+	}
+	// The vendor first: one that refuses still sends callers, so the number stays attached
+	// for them and the detach can be tried again. A number on the customer's own trunk was
+	// never pointed anywhere by a vendor here.
+	if held.Vendor != SIPTrunkVendor {
+		provider, err := s.registry.Open(held.Vendor)
+		if err != nil {
+			return err
+		}
+		if stopper, ok := provider.(InboundStopper); ok {
+			if err := stopper.StopInbound(ctx, e164); err != nil {
+				return err
+			}
+		}
+	}
+	group := store.TrunkGroup{CustomerID: customerID, StreamAppPK: held.StreamAppPK, Vendor: held.Vendor}
+	return s.inTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
+		number, err := tx.Number(e164)
+		if err != nil {
+			return err
+		}
+		if number.AttachedAt == nil {
+			return nil
+		}
+		return tx.Detach(e164)
+	})
+}
+
 // unline takes a number off its trunk and deletes its rule, in the app they are in, and
 // forgets them on the number. With release it also gives the number back under the same
 // lock, so a line made for it meanwhile cannot put it back on a trunk. A Stream failure is
@@ -646,6 +683,11 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		}
 		// Attached before its trunk's password was kept, so its trunk cannot be shared: it is
 		// replaced by one of its own, which keeps it.
+		if err := s.unline(ctx, held, "re-attached a number", false); err != nil {
+			return Attached{}, err
+		}
+	} else if held.StreamTrunkID != "" {
+		// Detached, it is still on its trunk, and Stream refuses a second trunk naming it.
 		if err := s.unline(ctx, held, "re-attached a number", false); err != nil {
 			return Attached{}, err
 		}
