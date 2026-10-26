@@ -88,7 +88,7 @@ func (s *ServerSuite) TestTheCustomerViewOfCreditsLeavesOutWhatStaffWrote() {
 	s.ok(http.StatusCreated, nil, http.MethodPost, path,
 		server.CreditRequest{Kind: usage.CreditGrant, AmountMicros: 10_000_000, Reference: "contract 7", Note: "a goodwill grant"}, key()...)
 	s.ok(http.StatusCreated, nil, http.MethodPost, path,
-		server.CreditRequest{Kind: usage.CreditRefund, AmountMicros: -1_000_000, Reference: "Zendesk #88412"}, key()...)
+		server.CreditRequest{Kind: usage.CreditRefund, AmountMicros: -1_000_000, Reference: "support ticket 4417"}, key()...)
 	s.ok(http.StatusCreated, nil, http.MethodPost, path,
 		server.CreditRequest{Kind: usage.CreditTopUp, AmountMicros: 50_000_000, Reference: "pi_3Nabc"},
 		append(key(), "X-Stream-Actor-Id", usage.StripeActor)...)
@@ -101,7 +101,7 @@ func (s *ServerSuite) TestTheCustomerViewOfCreditsLeavesOutWhatStaffWrote() {
 	s.Equal("pi_3Nabc", page.Items[0].Reference)
 	s.Empty(page.Items[1].Reference, "a staff refund's reference is the operator's")
 	s.Empty(page.Items[2].Reference)
-	for _, hidden := range []string{"Zendesk", "contract 7", "goodwill", "staff-1", "Ada", "actor", "note", "idempotency_key"} {
+	for _, hidden := range []string{"ticket 4417", "contract 7", "goodwill", "staff-1", "Ada", "actor", "note", "idempotency_key"} {
 		s.NotContains(string(answer), hidden)
 	}
 }

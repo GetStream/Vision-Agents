@@ -189,7 +189,7 @@ func (s *AccountSuite) TestTheAccountShowsTheSpendHardLimit() {
 
 func (s *AccountSuite) TestCreditsLeaveOutStaffNotes() {
 	s.credit("staff:ada", map[string]any{"kind": "grant", "amount_micros": 10_000_000, "reference": "contract 7", "note": "a goodwill grant"})
-	s.credit("staff:ada", map[string]any{"kind": "refund", "amount_micros": -1_000_000, "reference": "Zendesk #88412"})
+	s.credit("staff:ada", map[string]any{"kind": "refund", "amount_micros": -1_000_000, "reference": "support ticket 4417"})
 	s.credit(usage.StripeActor, map[string]any{"kind": "top_up", "amount_micros": 50_000_000, "reference": "pi_3Nabc"})
 
 	status, payload := s.serverClient.call(http.MethodGet, "/v1/account/credits", nil)
@@ -203,7 +203,7 @@ func (s *AccountSuite) TestCreditsLeaveOutStaffNotes() {
 	s.Equal(int64(-1_000_000), page.Items[1].AmountMicros)
 	s.Empty(page.Items[1].Reference, "a staff refund's reference is the operator's")
 	s.Empty(page.Items[2].Reference)
-	for _, hidden := range []string{"Zendesk", "contract 7", "goodwill", "staff:ada", "Ada Lovelace"} {
+	for _, hidden := range []string{"ticket 4417", "contract 7", "goodwill", "staff:ada", "Ada Lovelace"} {
 		s.NotContains(string(payload), hidden)
 	}
 }
