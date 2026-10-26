@@ -37,3 +37,8 @@ func TestTheFilesCodeHandedBackAreThoseOfARunAndOfSettledWork(t *testing.T) {
 	require.Equal(t, []sandbox.Attachment{chart}, madeBy(agent.TaskSettled{Files: []sandbox.Attachment{chart}}))
 	require.Nil(t, madeBy(agent.Responded{Text: "Here is the chart."}))
 }
+
+func TestSettledWorksOwnWordsAreNotCarriedButTheAgentsReplyIs(t *testing.T) {
+	require.Empty(t, spokenOf(agent.TaskSettled{Text: "steps: 9,214"}))
+	require.Equal(t, "You walked 9,214 steps today.", spokenOf(agent.Responded{Text: "You walked 9,214 steps today."}))
+}

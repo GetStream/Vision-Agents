@@ -311,6 +311,7 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 		if err := waitOutCall(ctx, found, scheduledWindow); err != nil {
 			return "", "", err
 		}
+		delivery.CommandID = replyCommand(found, delivery.CommandID)
 		if err := followUpWithin(ctx, found, delivery); err != nil {
 			return "", "", err
 		}
@@ -378,6 +379,7 @@ func waitOutCall(ctx context.Context, found *session.Session, window time.Durati
 // of the turn. A follow-up the conversation already holds is not run again:
 // its words and files are read back.
 func (s *Server) captureReply(ctx context.Context, found *session.Session, delivery scheduledDelivery) (string, []sandbox.Attachment, error) {
+	delivery.CommandID = replyCommand(found, delivery.CommandID)
 	if _, _, known := found.FollowUpReply(delivery.CommandID); known {
 		reply, err := readBackReply(ctx, found, delivery.CommandID)
 		return reply.Text, reply.Files, err
@@ -422,6 +424,24 @@ func (s *Server) captureReply(ctx context.Context, found *session.Session, deliv
 	}
 }
 
+// rerunSuffix ends the command id an occurrence's turn runs again under when the reply under
+// the run's own was cancelled or interrupted: the user got nothing, and the run's own id would
+// only read that reply back on every retry. It is one suffix, so the turn runs again once.
+const rerunSuffix = "_r1"
+
+// replyCommand is the command id an occurrence's reply is under in found: the run's own, or
+// the rerun's once the reply under the run's own was cancelled or interrupted. The
+// conversation says which, not the run's attempts: it keeps each follow-up's state across a
+// restart and a worker taking over (commandsIn), and an attempt that never reached the turn,
+// such as one on a call, counts as an attempt too.
+func replyCommand(found *session.Session, id string) string {
+	switch state, _, _ := found.FollowUpReply(id); state {
+	case "cancelled", "interrupted":
+		return id + rerunSuffix
+	}
+	return id
+}
+
 // readBackReply is the reply a follow-up already has, with its files, once it
 // has finished: the turn ran for a channel tried before this one, or for an
 // earlier attempt at the occurrence.
@@ -458,13 +478,12 @@ func captured(said []string, files []sandbox.Attachment) (string, []sandbox.Atta
 	return text, files, nil
 }
 
-// spokenOf is what an event is worth carrying out, if anything: the
-// channels' reading of a turn, a finished reply or settled work.
+// spokenOf is what an event is worth carrying out, if anything: the agent's
+// finished reply. Settled work's own words are not: the agent's next turn
+// tells them, and the conversation keeps only the reply, which a retry reads
+// back.
 func spokenOf(event session.Event) string {
-	switch happened := event.(type) {
-	case agent.Responded:
-		return happened.Text
-	case agent.TaskSettled:
+	if happened, ok := event.(agent.Responded); ok {
 		return happened.Text
 	}
 	return ""
