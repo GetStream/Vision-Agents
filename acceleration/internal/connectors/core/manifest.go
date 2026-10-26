@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/netip"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -106,6 +107,26 @@ type Manifest struct {
 	// again on the latest revision. Last, and left out of the JSON when empty, so the JSON of
 	// every manifest that declares none stays as it was stored.
 	BrokenRevisions []BrokenRevisions `yaml:"broken_revisions,omitempty" json:"broken_revisions,omitempty"`
+}
+
+// ReadsAsConnection reports whether a connection pinned to m reads what one pinned to other
+// does: whether the two differ only in fields no connection reads from its pinned revision.
+// Those are the revision's own number; broken_revisions, which the seeder alone reads; and
+// sensitive and each source's outbound and read_only_tools, which only the sensitive-connector
+// check reads, from the connector's latest revision whatever a connection pins
+// (SensitiveBindingsComplaint, internal/api/configs.go). Any other field counts.
+func (m Manifest) ReadsAsConnection(other Manifest) bool {
+	return reflect.DeepEqual(m.connectionReads(), other.connectionReads())
+}
+
+// connectionReads is m without the fields ReadsAsConnection leaves out.
+func (m Manifest) connectionReads() Manifest {
+	m.Revision, m.BrokenRevisions, m.Sensitive = 0, nil, false
+	m.Sources = slices.Clone(m.Sources)
+	for i := range m.Sources {
+		m.Sources[i].Outbound, m.Sources[i].ReadOnlyTools = nil, nil
+	}
+	return m
 }
 
 // BrokenRevisions are earlier revisions of a connector that share one reason for not

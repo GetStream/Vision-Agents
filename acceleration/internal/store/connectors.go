@@ -403,9 +403,11 @@ func (s *Store) BrokenConnectorRevision(ctx context.Context, connectorID string,
 
 // How a connection's pinned revision compares with its connector's (DefinitionStatus.Status).
 const (
-	// DefinitionCurrent: the connection reads its connector's latest revision.
+	// DefinitionCurrent: the connection reads its connector's latest revision, or one that
+	// differs from it only in what no connection reads (core.Manifest.ReadsAsConnection).
 	DefinitionCurrent = "current"
-	// DefinitionOutdated: a later revision exists, and the pinned one is not marked broken.
+	// DefinitionOutdated: a later revision changes what the connection reads, and the pinned
+	// one is not marked broken.
 	DefinitionOutdated = "outdated"
 	// DefinitionBroken: a later revision marked the pinned one broken.
 	DefinitionBroken = "broken"
@@ -419,8 +421,8 @@ type DefinitionStatus struct {
 }
 
 // ConnectorDefinitionStatuses is the DefinitionStatus of each of the customer's connections, by
-// connection id, in two reads whatever their number: the latest revision of each connector,
-// and the marks on them.
+// connection id, in at most three reads whatever their number: the latest revision of each
+// connector, the revisions the connections behind it pin, and the marks on them.
 func (s *Store) ConnectorDefinitionStatuses(ctx context.Context, customerID string, connections []ConnectorConnection) (map[string]DefinitionStatus, error) {
 	statuses := make(map[string]DefinitionStatus, len(connections))
 	if len(connections) == 0 {
@@ -432,32 +434,38 @@ func (s *Store) ConnectorDefinitionStatuses(ctx context.Context, customerID stri
 			ids = append(ids, connection.ConnectorID)
 		}
 	}
-	var latest []struct {
-		ID       string `bun:"id"`
-		Revision int    `bun:"revision"`
-	}
-	err := s.db.NewSelect().Model((*ConnectorDefinition)(nil)).
-		Column("id").ColumnExpr("max(revision) AS revision").
+	var latest []ConnectorDefinition
+	err := s.db.NewSelect().Model(&latest).
+		DistinctOn("cd.id").Column("id", "revision", "manifest").
 		Apply(visibleTo(customerID)).
-		Where("id IN (?)", bun.In(ids)).
-		Group("id").
-		Scan(ctx, &latest)
+		Where("cd.id IN (?)", bun.In(ids)).
+		OrderExpr("cd.id, cd.revision DESC").
+		Scan(ctx)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: latest connector revisions: %w", err))
+	}
+	newest := make(map[string]ConnectorDefinition, len(latest))
+	for _, definition := range latest {
+		newest[definition.ID] = definition
+	}
+	pinned, err := s.pinnedBehind(ctx, customerID, connections, newest)
+	if err != nil {
+		return nil, err
 	}
 	var marks []ConnectorBrokenRevision
 	err = s.db.NewSelect().Model(&marks).Where("connector_id IN (?)", bun.In(ids)).Scan(ctx)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: broken connector revisions: %w", err))
 	}
-	newest := make(map[string]int, len(latest))
-	for _, row := range latest {
-		newest[row.ID] = row.Revision
-	}
 	for _, connection := range connections {
 		status := DefinitionStatus{Status: DefinitionCurrent}
-		if connection.DefinitionRevision < newest[connection.ConnectorID] {
-			status.Status = DefinitionOutdated
+		if connection.DefinitionRevision < newest[connection.ConnectorID].Revision {
+			// A pinned revision the customer cannot read is the zero manifest here, which reads
+			// as no stored one does.
+			at := pinned[pinnedRevision{connection.ConnectorID, connection.DefinitionRevision}]
+			if !at.ReadsAsConnection(newest[connection.ConnectorID].Manifest) {
+				status.Status = DefinitionOutdated
+			}
 		}
 		for _, mark := range marks {
 			if mark.ConnectorID == connection.ConnectorID && mark.Revision == connection.DefinitionRevision {
@@ -467,6 +475,48 @@ func (s *Store) ConnectorDefinitionStatuses(ctx context.Context, customerID stri
 		statuses[connection.ID] = status
 	}
 	return statuses, nil
+}
+
+// pinnedRevision is one revision of one connector.
+type pinnedRevision struct {
+	connectorID string
+	revision    int
+}
+
+// pinnedBehind is the manifest of each revision a connection pins that is older than its
+// connector's newest, in one read, or none when no connection is behind.
+func (s *Store) pinnedBehind(ctx context.Context, customerID string, connections []ConnectorConnection, newest map[string]ConnectorDefinition) (map[pinnedRevision]core.Manifest, error) {
+	var ids []string
+	var revisions []int
+	for _, connection := range connections {
+		if connection.DefinitionRevision >= newest[connection.ConnectorID].Revision {
+			continue
+		}
+		if !slices.Contains(ids, connection.ConnectorID) {
+			ids = append(ids, connection.ConnectorID)
+		}
+		if !slices.Contains(revisions, connection.DefinitionRevision) {
+			revisions = append(revisions, connection.DefinitionRevision)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var definitions []ConnectorDefinition
+	err := s.db.NewSelect().Model(&definitions).
+		Column("id", "revision", "manifest").
+		Apply(visibleTo(customerID)).
+		Where("cd.id IN (?)", bun.In(ids)).
+		Where("cd.revision IN (?)", bun.In(revisions)).
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: pinned connector revisions: %w", err))
+	}
+	pinned := make(map[pinnedRevision]core.Manifest, len(definitions))
+	for _, definition := range definitions {
+		pinned[pinnedRevision{definition.ID, definition.Revision}] = definition.Manifest
+	}
+	return pinned, nil
 }
 
 // ErrConnectorDefinitionInUse says an unforced delete found a live connection made from the

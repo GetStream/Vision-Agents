@@ -473,7 +473,7 @@ func (s *ConnectionToolsSuite) TestSavingANoneConnectionAgainMovesAnOutdatedConn
 	connector := s.builtin(none.Name, 1, "")
 	id := s.connectionTo(connector)
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
-	s.builtin(none.Name, 2, "")
+	s.builtin(none.Name, 2, revisedDescription)
 	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
 
 	var saved Connection
@@ -553,7 +553,7 @@ func (s *ConnectionToolsSuite) TestAClientCredentialsConnectionKeepsItsRevisionW
 			oauth2cc.SuppliedClientID: s.provider.ClientID, oauth2cc.SuppliedClientSecret: s.provider.ClientSecret}}
 	}
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", body(), nil))
-	s.builtin(oauth2cc.Name, 2, "")
+	s.builtin(oauth2cc.Name, 2, revisedDescription)
 	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
 
 	var saved Connection
@@ -941,6 +941,10 @@ sources:
     endpoint: mcp
 ` + tools
 }
+
+// revisedDescription is the manifest YAML of a revision that changes what a connection reads
+// as little as a field can, so a connection before it is outdated.
+const revisedDescription = "description: revised\n"
 
 // brokenFirst is the manifest YAML a revision marks revision 1 broken with.
 const brokenFirst = "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n"

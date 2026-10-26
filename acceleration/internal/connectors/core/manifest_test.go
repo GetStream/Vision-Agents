@@ -126,6 +126,75 @@ func (s *ManifestSuite) TestAReadOnlyToolNamedTwiceIsRejected() {
 	s.ErrorContains(err, `sources[0].read_only_tools[1]: "read_doc" is named twice`)
 }
 
+// readsAsConnection is a connector at revision 1 with a source that lists a tool that only
+// reads, as bigquery.yaml revision 2 did.
+const readsAsConnection = "endpoints:\n  mcp: https://example.com/mcp\nscopes:\n  list: [read]\n" +
+	"sources:\n  - kind: mcp\n    endpoint: mcp\n    read_only_tools: [list_tables, run_select]\n"
+
+// revisedFrom is the pinned manifest with old replaced by new, at revision 2.
+func (s *ManifestSuite) revisedFrom(old, new string) Manifest {
+	raw := strings.Replace(string(minimal(readsAsConnection)), "revision: 1", "revision: 2", 1)
+	s.Require().Contains(raw, old)
+	parsed, err := ParseManifest([]byte(strings.Replace(raw, old, new, 1)))
+	s.Require().NoError(err)
+	return parsed
+}
+
+func (s *ManifestSuite) pinned() Manifest {
+	parsed, err := ParseManifest(minimal(readsAsConnection))
+	s.Require().NoError(err)
+	return parsed
+}
+
+// Only the sensitive-connector check reads sensitive, outbound and read_only_tools, and it
+// reads the latest revision; only the seeder reads broken_revisions. A later revision that
+// changes only those reads, for a connection, as the one it pins.
+func (s *ManifestSuite) TestARevisionChangingOnlyWhatAConfigIsCheckedAgainstReadsAsTheOneBefore() {
+	later := s.revisedFrom("    read_only_tools: [list_tables, run_select]\n",
+		"    read_only_tools: [list_tables]\n    outbound: true\nsensitive: true\n"+
+			"broken_revisions:\n  - revisions: [1]\n    reason: lists run_select\n")
+	s.Require().NotEqual(s.pinned(), later)
+
+	s.True(s.pinned().ReadsAsConnection(later))
+	s.True(later.ReadsAsConnection(s.pinned()))
+}
+
+func (s *ManifestSuite) TestARevisionAskingForOtherScopesReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("list: [read]", "list: [read, write]")))
+}
+
+func (s *ManifestSuite) TestARevisionWithAnotherSchemeReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("schemes: [oauth2_code]", "schemes: [bearer]")))
+}
+
+func (s *ManifestSuite) TestARevisionWithAnotherEndpointReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("https://example.com/mcp", "https://example.com/v2/mcp")))
+}
+
+// A field of a source other than outbound and read_only_tools counts: a tool's needs_scopes
+// decides whether the source offers the tool.
+func (s *ManifestSuite) TestARevisionChangingAnotherFieldOfASourceReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("    read_only_tools:",
+		"    tools:\n      - name: run_select\n        needs_scopes: [read]\n    read_only_tools:")))
+}
+
+// Any field it does not leave out counts, the connector's name among them, which a consent
+// started from a session shows (ConnectorConsents, internal/api/authorizations.go).
+func (s *ManifestSuite) TestARevisionChangingAnyOtherFieldReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("name: Example\n", "name: Example\ndescription: Renamed.\n")))
+}
+
+// The comparison changes neither manifest: each source keeps what it lists.
+func (s *ManifestSuite) TestReadsAsConnectionLeavesBothManifestsAsTheyWere() {
+	pinned := s.pinned()
+	later := s.revisedFrom("list_tables, run_select", "list_tables")
+
+	pinned.ReadsAsConnection(later)
+
+	s.Equal(s.pinned(), pinned)
+	s.Equal([]string{"list_tables"}, later.Sources[0].ReadOnlyTools)
+}
+
 // A manifest that says neither marshals as it did before the fields existed, so the seeder
 // finds a stored built-in unchanged (store.sameManifest).
 func (s *ManifestSuite) TestAManifestWithoutSensitiveOrOutboundMarshalsWithoutThem() {

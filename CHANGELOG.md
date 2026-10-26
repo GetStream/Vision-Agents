@@ -20,6 +20,14 @@ Before billable work starts the router now reserves what it may cost: a search, 
 
 ## Bug Fixes
 
+### A connection is outdated only when a later revision changes what it reads
+
+`definition_status` is `outdated` only when the connector's latest revision changes something the connection reads from the revision it pins: its scopes, auth, endpoints, tools or any other field. A revision that changes only `sensitive` or a source's `outbound` or `read_only_tools` leaves it `current`. The check of a config against a sensitive connector reads those fields from the latest revision. So BigQuery's revision 3 leaves a connection made on revision 1 or 2 `current`, and a connection made before Google Docs' or Google Drive's revision 3 was not outdated by that revision alone (AI-1878).
+
+### BigQuery's `execute_sql_readonly` needs approval beside a sensitive connector
+
+BigQuery revision 3 takes `execute_sql_readonly` out of `read_only_tools`. Its SELECT can call a remote function, whose code may send the rows anywhere. A config that binds it beside a sensitive connector such as Nessy is now refused unless the binding's `require_approval` holds it (AI-1877).
+
 ### A connector tool whose schema changed no longer breaks its whole binding
 
 When the provider lists a granted tool with another schema than the one approved, a session's binding now opens with its other tools (while it still offers one tool), also when the binding is required (reported in `connector_unavailable` as `tool_unavailable`) or has sandbox access (the sandbox keeps it), and when the person connects it in the conversation: that login no longer waits until its consent expires. A call of the left-out tool answers `tool_unavailable` with what gives it back: for a tool granted by name or by pattern, an admin's approval of the new schema (`POST /v1/agents/connections/{id}/tools/approve`); for a schema digest the agent config names, saving the config at the new schema. A login's `list_tools` names it under `left_out`. A granted tool the provider no longer lists is still unknown to the session, and still fails a required binding (AI-1932).
