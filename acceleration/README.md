@@ -556,9 +556,13 @@ What an organization's own dashboard reads about its money, server-side only:
 | `getAccount` | `GET /v1/account` | Status, tier, balance (less what work in flight holds, as `X-Stream-Balance-Micros` says), granted and spent, the warning threshold with `balance_warning_source` (`tier`, `account` or `organization_policy`, which wins) and `balance_state`, what the operator allows (`limits`, `own_limits`) and its spend hard limit with this window's spend and room |
 | `listCredits` | `GET /v1/account/credits` | Credit entries, newest first, a page of up to 100; no actor or note, and a reference only on what the payment processor wrote (actor `stripe`) |
 | `listTeams` | `GET /v1/teams` | Every team a limit names or this month's work carried: its apps, its spend in each current window and its limits; `app_id` narrows it to one app |
+| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `api_key`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
 
-The first two read the usage service's customer view with the ingest token, and answer 404
-`billing_not_enabled` with no usage service or for an app in no organization. `listTeams`
+The first two and `listUsageEvents` read the usage service's customer view with the ingest
+token, and answer 404 `billing_not_enabled` with no usage service or for an app in no
+organization. A server-side caller's `api_key` and `user_id` query parameters are filters there,
+as they are on `getSpend`: the key is the `X-Api-Key` header's, and `user_id` in the query only
+names who a backend acts for, which no account read looks at. `listTeams`
 sums the request rows this month when there is no usage service. Staff read the teams of any
 organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
 
@@ -1788,13 +1792,15 @@ changes nothing, writes no audit row and answers the standing as it is now. The 
 space across the four writes: a key already used for another operation, organization or body
 is a 409 `idempotency_key_reused`. Keys are kept in `manage_requests`, for good.
 
-**The customer view.** `GET /v1/accounts/{organization_id}`, `/credits` and `/teams` take the
-ingest token and write nothing: the standing without `status_reason`, with the low-balance
-threshold in force and whose it is (`tier` or `account`) and `own_limits`, the settings the
-account overrides; the credit entries without actor, note or idempotency key, a reference only
-on an entry whose actor is `stripe`; and the current windows of every `team:` category, across
-the organization and within each app that carried it this month. The manage key opens none of
-them. The router's `getAccount`, `listCredits` and `listTeams` read them.
+**The customer view.** `GET /v1/accounts/{organization_id}`, `/credits`, `/teams` and `/usage`
+take the ingest token and write nothing: the standing without `status_reason`, with the
+low-balance threshold in force and whose it is (`tier` or `account`) and `own_limits`, the
+settings the account overrides; the credit entries without actor, note or idempotency key, a
+reference only on an entry whose actor is `stripe`; the current windows of every `team:`
+category, across the organization and within each app that carried it this month; and the
+events `listUsage` answers, with its filters and cursor, without the organization, its tier,
+`base_cost_micros`, `price_version` or `source`. The manage key opens none of them. The
+router's `getAccount`, `listCredits`, `listTeams` and `listUsageEvents` read them.
 
 **Forgetting an end user.** A user id is often an email, so an erasure request for one of a
 customer's users reaches the usage records. `router usage forget-user --app <app> --user <id>

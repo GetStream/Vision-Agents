@@ -532,6 +532,11 @@ from .update_session_request_custom import UpdateSessionRequestCustom
 from .update_session_request_thinking import UpdateSessionRequestThinking
 from .update_session_request_verbosity import UpdateSessionRequestVerbosity
 from .update_sip_trunk_request import UpdateSipTrunkRequest
+from .usage_event import UsageEvent
+from .usage_event_attributes import UsageEventAttributes
+from .usage_event_page import UsageEventPage
+from .usage_event_quantities import UsageEventQuantities
+from .usage_event_tags import UsageEventTags
 from .use_case import UseCase
 from .use_case_channels import UseCaseChannels
 from .use_case_for_review import UseCaseForReview
@@ -1085,6 +1090,11 @@ __all__ = (
     "UpdateSessionRequestThinking",
     "UpdateSessionRequestVerbosity",
     "UpdateSipTrunkRequest",
+    "UsageEvent",
+    "UsageEventAttributes",
+    "UsageEventPage",
+    "UsageEventQuantities",
+    "UsageEventTags",
     "UseCase",
     "UseCaseChannels",
     "UseCaseForReview",
