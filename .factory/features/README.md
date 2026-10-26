@@ -26,7 +26,7 @@ edits them.
 | [Direct and acceleration first](architectures.md) | sprints 8, 14     | Both shapes work; only Go can host tools |
 | [Transfer and IVR navigation](transfer.md)     | sprint 7             | Built on tool calling; DTMF at Telnyx only |
 | [Campaigns](campaigns.md)                      | sprint 9             | Built; no page in the dashboard         |
-| [Shared trunks](shared-trunks.md)              | AI-1279, AI-1318, AI-988 | Built for Twilio, Telnyx and SIP trunks; five vendors still dial a trunk per call |
+| [Shared trunks](shared-trunks.md)              | not in a sprint          | Built for Twilio, Telnyx and SIP trunks; five vendors still dial a trunk per call |
 | [Scheduled tasks](scheduled-tasks.md)          | after sprint 17      | Built; delivered to the conversation, SMS, WhatsApp, iMessage or a phone call, with quiet hours |
 | [Simulate and test](simulations.md)            | sprint 16            | Built for text and audio; nothing schedules one |
 | [The harness](harness.md)                      | sprints 5, 6         | Built with cache-aware compaction        |

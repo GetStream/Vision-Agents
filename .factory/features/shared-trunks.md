@@ -1,18 +1,16 @@
 # Shared trunks
 
-Not in a sprint. Plan:
-[2026-10-23-phone-shared-trunks.md](../../docs/superpowers/plans/2026-10-23-phone-shared-trunks.md).
-Tickets AI-1279, AI-894, AI-1318 and AI-988.
+Not in a sprint.
 
 ## Asked for
 
 Make [telephony](telephony.md) usable for [campaigns](campaigns.md).
 
-- **AI-1279.** Parallel calls from one number failed after the first. They also failed for
-  about 30 seconds after a call ended.
-- **AI-894.** An attached number could not place calls.
-- **AI-1318.** Per-call trunks leaked toward Stream's cap of 25 trunks per app.
-- **AI-988.** Each inbound caller in a call of their own.
+- Parallel calls from one number failed after the first. They also failed for about 30
+  seconds after a call ended.
+- An attached number could not place calls.
+- Per-call trunks leaked toward Stream's cap of 25 trunks per app.
+- Each inbound caller in a call of their own.
 
 The root cause was one thing. The router made a Stream trunk and a routing rule per call, with
 the From number on the trunk. Stream allows a number on only one trunk per app, so a second
@@ -22,7 +20,7 @@ call from the same number was refused. A per-call trunk was deleted only on
 ## What exists
 
 One Stream trunk per Stream app, customer and vendor. It holds up to 50 numbers, which is
-the most chat allows on a trunk. When it is full, a sibling trunk opens. `sip_trunk` is one
+the most Stream allows on a trunk. When it is full, a sibling trunk opens. `sip_trunk` is one
 more vendor, so a customer's own trunk numbers group the same way.
 
 Each number keeps a routing rule of its own, its line.
@@ -58,11 +56,10 @@ Every rule names its call with `{{x_stream_call_id}}{{#unless x_stream_call_id}}
 - An outbound leg carries `x-stream-call-id` set to the session id. It lands in
   `agent:<session>`, where the agent already is.
 - A callback carries no header. It gets a new uuid, so each inbound caller has a call of their
-  own (AI-988).
+  own.
 
 The obvious template is `{{#if x_stream_call_id}}…{{else}}{{uuid}}{{/if}}`. Stream refused the
-leg with it, live, on 2026-10-23. Chat's raymond renders it fine locally. The cause is
-unknown, so the `{{#unless}}` form stays.
+leg with it, live, on 2026-10-23, so the `{{#unless}}` form stays.
 
 ### The header rides on the leg to Stream
 
@@ -147,13 +144,6 @@ calls at once.
 - `custom` kept on the call.
 - One trunk per vendor after 6 calls.
 - Release removes the trunk and the rule.
-
-## Moving to chat
-
-Chat plans a `POST /video/sip/call`. Once it exists, a call dialled by chat on a `sip_trunk`
-needs no trunk, no rule and no header. The provider swap is one `Provider`. The `sip_trunk`
-trunks here are their own group, so deleting them touches no other vendor's trunk. The plan
-keeps nothing new on the router's `sip_trunks` table for that reason.
 
 ## Not done
 
