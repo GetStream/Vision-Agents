@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 type SchedulerSuite struct {
@@ -35,11 +35,22 @@ func (s *SchedulerSuite) SetupSuite() {
 		s.T().Skip("ROUTER_POSTGRES_DSN must be set")
 	}
 	s.ctx = context.Background()
-	db, err := store.Open(dsn)
+	// The suite's own database: a worker of another suite on the shared one would claim the
+	// tasks made here before this suite's deliverer holds them.
+	db, err := store.Open(testenv.Database(dsn, "scheduler"))
 	s.Require().NoError(err)
 	s.Require().NoError(db.Migrate(s.ctx))
 	s.db = db
 	s.T().Cleanup(func() { s.Require().NoError(db.Close()) })
+}
+
+// The suite's workers claim every due task of the database they run on, so a database another
+// suite's worker shares would take the tasks made here.
+func (s *SchedulerSuite) TestTheSuiteRunsOnADatabaseOfItsOwn() {
+	var database string
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx, "SELECT current_database()").Scan(&database))
+
+	s.Contains(database, "_scheduler_test")
 }
 
 // deliverer records what it was asked to deliver and answers as it is told.
