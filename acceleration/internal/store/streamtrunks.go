@@ -179,6 +179,18 @@ func (t *TrunkGroupTx) ClearLine(e164 string) error {
 	return t.heldOne(result, err, e164, "clear line")
 }
 
+// Detach stops a number held in the group from ringing its agent, and keeps its trunk and rule.
+func (t *TrunkGroupTx) Detach(e164 string) error {
+	result, err := t.tx.NewUpdate().Model((*PhoneNumber)(nil)).
+		Set("attached_at = NULL").
+		Where("customer_id = ?", t.group.CustomerID).
+		Where("vendor = ?", t.group.Vendor).
+		Where("e164 = ?", e164).
+		Where("released_at IS NULL").
+		Exec(t.ctx)
+	return t.heldOne(result, err, e164, "detach")
+}
+
 // heldOne is an update's error, or one saying the number is not held in the group.
 func (t *TrunkGroupTx) heldOne(result sql.Result, err error, e164, what string) error {
 	if err != nil {

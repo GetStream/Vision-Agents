@@ -23,6 +23,7 @@ class Router:
         self.attached: Optional[dict[str, Any]] = None
         self.attached_e164: Optional[str] = None
         self.released_e164: Optional[str] = None
+        self.detached_e164: Optional[str] = None
         self.url = ""
         self.refuse = ""
 
@@ -33,6 +34,7 @@ class Router:
         app.router.add_get("/v1/phone/numbers/available", self._search)
         app.router.add_post("/v1/phone/numbers", self._buy)
         app.router.add_post("/v1/phone/numbers/{e164}/attach", self._attach)
+        app.router.add_delete("/v1/phone/numbers/{e164}/attach", self._detach)
         app.router.add_delete("/v1/phone/numbers/{e164}", self._release)
         return app
 
@@ -165,6 +167,22 @@ class Router:
                 "sip_uri": "sip:trunk@sip.stream-io-api.com",
             },
         )
+
+    async def _detach(self, request: web.Request) -> web.Response:
+        self.detached_e164 = request.match_info["e164"]
+        if self.refuse:
+            return web.json_response(
+                status=404,
+                data={
+                    "error": {
+                        "message": self.refuse,
+                        "type": "not_found",
+                        "code": "not_found",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#not_found",
+                    }
+                },
+            )
+        return web.Response(status=204)
 
     async def _release(self, request: web.Request) -> web.Response:
         self.released_e164 = request.match_info["e164"]
@@ -352,6 +370,17 @@ class TestPhone:
         await phone.release("+15125551234")
 
         assert router.released_e164 == "+15125551234"
+
+    async def test_detach_completes(self, router: Router, phone: stream.Phone):
+        await phone.detach("+15125551234")
+
+        assert router.detached_e164 == "+15125551234"
+
+    async def test_a_refused_detach_says_why(self, router: Router, phone: stream.Phone):
+        router.refuse = "phone: +15125551234 is not held"
+
+        with pytest.raises(RuntimeError, match="is not held"):
+            await phone.detach("+15125551234")
 
     async def test_a_refused_search_says_why(self, router: Router, phone: stream.Phone):
         router.refuse = "phone: bird cannot search by administrative_area"

@@ -20402,6 +20402,44 @@ paths:
           $ref: '#/components/responses/Unavailable'
       summary: Give a number back, which stops its monthly charge
   /v1/phone/numbers/{e164}/attach:
+    delete:
+      description: Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
+      operationId: detachPhoneNumber
+      parameters:
+        - description: The number in +15551234567 form.
+          in: path
+          name: e164
+          required: true
+          schema:
+            description: The number in +15551234567 form.
+            type: string
+      responses:
+        "204":
+          description: The number no longer takes calls
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Stop a number taking calls, keeping it
     post:
       description: Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
       operationId: attachPhoneNumber
