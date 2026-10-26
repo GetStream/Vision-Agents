@@ -304,6 +304,13 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 		if !ok {
 			return nil, invalidRequest("session_id must be up to 64 letters, digits, - and _")
 		}
+		theirs, err := s.anotherCustomersSession(ctx, customerID, held)
+		if err != nil {
+			return nil, err
+		}
+		if theirs {
+			return nil, conflict("session_id is taken")
+		}
 		call.SessionID = held
 	}
 	if request.Body.RingTimeoutSeconds != nil {
@@ -390,6 +397,11 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 	tags := phoneTags(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
 		return nil, invalidRequest(err.Error())
+	}
+
+	// Several customers can share a Stream app, so the call has to be one of the caller's.
+	if _, err := s.storedOrLiveSession(ctx, request.Body.SessionId); err != nil {
+		return nil, err
 	}
 
 	// The human is brought into the session's call, which is named after it.
@@ -776,6 +788,25 @@ func (s *Server) callApp(ctx context.Context, customerID, callType, callID strin
 	return s.callPinApp(ctx, customerID, callType, callID)
 }
 
+// anotherCustomersSession reports whether a session id is held by another customer, whose
+// agent's call a call routed under it would join. Session ids are unique across customers.
+// One nobody holds yet is not: a caller may name the session it is about to start.
+func (s *Server) anotherCustomersSession(ctx context.Context, customerID, id string) (bool, error) {
+	if s.sessions != nil && s.sessions.Running(id) {
+		_, own := s.sessions.Get(id, session.Owner{CustomerID: customerID, Kind: auth.KindServer})
+		return !own, nil
+	}
+	if s.store == nil {
+		return false, nil
+	}
+	taken, err := s.store.SessionExists(ctx, id)
+	if err != nil || !taken {
+		return false, err
+	}
+	_, err = s.store.StoredSession(ctx, customerID, id)
+	return err != nil, nil
+}
+
 // callPinApp is the Stream app a call no session is running in is in: the app its lines were
 // made in, else the customer's own. It is the app the session manager acts in for a new
 // session joining the call.
@@ -887,7 +918,7 @@ func (s *Server) registerPhone(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"202": {Description: "The vendor is placing the call"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict},
 	}, s.placePhoneCall)
 	huma.Register(api, huma.Operation{
 		OperationID: "transferPhoneCall",

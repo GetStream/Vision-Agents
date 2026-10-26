@@ -133,10 +133,63 @@ func (s *PhoneSuite) TestACallOrATransferToAPremiumRateNumberIsForbidden() {
 	s.Contains(failure, "premium-rate")
 
 	status, failure = s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
-		From: "+15125551234", To: "+19765550100", SessionId: "session-" + s.utils.uuid(),
+		From: "+15125551234", To: "+19765550100", SessionId: s.data.storedSession(),
 	})
 	s.Equal(http.StatusForbidden, status)
 	s.Contains(failure, "premium-rate")
+}
+
+// The session tests dial a premium-rate number, refused only once the session is let
+// through, so a 403 is a session that passed.
+
+func (s *PhoneSuite) TestACallMayBeRoutedIntoTheCallersOwnSession() {
+	own := s.serverClient.createSession(textSession(nil)).Id
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "+19005550100", SessionId: &own,
+	})
+
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "premium-rate")
+}
+
+func (s *PhoneSuite) TestACallMayNameTheSessionItIsAboutToStart() {
+	fresh := "session-" + s.utils.uuid()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "+19005550100", SessionId: &fresh,
+	})
+
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "premium-rate")
+}
+
+func (s *PhoneSuite) TestACallCannotBeRoutedIntoAnotherCustomersSession() {
+	theirs := s.data.backendOfAnotherApp().createSession(textSession(nil)).Id
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "+19005550100", SessionId: &theirs,
+	})
+
+	s.Equal(http.StatusConflict, status)
+}
+
+func (s *PhoneSuite) TestAHumanCannotBeTransferredIntoAnotherCustomersSession() {
+	theirs := s.data.backendOfAnotherApp().createSession(textSession(nil)).Id
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
+		From: "+15125551234", To: "+19765550100", SessionId: theirs,
+	})
+
+	s.Equal(http.StatusNotFound, status)
+}
+
+func (s *PhoneSuite) TestAHumanCannotBeTransferredIntoASessionThatNeverWas() {
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
+		From: "+15125551234", To: "+19765550100", SessionId: "session-" + s.utils.uuid(),
+	})
+
+	s.Equal(http.StatusNotFound, status)
 }
 
 func (s *PhoneSuite) TestTheAnswerPathIsReachedByAVendorThatHasNoCustomerToName() {

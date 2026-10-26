@@ -46,7 +46,7 @@ func (s *SuspensionSuite) TestASuspendedAppCanNeitherBuyNorCallNorTransfer() {
 	s.Contains(failure, "suspended")
 
 	status, failure = s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer",
-		TransferCallRequest{From: "+15125551234", To: "+15550001111", SessionId: "session-" + s.utils.uuid()})
+		TransferCallRequest{From: "+15125551234", To: "+15550001111", SessionId: s.data.storedSession()})
 	s.Equal(http.StatusForbidden, status)
 	s.Contains(failure, "suspended")
 	s.NotContains(failure, "premium-rate", "why an app is suspended is Stream's to know")
