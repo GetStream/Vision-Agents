@@ -210,6 +210,10 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
   the session.
+- Google Drive has a block from revision 5 (`GOOGLE_DRIVE_TOKEN`, host `www.googleapis.com`; AI-1958),
+  so its connections of revisions 2-4 give the sandbox nothing until reconnected. Its token
+  carries `drive.file`, so code can also create files and change files the app opened. A
+  `session` Drive binding of a user with no connection gets a late grant (below).
 - A `session` binding whose user has not connected yet, in a chat they can log in in, gets a late
   grant: the env var is there from the start, built from the connector's latest `sandbox` block,
   and a request with it gets a 401 (the proxy's «gives no token», or the host's own under Daytona).

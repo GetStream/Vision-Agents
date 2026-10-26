@@ -101,6 +101,9 @@ func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 		if grant.Late && s.options.Bind == nil {
 			return sandbox.Mount{}, errors.Join(stack.Wrap(fmt.Errorf("daytona: connector %q is bound late, and the broker has no Bind", grant.Binding)), s.release(ctx))
 		}
+		if grant.Late && grant.Required {
+			return sandbox.Mount{}, errors.Join(stack.Wrap(fmt.Errorf("daytona: connector %q is bound late, so it cannot be required", grant.Binding)), s.release(ctx))
+		}
 		// A provider's refresh error may quote its answer, so only its class is logged, and a
 		// required grant's error carries none of it. A late grant has no connection to ask yet.
 		token, err := sandbox.Token{Value: unbound}, error(nil)
@@ -140,7 +143,7 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 	for i, held := range s.held {
 		if held.grant.Late {
 			bound, ok := s.options.Bind(ctx, held.grant)
-			if !ok {
+			if !ok || !held.grant.Binds(bound) {
 				kept = append(kept, held)
 				continue
 			}

@@ -32,16 +32,24 @@ type Grant struct {
 	// Required refuses the sandbox when the credential cannot be had, as a required binding
 	// refuses the session.
 	Required bool
-	// Late is a grant whose connection the user makes after the sandbox starts, so it has no
-	// Connection or Scheme yet, and is never Required. Its env var is set at Prepare without
-	// asking for a token; before each run the broker asks Bind for its connection, and no request
-	// gets a token for it until Bind gives one.
+	// Late is a grant whose connection the user makes after the sandbox starts. Any Connection
+	// or Scheme it carries is not used, and Prepare refuses one that is also Required. Its env
+	// var is set at Prepare without asking for a token; before each run the broker asks Bind for
+	// its connection, and no request gets a token for it until Bind gives one.
 	Late bool
 }
 
 // Bind is a late grant's connection once the user has made it: grant with its Connection and
-// Scheme, and true. It is false while there is none.
+// Scheme, and true. It is false while there is none. A grant that names another binding,
+// config or connector binds nothing (Binds).
 type Bind func(ctx context.Context, grant Grant) (Grant, bool)
+
+// Binds is whether bound, as Bind gave it, is a connection for g: one that names g's binding,
+// config and connector. A broker cannot check whose connection it is otherwise, so it keeps g
+// late, and gives no token for it, when Bind gives another grant's.
+func (g Grant) Binds(bound Grant) bool {
+	return bound.Binding == g.Binding && bound.Config == g.Config && bound.Connector == g.Connector
+}
 
 // Bound is g with the connection bind gave it, no longer late. It takes bound's Connection and
 // Scheme alone, so a bind never changes the hosts, env var or binding the sandbox was created

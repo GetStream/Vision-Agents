@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -156,6 +157,9 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 		if grant.Late && b.options.Bind == nil {
 			return sandbox.Mount{}, stack.Wrap(fmt.Errorf("egress: connector %q is bound late, and the broker has no Bind", grant.Binding))
 		}
+		if grant.Late && grant.Required {
+			return sandbox.Mount{}, stack.Wrap(fmt.Errorf("egress: connector %q is bound late, so it cannot be required", grant.Binding))
+		}
 		// A provider's refresh error may quote its answer, so only its class is logged, and a
 		// required grant's error carries none of it. A late grant has no connection to ask yet:
 		// the proxy refuses its placeholder until BeforeRun binds it.
@@ -176,9 +180,13 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 				"connector", grant.Binding, "connection", grant.Connection.ConnectionID, "class", errorClass(err))
 		}
 		placeholder := "va_ph_" + rand.Text()
-		prepared = append(prepared, held{grant: grant, entry: Grant{Connection: grant.Connection, Binding: grant.Binding,
-			Config: grant.Config, Connector: grant.Connector, Selection: grant.Selection, Scheme: grant.Scheme,
-			Placeholder: placeholder, Hosts: grant.Hosts}})
+		entry := Grant{Connection: grant.Connection, Binding: grant.Binding, Config: grant.Config, Connector: grant.Connector,
+			Selection: grant.Selection, Scheme: grant.Scheme, Placeholder: placeholder, Hosts: grant.Hosts}
+		if grant.Late {
+			// Whatever connection the caller gave it: the proxy gives no token until a bind.
+			entry.Connection, entry.Scheme = core.ConnectionRef{}, ""
+		}
+		prepared = append(prepared, held{grant: grant, entry: entry})
 		env[grant.Env] = placeholder
 	}
 	if len(prepared) == 0 {
@@ -232,7 +240,7 @@ func (b *Broker) BeforeRun(ctx context.Context) error {
 	for _, h := range b.held {
 		if h.grant.Late {
 			bound, ok := b.options.Bind(ctx, h.grant)
-			if !ok {
+			if !ok || !h.grant.Binds(bound) {
 				kept = append(kept, h)
 				continue
 			}
