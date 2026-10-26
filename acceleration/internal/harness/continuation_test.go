@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openai"
@@ -13,10 +14,10 @@ import (
 )
 
 func (s *HarnessSuite) TestATokenLimitedToolCallDoesNotPoisonTheNextTurn() {
+	var asked atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Previous string `json:"previous_response_id"`
-			Choice   string `json:"tool_choice"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -32,7 +33,7 @@ func (s *HarnessSuite) TestATokenLimitedToolCallDoesNotPoisonTheNextTurn() {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		send := func(event string) { fmt.Fprintf(w, "data: %s\n\n", event) }
-		if request.Choice == "required" {
+		if asked.Add(1) == 1 {
 			send(`{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc-cut-off","call_id":"call-cut-off","name":"transfer"}}`)
 			send(`{"type":"response.function_call_arguments.delta","item_id":"fc-cut-off","delta":"{\"to\":"}`)
 			send(`{"type":"response.incomplete","response":{"id":"provider-cut-off","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"output_tokens":256}}}`)
@@ -57,7 +58,7 @@ func (s *HarnessSuite) TestATokenLimitedToolCallDoesNotPoisonTheNextTurn() {
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = h.Close() })
 	history := []llm.Message{{Role: llm.User, Content: "transfer me"}}
-	stream, err := h.Respond(s.ctx, Turn{ID: "cut-off", History: history, MustCall: true})
+	stream, err := h.Respond(s.ctx, Turn{ID: "cut-off", History: history})
 	s.Require().NoError(err)
 	response, err := llm.Collect(stream)
 	s.Require().NoError(err)

@@ -3619,101 +3619,6 @@ func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
 	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
 }
 
-func (s *AgentSuite) TestAPromiseToCheckThatCalledNothingIsKept() {
-	// Gemma told Voicebench callers "one moment, checking..." and stopped there, so the
-	// caller waited on a lookup that was never made.
-	s.ownsTools("order 12 ships tomorrow")
-	s.join(false)
-	s.model.reply = []string{"Order twelve, one moment, checking..."}
-	s.model.then = []string{}
-	s.model.callsOn = 2
-	s.asksFor("lookup_order", `{"order":"12"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-
-	s.says(participant, "where is order twelve")
-
-	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the promised lookup was never made")
-	kept := s.model.requests()[1]
-	s.True(strings.HasPrefix(kept.ID, toolPrefix))
-	s.Contains(kept.Instructions, keepPromise)
-	s.Empty(kept.ToolChoice, "a hold phrase may come before what the call needs is known")
-}
-
-func (s *AgentSuite) TestAClaimThatSomethingIsDoneWithNoCallMustCallATool() {
-	// Chased up with a note alone, Gemma told a Voicebench caller "You're all set!" and then
-	// "Is there anything else?", and the booking was never made.
-	s.ownsTools("order 12 ships tomorrow")
-	s.join(false)
-	s.model.reply = []string{"Order twelve, you're all set."}
-	s.model.then = []string{}
-	s.model.callsOn = 2
-	s.asksFor("lookup_order", `{"order":"12"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-
-	s.says(participant, "where is order twelve")
-
-	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the claimed action was never made")
-	s.Equal("required", s.model.requests()[1].ToolChoice)
-}
-
-func (s *AgentSuite) TestAForcedChaseThatWritesNothingIsAskedAgainUnforced() {
-	// Constrained to a call, Gemma on vLLM wrote only whitespace and the caller was left
-	// with a booking that was never made.
-	s.ownsTools("order 12 ships tomorrow")
-	s.join(false)
-	s.model.reply = []string{"Order twelve, you're all set."}
-	s.model.then = []string{" "}
-	s.model.callsOn = 3
-	s.asksFor("lookup_order", `{"order":"12"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-
-	s.says(participant, "where is order twelve")
-
-	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the empty forced chase was not asked again")
-	s.Equal("required", s.model.requests()[1].ToolChoice)
-	s.Empty(s.model.requests()[2].ToolChoice)
-}
-
-func (s *AgentSuite) TestAGoAheadAnsweredWithAQuestionIsChasedUp() {
-	// After "Yes, that's right. Please go ahead." Gemma asked Voicebench callers for a phone
-	// number instead of booking, and the call ended with nothing booked.
-	s.ownsTools("order 12 ships tomorrow")
-	s.join(false)
-	s.model.reply = []string{"Shall I look up order twelve?"}
-	s.model.then = []string{"Could I get a phone number first?"}
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "where is order twelve")
-	s.eventually(func() bool { return s.spokenText("Shall I look up") }, "the first reply was not spoken")
-
-	s.says(participant, "yes, please go ahead")
-
-	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the go-ahead was left unacted on")
-	s.Contains(s.model.requests()[2].Instructions, actOnGoAhead)
-}
-
-func (s *AgentSuite) TestAPromiseHandedToTheSubagentIsNotChasedUp() {
-	// Gemma met "please go ahead" with "<ask skill=...>", and asking it again for a call
-	// superseded the work it had just handed over.
-	s.delegates()
-	s.ownsTools("order 12 ships tomorrow")
-	held := make(chan struct{})
-	defer close(held)
-	s.join(false)
-	s.subagent.holdCreate = held
-	s.model.reply = []string{`One moment, checking. <ask skill="think">where order twelve is</ask>`}
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-
-	s.says(participant, "yes, please go ahead")
-
-	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "nothing was handed over")
-	s.never(func() bool { return len(s.model.requests()) > 1 }, "the handed-over work was chased up")
-}
-
 func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() {
 	// After a result, Gemma often asked for the same call again: a second dispatch, a second
 	// booking.
@@ -3778,38 +3683,6 @@ func (s *AgentSuite) TestAVerificationRefusedOnceIsNotSentTheSameValuesAgain() {
 	s.False(again, "a call that could not be made may be tried again")
 }
 
-func (s *AgentSuite) TestALookupBacksALookButNotAChange() {
-	looked := []llm.Message{
-		{Role: llm.User, Content: "move my appointment to Tuesday"},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "lookup_appointment"}}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"appointments":[{"id":"a1"}]}`},
-	}
-	s.True(backsClaim(looked, "I've checked, you have one on Thursday.", nil))
-	s.False(backsClaim(looked, "Your appointment has been rescheduled to Tuesday.", nil))
-
-	moved := append(looked,
-		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "reschedule_appointment"}}},
-		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"ok":true}`})
-	s.True(backsClaim(moved, "Your appointment has been rescheduled to Tuesday.", nil))
-}
-
-func (s *AgentSuite) TestAClaimThatNamesWhatAToolMakesTakesThatTool() {
-	tools := []string{"verify_account", "walk_reboot", "create_ticket", "dispatch_tech"}
-	rebooted := []llm.Message{
-		{Role: llm.User, Content: "please keep going"},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "walk_reboot"}}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":true}`},
-	}
-	s.False(backsClaim(rebooted, "Since the Internet was still down, I opened a ticket for you.", tools))
-	s.True(backsClaim(rebooted, "You're all set, the gateway is back.", tools))
-
-	ticketed := append(rebooted,
-		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "create_ticket"}}},
-		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"id":"T-1842"}`})
-	s.True(backsClaim(ticketed, "I opened a ticket for you.", tools))
-	s.False(backsClaim(ticketed, "Your technician is dispatched for the morning window.", tools))
-}
-
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
 	for said, asked := range map[string]bool{
 		"What time would you like?":                         true,
@@ -3822,64 +3695,6 @@ func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
 	} {
 		s.Equal(asked, owesAnAnswer(said), said)
 	}
-}
-
-func (s *AgentSuite) TestWhatAReplyOwesACallFor() {
-	cases := []struct {
-		said   string
-		backed bool
-		owes   bool
-	}{
-		{"Order twelve, one moment, checking...", false, true},
-		{"One moment, checking to see if we can finalize that, Patel, you're booked: 8 at 8:15.", false, true},
-		{"Patel, you're booked for eight at 8:15.", false, true},
-		{"I've checked the outage map and there are no outages.", false, true},
-		{"Alvarez, you're booked: 4 at 7:30.", true, false},
-		{"Checking orders is what I do. Which order is it?", false, false},
-		{"Thank you, Maya. I will reschedule your appointment to Tuesday morning.", true, true},
-		{"I'll book that for you. What name should it be under?", false, false},
-		{"You're verified, Maya. Let me pull up your appointments now.", true, true},
-		{"I have Maya Chen, member ABC123456. Let me verify that now.", false, false},
-		{"Is there anything else I can help you with?", false, false},
-	}
-	for _, c := range cases {
-		s.Equal(c.owes, owesACall(c.said, c.backed), c.said)
-	}
-}
-
-func (s *AgentSuite) TestOnlyAToolThatAnsweredBacksAClaim() {
-	// LFM2.5 told a Voicebench caller "I've got you down for eight at 8:15" after
-	// create_reservation came back "no table at 8:15".
-	caller := llm.Message{Role: llm.User, Content: "book it"}
-	for _, c := range []struct {
-		result string
-		backed bool
-	}{
-		{`{"reservation_id":"r1"}`, true},
-		{`{"error":"no table at 8:15"}`, false},
-		{didNotWork + "no table at 8:15. Tell the caller, in your own words.", false},
-		{`{"ok":false}`, false},
-		{`{"error":""}`, true},
-	} {
-		history := []llm.Message{caller, {Role: llm.ToolResult, Content: c.result}}
-		s.Equal(c.backed, toolRanSinceCaller(history), c.result)
-	}
-	s.True(owesACall("I've got you down for eight at 8:15.", false))
-}
-
-func (s *AgentSuite) TestAReplyThatPromisesNothingIsNotChasedUp() {
-	s.ownsTools("order 12 ships tomorrow")
-	s.join(false)
-	s.model.reply = []string{"Checking orders is what I do. Which order is it?"}
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-
-	s.says(participant, "can you check an order")
-
-	s.eventually(func() bool { return s.spokenText("Which order is it") }, "the reply was not spoken")
-	model := s.model
-	s.Never(func() bool { return len(model.requests()) > 1 }, 200*time.Millisecond, 10*time.Millisecond,
-		"a question to the caller owes no tool")
 }
 
 func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
@@ -4826,20 +4641,12 @@ func (s *AgentSuite) TestACallTheRouterHeldBackRunsOnceThePersonHasActed() {
 	}
 }
 
-func (s *AgentSuite) TestAClaimIsNotBackedByACallTheRouterHeldBack() {
-	held := `{"status":"scope_required","message":"Tell them to press it."}`
-	done := `{"status":"sent","message":"Nash heard the joke."}`
-	history := func(result string) []llm.Message {
-		return []llm.Message{
-			{Role: llm.User, Content: "Send it."},
-			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "crm__send_message"}}},
-			{Role: llm.ToolResult, ToolCallID: "1", Content: result},
-		}
-	}
-	s.False(changedSinceCaller(history(held), anyTool))
-	s.True(changedSinceCaller(history(done), anyTool))
-	s.False(toolRanSinceCaller(history(held)))
-	s.True(toolRanSinceCaller(history(done)))
+func (s *AgentSuite) TestOnlyAResultThatSaysItFailedIsAFailure() {
+	s.False(failedResult(`{"reservation_id":"r1"}`))
+	s.True(failedResult(`{"error":"no table at 8:15"}`))
+	s.True(failedResult(didNotWork + "no table at 8:15. Tell the caller, in your own words."))
+	s.True(failedResult(`{"ok":false}`))
+	s.False(failedResult(`{"error":""}`))
 }
 
 func (s *AgentSuite) TestACallThatOnlyFillsInABlankIsTheSameCall() {
@@ -4848,26 +4655,6 @@ func (s *AgentSuite) TestACallThatOnlyFillsInABlankIsTheSameCall() {
 	s.True(fillsIn(`{"name": "Alvarez"}`, `{"name": "Alvarez", "phone": "512-550-1422"}`), "a text argument the first call left out")
 	s.False(fillsIn(`{"party_size": 6}`, `{"party_size": 6, "patio": true}`), "a choice the first call never made")
 	s.True(fillsIn(`{"party_size": 2}`, `{"party_size": 2, "high_chair": false}`), "a choice left at its default")
-}
-
-func (s *AgentSuite) TestAGoAheadToWorkAlreadyDoneHasNothingToDo() {
-	booked := []llm.Message{
-		{Role: llm.User, Content: "That's all. Thanks."},
-		{Role: llm.Assistant, Content: "Alvarez, you're booked: 4 at 7:30."},
-		{Role: llm.User, Content: "Yes, that's right. Please go ahead."},
-	}
-	s.True(doneBeforeGoAhead(booked))
-	booked[1].Content = "Shall I book it?"
-	s.False(doneBeforeGoAhead(booked))
-}
-
-func (s *AgentSuite) TestAHoldOrADoneClaimOwesACall() {
-	s.True(owesACall("One moment, checking. Let me verify your PIN 4471. Is that correct?", false),
-		"a hold that ends in a question")
-	s.False(owesACall("Checking orders is what I do. Which order is it?", false))
-	s.True(owesACall("Your appointment has been successfully rescheduled to Tuesday morning.", false))
-	s.False(owesACall("Your appointment has been successfully rescheduled to Tuesday morning.", true),
-		"a claim a tool backs")
 }
 
 func TestALineComposedUnaskedSaysWhatItIsFor(t *testing.T) {
