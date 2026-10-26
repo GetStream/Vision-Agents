@@ -155,15 +155,15 @@ func (s *HarnessChargeSuite) TestWorkTheUsersOwnTurnDelegatesIsCountedOnTheirDay
 	s.EqualValues(2, s.day(), "the reply and the work it delegated are both the user's")
 }
 
-func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedIsCountedOnTheirDay() {
-	// The backend opened both sessions; the user typed the turn. A turn is counted on
-	// whoever sent it, and the work it delegated is part of that turn.
+func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedStaysOnTheBackend() {
+	// The backend opened both sessions; the user typed the turn. The reply is the user's,
+	// and the work it delegated is counted on whoever opened the subagent, the backend.
 	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
 
 	s.reply(routing.WithCaller(s.ctx, s.user), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
 
 	s.Equal(Done, s.settled().State)
-	s.EqualValues(2, s.day(), "the reply and the work it delegated are both the user's")
+	s.EqualValues(1, s.day(), "only the reply is the user's")
 }
 
 func (s *HarnessChargeSuite) TestWorkAScheduledTurnHandsOverIsNotCountedOnTheUsersDay() {

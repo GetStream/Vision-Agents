@@ -192,8 +192,8 @@ type Harness struct {
 	// history is the conversation as of the last turn, so a request for help carries the
 	// context it was asked in rather than only the sentence that prompted it.
 	history []llm.Message
-	// charged is who the last turn is counted on (chargedAs), which the work it hands to
-	// the subagent is counted on too.
+	// charged marks whether a scheduled task fired the last turn (chargedAs), so the work
+	// it hands to the subagent is counted as the turn is.
 	charged context.Context
 	// stored is what the provider has already read of this conversation, when it keeps
 	// what it generates.
@@ -1070,8 +1070,8 @@ func identifiersAlreadyComplete(history []llm.Message) bool {
 	return false
 }
 
-// Delegate submits work independently of the conversation provider's transport. The work
-// is counted on whoever the turn ctx asks for is.
+// Delegate submits work independently of the conversation provider's transport. Work a
+// scheduled turn hands over, ctx marked so, is counted as that turn is.
 func (h *Harness) Delegate(ctx context.Context, skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
 	skill, ok := h.options.Skills.Lookup(skillName)
 	if !ok || h.tasks == nil {

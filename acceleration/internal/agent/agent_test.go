@@ -2384,7 +2384,7 @@ func (s *AgentSuite) TestWhatAResponseAskedForHoldsForTheAnswerToItsDelegatedWor
 
 func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 	// Whose day a reply is counted on is decided where the model is asked, so the sender
-	// has to reach it, the reply that finishes the turn and the work it hands over included.
+	// has to reach it, the reply that finishes the turn included.
 	s.delegates()
 	s.join(true)
 	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
@@ -2398,7 +2398,6 @@ func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the answer coming back never started a turn")
 	s.Equal([]routing.Caller{user, user}, s.model.sentBy())
-	s.Equal([]routing.Caller{user}, s.subagent.sentBy(), "the work the turn handed over is the sender's")
 }
 
 func (s *AgentSuite) TestATurnAScheduledTaskFiredIsAskedOfTheModelAsScheduled() {

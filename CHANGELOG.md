@@ -30,7 +30,7 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ### Work a scheduled turn hands to the subagent is the customer's spend
 
-Delegated work (a skill, a picture to look at, a summary of a long conversation) started by a turn a scheduled task fired was counted on the end user's daily quota, though the turn itself was not. It is now counted as the turn is: a scheduled turn's work on nobody's day, and in a session a backend opened for a user, the work of a turn the user typed on that user's day (AI-1560).
+Delegated work (a skill, a picture to look at, a summary of a long conversation) started by a turn a scheduled task fired was counted on the end user's daily quota, though the turn itself was not. It is now counted as the turn is: on nobody's day (AI-1560).
 
 ### A draining router no longer waits out a scheduled task's retry
 

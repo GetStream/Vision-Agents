@@ -162,8 +162,8 @@ func newManager(
 	return m
 }
 
-// Create delegates a piece of work and returns its task id. The work is counted on whoever
-// the turn ctx asks for is (chargedAs), and outlives it.
+// Create delegates a piece of work and returns its task id. Work a scheduled turn asked
+// for, ctx marked so, is counted as that turn is (chargedAs); the work outlives it.
 //
 // A newer request for a skill supersedes the one it already had: the caller has said
 // something since, so the older question was asked about a conversation that no longer
@@ -229,14 +229,10 @@ func (m *manager) Create(
 	return created.id, nil
 }
 
-// chargedAs returns ctx marked with who the turn asked asks for is counted on
-// (llmrouter Session.charged): whoever sent it, and whether a scheduled task fired it.
-// Nothing else of asked is kept, its cancellation least of all: delegated work outlives
-// the turn that asked for it.
+// chargedAs returns ctx marked as scheduled when a scheduled task fired the turn asked
+// (llmrouter Session.charged). Nothing else of asked is kept, its cancellation least of
+// all: delegated work outlives the turn that asked for it.
 func chargedAs(ctx, asked context.Context) context.Context {
-	if sender, ok := routing.CallerFrom(asked); ok {
-		ctx = routing.WithCaller(ctx, sender)
-	}
 	if routing.ScheduledTurn(asked) {
 		ctx = routing.WithScheduledTurn(ctx)
 	}

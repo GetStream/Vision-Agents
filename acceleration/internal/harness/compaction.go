@@ -74,7 +74,7 @@ func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens 
 		return false, nil
 	}
 	h.compaction = &compaction{prefix: prefix}
-	// The summary is counted on whoever the turn that grew the conversation is.
+	// A summary a scheduled turn set off is counted as that turn is (chargedAs).
 	charged := h.charged
 	h.mu.Unlock()
 
