@@ -14,6 +14,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -357,6 +359,26 @@ func (s *AgentSuite) TestAToolsPictureReachesTheVisionSkillWithItsCallAnswered()
 			s.True(answered[call.ID], "the vision task was handed %s with no result", call.ID)
 		}
 	}
+}
+
+func (s *AgentSuite) TestAToolsPictureInATurnAScheduledTaskFiredIsLookedAtAsScheduled() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.runner = &stubToolRunner{run: func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+		return []llm.ContentPart{{Text: "the room"}, {Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}}, nil
+	}}
+	s.tools = harness.Tools{Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}}}
+	s.join(true)
+	s.model.reply = []string{"Let me look."}
+	s.asksFor("photograph_room", "{}")
+
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is in the room", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "the vision task was never asked")
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the tool's picture is the customer's spend")
 }
 
 func (s *AgentSuite) TestToolsAreOnlyOfferedWhenThereIsACallToActOn() {

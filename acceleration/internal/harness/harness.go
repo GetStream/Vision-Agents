@@ -192,6 +192,9 @@ type Harness struct {
 	// history is the conversation as of the last turn, so a request for help carries the
 	// context it was asked in rather than only the sentence that prompted it.
 	history []llm.Message
+	// charged marks whether a scheduled task fired the last turn (chargedAs), so the work
+	// it hands to the subagent is counted as the turn is.
+	charged context.Context
 	// stored is what the provider has already read of this conversation, when it keeps
 	// what it generates.
 	stored stored
@@ -232,6 +235,7 @@ func New(options Options) (*Harness, error) {
 		options: options,
 		logger:  options.Logger,
 		emitter: NewEmitter(eventBuffer),
+		charged: context.Background(),
 	}
 
 	if options.Subagent != nil || options.OpenSubagent != nil {
@@ -360,6 +364,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		return nil, errors.New("harness: no text conversation model")
 	}
 	h.history = append([]llm.Message(nil), turn.History...)
+	h.charged = chargedAs(context.Background(), ctx)
 	instructions := h.instructions(turn, working)
 	// A colleague asks only for what the caller alone can say, so a reply carrying its
 	// question has nothing to look up. Left holding a tool the model reaches for one and
@@ -679,6 +684,7 @@ func (h *Harness) act(turnID string, found directive) {
 
 	h.mu.Lock()
 	history := append([]llm.Message(nil), h.history...)
+	charged := h.charged
 	complete := !h.options.Text && identifiersAlreadyComplete(history)
 	if complete && !skill.CaptureVideo {
 		h.correct("Those values are already complete. " +
@@ -720,7 +726,7 @@ func (h *Harness) act(turnID string, found directive) {
 		}
 	}
 	startedAt := time.Now().UTC()
-	taskID, err := h.tasks.Create(skill, found.body, history, turnID, false)
+	taskID, err := h.tasks.Create(charged, skill, found.body, history, turnID, false)
 	if err != nil {
 		h.reject(skill.Name, err)
 		return
@@ -1064,8 +1070,9 @@ func identifiersAlreadyComplete(history []llm.Message) bool {
 	return false
 }
 
-// Delegate submits work independently of the conversation provider's transport.
-func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
+// Delegate submits work independently of the conversation provider's transport. Work a
+// scheduled turn hands over, ctx marked so, is counted as that turn is.
+func (h *Harness) Delegate(ctx context.Context, skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
 	skill, ok := h.options.Skills.Lookup(skillName)
 	if !ok || h.tasks == nil {
 		return "", stack.Wrap(fmt.Errorf("harness: skill %q is not available", skillName))
@@ -1084,7 +1091,7 @@ func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.Content
 		history = append(history, llm.Message{Role: llm.User, Parts: parts})
 		skill.CaptureVideo = false
 	}
-	id, err := h.tasks.Create(skill, prompt, history, turnID, false)
+	id, err := h.tasks.Create(ctx, skill, prompt, history, turnID, false)
 	if err == nil {
 		h.emitter.Send(Delegated{StartedAt: time.Now().UTC(), TaskID: id, Skill: skill.Name, Prompt: prompt, TurnID: turnID})
 	}
