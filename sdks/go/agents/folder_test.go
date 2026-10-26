@@ -3,6 +3,7 @@ package agents
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -626,6 +627,51 @@ func TestAConnectorEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
 
 	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "plugin") {
 		t.Errorf("an entry with a key nobody knows loaded: %v", err)
+	}
+}
+
+// TestAConnectorEntryErrorNamesItsLineInTheFile: the line is counted from the top of
+// agent.yaml, not from the start of the entry.
+func TestAConnectorEntryErrorNamesItsLineInTheFile(t *testing.T) {
+	cases := []struct{ name, yaml, want string }{
+		{"a key nobody knows", "name: concierge\nconnectors:\n  - name: github\n    plugin: github\n", `line 4: "plugin"`},
+		{"a key nobody knows in the second entry", "name: concierge\nconnectors:\n  - linear\n  - name: notes\n    connector: linear\n\n    # a comment\n    plugin: x\n",
+			`line 8: "plugin"`},
+		{"a key nobody knows, flow style", "name: concierge\nconnectors:\n  - linear\n  - {name: github, plugin: x}\n", `line 4: "plugin"`},
+		{"a key that is not a string", "name: concierge\nconnectors:\n  - name: github\n    1: x\n", `line 4: "1"`},
+		{"a sandbox that is not a boolean", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    sandbox: github\n",
+			"line 5: cannot unmarshal !!str `github` into bool"},
+		{"tools that are not strings", "name: concierge\nconnectors:\n  - name: github\n\n    tools: [list_*, {a: b}]\n",
+			"line 5: cannot unmarshal !!map into string"},
+		{"an entry that is a list", "name: concierge\nconnectors:\n  - linear\n  - [github]\n", "line 4: cannot unmarshal !!seq"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "concierge")
+			write(t, root, "agent.yaml", c.yaml)
+
+			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+func TestAConnectorEntryWithKnownKeysAloneLoads(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n    tools: [list_*]\n"+
+		"    connection: work\n    required: true\n    sandbox: true\n    require_approval: [delete_*]\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tools, connection, required, approval := []string{"list_*"}, "work", true, []string{"delete_*"}
+	want := ConnectorSettings{Name: "issues", Connector: "linear", Tools: &tools, Connection: &connection, Required: &required,
+		Sandbox: true, RequireApproval: &approval}
+	if got := folder.Settings.Connectors; len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Errorf("the connectors read as %#v", got)
 	}
 }
 

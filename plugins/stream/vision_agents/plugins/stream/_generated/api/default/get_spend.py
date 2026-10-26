@@ -176,8 +176,8 @@ def sync_detailed(
     Args:
         group_by (str | Unset):  Default: 'modality'.
         limit (int | Unset):  Default: 6.
-        scope (SpendScope | Unset): Whose spend is counted: the calling app's, or every app's of
-            its organization. organization is server-side only.
+        scope (SpendScope | Unset): Whose spend is counted, or whose usage events are listed: the
+            calling app's, or every app's of its organization. organization is server-side only.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -255,8 +255,8 @@ def sync(
     Args:
         group_by (str | Unset):  Default: 'modality'.
         limit (int | Unset):  Default: 6.
-        scope (SpendScope | Unset): Whose spend is counted: the calling app's, or every app's of
-            its organization. organization is server-side only.
+        scope (SpendScope | Unset): Whose spend is counted, or whose usage events are listed: the
+            calling app's, or every app's of its organization. organization is server-side only.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -329,8 +329,8 @@ async def asyncio_detailed(
     Args:
         group_by (str | Unset):  Default: 'modality'.
         limit (int | Unset):  Default: 6.
-        scope (SpendScope | Unset): Whose spend is counted: the calling app's, or every app's of
-            its organization. organization is server-side only.
+        scope (SpendScope | Unset): Whose spend is counted, or whose usage events are listed: the
+            calling app's, or every app's of its organization. organization is server-side only.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -406,8 +406,8 @@ async def asyncio(
     Args:
         group_by (str | Unset):  Default: 'modality'.
         limit (int | Unset):  Default: 6.
-        scope (SpendScope | Unset): Whose spend is counted: the calling app's, or every app's of
-            its organization. organization is server-side only.
+        scope (SpendScope | Unset): Whose spend is counted, or whose usage events are listed: the
+            calling app's, or every app's of its organization. organization is server-side only.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.

@@ -7,8 +7,8 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Generated;
 
 /**
- * Whose spend is counted: the calling app's, or every app's of its organization. organization
- * is server-side only.
+ * Whose spend is counted, or whose usage events are listed: the calling app's, or every app's
+ * of its organization. organization is server-side only.
  */
 enum SpendScope: string
 {

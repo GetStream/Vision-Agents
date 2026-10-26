@@ -161,6 +161,70 @@ func (s *ServerSuite) TestTheIngestTokenReadsTeams() {
 	s.Equal(int64(3_000_000), sales.Windows[3].SpentMicros)
 }
 
+func (s *ServerSuite) TestTheCustomerViewOfUsageLeavesOutWhatTheOperatorReads() {
+	event := usagetest.Event(s.organization, func(event *usage.Event) {
+		event.UserID, event.UsageCategories, event.PriceVersion = "u1", []string{"support", "team:finance"}, "prices-v7"
+		event.Attributes, event.Tags = map[string]string{"country": "nl"}, map[string]string{"project": "alpha"}
+		event.BaseCostMicros, event.CostMicros = 777, 1_234
+	})
+	bare := usagetest.Event(s.organization, func(event *usage.Event) { event.OccurredAt = event.OccurredAt.Add(-time.Second) })
+	s.ship(event, bare)
+
+	var page usage.CustomerUsagePage
+	answer := s.customerView(usage.PathAccounts+"/"+s.organization+"/usage", &page)
+
+	s.Require().Len(page.Items, 2)
+	listed := page.Items[0]
+	s.Equal(event.UsageID, listed.UsageID, "newest first")
+	s.Equal("u1", listed.UserID)
+	s.Equal([]string{"support", "team:finance"}, listed.UsageCategories)
+	s.Equal(int64(1_234), listed.CostMicros)
+	s.Equal(event.Quantities, listed.Quantities)
+	s.Equal(map[string]string{"country": "nl"}, listed.Attributes)
+	s.Equal(map[string]string{"project": "alpha"}, listed.Tags)
+	s.Equal("llm", listed.Meter)
+	s.Equal([]string{}, page.Items[1].UsageCategories, "none is an empty list")
+	for _, hidden := range []string{"organization_tier", "organization_id", "base_cost_micros", "777", "price_version", "prices-v7", "source", "router/test/pod"} {
+		s.NotContains(string(answer), hidden)
+	}
+}
+
+func (s *ServerSuite) TestTheCustomerViewOfUsageFiltersAndPagesAsListUsageDoes() {
+	base := time.Now().Add(-time.Minute).UTC().Truncate(time.Microsecond)
+	var finance []usage.Event
+	for i := range 3 {
+		finance = append(finance, usagetest.Event(s.organization, func(event *usage.Event) {
+			event.OccurredAt, event.AppID, event.UserID = base.Add(time.Duration(i)*time.Second), "a1", "u1"
+			event.UsageCategories = []string{"team:finance"}
+		}))
+	}
+	s.ship(append(finance,
+		usagetest.Event(s.organization, func(event *usage.Event) { event.AppID, event.UserID = "a2", "u1" }),
+		usagetest.Event(s.organization, func(event *usage.Event) { event.AppID, event.APIKey = "a1", "hook:chat" }),
+	)...)
+	path := usage.PathAccounts + "/" + s.organization + "/usage?app_id=a1&user_id=u1&team=finance&limit=2"
+
+	var first, second usage.CustomerUsagePage
+	s.customerView(path, &first)
+	s.Require().Len(first.Items, 2)
+	s.True(first.HasMore)
+	s.customerView(path+"&cursor="+first.NextCursor, &second)
+	s.Require().Len(second.Items, 1)
+	s.False(second.HasMore)
+	s.Equal([]uuid.UUID{finance[2].UsageID, finance[1].UsageID, finance[0].UsageID},
+		[]uuid.UUID{first.Items[0].UsageID, first.Items[1].UsageID, second.Items[0].UsageID})
+
+	var keyed usage.CustomerUsagePage
+	s.customerView(usage.PathAccounts+"/"+s.organization+"/usage?api_key=hook:chat", &keyed)
+	s.Require().Len(keyed.Items, 1)
+	s.Equal("hook:chat", keyed.Items[0].APIKey)
+
+	for _, refused := range []string{"?user_id=u1", "?team=finance&category=support", "?cursor=not-a-cursor"} {
+		status, answer := s.read(usage.PathAccounts+"/"+s.organization+"/usage"+refused, "Authorization", "Bearer "+s.service.Token)
+		s.Equal(http.StatusBadRequest, status, "%s: %s", refused, answer)
+	}
+}
+
 func (s *ServerSuite) TestTheIngestTokenWritesNothingElse() {
 	account := "/v1/manage/accounts/" + s.organization
 	writes := [][3]string{
@@ -189,6 +253,7 @@ func (s *ServerSuite) TestTheManageKeyDoesNotOpenTheCustomerView() {
 		usage.PathAccounts + "/" + s.organization,
 		usage.PathAccounts + "/" + s.organization + "/credits",
 		usage.PathAccounts + "/" + s.organization + "/teams",
+		usage.PathAccounts + "/" + s.organization + "/usage",
 	} {
 		for _, headers := range [][]string{
 			{"X-Manage-Key", s.service.ManageKey},

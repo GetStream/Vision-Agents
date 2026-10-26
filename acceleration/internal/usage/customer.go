@@ -3,9 +3,13 @@ package usage
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // PathAccounts prefixes the customer view of the accounts: what an organization's own
@@ -117,6 +121,99 @@ type CustomerCreditPage struct {
 	Items      []CustomerCredit `json:"items"`
 	HasMore    bool             `json:"has_more"`
 	NextCursor string           `json:"next_cursor,omitempty"`
+}
+
+// CustomerUsageEvent is one usage event as its organization may read it: without its tier,
+// its cost at the vendor's rates, its price version or the producer that sent it.
+type CustomerUsageEvent struct {
+	UsageID         uuid.UUID         `json:"usage_id"`
+	OccurredAt      time.Time         `json:"occurred_at"`
+	AppID           string            `json:"app_id"`
+	APIKey          string            `json:"api_key" doc:"The public key the work was started with, or the origin of work no key started, such as hook:chat."`
+	UserID          string            `json:"user_id,omitempty"`
+	UsageCategories []string          `json:"usage_categories" doc:"The token's usage categories, its team among them as team:<name>."`
+	AgentID         string            `json:"agent_id,omitempty"`
+	CallID          string            `json:"call_id,omitempty"`
+	SessionID       string            `json:"session_id,omitempty"`
+	Meter           string            `json:"meter" doc:"The kind of work, such as llm or runtime."`
+	Provider        string            `json:"provider,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	Purpose         string            `json:"purpose,omitempty"`
+	Quantities      map[string]int64  `json:"quantities"`
+	Attributes      map[string]string `json:"attributes,omitempty"`
+	CostMicros      int64             `json:"cost_micros" doc:"What the organization is charged for the work, in micros."`
+	Billable        bool              `json:"billable"`
+	Success         bool              `json:"success"`
+	ErrorCode       string            `json:"error_code,omitempty"`
+	Tags            map[string]string `json:"tags,omitempty"`
+}
+
+// CustomerUsageEventOf is the event as its organization may read it.
+func CustomerUsageEventOf(event Event) CustomerUsageEvent {
+	categories := event.UsageCategories
+	if categories == nil {
+		categories = []string{}
+	}
+	quantities := event.Quantities
+	if quantities == nil {
+		quantities = map[string]int64{}
+	}
+	return CustomerUsageEvent{
+		UsageID: event.UsageID, OccurredAt: event.OccurredAt.UTC(), AppID: event.AppID, APIKey: event.APIKey,
+		UserID: event.UserID, UsageCategories: categories, AgentID: event.AgentID, CallID: event.CallID,
+		SessionID: event.SessionID, Meter: event.Meter, Provider: event.Provider, Model: event.Model,
+		Purpose: event.Purpose, Quantities: quantities, Attributes: event.Attributes, CostMicros: event.CostMicros,
+		Billable: event.Billable, Success: event.Success, ErrorCode: event.ErrorCode, Tags: event.Tags,
+	}
+}
+
+// CustomerUsagePage is one page of an organization's usage events, newest first.
+type CustomerUsagePage struct {
+	Items      []CustomerUsageEvent `json:"items"`
+	HasMore    bool                 `json:"has_more"`
+	NextCursor string               `json:"next_cursor,omitempty"`
+}
+
+// UsageQuery picks an organization's usage events: those of every field set, at most Limit
+// after Cursor, the next_cursor of the page before.
+type UsageQuery struct {
+	// From is inclusive and To exclusive; either may be zero.
+	From, To time.Time
+	Meter    string
+	AppID    string
+	APIKey   string
+	// UserID needs AppID: a user id is only unique within its app.
+	UserID string
+	// Team is the category team:<name>, so it is not given with Category.
+	Team     string
+	Category string
+	Limit    int
+	Cursor   string
+}
+
+// Values is the query as the usage service reads it.
+func (q UsageQuery) Values() url.Values {
+	values := url.Values{}
+	if q.Limit > 0 {
+		values.Set("limit", strconv.Itoa(q.Limit))
+	}
+	for _, instant := range []struct {
+		name string
+		at   time.Time
+	}{{"from", q.From}, {"to", q.To}} {
+		if !instant.at.IsZero() {
+			values.Set(instant.name, instant.at.UTC().Format(time.RFC3339Nano))
+		}
+	}
+	for name, value := range map[string]string{
+		"meter": q.Meter, "app_id": q.AppID, "api_key": q.APIKey, "user_id": q.UserID,
+		"team": q.Team, "category": q.Category, "cursor": q.Cursor,
+	} {
+		if value != "" {
+			values.Set(name, value)
+		}
+	}
+	return values
 }
 
 // Teams is what an organization's teams spent in their current windows.
