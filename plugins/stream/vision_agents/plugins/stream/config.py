@@ -457,6 +457,10 @@ async def _connector_binding(
         tools=[],
         tool_patterns=list(entry.tools) if entry.tools is not None else ["*"],
         required=UNSET if entry.required is None else entry.required,
+        sandbox=True if entry.sandbox else UNSET,
+        require_approval=UNSET
+        if entry.require_approval is None
+        else list(entry.require_approval),
     )
 
 
