@@ -18,6 +18,66 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AccountBalanceState.
+const (
+	AccountBalanceStateExhausted AccountBalanceState = "exhausted"
+	AccountBalanceStateLow       AccountBalanceState = "low"
+	AccountBalanceStateOk        AccountBalanceState = "ok"
+)
+
+// Valid indicates whether the value is a known member of the AccountBalanceState enum.
+func (e AccountBalanceState) Valid() bool {
+	switch e {
+	case AccountBalanceStateExhausted:
+		return true
+	case AccountBalanceStateLow:
+		return true
+	case AccountBalanceStateOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AccountBalanceWarningSource.
+const (
+	AccountBalanceWarningSourceAccount            AccountBalanceWarningSource = "account"
+	AccountBalanceWarningSourceOrganizationPolicy AccountBalanceWarningSource = "organization_policy"
+	AccountBalanceWarningSourceTier               AccountBalanceWarningSource = "tier"
+)
+
+// Valid indicates whether the value is a known member of the AccountBalanceWarningSource enum.
+func (e AccountBalanceWarningSource) Valid() bool {
+	switch e {
+	case AccountBalanceWarningSourceAccount:
+		return true
+	case AccountBalanceWarningSourceOrganizationPolicy:
+		return true
+	case AccountBalanceWarningSourceTier:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AccountStatus.
+const (
+	AccountStatusActive    AccountStatus = "active"
+	AccountStatusSuspended AccountStatus = "suspended"
+)
+
+// Valid indicates whether the value is a known member of the AccountStatus enum.
+func (e AccountStatus) Valid() bool {
+	switch e {
+	case AccountStatusActive:
+		return true
+	case AccountStatusSuspended:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ActivityGranularity.
 const (
 	ActivityGranularityDaily   ActivityGranularity = "daily"
@@ -798,6 +858,36 @@ func (e CreateOptOutRequestSource) Valid() bool {
 	}
 }
 
+// Defines values for CreditEntryKind.
+const (
+	Adjustment      CreditEntryKind = "adjustment"
+	Dispute         CreditEntryKind = "dispute"
+	DisputeReversal CreditEntryKind = "dispute_reversal"
+	Grant           CreditEntryKind = "grant"
+	Refund          CreditEntryKind = "refund"
+	TopUp           CreditEntryKind = "top_up"
+)
+
+// Valid indicates whether the value is a known member of the CreditEntryKind enum.
+func (e CreditEntryKind) Valid() bool {
+	switch e {
+	case Adjustment:
+		return true
+	case Dispute:
+		return true
+	case DisputeReversal:
+		return true
+	case Grant:
+		return true
+	case Refund:
+		return true
+	case TopUp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CustomModelRequestTrainsOnData.
 const (
 	CustomModelRequestTrainsOnDataNo      CustomModelRequestTrainsOnData = "no"
@@ -1097,16 +1187,16 @@ func (e Harness) Valid() bool {
 
 // Defines values for HealthStatusStatus.
 const (
-	Degraded HealthStatusStatus = "degraded"
-	Ok       HealthStatusStatus = "ok"
+	HealthStatusStatusDegraded HealthStatusStatus = "degraded"
+	HealthStatusStatusOk       HealthStatusStatus = "ok"
 )
 
 // Valid indicates whether the value is a known member of the HealthStatusStatus enum.
 func (e HealthStatusStatus) Valid() bool {
 	switch e {
-	case Degraded:
+	case HealthStatusStatusDegraded:
 		return true
-	case Ok:
+	case HealthStatusStatusOk:
 		return true
 	default:
 		return false
@@ -1857,6 +1947,27 @@ func (e Sandbox) Valid() bool {
 	}
 }
 
+// Defines values for SandboxLimitsNetwork.
+const (
+	SandboxLimitsNetworkAllowList SandboxLimitsNetwork = "allow_list"
+	SandboxLimitsNetworkAny       SandboxLimitsNetwork = "any"
+	SandboxLimitsNetworkNone      SandboxLimitsNetwork = "none"
+)
+
+// Valid indicates whether the value is a known member of the SandboxLimitsNetwork enum.
+func (e SandboxLimitsNetwork) Valid() bool {
+	switch e {
+	case SandboxLimitsNetworkAllowList:
+		return true
+	case SandboxLimitsNetworkAny:
+		return true
+	case SandboxLimitsNetworkNone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ScheduledTaskCreatedBy.
 const (
 	ScheduledTaskCreatedByAgent ScheduledTaskCreatedBy = "agent"
@@ -2334,6 +2445,24 @@ func (e SipTrunkTransport) Valid() bool {
 	}
 }
 
+// Defines values for SpendScope.
+const (
+	SpendScopeApp          SpendScope = "app"
+	SpendScopeOrganization SpendScope = "organization"
+)
+
+// Valid indicates whether the value is a known member of the SpendScope enum.
+func (e SpendScope) Valid() bool {
+	switch e {
+	case SpendScopeApp:
+		return true
+	case SpendScopeOrganization:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StreamTenancy.
 const (
 	StreamTenancyApp        StreamTenancy = "app"
@@ -2735,6 +2864,50 @@ func (e ListSimulationRunsParamsState) Valid() bool {
 		return false
 	}
 }
+
+// Account The calling organization's account: its balance, its credit and spend, its status and tier, the threshold it is warned at, and what Stream allows it. Why an organization is suspended is Stream's, and is not here.
+type Account struct {
+	// BalanceMicros What the organization has to spend now, in millionths of a dollar: its credit less what it spent and what work in flight holds, the figure every answer's X-Stream-Balance-Micros says.
+	BalanceMicros int64 `json:"balance_micros"`
+
+	// BalanceState Where balance_micros stands: exhausted at or below 0, low at or below the threshold.
+	BalanceState AccountBalanceState `json:"balance_state"`
+
+	// BalanceWarningMicros The balance at or below which the organization is warned: X-Stream-Balance-Warning says low, and its stream event destinations get account.balance_low. 0 when nothing sets one.
+	BalanceWarningMicros int64 `json:"balance_warning_micros"`
+
+	// BalanceWarningSource Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
+	BalanceWarningSource AccountBalanceWarningSource `json:"balance_warning_source"`
+
+	// GrantedMicros Every credit entry summed: top-ups, grants, refunds and adjustments.
+	GrantedMicros  int64  `json:"granted_micros"`
+	Limits         Limits `json:"limits"`
+	OrganizationId string `json:"organization_id"`
+
+	// OwnLimits The settings in limits Stream set for this organization rather than leaving its tier's, as dotted paths such as channels.voice.concurrent.
+	OwnLimits *[]string `json:"own_limits,omitempty"`
+
+	// SpendHardLimit The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
+	SpendHardLimit *SpendHardLimitUsage `json:"spend_hard_limit,omitempty"`
+
+	// SpentMicros Every billable unit of work recorded, summed.
+	SpentMicros int64 `json:"spent_micros"`
+
+	// Status suspended: Stream refuses every request of the organization, free work included, until it restores it.
+	Status AccountStatus `json:"status"`
+
+	// Tier The tier the organization is billed on.
+	Tier string `json:"tier"`
+}
+
+// AccountBalanceState Where balance_micros stands: exhausted at or below 0, low at or below the threshold.
+type AccountBalanceState string
+
+// AccountBalanceWarningSource Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
+type AccountBalanceWarningSource string
+
+// AccountStatus suspended: Stream refuses every request of the organization, free work included, until it restores it.
+type AccountStatus string
 
 // ActivityBucket defines model for ActivityBucket.
 type ActivityBucket struct {
@@ -3819,6 +3992,21 @@ type ChannelIdentity string
 // ChannelKind A channel a conversation can be carried over.
 type ChannelKind string
 
+// ChannelLimits defines model for ChannelLimits.
+type ChannelLimits struct {
+	// Concurrent How many at once, for a calling channel.
+	Concurrent *int64 `json:"concurrent,omitempty"`
+
+	// Countries The destination countries allowed, as ISO 3166-1 alpha-2 codes. Absent or empty allows any; in overrides, a non-empty list replaces the tier's.
+	Countries *[]string `json:"countries,omitempty"`
+
+	// PerDay How many a UTC day: messages, or minutes for a calling channel.
+	PerDay *int64 `json:"per_day,omitempty"`
+
+	// RecipientsPerDay How many distinct recipients a UTC day.
+	RecipientsPerDay *int64 `json:"recipients_per_day,omitempty"`
+}
+
 // ChannelLineRequest defines model for ChannelLineRequest.
 type ChannelLineRequest struct {
 	// Number The number people write to, in E.164. It must be a line this app connected.
@@ -4885,6 +5073,28 @@ type CreateSipTrunkRequest struct {
 	Username *string `json:"username,omitempty"`
 }
 
+// CreditEntry defines model for CreditEntry.
+type CreditEntry struct {
+	// AmountMicros Signed: what the entry added to the credit, in millionths of a dollar.
+	AmountMicros int64           `json:"amount_micros"`
+	CreatedAt    time.Time       `json:"created_at"`
+	Id           int64           `json:"id"`
+	Kind         CreditEntryKind `json:"kind"`
+
+	// Reference The payment's own reference, such as a top-up's payment id. Absent on entries Stream's staff wrote.
+	Reference *string `json:"reference,omitempty"`
+}
+
+// CreditEntryKind defines model for CreditEntry.Kind.
+type CreditEntryKind string
+
+// CreditPage defines model for CreditPage.
+type CreditPage struct {
+	HasMore    bool          `json:"has_more"`
+	Items      []CreditEntry `json:"items"`
+	NextCursor *string       `json:"next_cursor,omitempty"`
+}
+
 // CustomConnectorRequest A custom MCP server for the app's agents to connect to. An unknown field is refused rather than ignored.
 type CustomConnectorRequest struct {
 	Category *string `json:"category,omitempty"`
@@ -5172,7 +5382,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -5866,6 +6076,17 @@ type LimitWindow struct {
 	WindowStart time.Time `json:"window_start"`
 }
 
+// Limits defines model for Limits.
+type Limits struct {
+	// Channels Limits on each messaging and calling channel, by channel name (sms, whatsapp, rcs, imessage, voice, ...).
+	Channels *map[string]ChannelLimits `json:"channels,omitempty"`
+
+	// LowBalanceMicros The balance, in micros, under which the organization is warned.
+	LowBalanceMicros *int64          `json:"low_balance_micros,omitempty"`
+	Sandbox          *SandboxLimits  `json:"sandbox,omitempty"`
+	SpendHardLimit   *SpendHardLimit `json:"spend_hard_limit,omitempty"`
+}
+
 // LinkChannelRequest defines model for LinkChannelRequest.
 type LinkChannelRequest struct {
 	// ConfigId The agent whose channels the number is being claimed on.
@@ -6508,6 +6729,41 @@ type PressDigitsRequest struct {
 	Vendor string `json:"vendor"`
 }
 
+// Price What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.
+type Price struct {
+	// Change The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.
+	Change *string `json:"change,omitempty"`
+
+	// Description In upcoming: why the change is made.
+	Description *string `json:"description,omitempty"`
+
+	// EffectiveAt When it took effect, or takes effect. Absent when no change set it.
+	EffectiveAt *time.Time `json:"effective_at,omitempty"`
+
+	// Free The work costs nothing.
+	Free bool `json:"free"`
+
+	// Local The deployment runs the model itself; with no rates it costs nothing.
+	Local bool `json:"local"`
+
+	// Modality Such as llm, stt, tts, sms or phone.
+	Modality string `json:"modality"`
+	Model    string `json:"model"`
+	Provider string `json:"provider"`
+
+	// Rates What a customer is charged, by meter.
+	Rates *map[string]PriceRate `json:"rates,omitempty"`
+
+	// Tiers What a customer is charged for long prompts.
+	Tiers *[]PriceTier `json:"tiers,omitempty"`
+
+	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+	When *map[string]string `json:"when,omitempty"`
+
+	// Withdrawn In upcoming: the item stops being priced at effective_at.
+	Withdrawn *bool `json:"withdrawn,omitempty"`
+}
+
 // PriceChange defines model for PriceChange.
 type PriceChange struct {
 	CancelReason *string    `json:"cancel_reason,omitempty"`
@@ -6772,6 +7028,18 @@ type PricedEntry struct {
 
 	// Version The change that wrote it. Absent for the change previewed.
 	Version *string `json:"version,omitempty"`
+}
+
+// Prices defines model for Prices.
+type Prices struct {
+	// At The moment the list is read at.
+	At time.Time `json:"at"`
+
+	// Entries Every item priced now, by modality, provider and model.
+	Entries []Price `json:"entries"`
+
+	// Upcoming What the changes scheduled after at will set, soonest first.
+	Upcoming []Price `json:"upcoming"`
 }
 
 // Provider defines model for Provider.
@@ -7107,6 +7375,27 @@ type Run struct {
 
 // Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 type Sandbox string
+
+// SandboxLimits defines model for SandboxLimits.
+type SandboxLimits struct {
+	// MaxConcurrent How many sandboxes at once.
+	MaxConcurrent *int64 `json:"max_concurrent,omitempty"`
+
+	// MaxCpu The most vCPUs of one sandbox.
+	MaxCpu *int64 `json:"max_cpu,omitempty"`
+
+	// MaxDiskGb The most disk of one sandbox, in GiB.
+	MaxDiskGb *int64 `json:"max_disk_gb,omitempty"`
+
+	// MaxMemoryGb The most memory of one sandbox, in GiB.
+	MaxMemoryGb *int64 `json:"max_memory_gb,omitempty"`
+
+	// Network What a sandbox may reach: nothing, an allow list, or anything.
+	Network *SandboxLimitsNetwork `json:"network,omitempty"`
+}
+
+// SandboxLimitsNetwork What a sandbox may reach: nothing, an allow list, or anything.
+type SandboxLimitsNetwork string
 
 // SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 type SandboxOptions struct {
@@ -8002,6 +8291,15 @@ type SpendBucket struct {
 	Value string `json:"value"`
 }
 
+// SpendHardLimit defines model for SpendHardLimit.
+type SpendHardLimit struct {
+	// DailyMicros The most spent in one UTC day, in micros; 0 or absent is no limit.
+	DailyMicros *int64 `json:"daily_micros,omitempty"`
+
+	// MonthlyMicros The most spent in one calendar month (UTC), in micros; 0 or absent is no limit.
+	MonthlyMicros *int64 `json:"monthly_micros,omitempty"`
+}
+
 // SpendHardLimitUsage The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
 type SpendHardLimitUsage struct {
 	Daily   *SpendHardLimitWindow `json:"daily,omitempty"`
@@ -8010,11 +8308,18 @@ type SpendHardLimitUsage struct {
 
 // SpendHardLimitWindow defines model for SpendHardLimitWindow.
 type SpendHardLimitWindow struct {
-	LimitMicros int64     `json:"limit_micros"`
-	RoomMicros  int64     `json:"room_micros"`
+	LimitMicros int64 `json:"limit_micros"`
+
+	// RoomMicros What it may still spend in the window: the limit less what it spent and what work in flight holds.
+	RoomMicros int64 `json:"room_micros"`
+
+	// SpentMicros What the organization spent in the window, as the usage records count it.
 	SpentMicros int64     `json:"spent_micros"`
 	WindowEnd   time.Time `json:"window_end"`
 }
+
+// SpendScope Whose spend is counted: the calling app's, or every app's of its organization. organization is server-side only.
+type SpendScope string
 
 // StartSessionVoiceRequest defines model for StartSessionVoiceRequest.
 type StartSessionVoiceRequest struct {
@@ -8443,6 +8748,19 @@ type TagValueSummary struct {
 
 	// Value Example: support
 	Value string `json:"value"`
+}
+
+// Team One of the organization's teams: one a spend limit names, or one this month's work carried. A team has no members: each user's token names its team.
+type Team struct {
+	// Apps The apps whose work carried the team this calendar month (UTC), by id.
+	Apps []string `json:"apps"`
+
+	// Limits The team's spend limits, across the organization and within each app, by id.
+	Limits []Limit `json:"limits"`
+	Name   string  `json:"name"`
+
+	// Spent What the team spent in the current daily, weekly, biweekly and monthly windows.
+	Spent []WindowSpend `json:"spent"`
 }
 
 // TelephonySuspension defines model for TelephonySuspension.
@@ -9269,6 +9587,15 @@ type WhatsAppProfile struct {
 	VerificationMethod *string `json:"verification_method,omitempty"`
 }
 
+// WindowSpend defines model for WindowSpend.
+type WindowSpend struct {
+	// Interval The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
+	Interval    LimitInterval `json:"interval"`
+	SpentMicros int64         `json:"spent_micros"`
+	WindowEnd   time.Time     `json:"window_end"`
+	WindowStart time.Time     `json:"window_start"`
+}
+
 // BadRequest The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more.
 type BadRequest = ErrorResponse
 
@@ -9289,6 +9616,15 @@ type Unauthorized = ErrorResponse
 
 // Unavailable The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more.
 type Unavailable = ErrorResponse
+
+// ListCreditsParams defines parameters for ListCredits.
+type ListCreditsParams struct {
+	// Limit Up to 100. Omitted is 50.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
 
 // ListCallsParams defines parameters for ListCalls.
 type ListCallsParams struct {
@@ -9666,6 +10002,12 @@ type ListUserPoliciesParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// GetPricesParams defines parameters for GetPrices.
+type GetPricesParams struct {
+	// Modality Only this modality's items, such as llm, stt, tts, sms or phone.
+	Modality *string `form:"modality,omitempty" json:"modality,omitempty"`
+}
+
 // ListLimitsParams defines parameters for ListLimits.
 type ListLimitsParams struct {
 	// Subject Only limits on this subject. team lists the teams' limits, category every other category's.
@@ -9706,12 +10048,22 @@ type ListLimitGrantsParams struct {
 
 // GetLimitUsageParams defines parameters for GetLimitUsage.
 type GetLimitUsageParams struct {
-	Subject  LimitSubject `form:"subject" json:"subject"`
-	AppId    *string      `form:"app_id,omitempty" json:"app_id,omitempty"`
-	ApiKey   *string      `form:"api_key,omitempty" json:"api_key,omitempty"`
-	UserId   *string      `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Team     *string      `form:"team,omitempty" json:"team,omitempty"`
-	Category *string      `form:"category,omitempty" json:"category,omitempty"`
+	Subject LimitSubject `form:"subject" json:"subject"`
+
+	// AppId The app of each subject, for every subject but organization, category and team. One goes with every subject.
+	AppId *[]string `form:"app_id,omitempty" json:"app_id,omitempty"`
+
+	// ApiKey The key of each subject, for subject api_key.
+	ApiKey *[]string `form:"api_key,omitempty" json:"api_key,omitempty"`
+
+	// UserId The end user of each subject, for subject user.
+	UserId *[]string `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// Team The team of each subject, for subject team or app_team.
+	Team *[]string `form:"team,omitempty" json:"team,omitempty"`
+
+	// Category The usage category of each subject, for subject category or app_category.
+	Category *[]string `form:"category,omitempty" json:"category,omitempty"`
 }
 
 // GetActivityParams defines parameters for GetActivity.
@@ -9736,11 +10088,14 @@ type GetAgentStatsParams struct {
 
 // GetSpendParams defines parameters for GetSpend.
 type GetSpendParams struct {
-	// GroupBy "modality", or the cost label to group by.
+	// GroupBy "modality", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.
 	GroupBy *string `form:"group_by,omitempty" json:"group_by,omitempty"`
 
 	// Limit How many values keep a series of their own.
-	Limit       *int         `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Scope Whose spend: app, the default, or organization.
+	Scope       *SpendScope  `form:"scope,omitempty" json:"scope,omitempty"`
 	Granularity *Granularity `form:"granularity,omitempty" json:"granularity,omitempty"`
 
 	// From Start of the window, inclusive.
@@ -9775,6 +10130,12 @@ type GetTagKeysParams struct {
 
 	// Tag Only consider requests carrying every one of these cost labels, each written "key:value". Repeat for several.
 	Tag *[]string `form:"tag,omitempty" json:"tag,omitempty"`
+}
+
+// ListTeamsParams defines parameters for ListTeams.
+type ListTeamsParams struct {
+	// AppId Only what happened within this app: each team's spend and limits there, and only the teams it saw.
+	AppId *string `form:"app_id,omitempty" json:"app_id,omitempty"`
 }
 
 // GetTurnStatsParams defines parameters for GetTurnStats.
@@ -10403,6 +10764,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAccount Read the organization's account
+	//
+	// The caller's organization's balance, credit, spend, status, tier, the threshold it is warned at and where that comes from, what Stream allows it, and Stream's spend hard limit on it with this window's spend. The balance is what admission counts, less the work in flight, so it agrees with X-Stream-Balance-Micros. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Corresponds with GET /v1/account (the `GetAccount` operationId).
+	GetAccount(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListCredits List the organization's credit entries
+	//
+	// Newest first: top-ups, grants, refunds, disputes and adjustments. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Corresponds with GET /v1/account/credits (the `ListCredits` operationId).
+	ListCredits(ctx context.Context, params *ListCreditsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListCalls The calls the calling customer has run
 	//
@@ -12929,6 +13308,13 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
 	UpdateUserPolicy(ctx context.Context, userId string, body UpdateUserPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetPrices Read the price list
+	//
+	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+	//
+	// Corresponds with GET /v1/prices (the `GetPrices` operationId).
+	GetPrices(ctx context.Context, params *GetPricesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListRouterConfigs The router configs the calling customer holds
 	//
 	// A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.
@@ -13100,9 +13486,9 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
 	RevokeLimitGrant(ctx context.Context, grantId int64, body RevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetLimitUsage Read what a subject spent against its limits
+	// GetLimitUsage Read what subjects spent against their limits
 	//
-	// The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -13207,7 +13593,8 @@ type ClientInterface interface {
 
 	// GetSpend What the calling customer spent, grouped
 	//
-	// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, or a cost label for what it was spent on.
+	// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+	// scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
 	// Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
 	// Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
 	//
@@ -13246,6 +13633,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/stt/recordings/{id} (the `GetTranscription` operationId).
 	GetTranscription(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListTeams List the organization's teams
+	//
+	// Every team a spend limit names or this month's work carried, by name, with the apps that carried it this month, what it spent in each current window and its limits, each with what it can spend once its parents are counted. A team has no members: a user's token names its team. With app_id, only what happened within that app. Spend is the usage service's, or with none the request rows summed.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Corresponds with GET /v1/teams (the `ListTeams` operationId).
+	ListTeams(ctx context.Context, params *ListTeamsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RecordSpeechWithBody Speak a whole text into one audio file, off the live path
 	//
@@ -13329,6 +13725,44 @@ func (c *Client) GetConnectorClientMetadata(ctx context.Context, reqEditors ...R
 // Corresponds with GET /health (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAccount Read the organization's account
+//
+// The caller's organization's balance, credit, spend, status, tier, the threshold it is warned at and where that comes from, what Stream allows it, and Stream's spend hard limit on it with this window's spend. The balance is what admission counts, less the work in flight, so it agrees with X-Stream-Balance-Micros. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Corresponds with GET /v1/account (the `GetAccount` operationId).
+func (c *Client) GetAccount(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAccountRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCredits List the organization's credit entries
+//
+// Newest first: top-ups, grants, refunds, disputes and adjustments. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Corresponds with GET /v1/account/credits (the `ListCredits` operationId).
+func (c *Client) ListCredits(ctx context.Context, params *ListCreditsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCreditsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -18583,6 +19017,23 @@ func (c *Client) UpdateUserPolicy(ctx context.Context, userId string, body Updat
 	return c.Client.Do(req)
 }
 
+// GetPrices Read the price list
+//
+// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+//
+// Corresponds with GET /v1/prices (the `GetPrices` operationId).
+func (c *Client) GetPrices(ctx context.Context, params *GetPricesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPricesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListRouterConfigs The router configs the calling customer holds
 //
 // A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.
@@ -18934,9 +19385,9 @@ func (c *Client) RevokeLimitGrant(ctx context.Context, grantId int64, body Revok
 	return c.Client.Do(req)
 }
 
-// GetLimitUsage Read what a subject spent against its limits
+// GetLimitUsage Read what subjects spent against their limits
 //
-// The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -19151,7 +19602,8 @@ func (c *Client) RunRollup(ctx context.Context, body RunRollupJSONRequestBody, r
 
 // GetSpend What the calling customer spent, grouped
 //
-// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, or a cost label for what it was spent on.
+// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+// scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
 // Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
 // Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
 //
@@ -19231,6 +19683,25 @@ func (c *Client) TranscribeRecording(ctx context.Context, body TranscribeRecordi
 // Corresponds with GET /v1/stt/recordings/{id} (the `GetTranscription` operationId).
 func (c *Client) GetTranscription(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTranscriptionRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListTeams List the organization's teams
+//
+// Every team a spend limit names or this month's work carried, by name, with the apps that carried it this month, what it spent in each current window and its limits, each with what it can spend once its parents are counted. A team has no members: a user's token names its team. With app_id, only what happened within that app. Spend is the usage service's, or with none the request rows summed.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Corresponds with GET /v1/teams (the `ListTeams` operationId).
+func (c *Client) ListTeams(ctx context.Context, params *ListTeamsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTeamsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -19434,6 +19905,99 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAccountRequest constructs an http.Request for the GetAccount method
+func NewGetAccountRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/account")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListCreditsRequest constructs an http.Request for the ListCredits method
+func NewListCreditsRequest(server string, params *ListCreditsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/account/credits")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -28678,6 +29242,60 @@ func NewUpdateUserPolicyRequestWithBody(server string, userId string, contentTyp
 	return req, nil
 }
 
+// NewGetPricesRequest constructs an http.Request for the GetPrices method
+func NewGetPricesRequest(server string, params *GetPricesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/prices")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Modality != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "modality", *params.Modality, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListRouterConfigsRequest constructs an http.Request for the ListRouterConfigs method
 func NewListRouterConfigsRequest(server string) (*http.Request, error) {
 	var err error
@@ -29404,7 +30022,7 @@ func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.
 
 		if params.AppId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "app_id", *params.AppId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "app_id", *params.AppId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -29416,7 +30034,7 @@ func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.
 
 		if params.ApiKey != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -29428,7 +30046,7 @@ func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.
 
 		if params.UserId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -29440,7 +30058,7 @@ func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.
 
 		if params.Team != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "team", *params.Team, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team", *params.Team, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -29452,7 +30070,7 @@ func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.
 
 		if params.Category != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "category", *params.Category, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "category", *params.Category, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -29851,6 +30469,18 @@ func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, e
 
 		}
 
+		if params.Scope != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "scope", *params.Scope, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if params.Granularity != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
@@ -30087,6 +30717,60 @@ func NewGetTranscriptionRequest(server string, id string) (*http.Request, error)
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListTeamsRequest constructs an http.Request for the ListTeams method
+func NewListTeamsRequest(server string, params *ListTeamsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.AppId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "app_id", *params.AppId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -30622,6 +31306,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
+
+	// GetAccountWithResponse Read the organization's account
+	//
+	// The caller's organization's balance, credit, spend, status, tier, the threshold it is warned at and where that comes from, what Stream allows it, and Stream's spend hard limit on it with this window's spend. The balance is what admission counts, less the work in flight, so it agrees with X-Stream-Balance-Micros. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/account (the `GetAccount` operationId).
+	GetAccountWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAccountResponse, error)
+
+	// ListCreditsWithResponse List the organization's credit entries
+	//
+	// Newest first: top-ups, grants, refunds, disputes and adjustments. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/account/credits (the `ListCredits` operationId).
+	ListCreditsWithResponse(ctx context.Context, params *ListCreditsParams, reqEditors ...RequestEditorFn) (*ListCreditsResponse, error)
 
 	// ListCallsWithResponse The calls the calling customer has run
 	//
@@ -33406,6 +34112,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/policies/users/{user_id} (the `UpdateUserPolicy` operationId).
 	UpdateUserPolicyWithResponse(ctx context.Context, userId string, body UpdateUserPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUserPolicyResponse, error)
 
+	// GetPricesWithResponse Read the price list
+	//
+	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/prices (the `GetPrices` operationId).
+	GetPricesWithResponse(ctx context.Context, params *GetPricesParams, reqEditors ...RequestEditorFn) (*GetPricesResponse, error)
+
 	// ListRouterConfigsWithResponse The router configs the calling customer holds
 	//
 	// A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.
@@ -33589,9 +34304,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
 	RevokeLimitGrantWithResponse(ctx context.Context, grantId int64, body RevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeLimitGrantResponse, error)
 
-	// GetLimitUsageWithResponse Read what a subject spent against its limits
+	// GetLimitUsageWithResponse Read what subjects spent against their limits
 	//
-	// The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -33706,7 +34421,8 @@ type ClientWithResponsesInterface interface {
 
 	// GetSpendWithResponse What the calling customer spent, grouped
 	//
-	// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, or a cost label for what it was spent on.
+	// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+	// scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
 	// Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
 	// Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
 	//
@@ -33751,6 +34467,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/stt/recordings/{id} (the `GetTranscription` operationId).
 	GetTranscriptionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetTranscriptionResponse, error)
+
+	// ListTeamsWithResponse List the organization's teams
+	//
+	// Every team a spend limit names or this month's work carried, by name, with the apps that carried it this month, what it spent in each current window and its limits, each with what it can spend once its parents are counted. A team has no members: a user's token names its team. With app_id, only what happened within that app. Spend is the usage service's, or with none the request rows summed.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/teams (the `ListTeams` operationId).
+	ListTeamsWithResponse(ctx context.Context, params *ListTeamsParams, reqEditors ...RequestEditorFn) (*ListTeamsResponse, error)
 
 	// RecordSpeechWithBodyWithResponse Speak a whole text into one audio file, off the live path
 	//
@@ -33930,6 +34657,222 @@ func (r GetHealthResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetHealthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetAccountResponse200Headers the declared response headers of an HTTP 200 response for GetAccount
+type GetAccountResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetAccountResponse402Headers the declared response headers of an HTTP 402 response for GetAccount
+type GetAccountResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetAccountResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Account
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetAccountResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetAccountResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAccountResponse) GetJSON200() *Account {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetAccountResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAccountResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetAccountResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAccountResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetAccountResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAccountResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAccountResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAccountResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAccountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAccountResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAccountResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListCreditsResponse200Headers the declared response headers of an HTTP 200 response for ListCredits
+type ListCreditsResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ListCreditsResponse402Headers the declared response headers of an HTTP 402 response for ListCredits
+type ListCreditsResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ListCreditsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CreditPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListCreditsResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ListCreditsResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCreditsResponse) GetJSON200() *CreditPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListCreditsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListCreditsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListCreditsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListCreditsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListCreditsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListCreditsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListCreditsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCreditsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCreditsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCreditsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCreditsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -54687,6 +55630,107 @@ func (r UpdateUserPolicyResponse) ContentType() string {
 	return ""
 }
 
+// GetPricesResponse200Headers the declared response headers of an HTTP 200 response for GetPrices
+type GetPricesResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetPricesResponse402Headers the declared response headers of an HTTP 402 response for GetPrices
+type GetPricesResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetPricesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Prices
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetPricesResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetPricesResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPricesResponse) GetJSON200() *Prices {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetPricesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetPricesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetPricesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetPricesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetPricesResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetPricesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPricesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPricesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPricesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPricesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListRouterConfigsResponse200Headers the declared response headers of an HTTP 200 response for ListRouterConfigs
 type ListRouterConfigsResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -55987,7 +57031,7 @@ type GetLimitUsageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *SubjectUsage
+	JSON200 *[]SubjectUsage
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -56009,7 +57053,7 @@ type GetLimitUsageResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetLimitUsageResponse) GetJSON200() *SubjectUsage {
+func (r GetLimitUsageResponse) GetJSON200() *[]SubjectUsage {
 	return r.JSON200
 }
 
@@ -57223,6 +58267,114 @@ func (r GetTranscriptionResponse) ContentType() string {
 	return ""
 }
 
+// ListTeamsResponse200Headers the declared response headers of an HTTP 200 response for ListTeams
+type ListTeamsResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ListTeamsResponse402Headers the declared response headers of an HTTP 402 response for ListTeams
+type ListTeamsResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ListTeamsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Team
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListTeamsResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ListTeamsResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListTeamsResponse) GetJSON200() *[]Team {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListTeamsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListTeamsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListTeamsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListTeamsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListTeamsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListTeamsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListTeamsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListTeamsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListTeamsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListTeamsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListTeamsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RecordSpeechResponse202Headers the declared response headers of an HTTP 202 response for RecordSpeech
 type RecordSpeechResponse202Headers struct {
 	XStreamBalanceMicros  *int64
@@ -58106,6 +59258,40 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetHealthResponse(rsp)
+}
+
+// GetAccountWithResponse Read the organization's account
+//
+// The caller's organization's balance, credit, spend, status, tier, the threshold it is warned at and where that comes from, what Stream allows it, and Stream's spend hard limit on it with this window's spend. The balance is what admission counts, less the work in flight, so it agrees with X-Stream-Balance-Micros. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/account (the `GetAccount` operationId).
+func (c *ClientWithResponses) GetAccountWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAccountResponse, error) {
+	rsp, err := c.GetAccount(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAccountResponse(rsp)
+}
+
+// ListCreditsWithResponse List the organization's credit entries
+//
+// Newest first: top-ups, grants, refunds, disputes and adjustments. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/account/credits (the `ListCredits` operationId).
+func (c *ClientWithResponses) ListCreditsWithResponse(ctx context.Context, params *ListCreditsParams, reqEditors ...RequestEditorFn) (*ListCreditsResponse, error) {
+	rsp, err := c.ListCredits(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCreditsResponse(rsp)
 }
 
 // ListCallsWithResponse The calls the calling customer has run
@@ -62527,6 +63713,21 @@ func (c *ClientWithResponses) UpdateUserPolicyWithResponse(ctx context.Context, 
 	return ParseUpdateUserPolicyResponse(rsp)
 }
 
+// GetPricesWithResponse Read the price list
+//
+// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/prices (the `GetPrices` operationId).
+func (c *ClientWithResponses) GetPricesWithResponse(ctx context.Context, params *GetPricesParams, reqEditors ...RequestEditorFn) (*GetPricesResponse, error) {
+	rsp, err := c.GetPrices(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPricesResponse(rsp)
+}
+
 // ListRouterConfigsWithResponse The router configs the calling customer holds
 //
 // A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.
@@ -62818,9 +64019,9 @@ func (c *ClientWithResponses) RevokeLimitGrantWithResponse(ctx context.Context, 
 	return ParseRevokeLimitGrantResponse(rsp)
 }
 
-// GetLimitUsageWithResponse Read what a subject spent against its limits
+// GetLimitUsageWithResponse Read what subjects spent against their limits
 //
-// The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -63001,7 +64202,8 @@ func (c *ClientWithResponses) RunRollupWithResponse(ctx context.Context, body Ru
 
 // GetSpendWithResponse What the calling customer spent, grouped
 //
-// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, or a cost label for what it was spent on.
+// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+// scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
 // Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
 // Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
 //
@@ -63075,6 +64277,23 @@ func (c *ClientWithResponses) GetTranscriptionWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseGetTranscriptionResponse(rsp)
+}
+
+// ListTeamsWithResponse List the organization's teams
+//
+// Every team a spend limit names or this month's work carried, by name, with the apps that carried it this month, what it spent in each current window and its limits, each with what it can spend once its parents are counted. A team has no members: a user's token names its team. With app_id, only what happened within that app. Spend is the usage service's, or with none the request rows summed.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/teams (the `ListTeams` operationId).
+func (c *ClientWithResponses) ListTeamsWithResponse(ctx context.Context, params *ListTeamsParams, reqEditors ...RequestEditorFn) (*ListTeamsResponse, error) {
+	rsp, err := c.ListTeams(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTeamsResponse(rsp)
 }
 
 // RecordSpeechWithBodyWithResponse Speak a whole text into one audio file, off the live path
@@ -63279,6 +64498,258 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 		}
 		response.JSON503 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetAccountResponse parses an HTTP response from a GetAccountWithResponse call
+func ParseGetAccountResponse(rsp *http.Response) (*GetAccountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAccountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Account
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetAccountResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetAccountResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListCreditsResponse parses an HTTP response from a ListCreditsWithResponse call
+func ParseListCreditsResponse(rsp *http.Response) (*ListCreditsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCreditsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CreditPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListCreditsResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ListCreditsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
 	}
 
 	return response, nil
@@ -87518,6 +88989,125 @@ func ParseUpdateUserPolicyResponse(rsp *http.Response) (*UpdateUserPolicyRespons
 	return response, nil
 }
 
+// ParseGetPricesResponse parses an HTTP response from a GetPricesWithResponse call
+func ParseGetPricesResponse(rsp *http.Response) (*GetPricesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPricesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Prices
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetPricesResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetPricesResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseListRouterConfigsResponse parses an HTTP response from a ListRouterConfigsWithResponse call
 func ParseListRouterConfigsResponse(rsp *http.Response) (*ListRouterConfigsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -89034,7 +90624,7 @@ func ParseGetLimitUsageResponse(rsp *http.Response) (*GetLimitUsageResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SubjectUsage
+		var dest []SubjectUsage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -90472,6 +92062,132 @@ func ParseGetTranscriptionResponse(rsp *http.Response) (*GetTranscriptionRespons
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GetTranscriptionResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListTeamsResponse parses an HTTP response from a ListTeamsWithResponse call
+func ParseListTeamsResponse(rsp *http.Response) (*ListTeamsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListTeamsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Team
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListTeamsResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ListTeamsResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

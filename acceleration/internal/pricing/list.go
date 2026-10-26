@@ -1,12 +1,14 @@
 package pricing
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -239,6 +241,11 @@ func (l *List) Entry(item Item) (Entry, bool) {
 	if !ok {
 		return Entry{}, false
 	}
+	return cloned(entry), true
+}
+
+// cloned is a copy of the entry that shares nothing with it.
+func cloned(entry Entry) Entry {
 	entry.When = maps.Clone(entry.When)
 	entry.Rates = maps.Clone(entry.Rates)
 	entry.Tiers = slices.Clone(entry.Tiers)
@@ -249,7 +256,24 @@ func (l *List) Entry(item Item) (Entry, bool) {
 		markup := *entry.MarkupBps
 		entry.MarkupBps = &markup
 	}
-	return entry, true
+	return entry
+}
+
+// Entries is a copy of every entry of the list, by modality, provider, model and then the
+// fewest conditions.
+func (l *List) Entries() []Entry {
+	var entries []Entry
+	for _, item := range l.entries {
+		for _, entry := range item {
+			entries = append(entries, cloned(entry))
+		}
+	}
+	slices.SortFunc(entries, func(a, b Entry) int {
+		return cmp.Or(strings.Compare(a.Modality, b.Modality), strings.Compare(a.Provider, b.Provider),
+			strings.Compare(a.Model, b.Model), cmp.Compare(len(a.When), len(b.When)),
+			strings.Compare(fmt.Sprint(a.When), fmt.Sprint(b.When)))
+	})
+	return entries
 }
 
 // Charged is the item's entry at the rates customers are charged under this list's markup,

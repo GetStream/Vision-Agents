@@ -16,8 +16,9 @@ class SpendHardLimitWindow:
     """
     Attributes:
         limit_micros (int):
-        room_micros (int):
-        spent_micros (int):
+        room_micros (int): What it may still spend in the window: the limit less what it spent and what work in flight
+            holds.
+        spent_micros (int): What the organization spent in the window, as the usage records count it.
         window_end (datetime.datetime):
     """
 

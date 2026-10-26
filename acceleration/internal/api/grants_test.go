@@ -89,9 +89,7 @@ func (s *LimitsSuite) TestAGrantUntilMidnightLetsTheUserSpendAgainToday() {
 	s.Require().NotNil(made.ExpiresAt)
 	s.True(made.ExpiresAt.Equal(midnight))
 	s.searchedUntil(u1, http.StatusOK)
-	var read SubjectUsage
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
-		"/v1/spend/limits/usage?subject=user&app_id="+s.customerID()+"&user_id=u1", nil, &read))
+	read := s.usageOf("subject=user&app_id=" + s.customerID() + "&user_id=u1")
 	s.True(read.Windows[0].OnGrant, "the usage says the user is running on a grant")
 	s.Require().Len(read.Grants, 1)
 	s.Equal(made.Id, read.Grants[0].Id)

@@ -103,6 +103,74 @@ func (s *LimitsSuite) spend(micros int64, change func(*usage.Event)) {
 	})
 }
 
+// usagesOf reads what the subjects query names spent as client, through path.
+func (s *LimitsSuite) usagesOf(client *testClient, path, query string) []SubjectUsage {
+	var read []SubjectUsage
+	status, payload := client.call(http.MethodGet, path+"?"+query, nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	s.Require().NoError(json.Unmarshal(payload, &read))
+	return read
+}
+
+// usageOf reads what the one subject query names spent, as the app's backend.
+func (s *LimitsSuite) usageOf(query string) SubjectUsage {
+	read := s.usagesOf(s.serverClient, "/v1/spend/limits/usage", query)
+	s.Require().Len(read, 1)
+	return read[0]
+}
+
+func (s *LimitsSuite) TestLimitUsageForManyUsers() {
+	s.create(map[string]any{"subject": "user", "app_id": s.customerID(), "interval": "daily", "limit_micros": 2_000_000})
+	for i, user := range []string{"u1", "u2", "u3"} {
+		s.spend(int64(i+1)*100_000, func(event *usage.Event) { event.UserID = user })
+	}
+	query := "subject=user&app_id=" + url.QueryEscape(s.customerID()) + "&user_id=u3&user_id=u1&user_id=u2"
+
+	read := s.usagesOf(s.serverClient, "/v1/spend/limits/usage", query)
+
+	s.Require().Len(read, 3)
+	for i, want := range []struct {
+		user  string
+		spent int64
+	}{{"u3", 300_000}, {"u1", 100_000}, {"u2", 200_000}} {
+		s.Equal(LimitSubjectUser, read[i].Subject)
+		s.Equal(want.user, read[i].UserId, "in the order asked")
+		s.Equal(s.customerID(), read[i].AppId, "the one app_id goes with every user")
+		s.Equal(want.spent, read[i].Windows[0].SpentMicros)
+		s.Require().NotNil(read[i].Windows[0].RoomMicros)
+		s.Equal(2_000_000-want.spent, *read[i].Windows[0].RoomMicros, "each held to the default for every user")
+	}
+	s.Equal(read, s.usagesOf(s.staff, "/v1/manage/spend/limits/usage", query+"&organization_id="+url.QueryEscape(s.organization())),
+		"staff read the same with the organization named")
+
+	many := "subject=user&app_id=" + url.QueryEscape(s.customerID())
+	for i := range 101 {
+		many += "&user_id=u" + strconv.Itoa(i)
+	}
+	status, failure := s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?"+many, nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.NotEmpty(failure.Message)
+}
+
+func (s *LimitsSuite) TestLimitUsagePairsTheAppsWithTheirSubjects() {
+	sibling := store.App{OrganizationID: s.organization(), Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &sibling))
+	s.spend(400_000, func(event *usage.Event) { event.UserID = "u1" })
+	s.spend(700_000, func(event *usage.Event) { event.AppID, event.UserID = sibling.ID, "u1" })
+
+	read := s.usagesOf(s.serverClient, "/v1/spend/limits/usage", "subject=user&app_id="+url.QueryEscape(s.customerID())+
+		"&app_id="+url.QueryEscape(sibling.ID)+"&user_id=u1&user_id=u1")
+
+	s.Require().Len(read, 2)
+	s.Equal(s.customerID(), read[0].AppId)
+	s.Equal(int64(400_000), read[0].Windows[0].SpentMicros)
+	s.Equal(sibling.ID, read[1].AppId)
+	s.Equal(int64(700_000), read[1].Windows[0].SpentMicros, "a user id is only unique within its app")
+
+	status, _ := s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=user&app_id=a&app_id=b&user_id=u1&user_id=u2&user_id=u3", nil)
+	s.Equal(http.StatusBadRequest, status, "two apps for three users pair with nothing")
+}
+
 func (s *LimitsSuite) TestAClientTokenCannotReadOrWriteLimits() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		return as.do(http.MethodGet, "/v1/spend/limits", nil, nil)
@@ -333,9 +401,8 @@ func (s *LimitsSuite) TestAUsersDefaultIsReadAsTheUsersLimit() {
 
 	var read SubjectUsage
 	s.Require().Eventually(func() bool {
-		read = SubjectUsage{}
-		return s.serverClient.do(http.MethodGet, "/v1/spend/limits/usage?subject=user&app_id="+url.QueryEscape(s.customerID())+"&user_id=u1", nil, &read) == http.StatusOK &&
-			read.Windows[0].SpentMicros == 500_000
+		read = s.usageOf("subject=user&app_id=" + url.QueryEscape(s.customerID()) + "&user_id=u1")
+		return read.Windows[0].SpentMicros == 500_000
 	}, 5*time.Second, 50*time.Millisecond)
 
 	daily := read.Windows[0]
@@ -352,8 +419,7 @@ func (s *LimitsSuite) TestSubjectUsageShowsTheSpendHardLimit() {
 	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{SpendHardLimit: &usage.SpendHardLimit{DailyMicros: &daily}})
 	s.spend(1_000_000, nil)
 
-	var read SubjectUsage
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/spend/limits/usage?subject=organization", nil, &read))
+	read := s.usageOf("subject=organization")
 
 	s.Require().NotNil(read.SpendHardLimit)
 	s.Require().NotNil(read.SpendHardLimit.Daily)
@@ -366,8 +432,7 @@ func (s *LimitsSuite) TestSubjectUsageShowsTheSpendHardLimit() {
 
 	zero := int64(0)
 	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{SpendHardLimit: &usage.SpendHardLimit{DailyMicros: &zero, MonthlyMicros: &zero}})
-	read = SubjectUsage{}
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/spend/limits/usage?subject=organization", nil, &read))
+	read = s.usageOf("subject=organization")
 	s.Nil(read.SpendHardLimit, "0 is no limit")
 }
 

@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -187,6 +189,51 @@ func (c *Client) ForgetUser(ctx context.Context, actor string, forget ForgetUser
 	return answer, err
 }
 
+// Account reads the organization's account as the organization may see it, on tier, or on the
+// tier its newest event carried when tier is empty.
+func (c *Client) Account(ctx context.Context, organization, tier string) (Account, error) {
+	query := url.Values{}
+	if tier != "" {
+		query.Set("organization_tier", tier)
+	}
+	var answer Account
+	err := c.get(ctx, PathAccounts+"/"+url.PathEscape(organization), query, &answer)
+	return answer, err
+}
+
+// Credits reads one page of the organization's credit entries, newest first, as the
+// organization may see them: at most limit after cursor, the next_cursor of the page before.
+func (c *Client) Credits(ctx context.Context, organization string, limit int, cursor string) (CustomerCreditPage, error) {
+	query := url.Values{"limit": {strconv.Itoa(limit)}}
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	var answer CustomerCreditPage
+	err := c.get(ctx, PathAccounts+"/"+url.PathEscape(organization)+"/credits", query, &answer)
+	return answer, err
+}
+
+// Teams reads what the organization's teams spent in their current windows.
+func (c *Client) Teams(ctx context.Context, organization string) (Teams, error) {
+	var answer Teams
+	err := c.get(ctx, PathAccounts+"/"+url.PathEscape(organization)+"/teams", nil, &answer)
+	return answer, err
+}
+
+// get reads path with query, with the ingest token, and decodes a 200 into answer.
+func (c *Client) get(ctx context.Context, path string, query url.Values, answer any) error {
+	target := c.url + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return fmt.Errorf("usage: %s: %w", path, err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	return c.do(request, path, answer)
+}
+
 // call posts body to path and decodes a 200 into answer.
 func (c *Client) call(ctx context.Context, path string, body, answer any) error {
 	payload, err := json.Marshal(body)
@@ -211,6 +258,11 @@ func (c *Client) send(ctx context.Context, path string, payload []byte, answer a
 	}
 	request.Header.Set("Content-Type", "application/json")
 	authorize(request.Header)
+	return c.do(request, path, answer)
+}
+
+// do makes the request and decodes a 200 into answer.
+func (c *Client) do(request *http.Request, path string, answer any) error {
 	response, err := c.http.Do(request)
 	if err != nil {
 		return fmt.Errorf("usage: %s: %w", path, err)
