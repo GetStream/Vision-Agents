@@ -932,6 +932,7 @@ func (s *StoreSuite) TestATaskOnADeletedConfigIsRefused() {
 
 	live := s.boundConfig("acme")
 	s.task("live", func(task *ScheduledTask) { task.ConfigID = live.ID })
+	s.task("theirs", func(task *ScheduledTask) { task.CustomerID, task.ConfigID = "globex", deleted.ID })
 }
 
 func (s *StoreSuite) TestACreateWaitsForAConfigDeleteUnderWayAndIsRefused() {
