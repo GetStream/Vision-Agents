@@ -721,7 +721,7 @@ func (a *Agent) nativeDelegate(call llm.ToolCall) ([]llm.ContentPart, bool, erro
 		}
 	}
 	a.mu.Unlock()
-	id, err := a.harness.Delegate(arguments.Skill, arguments.Prompt, call.ID, nil, history)
+	id, err := a.harness.Delegate(context.Background(), arguments.Skill, arguments.Prompt, call.ID, nil, history)
 	if err != nil {
 		return nil, false, err
 	}

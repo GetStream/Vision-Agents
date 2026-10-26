@@ -448,12 +448,13 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
 	delete(a.toolUpdates, requested.Call.ID)
+	charged := a.chargedLocked(ctx)
 	a.mu.Unlock()
 	// Visual tool results go to the vision worker in both native and cascade calls. The
 	// call is still open in the history it is handed, which a provider refuses to replay.
 	// With no worker, as in a chat, a model that sees images is shown them itself.
 	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) && !a.looksItself() {
-		_, err = a.harness.Delegate(visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, withOpenCallsAnswered(a.History()))
+		_, err = a.harness.Delegate(charged, visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, withOpenCallsAnswered(a.History()))
 		if err == nil {
 			parts = llm.TextParts(llm.TextOf(parts) + "\nVisual analysis requested; wait for the vision findings before interpreting the images.")
 		}

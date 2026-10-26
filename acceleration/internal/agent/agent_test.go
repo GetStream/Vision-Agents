@@ -2384,7 +2384,7 @@ func (s *AgentSuite) TestWhatAResponseAskedForHoldsForTheAnswerToItsDelegatedWor
 
 func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 	// Whose day a reply is counted on is decided where the model is asked, so the sender
-	// has to reach it, the reply that finishes the turn included.
+	// has to reach it, the reply that finishes the turn and the work it hands over included.
 	s.delegates()
 	s.join(true)
 	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
@@ -2398,12 +2398,13 @@ func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the answer coming back never started a turn")
 	s.Equal([]routing.Caller{user, user}, s.model.sentBy())
+	s.Equal([]routing.Caller{user}, s.subagent.sentBy(), "the work the turn handed over is the sender's")
 }
 
 func (s *AgentSuite) TestATurnAScheduledTaskFiredIsAskedOfTheModelAsScheduled() {
 	// A scheduled turn is the customer's spend, decided where the model is asked, so the
-	// mark has to reach it, the reply that finishes the turn included, and the next turn
-	// somebody sends is not marked.
+	// mark has to reach it, the reply that finishes the turn and the work it hands over
+	// included, and the next turn somebody sends is not marked.
 	s.delegates()
 	s.join(true)
 	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`, "Hello."}
@@ -2420,6 +2421,22 @@ func (s *AgentSuite) TestATurnAScheduledTaskFiredIsAskedOfTheModelAsScheduled() 
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the next turn was never asked")
 	s.Equal([]bool{true, true, false}, s.model.askedScheduled())
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the work the turn handed over is the customer's spend")
+}
+
+func (s *AgentSuite) TestAPictureAScheduledTaskSendsIsLookedAtAsScheduled() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.join(true)
+	picture := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is in this picture", picture, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "the vision task was never asked")
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the picture is the customer's spend")
 }
 
 func (s *AgentSuite) TestATurnNobodyIsNamedForIsNotAskedInTheNameOfTheLastSender() {

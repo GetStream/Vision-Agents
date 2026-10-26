@@ -74,9 +74,11 @@ func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens 
 		return false, nil
 	}
 	h.compaction = &compaction{prefix: prefix}
+	// The summary is counted on whoever the turn that grew the conversation is.
+	charged := h.charged
 	h.mu.Unlock()
 
-	taskID, err := h.tasks.Create(compactionSkill, compactionPrompt(prefix), nil, "", true)
+	taskID, err := h.tasks.Create(charged, compactionSkill, compactionPrompt(prefix), nil, "", true)
 	if err != nil {
 		h.mu.Lock()
 		h.compaction = nil
