@@ -38,7 +38,7 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ### An error in an agent.yaml connector entry names its line in the file
 
-In the Go SDK, a connector entry with a key nobody knows, or a value of the wrong type, named a line counted from the start of the entry, and a type called `agents.plain`. It now names its line in `agent.yaml`, and a key nobody knows is refused with the keys a connector takes (AI-1767).
+In the Go SDK, a connector entry with a key nobody knows, or a value of the wrong type, named a line counted from the start of the entry. It now names its line in `agent.yaml`, and a key nobody knows is refused with the keys a connector takes (AI-1767).
 
 ### The check before a sandbox run no longer shortens the code's run
 
