@@ -87,6 +87,11 @@ type Request struct {
 	// Tools is which of the session's tools the watcher runs, when DeclaresTools.
 	Tools         []string `json:"tools,omitempty"`
 	DeclaresTools bool     `json:"declares_tools,omitempty"`
+	// Resumable asks for a watcher whose frames carry cursors, carrying on after Cursor and
+	// told about the command RequestID names (session.Session.WatchFrom).
+	Resumable bool   `json:"resumable,omitempty"`
+	Cursor    string `json:"cursor,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
 	// Payload is the frame the watcher sent, for a Command.
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
@@ -102,6 +107,8 @@ type Response struct {
 	Watcher string `json:"watcher"`
 	// Payload is the rendered event, for a Frame.
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// Halted is a Closed for a session the holder's router stopped on its way down.
+	Halted bool `json:"halted,omitempty"`
 }
 
 // Options configures a Bus.
