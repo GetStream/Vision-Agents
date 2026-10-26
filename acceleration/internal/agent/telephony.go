@@ -181,7 +181,9 @@ const didNotWork = "That did not work: "
 // arguments, already answered since the caller last spoke. After a result Gemma often asks
 // for the same call again, and run twice a dispatch or a booking is made twice. A call that
 // failed may be tried again, since what failed may not fail twice, and so may one whose result
-// says nothing was done (undoneResult).
+// says nothing was done (undoneResult), and code whose result tells the model to run it again
+// once the user connected what it needed (harness.RunAgain): answered from that result, the
+// repeat after the user connected got the 401 from before.
 //
 // A call that changes something is matched across the whole call: Nemotron booked a table,
 // heard "Yes, please go ahead" and booked it again, and the second booking failed against the
@@ -193,7 +195,8 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 	changes := !readsOnly(call.Name)
 	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
-			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) {
+			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) ||
+			call.Name == sandbox.ToolName && harness.RunAgain(history[i].Content) {
 			continue
 		}
 		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {

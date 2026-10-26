@@ -879,12 +879,25 @@ func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Res
 		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
 	}
 	for _, grant := range result.Unconnected {
-		said += fmt.Sprintf("\n\nIf this code needed %s (a 401 from %s), the user has not connected it: call %s__list_tools "+
+		said += fmt.Sprintf("\n\nIf this code needed %s (a 401 from %s)"+notConnected+"%s__list_tools "+
 			"so they can, then run the code again; if you cannot call it, tell the user they must connect %s.",
 			grant.Binding, strings.Join(grant.Hosts, ", "), grant.Binding, grant.Binding)
 	}
 	for _, binding := range result.Connected {
-		said += fmt.Sprintf("\n\n%s was just connected: if this run got 401, wait 20 seconds and run the code again.", binding)
+		said += "\n\n" + binding + justConnected
 	}
 	return said, published
+}
+
+// notConnected and justConnected are in the lines HandBack adds for a late grant, each of which
+// tells the model to run the same code again once the user has connected it (RunAgain).
+const (
+	notConnected  = ", the user has not connected it: call "
+	justConnected = " was just connected: if this run got 401, wait 20 seconds and run the code again."
+)
+
+// RunAgain reports whether a run of code's result (HandBack) tells the model to run the same
+// code again, once the user connected what it had no token for: the run before that got a 401.
+func RunAgain(result string) bool {
+	return strings.Contains(result, notConnected) || strings.Contains(result, justConnected)
 }
