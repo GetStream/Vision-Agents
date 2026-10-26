@@ -170,8 +170,8 @@ func (s *Server) takeThreadTurn(ctx context.Context, channelID, holder string) e
 // binding the thread's line now, the oldest when several do, as the bridge picks it for the
 // message (channelbridge take), not the one the thread's earlier turns ran on: a binding moved
 // to another config moves the thread with it, and the history in the channel goes along. On an
-// SMS or WhatsApp thread the tasks it schedules are the person the thread belongs to, when
-// they are the one who wrote (personalThreads).
+// SMS or WhatsApp thread or a 1:1 iMessage chat the tasks it schedules are the person the
+// thread belongs to, when they are the one who wrote (personalThreads).
 func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread store.ChannelThread, event messageEvent) (*session.Session, error) {
 	configs, err := s.store.AgentConfigsBindingConnection(ctx, thread.CustomerID, thread.ConnectionID)
 	if err != nil {
@@ -209,19 +209,25 @@ func threadSpec(config store.AgentConfig, thread store.ChannelThread) session.Sp
 // threadPerson is the Stream user the person a thread belongs to writes as, when the thread
 // is one person's (personalThreads).
 func threadPerson(thread store.ChannelThread) (string, bool) {
-	if personalThreads[thread.ConnectorID] == "" {
+	person := thread.ThreadKey
+	if thread.ConnectorID == "linq" {
+		person = thread.ChatPerson
+	}
+	if personalThreads[thread.ConnectorID] == "" || person == "" {
 		return "", false
 	}
-	return channelbridge.AuthorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, thread.ThreadKey), true
+	return channelbridge.AuthorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, person), true
 }
 
-// personalThreads are the connectors whose thread is one person's, so its session schedules
+// personalThreads are the connectors whose thread can be one person's, so its session schedules
 // tasks for the person the thread belongs to (session.Spec.ThreadPerson), and the channel a
 // task delivered back to such a thread is recorded as: an SMS or WhatsApp thread's key is the
 // person's number (channelbridge.replyTo), so the thread names them. A Linq thread key is the
-// chat id, and a group chat is not told from a 1:1 one, so Linq schedules nothing. A Slack
-// thread is shared by everyone in the channel, so it schedules nothing either.
-var personalThreads = map[string]string{"telnyx": "sms", "whatsapp": "whatsapp"}
+// chat id, which names nobody, so a Linq thread is one person's only while its latest message
+// says the chat is no group, and its person is that message's author (ChatPerson): a group
+// chat, or one whose message does not say, schedules nothing. A Slack thread is shared by
+// everyone in the channel, so it schedules nothing either.
+var personalThreads = map[string]string{"telnyx": "sms", "whatsapp": "whatsapp", "linq": "imessage"}
 
 // heldOnThread is whether a session's conversation is held on a thread channel: a live one
 // says so (Spec.Thread), and an ended one's channel has a channel_threads row.

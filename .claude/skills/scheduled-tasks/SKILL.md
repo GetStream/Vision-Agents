@@ -44,17 +44,23 @@ The tools also need (`Manager.schedulingRunner`, `internal/session/schedule_tool
 - a router with a database;
 - a session that is not incognito, opened on a config;
 - a caller that is a verified user or a backend acting for one (`X-Stream-User-Id`), or the
-  person who wrote in an SMS (Telnyx) or WhatsApp thread, and only when that person writes,
-  not someone else in the thread (the task is theirs and keeps the thread; a Linq chat and a
-  Slack thread get no tools). A guest or an anonymous caller gets no tools.
+  person who wrote in an SMS (Telnyx) or WhatsApp thread or a 1:1 iMessage (Linq) chat, and
+  only when that person writes, not someone else in the thread (the task is theirs and keeps
+  the thread). A Linq chat is 1:1 only while its latest message says `data.chat.is_group`
+  `false`: the bridge then records the sender as the chat's person
+  (`channel_threads.chat_person`). A group chat, a chat whose message does not say, a thread
+  linked before that column, and a Slack thread get no tools. A guest or an anonymous caller
+  gets no tools.
 
-A task made in an SMS or WhatsApp thread comes back in that thread: the router opens the
-thread's conversation, the agent answers the task there, and the reply is texted to the
-person from the line. Its run says `delivered_to` `sms` or `whatsapp` once the line took the
+A task made in an SMS or WhatsApp thread or a 1:1 iMessage chat comes back in that thread:
+the router opens the thread's conversation, the agent answers the task there, and the reply is
+texted to the person from the line. Its run says `delivered_to` `sms`, `whatsapp` or
+`imessage` once the line took the
 reply; a reply the line refused is `delivery_failed`, and the retry sends the same reply,
 files included, without a second turn; a thread removed while the turn ran is `thread_gone`,
-final (`internal/api/scheduled_thread_delivery.go`). Such a task's
-`deliver_to` reads `sms` or `whatsapp` and cannot be changed.
+final (`internal/api/scheduled_thread_delivery.go`); a Linq chat that became a group is
+`thread_gone`, final, too. Such a task's `deliver_to` reads `sms`, `whatsapp` or `imessage`
+and cannot be changed.
 
 The REST create does not need `scheduling.enabled` (`internal/api/scheduled_tasks.go:752`).
 

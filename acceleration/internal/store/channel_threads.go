@@ -48,7 +48,11 @@ type ChannelThread struct {
 	ThreadParts map[string]string `bun:"thread_parts,type:jsonb,notnull"`
 	// StreamAppPK is the Stream app the thread channel is in; zero, stored as NULL, is the
 	// deployment's own.
-	StreamAppPK   int64     `bun:"stream_app_pk,nullzero"`
+	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
+	// ChatPerson is the author id of the one person a chat thread is with, while its latest
+	// message says the chat is no group; empty, stored as NULL, for any other thread
+	// (20261116100000_channel_thread_chat_person.sql).
+	ChatPerson    string    `bun:"chat_person,nullzero"`
 	LastInboundAt time.Time `bun:"last_inbound_at,notnull"`
 	CreatedAt     time.Time `bun:"created_at,notnull"`
 	// TurnHolder and TurnUntil are the lease on the thread's running turn
@@ -104,8 +108,8 @@ func (s *Store) ReleaseChannelThreadMessage(ctx context.Context, channelID, kind
 
 // LinkChannelThread returns the thread channel of the external thread thread names, linking it
 // to thread.ChannelID when the thread has none yet. created is whether it did. An existing
-// link keeps its channel and pin, takes thread's connection, which the latest message names,
-// and records the message as the last inbound one. Two first messages of one thread at once
+// link keeps its channel and pin, takes thread's connection and chat person, which the latest
+// message names, and records the message as the last inbound one. Two first messages of one thread at once
 // link one channel: the unique index on the thread decides which.
 func (s *Store) LinkChannelThread(ctx context.Context, thread *ChannelThread) (created bool, err error) {
 	if thread.ChannelID == "" || thread.CustomerID == "" || thread.ConnectorID == "" || thread.ThreadKey == "" || thread.ConnectionID == "" {
@@ -120,6 +124,7 @@ func (s *Store) LinkChannelThread(ctx context.Context, thread *ChannelThread) (c
 	_, err = s.db.NewInsert().Model(thread).
 		On("CONFLICT (customer_id, connector_id, provider_unit_id, thread_key) DO UPDATE").
 		Set("connection_id = EXCLUDED.connection_id").
+		Set("chat_person = EXCLUDED.chat_person").
 		Set("last_inbound_at = EXCLUDED.last_inbound_at").
 		Returning("*").
 		Exec(ctx)

@@ -2,6 +2,10 @@
 
 ## Features
 
+### A 1:1 iMessage chat can schedule reminders
+
+An agent answering a Linq (iMessage) chat is now offered the scheduling tools when the chat is 1:1: the latest message says `data.chat.is_group` `false`. The task belongs to the person who wrote, and comes back into the chat, `delivered_to` `imessage`. A group chat, a chat whose message does not say, and a chat linked before this release get no tools; a chat that becomes a group loses them, and its tasks fail `thread_gone`. Migration `20261116100000_channel_thread_chat_person` adds `channel_threads.chat_person` (AI-1867).
+
 ### A tool on a speech-to-speech conversation can say how it is going
 
 `/v1/sts/stream` now takes `tool_update` (`tool_call_id`, `text`, `verbatim`) for a call the model is waiting on, and has the model say it the way an agent session does: once no reply is being spoken and the caller is not talking, a newer update for the call replacing one not yet said, and the call's `tool_result` dropping it. A status is said in the model's own words, `verbatim` words as written or close to them. An update for a call the model is not waiting on, or to a model that cannot be told about an open call, is dropped. `tool_hold` is answered with `tool_held` for an open call, and with `tool_cancel` for one the model cancelled or was answered for. In Python, `stream.STS` runs each function with `current_call()` set, so `update()`, `say()` and `disallow_interruptions()` work there as they do on `stream.Accelerated`; before, they did nothing.

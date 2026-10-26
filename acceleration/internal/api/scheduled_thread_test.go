@@ -4,7 +4,9 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"slices"
@@ -12,13 +14,15 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// AI-1842: a thread on a line of one person (SMS on Telnyx, WhatsApp), on a
+// AI-1842: a thread on a line of one person (SMS on Telnyx, WhatsApp, a 1:1 Linq chat), on a
 // config with scheduling on, is offered the scheduling tools. A task made there belongs to the
 // person the thread belongs to, the Stream user the bridge writes them as, and keeps its thread
-// channel. A Slack thread is shared and a Linq chat may be a group, so they are offered none.
+// channel. A Slack thread is shared and a Linq group chat holds several people, so they are
+// offered none.
 
 // stretchInTwoHours is a schedule_task call the scheduling model makes.
 const stretchInTwoHours = `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H"}`
@@ -358,22 +362,132 @@ func (s *WhatsAppChannelSuite) TestAWhatsAppThreadSchedulesForThePersonWhoWrote(
 	s.took(1)
 }
 
-// A Linq chat may be a group, and the thread does not say, so it is offered no scheduling tools.
-func (s *LinqChannelSuite) TestALinqChatIsNotOfferedTheTools() {
+// chatSays is a message.received body whose data.chat.is_group is isGroup, or which has none
+// when isGroup is nil.
+func (s *LinqChannelSuite) chatSays(body []byte, isGroup any) []byte {
+	var event map[string]any
+	s.Require().NoError(json.Unmarshal(body, &event))
+	chat := event["data"].(map[string]any)["chat"].(map[string]any)
+	delete(chat, "is_group")
+	if isGroup != nil {
+		chat["is_group"] = isGroup
+	}
+	said, err := json.Marshal(event)
+	s.Require().NoError(err)
+	return said
+}
+
+// linqTurn has sender write text in chat, whose message says is_group is isGroup (nil: says
+// nothing), and the Router answer it, as smsTurn does on SMS: it returns once the reply went
+// to the chat and the message's turn in the thread is over.
+func (s *LinqChannelSuite) linqTurn(chat, sender string, isGroup any, text string) string {
+	before, replies, sent := 0, 0, len(s.linq.sent())
+	if s.hasChat(chat) {
+		channel := s.threadChannel(chat)
+		before, replies = len(s.chat.Stored(channel)), s.repliesIn(channel)
+	}
+	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, sender, text), isGroup), time.Now()))
+	channel := s.threadChannel(chat)
+	stored := s.written(channel, before+1)
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
+	s.answeredAfter(channel, replies)
+	s.took(sent + 1)
+	s.threadTurnIsFree(channel)
+	return channel
+}
+
+// hasChat is whether the test's customer has a thread channel for a Linq chat yet.
+func (s *LinqChannelSuite) hasChat(chat string) bool {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_threads WHERE customer_id = ? AND connector_id = 'linq' AND thread_key = ?",
+		s.customerID(), chat).Scan(&count))
+	return count > 0
+}
+
+// chatPerson is the person the thread of a Linq chat records the chat is with, "" for none.
+func (s *LinqChannelSuite) chatPerson(chat string) string {
+	var person sql.NullString
+	err := s.store.DB().QueryRowContext(context.Background(),
+		"SELECT chat_person FROM channel_threads WHERE customer_id = ? AND connector_id = 'linq' AND thread_key = ?",
+		s.customerID(), chat).Scan(&person)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ""
+	}
+	s.Require().NoError(err)
+	return person.String
+}
+
+// A 1:1 Linq chat schedules for the person who wrote, keeping the thread channel, delivered on
+// iMessage.
+func (s *LinqChannelSuite) TestALinqOneToOneChatSchedulesForThePersonWhoWrote() {
+	s.schedulingOn(&s.config)
+	s.planTool("schedule_task", stretchInTwoHours)
+	chat := s.utils.uuid()
+
+	channel := s.linqTurn(chat, "+13125550001", false, "remind me to stretch in two hours")
+
+	s.Equal("+13125550001", s.chatPerson(chat))
+	task := s.customersTasks(1)[0]
+	s.Equal(s.chat.Stored(channel)[0]["user_id"], task.UserID, "the person the bridge writes the sender as")
+	s.Equal("server", task.CallerKind)
+	s.Equal(channel, task.ChannelThread)
+	s.Equal([]string{"imessage"}, task.Channels)
+	offered := s.everyToolOffered()
+	for _, name := range schedulingTools {
+		s.Contains(offered, name)
+	}
+}
+
+// A group chat is offered no scheduling tools: a reminder set there would reach everyone in it.
+func (s *LinqChannelSuite) TestALinqGroupChatIsNotOfferedTheTools() {
+	s.offeredNoToolsWhenTheChatSays(true)
+}
+
+// A chat whose message does not say whether it is a group is taken as one, as is a thread
+// linked before the bridge recorded a chat's person.
+func (s *LinqChannelSuite) TestALinqChatWhoseMessageDoesNotSayIsNotOfferedTheTools() {
+	s.offeredNoToolsWhenTheChatSays(nil)
+}
+
+// A message that writes is_group as anything but a boolean says nothing.
+func (s *LinqChannelSuite) TestALinqChatWhoseMessageWritesIsGroupAsAStringIsNotOfferedTheTools() {
+	s.offeredNoToolsWhenTheChatSays("false")
+}
+
+func (s *LinqChannelSuite) offeredNoToolsWhenTheChatSays(isGroup any) {
 	s.schedulingOn(&s.config)
 	chat := s.utils.uuid()
-	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "+13125550001", "remind me to stretch in two hours"), time.Now()))
-	channel := s.threadChannel(chat)
-	s.written(channel, 1)
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
-	s.answeredAfter(channel, 0)
-	// The reply is sent before the test ends, so it reaches no later test's Linq.
-	s.took(1)
 
+	s.linqTurn(chat, "+13125550001", isGroup, "remind me to stretch in two hours")
+
+	s.Empty(s.chatPerson(chat))
 	offered := s.everyToolOffered()
 	for _, name := range schedulingTools {
 		s.False(slices.Contains(offered, name), name)
 	}
+}
+
+// A chat whose latest message says it is a group now is offered the tools no more, even to the
+// person who wrote when it was 1:1, and the task they made there is not delivered into it.
+func (s *LinqChannelSuite) TestALinqChatThatBecomesAGroupLosesTheToolsAndItsTasks() {
+	s.schedulingOn(&s.config)
+	s.planTool("schedule_task", stretchInTwoHours)
+	chat, person := s.utils.uuid(), "+13125550001"
+	s.linqTurn(chat, person, false, "remind me to stretch in two hours")
+	task := s.customersTasks(1)[0]
+
+	s.schedulingOn(&s.config)
+	s.linqTurn(chat, person, true, "I added my sister")
+
+	s.Empty(s.chatPerson(chat))
+	offered := s.everyToolOffered()
+	for _, name := range schedulingTools {
+		s.False(slices.Contains(offered, name), name)
+	}
+	_, _, err := s.deliverTask(task)
+	s.failedAs(err, scheduling.ReasonThreadGone, true)
+	s.Zero(s.scheduledTurns())
 }
 
 // A Slack thread is shared by the channel's people, so it is offered no scheduling tools.

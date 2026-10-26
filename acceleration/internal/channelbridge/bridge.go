@@ -85,9 +85,24 @@ const maxAnswerBytes = 1 << 20
 // none of them itself (keywords.go).
 var episodeSources = map[string]episodeSource{
 	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
-	"linq":      {source: store.EpisodeIMessage, person: byNumber, optOuts: dlc.IMessage, chats: true},
+	"linq":      {source: store.EpisodeIMessage, person: byNumber, optOuts: dlc.IMessage, chats: true, oneToOne: linqOneToOne},
 	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS, answered: telnyxAnswered},
 	"whatsapp":  {source: store.EpisodeWhatsApp, person: byWhatsAppNumber, optOuts: dlc.WhatsApp, recipient: whatsAppNumber, window: whatsAppWindow},
+}
+
+// linqOneToOne is whether a Linq event's chat is one person's: data.chat.is_group false, as the
+// 2026-02-03 payload in linq.yaml's [events] shows it. That page shows the field in its example
+// only, so an event that leaves it out, or writes it as anything but a boolean, is taken as a
+// group's: a task scheduled there would reach everyone in the chat.
+func linqOneToOne(raw []byte) bool {
+	var event struct {
+		Data struct {
+			Chat struct {
+				IsGroup *bool `json:"is_group"`
+			} `json:"chat"`
+		} `json:"data"`
+	}
+	return json.Unmarshal(raw, &event) == nil && event.Data.Chat.IsGroup != nil && !*event.Data.Chat.IsGroup
 }
 
 // whatsAppWindow is Meta's customer service window: free text may be sent within 24 hours of
@@ -114,6 +129,10 @@ type episodeSource struct {
 	// chats is a thread key that is a chat, not the person a reply reaches: a Linq chat id
 	// (linq.yaml). Its replies reach the person who started the thread (replyTo).
 	chats bool
+	// oneToOne is whether a chat's raw event says the chat is one person's, not a group, so the
+	// thread records its author as the chat's person (store.ChannelThread.ChatPerson). Nil is
+	// never.
+	oneToOne func(raw []byte) bool
 	// window is how long after the person's last message the provider takes free text, when
 	// it limits that; zero is no limit. A manifest whose reply has an after_window template
 	// still reaches the person past it (Reachable).
@@ -525,6 +544,9 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		ConnectionID:   connection.ID,
 		ThreadParts:    read.ThreadParts,
 		StreamAppPK:    app.StreamAppPK,
+	}
+	if source := episodeSources[message.ConnectorID]; source.oneToOne != nil && source.oneToOne(message.Raw) {
+		thread.ChatPerson = message.AuthorID
 	}
 	_, err = b.store.LinkChannelThread(ctx, &thread)
 	if err != nil {
