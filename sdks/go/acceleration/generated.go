@@ -6270,7 +6270,7 @@ type PhoneVendor struct {
 
 // PlaceCallRequest defines model for PlaceCallRequest.
 type PlaceCallRequest struct {
-	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
+	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set.
 	Custom *map[string]string `json:"custom,omitempty"`
 
 	// From One of the customer's own numbers, which is what the person sees.
@@ -50938,6 +50938,8 @@ type PlacePhoneCallResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -50976,6 +50978,11 @@ func (r PlacePhoneCallResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PlacePhoneCallResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PlacePhoneCallResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -83149,6 +83156,13 @@ func ParsePlacePhoneCallResponse(rsp *http.Response) (*PlacePhoneCallResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

@@ -400,7 +400,7 @@ func (s *AdmissionSuite) telephony() map[string]func() (int, ErrorDetail) {
 	return map[string]func() (int, ErrorDetail){
 		"buy":      answer("/v1/phone/numbers", BuyNumberRequest{Vendor: "twilio", E164: "+15125551234"}),
 		"call":     answer("/v1/phone/calls", PlaceCallRequest{From: "+15125551234", To: "+15550001111"}),
-		"transfer": answer("/v1/phone/calls/transfer", TransferCallRequest{From: "+15125551234", To: "+15550001111", SessionId: "session-" + s.utils.uuid()}),
+		"transfer": answer("/v1/phone/calls/transfer", TransferCallRequest{From: "+15125551234", To: "+15550001111", SessionId: s.data.storedSession()}),
 	}
 }
 
@@ -434,7 +434,7 @@ func (s *AdmissionSuite) TestACallOrATransferToACountryTheTierDoesNotAllowIsForb
 	}})
 	transfer := func(to string) (int, string) {
 		return s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer",
-			TransferCallRequest{From: "+15125551234", To: to, SessionId: "session-" + s.utils.uuid()})
+			TransferCallRequest{From: "+15125551234", To: to, SessionId: s.data.storedSession()})
 	}
 	var status int
 	var failure string

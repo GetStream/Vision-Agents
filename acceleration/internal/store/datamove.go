@@ -641,7 +641,7 @@ func (t dataTable) identity() string {
 	if t.name == "phone_numbers" {
 		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL," +
 			" 'stream_trunk_id', NULL, 'stream_route_id', NULL, 'stream_call_id', NULL," +
-			" 'stream_call_type', NULL, 'bridge_uri', NULL, 'bridge_username', NULL)"
+			" 'stream_call_type', NULL, 'bridge_uri', NULL, 'bridge_username', NULL, 'attached_at', NULL)"
 	}
 	// A request was billed by the deployment that recorded it, so this one never ships it, and
 	// what that one's usage service answered for it is not this one's: a reship of the rows

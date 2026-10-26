@@ -304,6 +304,13 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 		if !ok {
 			return nil, invalidRequest("session_id must be up to 64 letters, digits, - and _")
 		}
+		theirs, err := s.anotherCustomersSession(ctx, customerID, held)
+		if err != nil {
+			return nil, err
+		}
+		if theirs {
+			return nil, conflict("session_id is taken")
+		}
 		call.SessionID = held
 	}
 	if request.Body.RingTimeoutSeconds != nil {
@@ -319,6 +326,10 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 		call.Headers = *request.Body.Headers
 	}
 	if request.Body.Custom != nil {
+		// The call hook hands a call naming a number to the agent of whoever holds it.
+		if _, named := (*request.Body.Custom)[phone.NumberKey]; named {
+			return nil, invalidRequest("custom cannot set " + phone.NumberKey)
+		}
 		call.Custom = *request.Body.Custom
 	}
 
@@ -386,6 +397,11 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 	tags := phoneTags(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
 		return nil, invalidRequest(err.Error())
+	}
+
+	// Several customers can share a Stream app, so the call has to be one of the caller's.
+	if _, err := s.storedOrLiveSession(ctx, request.Body.SessionId); err != nil {
+		return nil, err
 	}
 
 	// The human is brought into the session's call, which is named after it.
@@ -718,7 +734,8 @@ func phoneNumber(held store.PhoneNumber) PhoneNumber {
 		tags := held.Tags
 		number.Tags = &tags
 	}
-	if held.StreamTrunkID != "" {
+	// A number on a trunk only to place calls is not attached: its callers reach no agent.
+	if held.AttachedAt != nil {
 		trunk := held.StreamTrunkID
 		number.StreamTrunkId = &trunk
 	}
@@ -769,6 +786,25 @@ func (s *Server) callApp(ctx context.Context, customerID, callType, callID strin
 		}
 	}
 	return s.callPinApp(ctx, customerID, callType, callID)
+}
+
+// anotherCustomersSession reports whether a session id is held by another customer, whose
+// agent's call a call routed under it would join. Session ids are unique across customers.
+// One nobody holds yet is not: a caller may name the session it is about to start.
+func (s *Server) anotherCustomersSession(ctx context.Context, customerID, id string) (bool, error) {
+	if s.sessions != nil && s.sessions.Running(id) {
+		_, own := s.sessions.Get(id, session.Owner{CustomerID: customerID, Kind: auth.KindServer})
+		return !own, nil
+	}
+	if s.store == nil {
+		return false, nil
+	}
+	taken, err := s.store.SessionExists(ctx, id)
+	if err != nil || !taken {
+		return false, err
+	}
+	_, err = s.store.StoredSession(ctx, customerID, id)
+	return err != nil, nil
 }
 
 // callPinApp is the Stream app a call no session is running in is in: the app its lines were
@@ -882,7 +918,7 @@ func (s *Server) registerPhone(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"202": {Description: "The vendor is placing the call"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict},
 	}, s.placePhoneCall)
 	huma.Register(api, huma.Operation{
 		OperationID: "transferPhoneCall",
@@ -1277,7 +1313,7 @@ type PhoneVendor struct {
 
 // PlaceCallRequest is the PlaceCallRequest schema.
 type PlaceCallRequest struct {
-	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it."`
+	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set."`
 	From               string             `json:"from" doc:"One of the customer's own numbers, which is what the person sees."`
 	Headers            *map[string]string `json:"headers,omitempty" doc:"Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call."`
 	InitialDigits      *string            `json:"initial_digits,omitempty" doc:"Digits pressed once the person answers, for reaching an extension behind a menu, e.g. \"ww1234#\". w is a short pause and W a long one."`

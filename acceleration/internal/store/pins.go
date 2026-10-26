@@ -154,7 +154,7 @@ type pinsHolder = atomic.Pointer[StreamPins]
 // for long.
 const backfillBatch = 5000
 
-// BackfillStreamPins pins every unpinned session, call, number and call leg to the
+// BackfillStreamPins pins every unpinned session, call, number, shared trunk and call leg to the
 // deployment's own app, which is what an unpinned row meant all along. It is for app mode,
 // where every row names its app, once that app's id is known. It reports how many rows of
 // each table it pinned. A shard's sessions, calls and call legs are its own to backfill.
@@ -163,9 +163,9 @@ func (s *Store) BackfillStreamPins(ctx context.Context, deployment int64) (map[s
 		return nil, errors.New("store: pins are backfilled with the deployment's own app id")
 	}
 	pinned := map[string]int64{}
-	for _, table := range []string{"agent_sessions", "calls", "phone_numbers", "call_resources"} {
+	for _, table := range []string{"agent_sessions", "calls", "phone_numbers", "stream_trunks", "call_resources"} {
 		db := s.shard
-		if table == "phone_numbers" {
+		if table == "phone_numbers" || table == "stream_trunks" {
 			db = s.db
 		}
 		for {

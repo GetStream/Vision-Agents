@@ -168,7 +168,7 @@ func (s *DLCSuite) dial(to string) (int, string) {
 
 func (s *DLCSuite) transfer(to string) (int, string) {
 	return s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer",
-		TransferCallRequest{From: "+15550000001", To: to, SessionId: "session-" + s.utils.uuid()})
+		TransferCallRequest{From: "+15550000001", To: to, SessionId: s.data.storedSession()})
 }
 
 func (s *DLCSuite) spend(field string, amount int) {

@@ -8163,7 +8163,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
+        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("custom")]
         public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;

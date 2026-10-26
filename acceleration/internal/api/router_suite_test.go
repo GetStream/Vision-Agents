@@ -1904,6 +1904,15 @@ func (d testData) briefed(request CreateSessionRequest) (CreateSessionRequest, s
 	return request, brief
 }
 
+// storedSession is the id of a session of the suite's app that is not running, its row put
+// straight into the store, for an endpoint that only asks whose a session is.
+func (d testData) storedSession() string {
+	id := "session-" + d.suite.utils.uuid()
+	d.suite.Require().NoError(d.suite.store.SaveSession(context.Background(),
+		&store.AgentSession{ID: id, CustomerID: d.suite.customerID()}))
+	return id
+}
+
 // createUser is a client signed in as a new end user of the suite's app.
 func (d testData) createUser() *testClient {
 	return d.signedInAs(d.suite.utils.uuid())

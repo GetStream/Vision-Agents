@@ -57,7 +57,14 @@ type CallParams struct {
 	// To is who to ring.
 	To          string
 	RingTimeout time.Duration
+	// CallID, when set, is sent on the Stream leg's INVITE as CallIDHeader, which is how
+	// Stream tells calls on a shared trunk apart.
+	CallID string
 }
+
+// CallIDHeader carries the call id to Stream. Twilio and Telnyx deliver it from the
+// x-stream-call-id parameter of the <Sip> URI.
+const CallIDHeader = "X-Stream-Call-Id"
 
 // FlowB tunes the flow B offer that opens the session in Stream before the customer answers.
 type FlowB struct {

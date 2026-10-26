@@ -1036,6 +1036,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// billed by jobs of their own (router usage numbers, router usage dlc).
 		go telephony.RunLegSweep(ctx, phone.LegSweepEvery)
 		go checkCallHook(ctx, settings, logger)
+		startPhoneSweeper(ctx, telephony, logger)
 	}
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup

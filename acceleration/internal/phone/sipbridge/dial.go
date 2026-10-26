@@ -63,26 +63,7 @@ func Dial(ctx context.Context, cfg Config) (*Call, error) {
 	}
 
 	reg := newRegistry()
-	customer := &sipLeg{
-		side: customerSide, client: customerClient, ua: &sipgo.DialogUA{Client: customerClient},
-		target:    customerURI,
-		from:      sip.Uri{User: cfg.Call.From, Host: cfg.CustomerTrunk.Host},
-		to:        sip.Uri{User: cfg.Call.To, Host: cfg.CustomerTrunk.Host},
-		transport: cfg.CustomerTrunk.Transport,
-		username:  cfg.CustomerTrunk.Username, password: cfg.CustomerTrunk.Password,
-		log: log.With("leg", customerSide),
-	}
-	// Stream matches the routing rule on the called number, which is the trunk's own
-	// number, and makes the caller a participant named after From.
-	stream := &sipLeg{
-		side: streamSide, client: client, ua: &sipgo.DialogUA{Client: client},
-		target:    streamURI,
-		from:      sip.Uri{User: cfg.Call.To, Host: streamURI.Host},
-		to:        sip.Uri{User: cfg.Call.From, Host: streamURI.Host},
-		transport: cfg.Stream.Transport, reinviteHost: streamURI.Host,
-		username: cfg.Stream.Username, password: cfg.Stream.Password,
-		log: log.With("leg", streamSide),
-	}
+	customer, stream := newLegs(cfg, customerClient, client, customerURI, streamURI)
 	customer.onDialog = func(id string) { reg.add(id, customer) }
 	stream.onDialog = func(id string) { reg.add(id, stream) }
 
@@ -124,6 +105,33 @@ func Dial(ctx context.Context, cfg Config) (*Call, error) {
 		ua.Close()
 	}()
 	return call, nil
+}
+
+// newLegs builds the customer leg and the Stream leg of a call. The call id goes on the
+// Stream leg alone, since only Stream reads it.
+func newLegs(cfg Config, customerClient, streamClient *sipgo.Client, customerURI, streamURI sip.Uri) (customer, stream *sipLeg) {
+	customer = &sipLeg{
+		side: customerSide, client: customerClient, ua: &sipgo.DialogUA{Client: customerClient},
+		target:    customerURI,
+		from:      sip.Uri{User: cfg.Call.From, Host: cfg.CustomerTrunk.Host},
+		to:        sip.Uri{User: cfg.Call.To, Host: cfg.CustomerTrunk.Host},
+		transport: cfg.CustomerTrunk.Transport,
+		username:  cfg.CustomerTrunk.Username, password: cfg.CustomerTrunk.Password,
+		log: cfg.Logger.With("leg", customerSide),
+	}
+	// Stream matches the routing rule on the called number, which is the trunk's own
+	// number, and makes the caller a participant named after From.
+	stream = &sipLeg{
+		side: streamSide, client: streamClient, ua: &sipgo.DialogUA{Client: streamClient},
+		target:    streamURI,
+		from:      sip.Uri{User: cfg.Call.To, Host: streamURI.Host},
+		to:        sip.Uri{User: cfg.Call.From, Host: streamURI.Host},
+		transport: cfg.Stream.Transport, reinviteHost: streamURI.Host,
+		username: cfg.Stream.Username, password: cfg.Stream.Password,
+		callID: cfg.Call.CallID,
+		log:    cfg.Logger.With("leg", streamSide),
+	}
+	return customer, stream
 }
 
 // finishSetup catches a call that ended while the flow was still running: the flow can
