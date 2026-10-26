@@ -125,7 +125,7 @@ func (s *Service) deliver(ctx context.Context, line Account, provider Provider, 
 	return err
 }
 
-// partlySent is a reply whose first parts, its words among them, went out and a later part,
+// partlySent is a reply whose first parts, such as its words, went out and a later part,
 // such as a file the provider refused, did not. Sending it again repeats what went out.
 type partlySent struct{ err error }
 
