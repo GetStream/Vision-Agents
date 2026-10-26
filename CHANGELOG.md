@@ -20,6 +20,13 @@ Before billable work starts the router now reserves what it may cost: a search, 
 
 ## Bug Fixes
 
+### A connection is outdated only when a later revision changes what it reads
+
+`definition_status` is `outdated` only when the connector's latest revision changes something the connection reads from the revision it pins: its scopes, auth, endpoints, tools or any other field. A revision that changes only `sensitive` or a source's `outbound` or `read_only_tools` leaves it `current`. The check of a config against a sensitive connector reads those fields from the latest revision. So BigQuery's revision 3 leaves a connection made on revision 1 or 2 `current`, and a connection made before Google Docs' or Google Drive's revision 3 was not outdated by that revision alone (AI-1878).
+
+### BigQuery's `execute_sql_readonly` needs approval beside a sensitive connector
+
+BigQuery revision 3 takes `execute_sql_readonly` out of `read_only_tools`. Its SELECT can call a remote function, whose code may send the rows anywhere. A config that binds it beside a sensitive connector such as Nessy is now refused unless the binding's `require_approval` holds it (AI-1877).
 ### The Python and JavaScript SDKs read `sandbox` and `require_approval` on an agent.yaml connector
 
 A `connectors:` entry in agent.yaml may say `sandbox: true` and `require_approval: [...]` in the Python SDK (`plugins/stream`) and the JavaScript SDK, as it may in the Go SDK. Folder sync sends them on that binding. Before, both SDKs refused the keys. `sandbox` left out or `false` sends no key, and `require_approval` left out or null sends none, so the body is the one sent before. A `sandbox` that is not true or false, or a `require_approval` that is not a list, is refused when the folder is read (AI-1961).

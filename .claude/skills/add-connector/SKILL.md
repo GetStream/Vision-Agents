@@ -87,7 +87,9 @@ Start from the closest existing file:
   the router from starting. A comment, spacing or key order is not a change.
 - **Existing connections keep their pinned revision.** They move to the new one at their next
   consent (OAuth) or token save. So a new field, such as `api_base`, reaches old connections
-  only then.
+  only then. The API shows them `outdated` only when the new revision changes what they read
+  (`core.Manifest.ReadsAsConnection`): a revision that changes only `sensitive`, `outbound` or
+  `read_only_tools` leaves them `current`, since the config check reads those from the latest.
 - **To retire a broken revision**, the new revision lists it in `broken_revisions` with a
   reason. Connections on it are asked to sign in again.
 - **Never delete a file to remove a connector.** Its revisions stay for the connections that
