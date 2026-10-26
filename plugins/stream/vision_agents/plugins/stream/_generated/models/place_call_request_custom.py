@@ -13,14 +13,13 @@ T = TypeVar("T", bound="PlaceCallRequestCustom")
 @_attrs_define
 class PlaceCallRequestCustom:
     """Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every
-    vendor can carry it.
+    vendor can carry it. phone_number is the router's own and cannot be set.
 
     """
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
 
