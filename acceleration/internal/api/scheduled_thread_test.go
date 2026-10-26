@@ -409,7 +409,8 @@ func (s *LinqChannelSuite) hasChat(chat string) bool {
 func (s *LinqChannelSuite) chatPerson(chat string) string {
 	var person sql.NullString
 	err := s.store.DB().QueryRowContext(context.Background(),
-		"SELECT chat_person FROM channel_threads WHERE customer_id = ? AND connector_id = 'linq' AND thread_key = ?",
+		"SELECT p.chat_person FROM channel_threads t LEFT JOIN channel_thread_people p ON p.channel_id = t.channel_id"+
+			" WHERE t.customer_id = ? AND t.connector_id = 'linq' AND t.thread_key = ?",
 		s.customerID(), chat).Scan(&person)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ""

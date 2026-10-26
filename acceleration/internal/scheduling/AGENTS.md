@@ -163,8 +163,8 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   (`channelbridge.authorUserID`: per customer, line and person), `caller_kind` `server`, and
   `channel_thread` its thread channel. A Linq (iMessage) chat is offered them while its
   latest message says `data.chat.is_group` `false`; its person is that message's sender
-  (`channel_threads.chat_person`), and a group chat, a chat whose message does not say and a
-  thread linked before the column are offered none. A Slack thread is shared and is offered none.
+  (`channel_thread_people`), and a group chat, a chat whose message does not say and a
+  thread linked before the table are offered none. A Slack thread is shared and is offered none.
   `TestTelnyxChannelSuite/TestAPersonTextingTheLineSchedulesATaskThatKeepsTheirThread`,
   `TestTelnyxChannelSuite/TestTwoPeopleOnOneLineNeverReachEachOthersTasks`,
   `TestTelnyxChannelSuite/TestTheSamePersonOnAnotherCustomersLineReachesNoneOfTheTasks`,

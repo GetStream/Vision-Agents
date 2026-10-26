@@ -48,8 +48,8 @@ The tools also need (`Manager.schedulingRunner`, `internal/session/schedule_tool
   only when that person writes, not someone else in the thread (the task is theirs and keeps
   the thread). A Linq chat is 1:1 only while its latest message says `data.chat.is_group`
   `false`: the bridge then records the sender as the chat's person
-  (`channel_threads.chat_person`). A group chat, a chat whose message does not say, a thread
-  linked before that column, and a Slack thread get no tools. A guest or an anonymous caller
+  (`channel_thread_people`). A group chat, a chat whose message does not say, a thread
+  linked before that table, and a Slack thread get no tools. A guest or an anonymous caller
   gets no tools.
 
 A task made in an SMS or WhatsApp thread or a 1:1 iMessage chat comes back in that thread:

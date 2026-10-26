@@ -130,7 +130,7 @@ type episodeSource struct {
 	// (linq.yaml). Its replies reach the person who started the thread (replyTo).
 	chats bool
 	// oneToOne is whether a chat's raw event says the chat is one person's, not a group, so the
-	// thread records its author as the chat's person (store.ChannelThread.ChatPerson). Nil is
+	// thread records its author as the chat's person (store.SetChannelThreadChatPerson). Nil is
 	// never.
 	oneToOne func(raw []byte) bool
 	// window is how long after the person's last message the provider takes free text, when
@@ -545,12 +545,17 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		ThreadParts:    read.ThreadParts,
 		StreamAppPK:    app.StreamAppPK,
 	}
-	if source := episodeSources[message.ConnectorID]; source.oneToOne != nil && source.oneToOne(message.Raw) {
-		thread.ChatPerson = message.AuthorID
-	}
 	_, err = b.store.LinkChannelThread(ctx, &thread)
 	if err != nil {
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
+	}
+	if source := episodeSources[message.ConnectorID]; source.oneToOne != nil {
+		if source.oneToOne(message.Raw) {
+			thread.ChatPerson = message.AuthorID
+		}
+		if err := b.store.SetChannelThreadChatPerson(ctx, thread.ChannelID, thread.ChatPerson); err != nil {
+			return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
+		}
 	}
 	fresh, err = b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimInbound, message.ProviderMessageID)
 	if err != nil {

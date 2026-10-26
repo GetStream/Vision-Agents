@@ -50,9 +50,10 @@ type ChannelThread struct {
 	// deployment's own.
 	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
 	// ChatPerson is the author id of the one person a chat thread is with, while its latest
-	// message says the chat is no group; empty, stored as NULL, for any other thread
-	// (20261116100000_channel_thread_chat_person.sql).
-	ChatPerson    string    `bun:"chat_person,nullzero"`
+	// message says the chat is no group; empty for any other thread. It is not a column of
+	// channel_threads: ChannelThread reads it from channel_thread_people and
+	// SetChannelThreadChatPerson writes it (20261116100000_channel_thread_people.sql).
+	ChatPerson    string    `bun:"chat_person,scanonly"`
 	LastInboundAt time.Time `bun:"last_inbound_at,notnull"`
 	CreatedAt     time.Time `bun:"created_at,notnull"`
 	// TurnHolder and TurnUntil are the lease on the thread's running turn
@@ -108,8 +109,8 @@ func (s *Store) ReleaseChannelThreadMessage(ctx context.Context, channelID, kind
 
 // LinkChannelThread returns the thread channel of the external thread thread names, linking it
 // to thread.ChannelID when the thread has none yet. created is whether it did. An existing
-// link keeps its channel and pin, takes thread's connection and chat person, which the latest
-// message names, and records the message as the last inbound one. Two first messages of one thread at once
+// link keeps its channel and pin, takes thread's connection, which the latest message names,
+// and records the message as the last inbound one. Two first messages of one thread at once
 // link one channel: the unique index on the thread decides which.
 func (s *Store) LinkChannelThread(ctx context.Context, thread *ChannelThread) (created bool, err error) {
 	if thread.ChannelID == "" || thread.CustomerID == "" || thread.ConnectorID == "" || thread.ThreadKey == "" || thread.ConnectionID == "" {
@@ -124,7 +125,6 @@ func (s *Store) LinkChannelThread(ctx context.Context, thread *ChannelThread) (c
 	_, err = s.db.NewInsert().Model(thread).
 		On("CONFLICT (customer_id, connector_id, provider_unit_id, thread_key) DO UPDATE").
 		Set("connection_id = EXCLUDED.connection_id").
-		Set("chat_person = EXCLUDED.chat_person").
 		Set("last_inbound_at = EXCLUDED.last_inbound_at").
 		Returning("*").
 		Exec(ctx)
@@ -132,6 +132,26 @@ func (s *Store) LinkChannelThread(ctx context.Context, thread *ChannelThread) (c
 		return false, stack.Wrap(fmt.Errorf("store: link channel thread: %w", err))
 	}
 	return thread.ChannelID == proposed, nil
+}
+
+// SetChannelThreadChatPerson records person as the one person a thread channel's chat is with,
+// as the chat's latest message names them; empty forgets the one recorded, so the chat is no
+// one person's.
+func (s *Store) SetChannelThreadChatPerson(ctx context.Context, channelID, person string) error {
+	if channelID == "" {
+		return stack.Wrap(errors.New("store: a channel id is required"))
+	}
+	var err error
+	if person == "" {
+		_, err = s.db.NewRaw("DELETE FROM channel_thread_people WHERE channel_id = ?", channelID).Exec(ctx)
+	} else {
+		_, err = s.db.NewRaw("INSERT INTO channel_thread_people (channel_id, chat_person) VALUES (?, ?) "+
+			"ON CONFLICT (channel_id) DO UPDATE SET chat_person = EXCLUDED.chat_person", channelID, person).Exec(ctx)
+	}
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set channel thread chat person: %w", err))
+	}
+	return nil
 }
 
 // ChannelThreadLinked is whether an external thread of a customer's provider unit is linked to
@@ -153,7 +173,12 @@ func (s *Store) ChannelThread(ctx context.Context, channelID string) (ChannelThr
 		return ChannelThread{}, stack.Wrap(errors.New("store: a channel id is required"))
 	}
 	var thread ChannelThread
-	err := s.db.NewSelect().Model(&thread).Where("channel_id = ?", channelID).Scan(ctx)
+	err := s.db.NewSelect().Model(&thread).
+		ColumnExpr("ct.*").
+		ColumnExpr("ctp.chat_person").
+		Join("LEFT JOIN channel_thread_people AS ctp ON ctp.channel_id = ct.channel_id").
+		Where("ct.channel_id = ?", channelID).
+		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ChannelThread{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoChannelThread, channelID))
 	}
