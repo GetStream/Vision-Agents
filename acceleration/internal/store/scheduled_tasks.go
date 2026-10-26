@@ -873,8 +873,8 @@ func (s *Store) FinishManualScheduledTaskRun(ctx context.Context, runID, state, 
 // TakeScheduledTaskRunCall records on a running run the session of the call
 // about to be placed for it, and reports false when the run already has one:
 // an earlier attempt, or a worker that stopped, placed a call for this
-// occurrence, so the user is not rung again. reason is then the one that call
-// ended under (SetScheduledTaskRunCallReason), empty while it is unknown.
+// occurrence, so the user is not rung again. reason is then the one the run
+// records, such as how that call ended (SetScheduledTaskRunCallReason), if any.
 func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID, sessionID string) (took bool, reason string, err error) {
 	result, err := s.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 		Set("session_id = ?", sessionID).
@@ -897,7 +897,6 @@ func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID,
 		ColumnExpr("coalesce(error, '')").
 		Where("customer_id = ?", customerID).
 		Where("id = ?", runID).
-		Where("session_id <> ''").
 		Scan(ctx, &reason)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, "", stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))

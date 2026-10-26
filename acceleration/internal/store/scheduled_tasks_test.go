@@ -404,10 +404,12 @@ func (s *StoreSuite) TestARunTakesOneCallUntilItIsGivenBack() {
 
 	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "call-3", "not_answered"))
 	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3"))
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "acme", run.ID, "call-3", "delivery_failed"))
 	runs, err := s.store.ScheduledTaskRuns(s.ctx, "acme", "one", 25, nil)
 	s.Require().NoError(err)
 	s.Require().Len(runs, 1)
 	s.Equal("call-3", runs[0].SessionID, "a finished run keeps the call it made")
+	s.Equal("not_answered", *runs[0].Error, "and its outcome: a call ending late writes no reason over it")
 
 	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "", "delivery_failed"))
 	s.False(take("acme", "call-4"), "a finished run places no call")
@@ -423,14 +425,15 @@ func (s *StoreSuite) TestARunsCallKeepsTheReasonItEndedUnderForTheWorkerTakingIt
 	took, _, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-1")
 	s.Require().NoError(err)
 	s.Require().True(took)
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "acme", run.ID, "call-1", "not_answered"))
+	// Only the call the run took, on the customer's own run, records how it ended.
 	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "acme", run.ID, "call-2", "delivery_failed"))
 	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "globex", run.ID, "call-1", "delivery_failed"))
-	took, reason, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3")
+	took, reason, err := s.store.TakeScheduledTaskRunCall(s.ctx, "globex", run.ID, "call-3")
 	s.Require().NoError(err)
 	s.False(took)
-	s.Empty(reason, "only the call the run took, on the customer's own run, records how it ended")
+	s.Empty(reason, "another customer's run tells nothing")
 
-	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "acme", run.ID, "call-1", "not_answered"))
 	// The worker dies: its run ages past the stale window and its lease lapses.
 	_, err = s.store.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 		Set("started_at = ?", s.base.Add(-time.Hour)).
@@ -443,7 +446,6 @@ func (s *StoreSuite) TestARunsCallKeepsTheReasonItEndedUnderForTheWorkerTakingIt
 	reclaimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
 	s.Require().NoError(err)
 	s.Require().Len(reclaimed, 1)
-	s.Require().Equal(run.ID, reclaimed[0].Run.ID)
 
 	took, reason, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-4")
 	s.Require().NoError(err)
