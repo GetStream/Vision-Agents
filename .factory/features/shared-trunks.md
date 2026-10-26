@@ -42,7 +42,7 @@ number +1556...  ->  rule of its own  ->  same trunk
 | [store/callresources.go](../../acceleration/internal/store/callresources.go)    | `call_resources`, now with a `shared` flag |
 | [callhooks.go](../../acceleration/internal/api/callhooks.go)                    | The hook skips a call the router placed |
 | [phonesweep.go](../../acceleration/cmd/router/phonesweep.go)                    | The sweeper, every 10 minutes |
-| [the migration](../../acceleration/migrations/20261113120000_shared_trunks.sql)  | `stream_trunks`, `attached_at`, `call_resources.id` and `shared` |
+| [the migration](../../acceleration/migrations/20261113130000_shared_trunks.sql)  | `stream_trunks`, `attached_at`, `call_resources.id` and `shared` |
 
 ### One trunk for inbound and outbound
 
