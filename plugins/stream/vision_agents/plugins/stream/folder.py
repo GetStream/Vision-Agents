@@ -179,6 +179,12 @@ class ConnectorSettings:
     binding, filled when a session opens."""
     required: bool | None = None
     """Whether a session needs this connector. None when the file says nothing about it."""
+    sandbox: bool = False
+    """Whether code in the agent's sandbox may call the connector's API with the binding's
+    connection. False sends no sandbox key."""
+    require_approval: list[str] | None = None
+    """Names or patterns of the tools whose every call waits for the session's user to
+    allow it. None sends no require_approval key."""
 
 
 @dataclass
@@ -598,7 +604,15 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
             raise ValueError(
                 f"{path} should give each of connectors as a connector id or a mapping"
             )
-        extra = set(item) - {"name", "connector", "tools", "connection", "required"}
+        extra = set(item) - {
+            "name",
+            "connector",
+            "tools",
+            "connection",
+            "required",
+            "sandbox",
+            "require_approval",
+        }
         if extra:
             raise ValueError(f"{path} unknown connectors setting: {sorted(extra)[0]}")
         name = _text(item.get("name"))
@@ -626,6 +640,9 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
                     f"{path} should give connectors required as true or false"
                 )
             required = flag
+        sandbox = item.get("sandbox")
+        if sandbox is not None and not isinstance(sandbox, bool):
+            raise ValueError(f"{path} should give connectors sandbox as true or false")
         named.append(
             ConnectorSettings(
                 name=name,
@@ -633,6 +650,8 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
                 tools=_connector_tools(path, name, item),
                 connection=connection,
                 required=required,
+                sandbox=bool(sandbox),
+                require_approval=_connector_require_approval(path, item),
             )
         )
     return named
@@ -657,6 +676,18 @@ def _connector_tools(
             raise ValueError(f"{path} should give connectors.tools as a list")
         patterns.append(piece)
     return patterns
+
+
+def _connector_require_approval(
+    path: Path, item: dict[str, object]
+) -> list[str] | None:
+    """Patterns as written. Absent or null sends none; an empty list is sent as one."""
+    raw = item.get("require_approval")
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not all(isinstance(piece, str) for piece in raw):
+        raise ValueError(f"{path} should give connectors.require_approval as a list")
+    return list(raw)
 
 
 def _refuse_connector_aliases(settings: Settings) -> None:
