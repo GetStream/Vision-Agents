@@ -2662,7 +2662,7 @@ func (s *ScheduledTasksSuite) TestAnUnreachablePhoneFallsBackToWhatsApp() {
 	s.makeDue(s.tasksOf(user)[0])
 
 	run := s.delivered(s.tasksOf(user)[0])
-	s.Equal("whatsapp", run.DeliveredTo, "no call could be placed here, so the text carried it")
+	s.Equal("whatsapp", run.DeliveredTo, "a number used only on WhatsApp is not rung, so the text carried it")
 	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond)
 }
@@ -2672,11 +2672,8 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 	scheduling.DeliveryRetries = []time.Duration{time.Millisecond, time.Millisecond}
 	s.T().Cleanup(func() { scheduling.DeliveryRetries = retries })
 
-	number, writer := s.lineNumber(), s.writerNumber()
-	s.connectWhatsApp(number)
-	config := s.agentOnWhatsApp(number)
 	user := s.data.createUser()
-	s.seedWriter(user, config, number, writer)
+	config := s.agentToRing(user)
 	opened := s.openScheduling(user, config, nil)
 	s.taskOn(user, config, opened.Id, []string{"phone"})
 	s.runWorker()
@@ -2695,11 +2692,8 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 }
 
 func (s *ScheduledTasksSuite) TestARunByHandThatFailsListsItsReasonAndNotItsWords() {
-	number, writer := s.lineNumber(), s.writerNumber()
-	s.connectWhatsApp(number)
-	config := s.agentOnWhatsApp(number)
 	user := s.data.createUser()
-	s.seedWriter(user, config, number, writer)
+	config := s.agentToRing(user)
 	opened := s.openScheduling(user, config, nil)
 	created := s.taskOn(user, config, opened.Id, []string{"phone"})
 	path := "/v1/agents/scheduled-tasks/" + created.Id
@@ -2847,8 +2841,8 @@ func (s *ScheduledTasksSuite) TestAFailureOnEveryChannelIsListedUnderTheFirstCha
 	s.connectWhatsApp(number)
 	config := s.agentOnWhatsApp(number)
 	user := s.data.createUser()
-	// The person never wrote, so WhatsApp is out of its window; the call
-	// rings the same number and cannot be placed here.
+	// The person never wrote, so WhatsApp is out of its window; nor did they
+	// text, so the call has no number to ring.
 	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
 		CustomerID: s.customerID(), ConfigID: config, Kind: "whatsapp", Address: writer, UserID: user.userID,
 	}))

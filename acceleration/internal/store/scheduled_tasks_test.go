@@ -386,7 +386,7 @@ func (s *StoreSuite) TestARunTakesOneCallUntilItIsGivenBack() {
 	}
 	s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, &run))
 	take := func(customer, call string) bool {
-		took, err := s.store.TakeScheduledTaskRunCall(s.ctx, customer, run.ID, call)
+		took, _, err := s.store.TakeScheduledTaskRunCall(s.ctx, customer, run.ID, call)
 		s.Require().NoError(err)
 		return took
 	}
@@ -411,6 +411,50 @@ func (s *StoreSuite) TestARunTakesOneCallUntilItIsGivenBack() {
 
 	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "", "delivery_failed"))
 	s.False(take("acme", "call-4"), "a finished run places no call")
+}
+
+func (s *StoreSuite) TestARunsCallKeepsTheReasonItEndedUnderForTheWorkerTakingItOver() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	run := claimed[0].Run
+	took, _, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-1")
+	s.Require().NoError(err)
+	s.Require().True(took)
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "acme", run.ID, "call-2", "delivery_failed"))
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "globex", run.ID, "call-1", "delivery_failed"))
+	took, reason, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3")
+	s.Require().NoError(err)
+	s.False(took)
+	s.Empty(reason, "only the call the run took, on the customer's own run, records how it ended")
+
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "acme", run.ID, "call-1", "not_answered"))
+	// The worker dies: its run ages past the stale window and its lease lapses.
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("started_at = ?", s.base.Add(-time.Hour)).
+		Where("id = ?", run.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = ?", s.base.Add(-time.Minute)).
+		Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+	reclaimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(reclaimed, 1)
+	s.Require().Equal(run.ID, reclaimed[0].Run.ID)
+
+	took, reason, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-4")
+	s.Require().NoError(err)
+	s.False(took, "the run rang already")
+	s.Equal("not_answered", reason, "the taking over keeps how the call went")
+
+	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "call-1", "delivery_failed"))
+	took, reason, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-5")
+	s.Require().NoError(err)
+	s.False(took)
+	s.Empty(reason, "a finished run's reason is its outcome, not a call's")
 }
 
 // held claims the due task id and holds its occurrence until until, as quiet
@@ -637,6 +681,39 @@ func (s *StoreSuite) TestAnEditedOneShotWhoseWorkerLeaseLapsedComesDueAgain() {
 	s.Require().Len(again, 1, "the one-shot is due again at the edit")
 	s.False(again[0].AlreadySettled)
 	s.Equal("Remind Sam to drink water.", again[0].Run.Prompt)
+}
+
+func (s *StoreSuite) TestAnEditedOneShotWhoseLostWorkerPlacedACallIsCompletedNotRungAgain() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	took, _, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", claimed[0].Run.ID, "call-1")
+	s.Require().NoError(err)
+	s.Require().True(took)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = now() - interval '1 second'").
+		Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	task.Instructions = "Remind Sam to drink water."
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+
+	s.Equal(ScheduledTaskCompleted, task.State, "the caller reads back what was saved")
+	stored, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskCompleted, stored.State)
+	s.Nil(stored.NextRunAt)
+	s.Equal("Remind Sam to drink water.", stored.Instructions, "the edit itself stands")
+	settled := s.run(claimed[0].Run.ID)
+	s.Equal(ScheduledTaskRunMissed, settled.State)
+	s.Equal("call-1", settled.SessionID)
+	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Empty(again, "the user is not rung a second time")
 }
 
 func (s *StoreSuite) TestAOneShotMovedWhileBeingDeliveredLetsThatDeliveryGo() {

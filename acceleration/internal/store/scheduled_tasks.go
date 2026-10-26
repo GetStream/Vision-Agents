@@ -344,7 +344,9 @@ func (s *Store) ScheduledTasks(ctx context.Context, customerID string, filter Sc
 // later with the instructions it had before the change. An active one-shot
 // whose occurrence that was is due again at the save, so it is delivered as
 // it now reads (and held again if quiet hours still hold); a repeating task
-// goes on to its next occurrence. An active one-shot whose occurrence a
+// goes on to its next occurrence. An active one-shot whose settled occurrence
+// placed a call is completed instead: ringing the user a second time is worse
+// than an edit missed. An active one-shot whose occurrence a
 // worker is delivering under a live lease, not held, keeps that claim and
 // run: the delivery under way completes with the text it has, since bringing
 // the one-shot forward would deliver it a second time. The caller reads the
@@ -400,17 +402,21 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 		if len(delivering) > 0 {
 			settle = settle.Where("id NOT IN (?)", bun.In(delivering))
 		}
-		var settled []time.Time
-		if err := settle.Returning("scheduled_for").Scan(ctx, &settled); err != nil {
+		var settled []ScheduledTaskRun
+		if err := settle.Returning("scheduled_for, session_id").Scan(ctx, &settled); err != nil {
 			return fmt.Errorf("store: settle scheduled task runs: %w", err)
 		}
 		// The occurrence keeps its run, so a one-shot left at it would only
 		// be advanced past it: it comes due again at the save instead, on the
 		// database's clock, which the claim compares against.
 		if oneShot {
-			for _, scheduledFor := range settled {
-				if !scheduledFor.Equal(*task.NextRunAt) {
+			for _, run := range settled {
+				if !run.ScheduledFor.Equal(*task.NextRunAt) {
 					continue
+				}
+				if run.SessionID != "" {
+					task.State, task.NextRunAt = ScheduledTaskCompleted, nil
+					break
 				}
 				var again time.Time
 				if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&again); err != nil {
@@ -606,18 +612,18 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 					lost = true
 				default:
 					// Stale: take it over under the same run, so the same
-					// command id, so a copy that did land is refused.
+					// command id, so a copy that did land is refused. The
+					// reason a call it placed ended under stays for the
+					// worker taking over (SetScheduledTaskRunCallReason).
 					if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 						Set("attempts = attempts + 1").
 						Set("started_at = ?", now).
-						Set("error = NULL").
 						Where("id = ?", run.ID).
 						Exec(ctx); err != nil {
 						return fmt.Errorf("store: reclaim scheduled task run: %w", err)
 					}
 					run.Attempts++
 					run.StartedAt = &now
-					run.Error = nil
 				}
 				if run.State != ScheduledTaskRunRunning {
 					// The worker settles the task from the run as it stands,
@@ -867,8 +873,9 @@ func (s *Store) FinishManualScheduledTaskRun(ctx context.Context, runID, state, 
 // TakeScheduledTaskRunCall records on a running run the session of the call
 // about to be placed for it, and reports false when the run already has one:
 // an earlier attempt, or a worker that stopped, placed a call for this
-// occurrence, so the user is not rung again.
-func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID, sessionID string) (bool, error) {
+// occurrence, so the user is not rung again. reason is then the one that call
+// ended under (SetScheduledTaskRunCallReason), empty while it is unknown.
+func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID, sessionID string) (took bool, reason string, err error) {
 	result, err := s.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 		Set("session_id = ?", sessionID).
 		Where("customer_id = ?", customerID).
@@ -877,13 +884,43 @@ func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID,
 		Where("session_id = ''").
 		Exec(ctx)
 	if err != nil {
-		return false, stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+		return false, "", stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return false, stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+		return false, "", stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
 	}
-	return affected > 0, nil
+	if affected > 0 {
+		return true, "", nil
+	}
+	err = s.db.NewSelect().Model((*ScheduledTaskRun)(nil)).
+		ColumnExpr("coalesce(error, '')").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", runID).
+		Where("state = ?", ScheduledTaskRunRunning).
+		Where("session_id <> ''").
+		Scan(ctx, &reason)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, "", stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+	}
+	return false, reason, nil
+}
+
+// SetScheduledTaskRunCallReason records on a running run the reason the call
+// sessionID, which it took, ended under, so a worker that takes the run over
+// records that reason, not only that a call was placed.
+func (s *Store) SetScheduledTaskRunCallReason(ctx context.Context, customerID, runID, sessionID, reason string) error {
+	_, err := s.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("error = ?", reason).
+		Where("customer_id = ?", customerID).
+		Where("id = ?", runID).
+		Where("state = ?", ScheduledTaskRunRunning).
+		Where("session_id = ?", sessionID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set scheduled task run call reason: %w", err))
+	}
+	return nil
 }
 
 // ReleaseScheduledTaskRunCall gives back a call TakeScheduledTaskRunCall
