@@ -23,6 +23,7 @@ Before billable work starts the router now reserves what it may cost: a search, 
 ### A Google Drive or Docs grant holding full Drive access no longer needs a consent
 
 `POST /v1/agents/connections/{id}/validate` answered `needs_scopes` for `drive.file` (Google Drive) or `documents` (Google Docs) when the grant held `https://www.googleapis.com/auth/drive`, which Google's tool pages take for `create_file`, `copy_file` and `update_doc`. A manifest's new `scopes.covered_by` names, per needed scope, the broader scopes that meet it; `google_drive` revision 6 and `google_docs` revision 5 say `drive` covers them. A connection moves to the new revision at its next consent.
+
 ### The Python and JavaScript SDKs read `sandbox` and `require_approval` on an agent.yaml connector
 
 A `connectors:` entry in agent.yaml may say `sandbox: true` and `require_approval: [...]` in the Python SDK (`plugins/stream`) and the JavaScript SDK, as it may in the Go SDK. Folder sync sends them on that binding. Before, both SDKs refused the keys. `sandbox` left out or `false` sends no key, and `require_approval` left out or null sends none, so the body is the one sent before. A `sandbox` that is not true or false, or a `require_approval` that is not a list, is refused when the folder is read (AI-1961).
