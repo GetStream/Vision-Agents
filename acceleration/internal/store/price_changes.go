@@ -73,7 +73,9 @@ func (p priceSource) Active(ctx context.Context, at time.Time) ([]pricing.Entry,
 		}
 		entries = make([]pricing.Entry, 0, len(rows))
 		for _, row := range rows {
-			entries = append(entries, row.Entry())
+			entry := row.Entry()
+			entry.EffectiveAt = row.EffectiveAt.UTC()
+			entries = append(entries, entry)
 		}
 		if markup, err = activeMarkup(ctx, tx, at); err != nil {
 			return err
@@ -102,6 +104,26 @@ func (p priceSource) Upcoming(ctx context.Context, after time.Time) ([]pricing.U
 		})
 	}
 	return upcoming, nil
+}
+
+func (p priceSource) UpcomingMarkups(ctx context.Context, after time.Time) ([]pricing.UpcomingMarkup, error) {
+	var changes []PriceChange
+	err := p.store.db.NewSelect().Model(&changes).
+		Where("cancelled_at IS NULL").
+		Where("effective_at > ?", after).
+		Where("markup_bps IS NOT NULL").
+		Order("effective_at", "name").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: upcoming markups: %w", err))
+	}
+	markups := make([]pricing.UpcomingMarkup, 0, len(changes))
+	for _, change := range changes {
+		markups = append(markups, pricing.UpcomingMarkup{
+			Change: change.Name, EffectiveAt: change.EffectiveAt, MarkupBps: *change.MarkupBps, Reason: change.Reason,
+		})
+	}
+	return markups, nil
 }
 
 // PriceListSnapshot is the price list in force at a moment and what is scheduled after it,

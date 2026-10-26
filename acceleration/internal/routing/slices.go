@@ -108,8 +108,8 @@ func StartSlices(options SliceOptions) *Slices {
 		ticker:     time.NewTicker(options.Every),
 		stop:       make(chan struct{}),
 		done:       make(chan struct{}),
-		lease: StartLease(options.Recorder, options.Config, options.Owner, options.Kind, options.ID+"/"+start.UTC().Format(time.RFC3339Nano),
-			options.Quantities(options.Config.Model, int64(time.Minute/time.Second))),
+		lease: StartLeaseOf(options.Recorder, options.Config, options.Owner, options.Kind, options.ID+"/"+start.UTC().Format(time.RFC3339Nano),
+			options.Quantities(options.Config.Model, int64(time.Minute/time.Second)), options.Attributes),
 	}
 	go s.tick()
 	return s

@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"maps"
 	"sync"
 	"time"
 
@@ -27,8 +28,10 @@ type Lease struct {
 	owner    Owner
 	id       uuid.UUID
 	minute   pricing.Quantities
-	every    time.Duration
-	ttl      time.Duration
+	// attributes are what the stream's rows carry, so the minute is priced as they are.
+	attributes map[string]string
+	every      time.Duration
+	ttl        time.Duration
 
 	mu      sync.Mutex
 	refused error
@@ -42,12 +45,24 @@ type Lease struct {
 // provider for its owner, and keeps renewing it until Stop. A recorder that holds nothing, or a
 // provider that bills nothing, leases nothing.
 func StartLease(recorder *Recorder, config ProviderConfig, owner Owner, kind, id string, minute pricing.Quantities) *Lease {
-	return StartLeaseEvery(recorder, config, owner, kind, id, minute, LeaseRenew, LeaseTTL)
+	return startLease(recorder, config, owner, kind, id, minute, nil, LeaseRenew, LeaseTTL)
+}
+
+// StartLeaseOf is StartLease for a stream whose rows carry attributes its price depends on,
+// such as a sandbox's class.
+func StartLeaseOf(recorder *Recorder, config ProviderConfig, owner Owner, kind, id string, minute pricing.Quantities, attributes map[string]string) *Lease {
+	return startLease(recorder, config, owner, kind, id, minute, attributes, LeaseRenew, LeaseTTL)
 }
 
 // StartLeaseEvery is StartLease renewing every every, for ttl each time.
 func StartLeaseEvery(recorder *Recorder, config ProviderConfig, owner Owner, kind, id string, minute pricing.Quantities, every, ttl time.Duration) *Lease {
-	if recorder == nil || !recorder.writer.records() || !recorder.Billable(config) {
+	return startLease(recorder, config, owner, kind, id, minute, nil, every, ttl)
+}
+
+func startLease(recorder *Recorder, config ProviderConfig, owner Owner, kind, id string, minute pricing.Quantities,
+	attributes map[string]string, every, ttl time.Duration,
+) *Lease {
+	if recorder == nil || !recorder.writer.records() || !recorder.billableFor(config, attributes) {
 		return nil
 	}
 	if _, holds := recorder.moneyGate().(Reserver); !holds {
@@ -55,7 +70,7 @@ func StartLeaseEvery(recorder *Recorder, config ProviderConfig, owner Owner, kin
 	}
 	l := &Lease{
 		recorder: recorder, config: config, owner: owner, id: UsageID("lease", kind, id), minute: minute,
-		every: every, ttl: ttl, stop: make(chan struct{}), done: make(chan struct{}),
+		attributes: maps.Clone(attributes), every: every, ttl: ttl, stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	l.renew()
 	go l.keep()
@@ -77,7 +92,12 @@ func (l *Lease) keep() {
 }
 
 func (l *Lease) renew() {
-	err := l.recorder.Reserve(l.config, l.owner, l.id, l.minute, l.ttl)
+	var minute Stat
+	minute.Use(l.minute)
+	for name, value := range l.attributes {
+		minute.Attribute(name, value)
+	}
+	err := l.recorder.ReserveStat(l.config, l.owner, l.id, minute, l.ttl)
 	l.mu.Lock()
 	l.refused = err
 	l.mu.Unlock()

@@ -361,17 +361,3 @@ func (s *Server) revokeGrant(ctx context.Context, organization string, request *
 	s.policies.LimitsChanged(ctx, revoked.OrganizationID)
 	return &grantResponse{Body: grantOf(revoked, time.Now())}, nil
 }
-
-// subjectGrants are the subject's grants live at now, each with what it paid for.
-func (s *Server) subjectGrants(ctx context.Context, ref usage.SubjectRef, now time.Time) ([]LimitGrant, error) {
-	live, err := s.store.LiveGrants(ctx, []string{ref.OrganizationID}, now)
-	if err != nil {
-		return nil, err
-	}
-	live = slices.DeleteFunc(live, func(grant store.LimitGrant) bool { return grant.Ref() != ref })
-	grants := make([]LimitGrant, 0, len(live))
-	for _, grant := range live {
-		grants = append(grants, grantOf(grant, now))
-	}
-	return grants, nil
-}
