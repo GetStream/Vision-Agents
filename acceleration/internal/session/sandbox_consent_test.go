@@ -36,7 +36,8 @@ func (s *shown) counts() (begun, cards, steps int) {
 }
 
 // askingSandbox is the sandbox of spec's session, on a router whose consents begin begun,
-// each stored as an attempt as api.ConnectorConsents stores one, with its connectors attached, in a conversation of owner's that records in shown what it is
+// each stored as an attempt as api.ConnectorConsents stores one, with its connectors attached,
+// in a conversation of owner's that records in shown what it is
 // asked to show. A step asked to wait is refused, so a list_tools call answers at once.
 func (s *SandboxGrantsSuite) askingSandbox(spec Spec, owner string, begun Consent) (sandbox.Sandbox, *dispatcher, *shown) {
 	seen := &shown{stored: map[string]bool{}}
@@ -215,6 +216,33 @@ func (s *SandboxGrantsSuite) TestAConsentEndedOnAnotherRouterShowsNoNewOne() {
 	s.Equal([]string{"crm"}, bindings(afterExpiry.Unconnected))
 	begun, cards, _ := seen.counts()
 	s.Equal([]int{1, 1}, []int{begun, cards})
+}
+
+// TestAConsentConnectedAfterItsAttemptWasUsedUpCarriesOn: the callback on another router used
+// up alice's attempt, a poll of the watch lands before the token exchange stores the
+// connection, then it is stored. The watch has not stopped: the session carries on once, and
+// the next run binds.
+func (s *SandboxGrantsSuite) TestAConsentConnectedAfterItsAttemptWasUsedUpCarriesOn() {
+	api := s.daytonaAPI()
+	box, d, seen, mine := s.lateChat(true, "alice", openFor)
+	s.held(d)
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	_, err = s.store.ConsumeConnectorAuthorizationAttempt(s.ctx, attemptOn(mine))
+	s.Require().NoError(err)
+	time.Sleep(loginPoll + loginPoll/2) // a poll inside the token exchange
+	s.Require().Zero(s.carriedOn())
+	s.connect(mine, "primary")
+
+	s.Eventually(func() bool { return s.carriedOn() > 0 }, 2*loginPoll+5*time.Second, 50*time.Millisecond)
+	bound, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Equal(sandbox.Result{Connected: []string{"crm"}}, bound)
+	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
+	begun, cards, _ := seen.counts()
+	s.Equal([]int{1, 1}, []int{begun, cards})
+	s.Never(func() bool { return s.carriedOn() > 1 }, loginPoll+time.Second, 100*time.Millisecond)
 }
 
 // TestAConsentToReconnectCarriesOnOnlyOnceItConnectedAnew: alice's chosen connection needs

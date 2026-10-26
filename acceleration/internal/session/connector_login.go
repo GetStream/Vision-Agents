@@ -480,8 +480,8 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login, callID string) (c
 // It begins none while the login's newest consent is still open, wherever it is shown, so a
 // second run, or one in a later reply, shows nothing new; askToLogIn reuses the consent this
 // shows within the same reply. Nor any once a consent ended without connecting
-// (endedWithout): the person said no, and the model is still told to call list_tools. Nor does it begin one where askToLogIn would not: a binding
-// already opened, or whose connection the store says is usable now (openConnected), a token
+// (endedWithout): the person said no, and the model is still told to call list_tools. Nor
+// does it begin one where askToLogIn would not: a binding already opened, or whose connection the store says is usable now (openConnected), a token
 // the provider rejected, a conversation that is not the caller's own, or a config that no
 // longer binds it as the caller's.
 func (d *dispatcher) offerConsent(ctx context.Context, l *login) {
@@ -497,9 +497,10 @@ func (d *dispatcher) offerConsent(ctx context.Context, l *login) {
 }
 
 // watchConsent reads the connection of a consent a run of code showed every loginPoll, until
-// the consent expires, the session closes, or its attempt was used up without connecting it
-// (endedWithout), wherever its callback landed. Once the consent connected it,
-// it hands the consent back as the router's callback does (ConnectorConsentFinished), which
+// the consent expires or the session closes. An attempt used up without a connection ends the
+// consent (endedWithout), wherever its callback landed, but the watch goes on: a callback uses
+// the attempt up before it stores the connection, so a poll between the two must not stop it.
+// Once the consent connected it, it hands the consent back as the router's callback does (ConnectorConsentFinished), which
 // opens the binding and tells the session to carry on: a consent finished on another router is
 // never handed to this one, and no call waits for it to read the store (waitForLogin). Of the
 // two, only the one that opens the login carries on (loginFinished).
@@ -532,7 +533,6 @@ func (d *dispatcher) watchConsent(l *login, consent Consent) {
 				l.mu.Lock()
 				l.endedWithout = true
 				l.mu.Unlock()
-				return
 			}
 		}
 	}
