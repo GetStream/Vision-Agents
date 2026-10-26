@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -178,10 +179,96 @@ func (s *ManifestSuite) TestARevisionChangingAnotherFieldOfASourceReadsOtherwise
 		"    tools:\n      - name: run_select\n        needs_scopes: [read]\n    read_only_tools:")))
 }
 
-// Any field it does not leave out counts, the connector's name among them, which a consent
-// started from a session shows (ConnectorConsents, internal/api/authorizations.go).
-func (s *ManifestSuite) TestARevisionChangingAnyOtherFieldReadsOtherwise() {
-	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("name: Example\n", "name: Example\ndescription: Renamed.\n")))
+// The connector's name counts, which a consent started from a session shows
+// (ConnectorConsents, internal/api/authorizations.go).
+func (s *ManifestSuite) TestARevisionWithAnotherNameReadsOtherwise() {
+	s.False(s.pinned().ReadsAsConnection(s.revisedFrom("name: Example\n", "name: Renamed\n")))
+}
+
+// Category, description and setup only the catalog shows, from the latest revision.
+func (s *ManifestSuite) TestARevisionChangingOnlyWhatTheCatalogShowsReadsAsTheOneBefore() {
+	later := s.revisedFrom("name: Example\n", "name: Example\ncategory: Data\ndescription: Renamed.\n"+
+		"setup:\n  url: https://example.com/setup\n")
+	s.Require().NotEqual(s.pinned(), later)
+
+	s.True(s.pinned().ReadsAsConnection(later))
+}
+
+// readsAsConnectionIgnores is every field ReadsAsConnection leaves out, by name. Any other
+// field of Manifest or SourceRule counts, so one added later counts until it is named here
+// with the check that reads it.
+var readsAsConnectionIgnores = map[string]bool{
+	"Revision": true, "BrokenRevisions": true, "Sensitive": true,
+	"Category": true, "Description": true, "Setup": true,
+	"SourceRule.Outbound": true, "SourceRule.ReadOnlyTools": true,
+}
+
+// filled is a non-zero value of t, every field of a struct set.
+func filled(t reflect.Type) reflect.Value {
+	v := reflect.New(t).Elem()
+	switch t.Kind() {
+	case reflect.String:
+		v.SetString("x")
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Int, reflect.Int64:
+		v.SetInt(7)
+	case reflect.Float64:
+		v.SetFloat(7)
+	case reflect.Interface:
+		v.Set(reflect.ValueOf("x"))
+	case reflect.Pointer:
+		v.Set(reflect.New(t.Elem()))
+		v.Elem().Set(filled(t.Elem()))
+	case reflect.Slice:
+		v.Set(reflect.Append(v, filled(t.Elem())))
+	case reflect.Map:
+		v.Set(reflect.MakeMap(t))
+		v.SetMapIndex(filled(t.Key()), filled(t.Elem()))
+	case reflect.Struct:
+		for i := range t.NumField() {
+			v.Field(i).Set(filled(t.Field(i).Type))
+		}
+	default:
+		panic("filled: unsupported kind " + t.Kind().String())
+	}
+	return v
+}
+
+// Every field of a manifest, and of each source, counts for a connection unless named in
+// readsAsConnectionIgnores: a connection reads the rest from its pinned revision (headers
+// sources/mcp/source.go, refresh schemes/oauth2cc/scheme.go, channel channelbridge/bridge.go,
+// sandbox per google_drive.yaml revision 5).
+func (s *ManifestSuite) TestEveryFieldCountsForAConnectionUnlessItIsNamedAsIgnored() {
+	base := Manifest{Sources: []SourceRule{{}}}
+	seen := map[string]bool{}
+	check := func(name string, change func(*Manifest)) {
+		seen[name] = true
+		changed := Manifest{Sources: []SourceRule{{}}}
+		change(&changed)
+		s.Equal(readsAsConnectionIgnores[name], base.ReadsAsConnection(changed), name)
+		s.Equal(readsAsConnectionIgnores[name], changed.ReadsAsConnection(base), name)
+	}
+	mt := reflect.TypeFor[Manifest]()
+	for i := range mt.NumField() {
+		f := mt.Field(i)
+		s.Require().True(f.IsExported(), f.Name)
+		if f.Name == "Sources" {
+			continue
+		}
+		check(f.Name, func(m *Manifest) { reflect.ValueOf(m).Elem().Field(i).Set(filled(f.Type)) })
+	}
+	st := reflect.TypeFor[SourceRule]()
+	for i := range st.NumField() {
+		f := st.Field(i)
+		s.Require().True(f.IsExported(), f.Name)
+		check("SourceRule."+f.Name, func(m *Manifest) {
+			reflect.ValueOf(&m.Sources[0]).Elem().Field(i).Set(filled(f.Type))
+		})
+	}
+	for name := range readsAsConnectionIgnores {
+		s.True(seen[name], "%s is named as ignored but is no field", name)
+	}
 }
 
 // The comparison changes neither manifest: each source keeps what it lists.
