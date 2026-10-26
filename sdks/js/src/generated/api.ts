@@ -3139,7 +3139,11 @@ export type paths = {
          * @description Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
          */
         readonly post: operations["attachPhoneNumber"];
-        readonly delete?: never;
+        /**
+         * Stop a number taking calls, keeping it
+         * @description Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
+         */
+        readonly delete: operations["detachPhoneNumber"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -17121,6 +17125,38 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["AttachedNumber"];
                 };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly detachPhoneNumber: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The number in +15551234567 form. */
+                readonly e164: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The number no longer takes calls */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
