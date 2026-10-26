@@ -154,6 +154,9 @@ type Usage struct {
 	URL string `koanf:"url"`
 	// Token is the service's ingest token.
 	Token string `koanf:"token"`
+	// ManageKey is the service's manage key (its USAGE_MANAGE_KEY), which `router usage
+	// forget-user` calls the service's management API with. The router itself never uses it.
+	ManageKey string `koanf:"manage_key"`
 	// RedisURL is the Redis the service keeps every subject's spend in (its USAGE_REDIS_URL),
 	// which the customer's spend limits are read from every second. Empty: they are read from
 	// the service itself every few seconds.
@@ -532,9 +535,10 @@ var variables = map[string]string{
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
 	"telnyx.public_key":    "TELNYX_PUBLIC_KEY",
 
-	"usage.url":       "ROUTER_USAGE_URL",
-	"usage.token":     "ROUTER_USAGE_TOKEN",
-	"usage.redis_url": "ROUTER_USAGE_REDIS_URL",
+	"usage.url":        "ROUTER_USAGE_URL",
+	"usage.token":      "ROUTER_USAGE_TOKEN",
+	"usage.manage_key": "ROUTER_USAGE_MANAGE_KEY",
+	"usage.redis_url":  "ROUTER_USAGE_REDIS_URL",
 
 	"limits.mode": "ROUTER_LIMITS_MODE",
 }
@@ -976,9 +980,10 @@ func (c Config) export() error {
 		"telnyx.connection_id": c.Telnyx.ConnectionID,
 		"telnyx.public_key":    c.Telnyx.PublicKey,
 
-		"usage.url":       c.Usage.URL,
-		"usage.token":     c.Usage.Token,
-		"usage.redis_url": c.Usage.RedisURL,
+		"usage.url":        c.Usage.URL,
+		"usage.token":      c.Usage.Token,
+		"usage.manage_key": c.Usage.ManageKey,
+		"usage.redis_url":  c.Usage.RedisURL,
 
 		"limits.mode": string(c.Limits.Mode),
 	}

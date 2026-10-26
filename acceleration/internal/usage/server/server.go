@@ -1,5 +1,6 @@
 // Package server is the usage service's HTTP API: producers ship events to it, and routers
-// read what subjects spent and organizations' standings from it, with the ingest token; the
+// read what subjects spent, organizations' standings and the accounts as the organizations
+// themselves may see them from it, with the ingest token; the
 // operator manages tiers, accounts and credit through the management API, with the manage
 // key. The health check takes neither.
 package server
@@ -199,6 +200,7 @@ func (s *Server) register(router chi.Router) huma.API {
 		Security: security,
 		Errors:   []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable},
 	}, s.standings)
+	s.registerAccounts(api)
 	s.registerManage(api)
 	return api
 }
