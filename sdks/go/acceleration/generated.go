@@ -4003,7 +4003,7 @@ type Connection struct {
 	// DefinitionRevision The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again, or a none connection's empty credentials (PUT .../credentials), moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
 	DefinitionRevision *int64 `json:"definition_revision,omitempty"`
 
-	// DefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
+	// DefinitionStatus current when the connection reads its connector's latest revision, or an earlier one that differs from it only in what a config is checked against (sensitive, and which tools only read or send data out), outdated when a later one changes what the connection reads, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 	DefinitionStatus ConnectionDefinitionStatus `json:"definition_status"`
 
 	// ExpiresAt When the current credential expires. Absent when there is none or it does not.
@@ -4053,7 +4053,7 @@ type ConnectionCredentials struct {
 	Values *map[string]string `json:"values,omitempty"`
 }
 
-// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
+// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, or an earlier one that differs from it only in what a config is checked against (sensitive, and which tools only read or send data out), outdated when a later one changes what the connection reads, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 type ConnectionDefinitionStatus string
 
 // ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, the shape of its arguments, how long it took and how it failed. No value the call was asked, and nothing it answered, is kept.

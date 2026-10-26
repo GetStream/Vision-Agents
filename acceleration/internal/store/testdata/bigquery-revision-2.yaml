@@ -1,0 +1,92 @@
+# Google's hosted BigQuery MCP server, asked for in WWSD's platform feedback #46 (AI-1381).
+# Vendor pages, opened October 16, 2026:
+#   [setup] https://cloud.google.com/bigquery/docs/use-bigquery-mcp («Use the BigQuery MCP
+#           server»)
+#   [web]   https://developers.google.com/identity/protocols/oauth2/web-server
+# And the servers' own metadata («[prm]» and «[as]»):
+#   [prm] GET https://bigquery.googleapis.com/.well-known/oauth-protected-resource/mcp at
+#         2026-10-16T17:16:53Z: resource https://bigquery.googleapis.com/mcp,
+#         authorization_servers [https://accounts.google.com/], scopes_supported
+#         [https://www.googleapis.com/auth/bigquery].
+#   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server, as
+#         google_calendar.yaml quotes it.
+id: bigquery
+# A new revision for any change to what this file says; see AGENTS.md. 2 lists the tools
+# that only read.
+revision: 2
+name: BigQuery
+category: Analytics
+# [setup]: «running queries, getting metadata, and listing resources».
+description: List datasets and tables, read their metadata, and run SQL queries.
+setup:
+  # The same Cloud console page as the other Google built-ins (google_drive.yaml).
+  url: https://console.cloud.google.com/auth/clients
+  steps:
+    - title: Enable the API
+      # [setup]: «The BigQuery remote MCP server is enabled when you enable the BigQuery API»,
+      # and «For new projects, the BigQuery API is automatically enabled». No separate MCP API
+      # and no preview enrolment, unlike gmail.yaml: [setup] says neither.
+      description: In a Google Cloud project of your own, check that bigquery.googleapis.com is enabled in the API Library. The MCP server comes with it.
+    - title: Grant the roles
+      # [setup], «Required roles».
+      description: Give each person who will connect MCP Tool User (roles/mcp.toolUser), BigQuery Job User (roles/bigquery.jobUser) and BigQuery Data Viewer (roles/bigquery.dataViewer) on the project.
+    - title: Set up the consent screen
+      description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
+    - title: Add the scope
+      description: Under Data Access, add https://www.googleapis.com/auth/bigquery.
+    - title: Create a web client
+      # [setup], «Redirect URIs»: a web application allowlists the redirect URI on its client.
+      description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
+    - title: Copy the credentials
+      description: Copy the Client ID and Client secret into this page. The same client serves Google Drive, Google Calendar, Google Docs and Gmail.
+endpoints:
+  # [setup] «Server URL or Endpoint»; [prm]'s resource.
+  mcp: https://bigquery.googleapis.com/mcp
+  # Pinned for the trailing slash [prm] and [as] disagree on, as in google_calendar.yaml.
+  issuer: https://accounts.google.com
+  # RFC 8707 resource indicator: [prm]'s resource.
+  resource: https://bigquery.googleapis.com/mcp
+# Authorization code with PKCE S256: [as]; [web].
+schemes: [oauth2_code]
+client:
+  # As google_drive.yaml: a web client registered by hand ([setup] «your OAuth Client ID and
+  # secret»), no registration_endpoint in [as], client_secret_post, and the one Google env
+  # every Google built-in reads.
+  registration: [operator, customer]
+  auth_method: client_secret_post
+  env: GOOGLE
+# [web]: offline access for a refresh token.
+authorize_params:
+  access_type: offline
+  prompt: consent
+scopes:
+  # [setup], «BigQuery MCP OAuth scopes», names this one scope, and [prm] supports only it.
+  # Neither names bigquery.readonly, so a narrower scope is not asked for. Read-only is the
+  # project's IAM instead: [setup] says execute_sql is «The only MCP tool that isn't
+  # read-only», and a deny policy can block it («Deny access to read-write tools»).
+  list:
+    - https://www.googleapis.com/auth/bigquery
+# No identity, as google_drive.yaml.
+refresh:
+  # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh
+  # token expires» ([web]), as google_drive.yaml.
+  rotating: false
+rate_limit:
+  # Per OAuth app, as google_drive.yaml. [setup] names no MCP rate limit. # unverified
+  per: app
+sources:
+  - kind: mcp
+    endpoint: mcp
+    # The tools that only read, from the tool list at
+    # https://docs.cloud.google.com/bigquery/docs/reference/mcp (opened 2026-10-22, «Last
+    # updated 2026-10-15»): listing and reading datasets, tables and jobs, and
+    # execute_sql_readonly, «restricted to only SELECT statements». execute_sql «can execute
+    # any query», and cancel_job stops a job, so both are left out, as is a tool added later.
+    read_only_tools:
+      - list_dataset_ids
+      - get_dataset_info
+      - list_table_ids
+      - get_table_info
+      - execute_sql_readonly
+      - get_query_results
+      - get_job
