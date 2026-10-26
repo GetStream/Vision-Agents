@@ -128,6 +128,10 @@ type Sandbox struct {
 	// abandoned says a Close gave up waiting for the gate, so deleted nothing.
 	abandoned atomic.Bool
 	timeout, runTimeout time.Duration
+	// check bounds the checks before each run: the timeout, but at most defaultTimeout, as a
+	// built sandbox's timeout is buildTimeout and a hung check holds the gate, so every other
+	// run of the session waits. Shorter in tests.
+	check               time.Duration
 	config              sandbox.Config
 	grants              []sandbox.Grant
 	broker              sandbox.CredentialBroker
@@ -197,6 +201,7 @@ func New(o Options) (*Sandbox, error) {
 		return nil, stack.Wrap(err)
 	}
 	return &Sandbox{client: c, gate: make(chan struct{}, 1), timeout: o.Timeout, runTimeout: o.RunTimeout, config: o.Config,
+		check:  min(o.Timeout, defaultTimeout),
 		grants: o.Grants, broker: o.Broker, labels: maps.Clone(o.Labels), lifecycle: o.Lifecycle, meter: o.Meter,
 		slots: o.Slots, logger: o.Logger, grace: stopGrace}, nil
 }
@@ -238,9 +243,8 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 				return err
 			}
 		}
-		// The checks are bounded as any other call to Daytona, so they leave the code its
-		// whole run timeout.
-		check, end := context.WithTimeout(ctx, s.timeout)
+		// The checks are bounded on their own, so they leave the code its whole run timeout.
+		check, end := context.WithTimeout(ctx, s.check)
 		defer end()
 		for _, command := range s.mount.EachRun {
 			checked, err := s.box.Process.ExecuteCommand(check, "sh -c "+quoted(command), options.WithCommandEnv(s.mount.RunEnv))
