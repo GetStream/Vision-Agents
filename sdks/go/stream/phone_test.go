@@ -27,10 +27,13 @@ func TestDetachStopsANumberTakingCalls(t *testing.T) {
 }
 
 func TestDetachSaysWhyTheRouterRefused(t *testing.T) {
-	server := refusing(t, http.StatusNotFound, "application/json", notFound)
+	server := refusing(t, http.StatusNotFound, "application/json", `{"error": {
+		"message": "no phone number +15125551234 is held",
+		"type": "not_found", "code": "phone_number_not_found",
+		"doc_url": "https://getstream.io/agents/docs/api/errors/#phone_number_not_found"}}`)
 	client, err := acceleration.NewClientWithResponses(server.URL)
 	require.NoError(t, err)
 
 	err = NewPhone(client).Detach(t.Context(), "+15125551234")
-	require.ErrorContains(t, err, "no router config is called healthcare")
+	require.ErrorContains(t, err, "no phone number +15125551234 is held")
 }

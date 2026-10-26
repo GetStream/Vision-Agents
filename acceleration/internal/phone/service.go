@@ -687,7 +687,8 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 			return Attached{}, err
 		}
 	} else if held.StreamTrunkID != "" {
-		// Detached, it is still on its trunk, and Stream refuses a second trunk naming it.
+		// Still on a trunk of its own (detached, or lined for calls out), and Stream refuses a
+		// second trunk naming it.
 		if err := s.unline(ctx, held, "re-attached a number", false); err != nil {
 			return Attached{}, err
 		}

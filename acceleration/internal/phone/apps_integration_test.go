@@ -401,6 +401,7 @@ func (s *AppsSuite) TestAttachingADetachedNumberWithoutAKeyWorks() {
 	s.NotNil(s.number().AttachedAt)
 	s.Equal([]string{again.TrunkID}, s.own.Trunks())
 	s.Equal([]string{s.e164}, s.own.TrunkNumbers(again.TrunkID))
+	s.Equal([]string{again.RouteID}, s.own.Rules())
 }
 
 func (s *AppsSuite) TestDetachingLeavesALiveCallAlone() {
