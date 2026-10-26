@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 
@@ -123,8 +125,13 @@ func quoteSkills() harness.Skills {
 // codeBox runs code as a sandbox would, recording what it was handed. generation is which
 // sandbox it is, 1 unless the test makes it another.
 type codeBox struct {
-	mu         sync.Mutex
-	result     sandbox.Result
+	mu     sync.Mutex
+	result sandbox.Result
+	// then are the results of the runs after the first, in order, the last one kept for
+	// the rest: the user connected something between runs.
+	then []sandbox.Result
+	// connected are the late grants' bindings the user has connected (sandbox.Connecting).
+	connected  []string
 	ran        []string
 	written    []string
 	generation int
@@ -147,7 +154,18 @@ func (b *codeBox) Run(_ context.Context, code string, _ []string) (sandbox.Resul
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.ran = append(b.ran, code)
-	return b.result, nil
+	if len(b.ran) == 1 || len(b.then) == 0 {
+		return b.result, nil
+	}
+	return b.then[min(len(b.ran)-2, len(b.then)-1)], nil
+}
+
+func (b *codeBox) Connected() []string { return b.connected }
+
+func (b *codeBox) runs() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.ran)
 }
 
 func (b *codeBox) Write(_ context.Context, path string, _ []byte) error {
@@ -251,6 +269,127 @@ func (s *AgentSuite) TestAWrittenConversationsCodeRunWithoutTheUsersConnectionSa
 		"github.\n\nIf this code needed linear (a 401 from api.linear.app, linear.app), the user has not connected it: call "+
 		"linear__list_tools so they can, then run the code again; if you cannot call it, tell the user they must connect "+
 		"linear.", ran.Result)
+}
+
+// repeatsRunCode has the model ask for the same run_code on every reply, as a model does that
+// read a 401 and was told the user can now connect, and waits until the box ran the code n
+// times and a repeat was answered from an earlier result.
+func (s *AgentSuite) repeatsRunCode(n int) {
+	s.model.reply = []string{}
+	s.model.keepCalling = true
+	s.model.calls = []llm.ToolCall{runCodeCall("call-1", "print(issues())")}
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "list my issues"))
+
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+			return m.Role == llm.ToolResult && strings.HasPrefix(m.Content, alreadyCalled)
+		})
+	}, "no repeat was answered from an earlier result")
+	s.Equal(n, s.box.runs())
+}
+
+// answeredFrom is the earlier result the first repeat that was not run was answered from.
+func (s *AgentSuite) answeredFrom() string {
+	for _, m := range s.history() {
+		if m.Role == llm.ToolResult && strings.HasPrefix(m.Content, alreadyCalled) {
+			return strings.TrimPrefix(m.Content, alreadyCalled)
+		}
+	}
+	return ""
+}
+
+// TestTheSameCodeRunsAgainOnceTheUserConnectedWhatItNeeded: its result told the model to run
+// it again once the user connected, so answering the repeat from it handed back the 401.
+func (s *AgentSuite) TestTheSameCodeRunsAgainOnceTheUserConnectedWhatItNeeded() {
+	s.box = &codeBox{
+		result:    sandbox.Result{Output: "status: 401\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}},
+		then:      []sandbox.Result{{Output: "status: 200\n"}},
+		connected: []string{"github"},
+	}
+	s.joinText()
+
+	s.repeatsRunCode(2)
+
+	s.Equal("status: 200\n", s.answeredFrom(), "the repeat after the run that worked is answered from it")
+}
+
+// TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhatItNeeded: its result tells the
+// model to run it again once the user connected github; until then the same code gets the
+// same 401, and a text conversation has no cap on tool rounds to stop the model asking.
+func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhatItNeeded() {
+	s.box = &codeBox{result: sandbox.Result{Output: "status: 401\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}}}
+	s.joinText()
+
+	s.repeatsRunCode(1)
+
+	s.Contains(s.answeredFrom(), "the user has not connected it")
+}
+
+// TestTheSameCodeIsNotRunAgainWhenTheUserConnectedAnotherBinding: every run names each late
+// grant not connected, whatever the code called, so linear connecting is no reason to run
+// again code whose result named github.
+func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhenTheUserConnectedAnotherBinding() {
+	s.box = &codeBox{
+		result:    sandbox.Result{Output: "booked\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}},
+		connected: []string{"linear"},
+	}
+	s.joinText()
+
+	s.repeatsRunCode(1)
+
+	s.Contains(s.answeredFrom(), "booked\n")
+}
+
+// TestTheSameCodeIsNotRunAgainWhenTheUserConnectedABindingWhoseNameIsPartOfTheOne: the result
+// names github, so connecting git is no reason to run the code again.
+func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhenTheUserConnectedABindingWhoseNameIsPartOfTheOne() {
+	s.box = &codeBox{
+		result:    sandbox.Result{Output: "booked\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}},
+		connected: []string{"git"},
+	}
+	s.joinText()
+
+	s.repeatsRunCode(1)
+
+	s.Contains(s.answeredFrom(), "booked\n")
+}
+
+// TestTheSameCodeRunsAgainAfterARunThatSaidItsConnectionWasJustMade: a token reaches code some
+// seconds after the run began, and the result tells the model to run the code again.
+func (s *AgentSuite) TestTheSameCodeRunsAgainAfterARunThatSaidItsConnectionWasJustMade() {
+	s.box = &codeBox{
+		result: sandbox.Result{Output: "status: 401\n", Connected: []string{"github"}},
+		then:   []sandbox.Result{{Output: "status: 200\n"}},
+	}
+	s.joinText()
+
+	s.repeatsRunCode(2)
+
+	s.Equal("status: 200\n", s.answeredFrom())
+}
+
+func (s *AgentSuite) TestTheSameCodeIsNotRunTwiceWhenItsResultAsksForNothing() {
+	s.box = &codeBox{result: sandbox.Result{Output: "status: 401\n"}, then: []sandbox.Result{{Output: "status: 200\n"}}}
+	s.joinText()
+
+	s.repeatsRunCode(1)
+
+	s.Equal("status: 401\n", s.answeredFrom())
+}
+
+func (s *AgentSuite) TestAToolThatIsNotRunCodeIsNotRunAgainForTheConnectLine() {
+	said, _ := harness.HandBack(s.ctx, nil, sandbox.Result{Output: "status: 401\n",
+		Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}, Connected: []string{"linear"}}, slog.New(slog.DiscardHandler))
+	asked := llm.ToolCall{ID: "1", Name: "github__run", Arguments: `{"code":"print(issues())"}`}
+	history := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{asked}},
+		{Role: llm.ToolResult, ToolCallID: "1", Content: said},
+	}
+
+	_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: asked.Name, Arguments: asked.Arguments}, []string{"github"})
+
+	s.True(repeated)
 }
 
 func (s *AgentSuite) TestAWrittenConversationWithoutASandboxRunsNoCode() {
