@@ -436,6 +436,11 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 	if err != nil {
 		return err
 	}
+	// Off its trunk first: a trunk Stream would not delete fails the release before the
+	// number is given back, so the release can be tried again.
+	if err := s.unline(ctx, held, "released a number", false); err != nil {
+		return err
+	}
 	// A number on the customer's own trunk was never bought here, so there is nobody to
 	// give it back to.
 	if held.Vendor != SIPTrunkVendor {
@@ -455,7 +460,8 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 // unline takes a number off its trunk and deletes its rule, in the app they are in, and
 // forgets them on the number. With release it also gives the number back under the same
 // lock, so a line made for it meanwhile cannot put it back on a trunk. A Stream failure is
-// logged, not returned, so the number is still taken off.
+// logged, not returned, so the number is still taken off, save a trunk Stream would not
+// delete (see offTrunk).
 func (s *Service) unline(ctx context.Context, held store.PhoneNumber, why string, release bool) error {
 	app := held.StreamAppPK
 	// A call or attach lining the number in another app while this waited for its lock
@@ -494,7 +500,8 @@ func (s *Service) unline(ctx context.Context, held store.PhoneNumber, why string
 
 // offTrunk takes a number off its trunk and deletes its rule. The trunk is deleted with its
 // last number; one the number had to itself, made before trunks were shared, is not a row
-// and is deleted with it.
+// and is deleted with it. A trunk Stream would not delete keeps its row, which holds its
+// password and is what a retry deletes it by.
 func (s *Service) offTrunk(ctx context.Context, tx *store.TrunkGroupTx, stream *Stream, reached error, number store.PhoneNumber, why string) error {
 	if reached != nil {
 		stream = nil
@@ -522,7 +529,7 @@ func (s *Service) offTrunk(ctx context.Context, tx *store.TrunkGroupTx, stream *
 	if len(trunk.Numbers) == 0 {
 		if stream != nil {
 			if err := stream.DeleteTrunk(ctx, trunk.ID); err != nil {
-				s.logger.Error("could not delete a trunk", "why", why, "trunk", trunk.ID, "error", err)
+				return err
 			}
 		}
 		if err := tx.DeleteTrunk(trunk.ID); err != nil {

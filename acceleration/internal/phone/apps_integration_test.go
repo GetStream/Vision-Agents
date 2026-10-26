@@ -1315,6 +1315,26 @@ func (s *AppsSuite) TestReleasingTheLastNumberDeletesTheTrunk() {
 	s.Len(s.deployment.Trunks(), 1)
 }
 
+func (s *AppsSuite) TestATrunkStreamWouldNotDeleteIsKeptForTheReleaseToBeRetried() {
+	s.sealed()
+	_, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	trunk := s.number().StreamTrunkID
+	s.deployment.RateLimit("/sip/inbound_trunks/" + trunk)
+
+	s.Require().Error(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.Equal([]string{trunk}, s.deployment.Trunks())
+	s.Equal(trunk, s.number().StreamTrunkID, "the trunk and its password are still known here")
+	s.Empty(s.vendor.released, "the number is not given back while its trunk lives on")
+
+	s.deployment.LiftRateLimit("/sip/inbound_trunks/" + trunk)
+	s.Require().NoError(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.Empty(s.deployment.Trunks())
+	s.Equal([]string{s.e164}, s.vendor.released)
+}
+
 func (s *AppsSuite) TestAFreedPlaceOnAFullTrunkIsTakenBeforeASiblingIsOpened() {
 	s.sealed()
 	first, err := s.lineFor(s.customer, s.e164)
