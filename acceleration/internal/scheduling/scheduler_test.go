@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -817,6 +818,98 @@ func (s *SchedulerSuite) TestAStoppedWorkerClaimsNothingMoreButFinishesItsDelive
 	}, 2*poll, 50*time.Millisecond, "nothing new is claimed")
 	s.Len(deliver.callsFor(first.ID), 1)
 	s.Empty(deliver.callsFor(second.ID))
+}
+
+func (s *SchedulerSuite) TestADrainStopsARetryWaitAndLeavesTheRunToItsLease() {
+	deliver := &deliverer{err: errors.New("the conversation would not take it")}
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, nil)
+	deliver.only = task.ID
+	ctx, drain := context.WithCancel(s.ctx)
+	defer drain()
+	scheduler := NewScheduler(s.db, deliver.deliver, slog.New(slog.DiscardHandler))
+	scheduler.lease = 400 * time.Millisecond
+	scheduler.renewEvery = 50 * time.Millisecond
+	scheduler.retries = []time.Duration{time.Hour}
+	scheduler.Start(ctx)
+	s.T().Cleanup(scheduler.Close)
+	s.Require().Eventually(func() bool {
+		return len(deliver.callsFor(task.ID)) == 1 && scheduler.Running() == 1
+	}, 10*time.Second, 10*time.Millisecond, "the first attempt failed and the delivery waits to retry")
+
+	drain()
+
+	s.Require().Eventually(func() bool {
+		return scheduler.Running() == 0
+	}, 2*time.Second, 10*time.Millisecond, "the drain does not wait out the retry")
+	s.Len(deliver.callsFor(task.ID), 1, "no retry is made once draining")
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunRunning, runs[0].State, "the run is left to its lease, not marked failed")
+	s.Zero(s.read(task).ConsecutiveFailures, "a drain is not a failure of the task")
+
+	// Another router takes the run up once its lease has run out and the run
+	// has sat in running for the store's stale-run time, which the test skips
+	// by dating the run's start back.
+	_, err := s.db.DB().NewUpdate().Model((*store.ScheduledTaskRun)(nil)).
+		Set("started_at = now() - interval '1 hour'").
+		Where("id = ?", runs[0].ID).
+		Exec(s.ctx)
+	s.Require().NoError(err)
+	other := &deliverer{}
+	s.started(other.deliver, func(scheduler *Scheduler) {
+		scheduler.lease = 400 * time.Millisecond
+	})
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskCompleted
+	}, 10*time.Second, 10*time.Millisecond, "another router delivers the occurrence")
+	runs = s.runs(task)
+	s.Require().Len(runs, 1, "under the same run")
+	s.Equal(store.ScheduledTaskRunDelivered, runs[0].State)
+	s.Len(other.callsFor(task.ID), 1)
+}
+
+func (s *SchedulerSuite) TestADrainLetsARetryAttemptInFlightFinish() {
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, nil)
+	var attempts atomic.Int32
+	inFlight := make(chan struct{})
+	deliver := func(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
+		if claimed.Task.ID != task.ID {
+			return "conversation", claimed.Task.SessionID, nil
+		}
+		if attempts.Add(1) == 1 {
+			return "", "", errors.New("the conversation would not take it")
+		}
+		close(inFlight)
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		}
+		return "conversation", claimed.Task.SessionID, nil
+	}
+	ctx, drain := context.WithCancel(s.ctx)
+	defer drain()
+	scheduler := NewScheduler(s.db, deliver, slog.New(slog.DiscardHandler))
+	scheduler.retries = []time.Duration{10 * time.Millisecond, time.Hour}
+	scheduler.Start(ctx)
+	s.T().Cleanup(scheduler.Close)
+	select {
+	case <-inFlight:
+	case <-time.After(10 * time.Second):
+		s.Require().Fail("the retry attempt never started")
+	}
+
+	drain()
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskCompleted
+	}, 10*time.Second, 10*time.Millisecond, "the retry attempt in flight finishes")
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunDelivered, runs[0].State)
+	s.EqualValues(2, attempts.Load())
 }
 
 func (s *SchedulerSuite) TestReplayingAMissedRunKeepsTheFailureStreak() {
