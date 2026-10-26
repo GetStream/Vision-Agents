@@ -35,3 +35,51 @@ func TestPlainInstructionsReachTheAgentAsWritten(t *testing.T) {
 
 	require.Contains(t, prompt, ">\nRemind them it's Bob's \"big\" day.\n</scheduled_task>\n")
 }
+
+func TestARedueOneShotStatesTheTimeItWasDue(t *testing.T) {
+	// Due 23:00, held, edited 01:00 (which re-dues it then), delivered 07:00.
+	due := time.Date(2026, 10, 20, 23, 0, 0, 0, time.UTC)
+	edited := time.Date(2026, 10, 21, 1, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 10, 21, 7, 0, 0, 0, time.UTC)
+	for name, test := range map[string]struct {
+		task store.ScheduledTask
+		run  store.ScheduledTaskRun
+		head string
+	}{
+		"a re-dued one-shot": {
+			task: store.ScheduledTask{ID: "task", Title: "Pills", Timezone: "UTC", StartLocal: due, NextRunAt: &edited},
+			run:  store.ScheduledTaskRun{ScheduledFor: edited, Trigger: store.ScheduledTaskTriggerSchedule},
+			head: `due="Tue 20 Oct 2026 23:00 UTC" now="Wed 21 Oct 2026 07:00 UTC" late="8 hours">`,
+		},
+		"a one-shot run by hand is due when it was made": {
+			task: store.ScheduledTask{ID: "task", Title: "Pills", Timezone: "UTC", StartLocal: due, NextRunAt: &due},
+			run:  store.ScheduledTaskRun{ScheduledFor: now, Trigger: store.ScheduledTaskTriggerManual},
+			head: `due="Wed 21 Oct 2026 07:00 UTC" now="Wed 21 Oct 2026 07:00 UTC">`,
+		},
+		"a repeat is due at its own occurrence": {
+			task: store.ScheduledTask{ID: "task", Title: "Pills", Timezone: "UTC", StartLocal: due.AddDate(0, 0, -2),
+				RRule: "FREQ=DAILY", NextRunAt: &edited},
+			run:  store.ScheduledTaskRun{ScheduledFor: edited, Trigger: store.ScheduledTaskTriggerSchedule},
+			head: `due="Wed 21 Oct 2026 01:00 UTC" now="Wed 21 Oct 2026 07:00 UTC" late="6 hours" repeats=`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			test.run.Prompt = "Take the pills."
+			prompt := scheduledPrompt(store.ClaimedScheduledTask{Task: test.task, Run: test.run}, now)
+			require.Contains(t, prompt, test.head)
+		})
+	}
+}
+
+func TestAStoredSecondPassIsTheFirstUpcomingRun(t *testing.T) {
+	// 02:20 CET on 25 Oct 2026, the second pass of Berlin's fall-back hour.
+	next := time.Date(2026, 10, 25, 1, 20, 0, 0, time.UTC)
+	rendered := scheduledTaskRendered(store.ScheduledTask{
+		ID: "task", Title: "Pills", Timezone: "Europe/Berlin", RRule: "FREQ=DAILY", State: store.ScheduledTaskActive,
+		StartLocal: time.Date(2026, 10, 25, 2, 20, 0, 0, time.UTC), NextRunAt: &next,
+	}, time.Time{})
+
+	require.NotNil(t, rendered.NextRunAt)
+	require.Equal(t, "2026-10-25T02:20:00+01:00", *rendered.NextRunAt)
+	require.Equal(t, []string{"2026-10-25T02:20:00+01:00", "2026-10-26T02:20:00+01:00"}, rendered.Upcoming[:2])
+}

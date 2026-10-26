@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // monday is 19 Oct 2026 at midday UTC, the "now" most parses are made at.
@@ -210,7 +212,8 @@ func TestFromStoredRoundTrips(t *testing.T) {
 	schedule := parse(t, Input{
 		At: "2026-10-20T09:00", Repeat: "FREQ=WEEKLY;BYDAY=MO,WE", Until: "2026-12-31", Timezone: "UTC",
 	})
-	rebuilt, err := FromStored(schedule.StartLocal, schedule.Timezone, schedule.Repeat, schedule.Until)
+	first, _ := schedule.First()
+	rebuilt, err := FromStored(storedAs(schedule, first))
 	require.NoError(t, err)
 	require.Equal(t, schedule.Describe(), rebuilt.Describe())
 	require.Equal(t, schedule.Upcoming(monday, 3), rebuilt.Upcoming(monday, 3))
@@ -513,7 +516,157 @@ func TestAStoredRepeatNowRefusedStillRuns(t *testing.T) {
 	// A task stored before its shape was refused is read as it was: the
 	// worker keeps firing it where it fired on the base.
 	start := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
-	schedule, err := FromStored(start, "UTC", "FREQ=DAILY;BYDAY=MO,WE", time.Time{})
+	schedule, err := FromStored(store.ScheduledTask{StartLocal: start, Timezone: "UTC", RRule: "FREQ=DAILY;BYDAY=MO,WE"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"Mon 2026-11-02", "Wed 2026-11-04", "Mon 2026-11-09"}, upcomingDays(schedule))
+}
+
+// storedAs is the row a create writes for a schedule and its next run.
+func storedAs(schedule *Schedule, next time.Time) store.ScheduledTask {
+	task := store.ScheduledTask{StartLocal: schedule.StartLocal, Timezone: schedule.Timezone,
+		RRule: schedule.Repeat, NextRunAt: &next}
+	if !schedule.Until.IsZero() {
+		until := schedule.Until
+		task.UntilDate = &until
+	}
+	return task
+}
+
+func TestAStoredTaskKeepsTheSecondPassItsNextRunNames(t *testing.T) {
+	// 01:50 CEST; an hour and a half on is 02:20 CET, the second pass. A
+	// pause and resume at 02:50 CEST, inside the hour, still finds it ahead.
+	now := time.Date(2026, 10, 24, 23, 50, 0, 0, time.UTC)
+	resumed := time.Date(2026, 10, 25, 0, 50, 0, 0, time.UTC)
+	for repeat, upcoming := range map[string][]string{
+		"":           {"2026-10-25T01:20:00Z"},
+		"FREQ=DAILY": {"2026-10-25T01:20:00Z", "2026-10-26T01:20:00Z"},
+	} {
+		schedule, err := Parse(Input{In: "PT1H30M", Repeat: repeat, Timezone: "Europe/Berlin"}, now)
+		require.NoError(t, err)
+		next, ok := schedule.Next(now)
+		require.True(t, ok)
+
+		rebuilt, err := FromStored(storedAs(schedule, next))
+		require.NoError(t, err)
+		first, _ := rebuilt.First()
+		require.Equal(t, "2026-10-25T01:20:00Z", first.Format(time.RFC3339), "repeat %q", repeat)
+		again, ok := rebuilt.Next(resumed)
+		require.True(t, ok, "repeat %q", repeat)
+		require.Equal(t, "2026-10-25T01:20:00Z", again.Format(time.RFC3339), "repeat %q", repeat)
+		var listed []string
+		for _, occurrence := range rebuilt.Upcoming(next.Add(-time.Second), 2) {
+			listed = append(listed, occurrence.Format(time.RFC3339))
+		}
+		require.Equal(t, upcoming, listed, "repeat %q", repeat)
+	}
+}
+
+func TestANextRunOnAnotherDayLeavesTheStartAtItsFirstPass(t *testing.T) {
+	// 02:30 written as a wall reading names the first pass; a next run on
+	// the 26th, also reading 02:30, names no instant for the 25th.
+	schedule := parse(t, Input{At: "2026-10-25T02:30", Repeat: "FREQ=DAILY", Timezone: "Europe/Berlin"})
+	rebuilt, err := FromStored(storedAs(schedule, time.Date(2026, 10, 26, 1, 30, 0, 0, time.UTC)))
+	require.NoError(t, err)
+	first, _ := rebuilt.First()
+	require.Equal(t, "2026-10-25T00:30:00Z", first.Format(time.RFC3339))
+}
+
+func TestARepeatCreatedWithItsStartPassedStartsAtItsNextOccurrence(t *testing.T) {
+	// Berlin falls back on 25 Oct 2026 at 01:00 UTC; 02:10 CET is the second pass.
+	berlin := time.Date(2026, 10, 25, 1, 10, 0, 0, time.UTC)
+	for name, test := range map[string]struct {
+		now      time.Time
+		input    Input
+		start    string // StartLocal after, "" when nothing is left
+		upcoming []string
+		more     bool // the schedule goes on past upcoming
+	}{
+		"a start in the future is left as written": {
+			now: monday, input: Input{At: "2026-10-20T09:00", Repeat: "FREQ=DAILY;COUNT=3", Timezone: "UTC"},
+			start:    "2026-10-20T09:00",
+			upcoming: []string{"2026-10-20T09:00:00Z", "2026-10-21T09:00:00Z", "2026-10-22T09:00:00Z"},
+		},
+		"a passed start with COUNT runs the whole count from the next": {
+			now: monday, input: Input{At: "2026-10-19T09:00", Repeat: "FREQ=DAILY;COUNT=3", Timezone: "UTC"},
+			start:    "2026-10-20T09:00",
+			upcoming: []string{"2026-10-20T09:00:00Z", "2026-10-21T09:00:00Z", "2026-10-22T09:00:00Z"},
+		},
+		"a start whose whole COUNT has passed runs it from the next": {
+			now: monday, input: Input{At: "2026-10-12T09:00", Repeat: "FREQ=DAILY;COUNT=3", Timezone: "UTC"},
+			start:    "2026-10-20T09:00",
+			upcoming: []string{"2026-10-20T09:00:00Z", "2026-10-21T09:00:00Z", "2026-10-22T09:00:00Z"},
+		},
+		"a passed start with until still stops at until": {
+			now: monday, input: Input{At: "2026-10-17T09:00", Repeat: "FREQ=DAILY", Until: "2026-10-21", Timezone: "UTC"},
+			start:    "2026-10-20T09:00",
+			upcoming: []string{"2026-10-20T09:00:00Z", "2026-10-21T09:00:00Z"},
+		},
+		"an until already passed leaves nothing": {
+			now: monday, input: Input{At: "2026-10-10T09:00", Repeat: "FREQ=DAILY", Until: "2026-10-18", Timezone: "UTC"},
+		},
+		"a passed start with no bound starts at its next weekday": {
+			now: monday, input: Input{At: "2026-10-12T09:00", Repeat: "FREQ=WEEKLY;BYDAY=MO,WE", Timezone: "UTC"},
+			start:    "2026-10-21T09:00",
+			upcoming: []string{"2026-10-21T09:00:00Z", "2026-10-26T09:00:00Z", "2026-10-28T09:00:00Z"},
+			more:     true,
+		},
+		"an interval keeps its cadence from the written start": {
+			now: monday, input: Input{At: "2026-10-18T09:00", Repeat: "FREQ=DAILY;INTERVAL=2;COUNT=2", Timezone: "UTC"},
+			start:    "2026-10-20T09:00",
+			upcoming: []string{"2026-10-20T09:00:00Z", "2026-10-22T09:00:00Z"},
+		},
+		"an occurrence at now has passed": {
+			now: monday, input: Input{At: "2026-10-12T12:00", Repeat: "FREQ=DAILY;COUNT=2", Timezone: "UTC"},
+			start:    "2026-10-20T12:00",
+			upcoming: []string{"2026-10-20T12:00:00Z", "2026-10-21T12:00:00Z"},
+		},
+		"a passed start named with an offset moves to its next occurrence": {
+			now: monday, input: Input{At: "2026-10-18T09:00:00Z", Repeat: "FREQ=DAILY;COUNT=2", Timezone: "UTC"},
+			start:    "2026-10-20T09:00",
+			upcoming: []string{"2026-10-20T09:00:00Z", "2026-10-21T09:00:00Z"},
+		},
+		"a one-shot is left as written": {
+			now: monday, input: Input{At: "2026-10-20T09:00", Timezone: "UTC"},
+			start:    "2026-10-20T09:00",
+			upcoming: []string{"2026-10-20T09:00:00Z"},
+		},
+		"a wall reading whose fall-back first pass has passed starts the next day": {
+			now: berlin, input: Input{At: "2026-10-24T02:30", Repeat: "FREQ=DAILY;COUNT=2", Timezone: "Europe/Berlin"},
+			start:    "2026-10-26T02:30",
+			upcoming: []string{"2026-10-26T01:30:00Z", "2026-10-27T01:30:00Z"},
+		},
+		"a fall-back second pass named by its offset is kept": {
+			now: berlin, input: Input{At: "2026-10-25T02:30:00+01:00", Repeat: "FREQ=DAILY;COUNT=2", Timezone: "Europe/Berlin"},
+			start:    "2026-10-25T02:30",
+			upcoming: []string{"2026-10-25T01:30:00Z", "2026-10-26T01:30:00Z"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			schedule, err := Parse(test.input, test.now)
+			require.NoError(t, err)
+			repeat := schedule.Repeat
+			next, ok := schedule.FromNow(test.now)
+			if test.start == "" {
+				require.False(t, ok)
+				return
+			}
+			require.True(t, ok)
+			require.Equal(t, test.upcoming[0], next.Format(time.RFC3339))
+			require.Equal(t, test.start, schedule.StartLocal.Format("2006-01-02T15:04"))
+			require.Equal(t, repeat, schedule.Repeat, "the rule is stored as written")
+
+			rebuilt, err := FromStored(storedAs(schedule, next))
+			require.NoError(t, err)
+			for _, read := range []*Schedule{schedule, rebuilt} {
+				var listed []string
+				for _, occurrence := range read.Upcoming(test.now, 10) {
+					listed = append(listed, occurrence.Format(time.RFC3339))
+				}
+				if test.more {
+					listed = listed[:len(test.upcoming)]
+				}
+				require.Equal(t, test.upcoming, listed)
+			}
+		})
+	}
 }

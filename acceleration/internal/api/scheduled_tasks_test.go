@@ -1682,6 +1682,63 @@ func (s *ScheduledTasksSuite) TestARepeatWrittenFromAPastDateStartsAtItsNextOccu
 	nextOf(updated, "10:00")
 }
 
+// threeDaysAgo is midnight UTC three days back: a daily COUNT=3 from it has
+// let all three occurrences pass. It returns that start and the next three
+// midnights, the occurrences a create from it is to run.
+func threeDaysAgo() (string, []time.Time) {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	return today.AddDate(0, 0, -3).Format("2006-01-02T15:04"),
+		[]time.Time{today.AddDate(0, 0, 1), today.AddDate(0, 0, 2), today.AddDate(0, 0, 3)}
+}
+
+func (s *ScheduledTasksSuite) TestARepeatCreatedWithItsStartPassedRunsItsWholeCountFromNow() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	start, want := threeDaysAgo()
+	body := taskRequest(config)
+	body.Schedule = ScheduledTaskSchedule{At: pointerTo(start), Repeat: pointerTo("FREQ=DAILY;COUNT=3"),
+		Timezone: pointerTo("UTC")}
+	created := s.createTask(user, body)
+
+	s.Equal(want[0].Format("2006-01-02T15:04:05"), value(created.Schedule.At), "the start moved to the next occurrence")
+	s.Equal("FREQ=DAILY;COUNT=3", value(created.Schedule.Repeat))
+	upcoming := make([]time.Time, 0, len(created.Upcoming))
+	for _, at := range created.Upcoming {
+		parsed, err := time.Parse(time.RFC3339, at)
+		s.Require().NoError(err)
+		upcoming = append(upcoming, parsed.UTC())
+	}
+	s.Equal(want, upcoming, "three times is three deliveries from now")
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentSchedulesARepeatWithItsStartPassedForItsWholeCount() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	start, want := threeDaysAgo()
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","at":"` + start +
+			`","repeat":"FREQ=DAILY;COUNT=3","timezone":"UTC"}`})
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "remind me three times a day from three days ago")
+	s.Contains(s.ranResult(watching), `"title":"Stretch"`)
+
+	tasks := s.tasksOf(user)
+	s.Require().Len(tasks, 1)
+	task := tasks[0]
+	s.Equal(want[0], task.StartLocal.UTC(), "the start moved to the next occurrence")
+	s.Equal("FREQ=DAILY;COUNT=3", task.RRule)
+	s.Require().NotNil(task.NextRunAt)
+	s.Equal(want[0], task.NextRunAt.UTC())
+	schedule, err := scheduling.FromStored(task)
+	s.Require().NoError(err)
+	upcoming := []time.Time{}
+	for _, at := range schedule.Upcoming(time.Now(), 10) {
+		upcoming = append(upcoming, at.UTC())
+	}
+	s.Equal(want, upcoming, "three times is three deliveries from now")
+}
+
 func (s *ScheduledTasksSuite) TestPauseAndResumeCountsFromNow() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()

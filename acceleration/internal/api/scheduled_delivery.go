@@ -519,14 +519,21 @@ func scheduledPrompt(claimed store.ClaimedScheduledTask, now time.Time) string {
 	if err != nil {
 		loc = time.UTC
 	}
+	due := claimed.Run.ScheduledFor
+	schedule, err := scheduling.FromStored(task)
+	// An edit re-dues a one-shot's occurrence at the edit time; its time is
+	// still the schedule's one occurrence. A run by hand is due when it was made.
+	if err == nil && task.RRule == "" && claimed.Run.Trigger == store.ScheduledTaskTriggerSchedule {
+		due, _ = schedule.First()
+	}
 	head := fmt.Sprintf("<scheduled_task id=%q title=%q due=%q now=%q",
 		task.ID, taskText.Replace(task.Title),
-		scheduling.FormatLocal(claimed.Run.ScheduledFor, loc),
+		scheduling.FormatLocal(due, loc),
 		scheduling.FormatLocal(now, loc))
-	if late := now.Sub(claimed.Run.ScheduledFor); late > time.Minute {
+	if late := now.Sub(due); late > time.Minute {
 		head += fmt.Sprintf(" late=%q", lateFor(late))
 	}
-	if schedule, err := scheduling.FromStored(task.StartLocal, task.Timezone, task.RRule, untilOf(task)); err == nil {
+	if err == nil {
 		if repeats := schedule.Describe(); task.RRule != "" && repeats != "" {
 			head += fmt.Sprintf(" repeats=%q", repeats)
 		}
@@ -541,13 +548,6 @@ func scheduledPrompt(claimed store.ClaimedScheduledTask, now time.Time) string {
 // taskText writes a title or instructions into the block the way XML escapes
 // them, so a "</scheduled_task>" in them is words, not the block's end.
 var taskText = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
-
-func untilOf(task store.ScheduledTask) time.Time {
-	if task.UntilDate == nil {
-		return time.Time{}
-	}
-	return *task.UntilDate
-}
 
 // lateFor says how late an occurrence is, in the units people count.
 func lateFor(late time.Duration) string {

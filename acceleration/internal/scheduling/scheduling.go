@@ -17,6 +17,8 @@ import (
 	_ "time/tzdata"
 
 	"github.com/teambition/rrule-go"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // Error is a refusal a caller can act on: its Code is answered over the API
@@ -253,21 +255,29 @@ func Parse(input Input, now time.Time) (*Schedule, error) {
 	return schedule, nil
 }
 
-// FromStored rebuilds a schedule from what the store holds, without the
+// FromStored rebuilds the schedule a stored task describes, without the
 // future checks Parse makes: a stored task may legitimately be due.
-func FromStored(startLocal time.Time, zone, repeat string, until time.Time) (*Schedule, error) {
-	loc, err := LoadZone(zone)
+func FromStored(task store.ScheduledTask) (*Schedule, error) {
+	loc, err := LoadZone(task.Timezone)
 	if err != nil {
 		return nil, err
 	}
 	schedule := &Schedule{
-		StartLocal: wallOf(startLocal),
-		Timezone:   zone,
-		Until:      until,
+		StartLocal: wallOf(task.StartLocal),
+		Timezone:   task.Timezone,
 		location:   loc,
 	}
-	if strings.TrimSpace(repeat) != "" {
-		rule, err := parseRepeat(repeat)
+	if task.UntilDate != nil {
+		schedule.Until = *task.UntilDate
+	}
+	// The store keeps no instant for the start, but a next run that reads as
+	// the start is the start: a reading in a fall-back hour's second pass
+	// stays there rather than resolving to its first.
+	if task.NextRunAt != nil && wallOf(task.NextRunAt.In(loc)).Equal(schedule.StartLocal) {
+		schedule.start = task.NextRunAt.UTC()
+	}
+	if strings.TrimSpace(task.RRule) != "" {
+		rule, err := parseRepeat(task.RRule)
 		if err != nil {
 			return nil, err
 		}
@@ -280,6 +290,40 @@ func FromStored(startLocal time.Time, zone, repeat string, until time.Time) (*Sc
 		schedule.Repeat = rule.String()
 	}
 	return schedule, nil
+}
+
+// FromNow moves a repeat whose start has passed to start at its first
+// occurrence after now, and returns that occurrence; false when none is left
+// before until. RFC 5545 counts DTSTART as the first occurrence
+// (https://www.icalendar.org/iCalendar-RFC-5545/3-3-10-recurrence-rule.html),
+// so COUNT then counts from now: three times is three deliveries, however
+// many the written start has let pass.
+func (s *Schedule) FromNow(now time.Time) (time.Time, bool) {
+	if s.rule != nil {
+		// The search reads the rule without its COUNT, which only starts
+		// counting at the start found; DTStart rebuilds from OrigOptions.
+		s.rule.rrule.OrigOptions.Count = 0
+		s.rule.rrule.DTStart(s.StartLocal)
+		defer func() {
+			s.rule.rrule.OrigOptions.Count = s.rule.count
+			s.rule.rrule.DTStart(s.StartLocal)
+		}()
+	}
+	walls := s.walls()
+	for {
+		wall, ok := walls()
+		if !ok {
+			return time.Time{}, false
+		}
+		occurrence := s.resolve(wall)
+		if !occurrence.After(now) {
+			continue
+		}
+		// The wall reading, not the instant: a time in a spring-forward gap
+		// keeps its clock reading on the days after.
+		s.StartLocal, s.start = wall, occurrence
+		return occurrence, true
+	}
 }
 
 // First is the schedule's first occurrence as an instant.
@@ -324,6 +368,19 @@ func (s *Schedule) Upcoming(after time.Time, n int) []time.Time {
 // StartLocal's time of day and is then resolved in the zone, so a 09:00 task
 // stays at 09:00 across a daylight-saving change.
 func (s *Schedule) occurrences() func() (time.Time, bool) {
+	walls := s.walls()
+	return func() (time.Time, bool) {
+		wall, ok := walls()
+		if !ok {
+			return time.Time{}, false
+		}
+		return s.resolve(wall), true
+	}
+}
+
+// walls returns a pull iterator over the schedule's wall-clock readings,
+// earliest first.
+func (s *Schedule) walls() func() (time.Time, bool) {
 	if s.rule == nil {
 		done := false
 		return func() (time.Time, bool) {
@@ -331,7 +388,7 @@ func (s *Schedule) occurrences() func() (time.Time, bool) {
 				return time.Time{}, false
 			}
 			done = true
-			return s.resolve(s.StartLocal), true
+			return s.StartLocal, true
 		}
 	}
 	iterator := s.rule.rrule.Iterator()
@@ -352,7 +409,7 @@ func (s *Schedule) occurrences() func() (time.Time, bool) {
 			if !s.Until.IsZero() && dateOf(wall).After(s.Until) {
 				return time.Time{}, false
 			}
-			return s.resolve(wall), true
+			return wall, true
 		}
 	}
 }

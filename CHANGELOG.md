@@ -28,6 +28,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ## Bug Fixes
 
+### A repeat created with its start passed runs its whole COUNT from now
+
+A scheduled task created with a repeat whose start has passed, over `POST /v1/agents/scheduled-tasks` or the agent's `schedule_task` tool, now starts at its first occurrence after now: its stored `at` is that occurrence, and its COUNT counts from it. "Daily, three times, from three days ago" is three reminders from tomorrow; before, it was refused as `schedule_in_past`, and one from this morning ran twice. A task stored in the second pass of a fall-back hour keeps that instant when it is read back: its upcoming list starts at its `next_run_at`, and a one-shot paused and resumed inside that hour still runs. The prompt of a one-shot whose occurrence an edit re-dued states the time it was due and how late it is from then, not from the edit (AI-1563, AI-1564, AI-1597).
+
 ### Code run again after the user connects a connector runs, instead of returning the old 401
 
 When sandbox code got a 401 because the user had not connected a connector, its result tells the model to run the code again once they connect. The agent's repeat-call guard answered that identical second `run_code` from the first result, so the turn ended on the old 401 although the connection was live. A `run_code` result that says a connector was just connected, or that it is not connected and the user has connected it since, no longer answers a repeat; while the user has not connected it, the repeat is still answered from that result. Every other repeated call is still answered from its earlier result (AI-1987).
