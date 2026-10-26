@@ -169,7 +169,7 @@ func (s *SecretsSuite) TestALateGrantsSecretHoldsAStandInUntilABindPutsTheTokenI
 	s.Equal("va_unbound", s.platform.secrets["secret-2"].Value)
 	s.Equal([]string{"api.linear.app"}, s.platform.secrets["secret-2"].Hosts)
 
-	bound = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-linear"}, Scheme: "bearer"}
+	bound = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-linear"}, Binding: "linear", Scheme: "bearer"}
 	for range 2 {
 		_, err = box.Run(s.ctx, "print(1)", nil)
 		s.Require().NoError(err)
@@ -183,7 +183,7 @@ func (s *SecretsSuite) TestALateGrantsSecretHoldsAStandInUntilABindPutsTheTokenI
 // again rather than keep the stand-in.
 func (s *SecretsSuite) TestALateGrantsTokenDaytonaRefusedIsPutInOnTheNextRun() {
 	s.token = sandbox.Token{Value: "lin_zero", Revision: 0}
-	bound := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-linear"}, Scheme: "bearer"}
+	bound := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-linear"}, Binding: "linear", Scheme: "bearer"}
 	box := s.lateBox(&bound)
 	s.platform.refuseUpdate = "linear"
 	_, err := box.Run(s.ctx, "print(1)", nil)

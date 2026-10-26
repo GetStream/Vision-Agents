@@ -462,7 +462,7 @@ func (s *BrokerSuite) TestADisconnectedConnectionIsRefusedAtTheProxy() {
 // gives it once they have.
 var (
 	lateLinear = sandbox.Grant{Binding: "linear", Env: "LINEAR_TOKEN", Hosts: []string{"uploads.github.com"}, Late: true}
-	linear     = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-linear"}, Scheme: "bearer"}
+	linear     = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-linear"}, Binding: "linear", Scheme: "bearer"}
 )
 
 // late is a broker of session-late whose Bind gives lateLinear the connection bound holds once
@@ -525,6 +525,14 @@ func (s *BrokerSuite) TestALateGrantIsRefusedWithNoTokenUntilBound() {
 
 	s.Equal(http.StatusOK, status)
 	s.Equal([]string{"Bearer gho_live-token-of-the-connection"}, s.rig.host.authorizations())
+	// The proxy reads the token through the entry's connection and scheme
+	// (egress.ResolverTokens), which the rig's Tokens does not check.
+	credential, _ := mount.Proxy.User.Password()
+	record, found := s.rig.record(s.T(), key(credential))
+	s.Require().True(found)
+	entry := record.Grants[slices.IndexFunc(record.Grants, func(g egress.Grant) bool { return g.Placeholder == placeholder })]
+	s.Equal(linear.Connection, entry.Connection)
+	s.Equal("bearer", entry.Scheme)
 }
 
 // TestABindWhileRequestsGoThroughGivesEachTheTokenOrNothing runs a bind while the sandbox sends
