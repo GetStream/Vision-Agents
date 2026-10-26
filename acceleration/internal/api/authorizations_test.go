@@ -866,7 +866,7 @@ func (s *AuthorizationsSuite) TestAReconnectOnARevisionThatDroppedACaptureConnec
 func (s *AuthorizationsSuite) TestAReconnectThatDoesNotConnectKeepsTheRevision() {
 	id := s.connection("")
 	s.connect(id)
-	s.revise(s.get(id).ConnectorID, func(manifest *core.Manifest) { manifest.Description = "revised" })
+	s.revise(s.get(id).ConnectorID, func(manifest *core.Manifest) { manifest.Name = "Revised" })
 	s.provider.SwitchAccount()
 
 	alice := s.browser()
