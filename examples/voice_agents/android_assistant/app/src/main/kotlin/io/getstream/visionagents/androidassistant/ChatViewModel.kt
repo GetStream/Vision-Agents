@@ -1,5 +1,6 @@
 package io.getstream.visionagents.androidassistant
 
+import android.Manifest
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
@@ -8,7 +9,9 @@ import io.getstream.chat.android.ai.compose.conversation.AIMessageAttachment
 import io.getstream.chat.android.ai.compose.conversation.AIMessageRating
 import io.getstream.chat.android.ai.compose.conversation.AIPendingMessage
 import io.getstream.visionagents.android.core.AgentsException
+import io.getstream.visionagents.android.core.Conversation
 import io.getstream.visionagents.android.core.SessionOptions
+import io.getstream.visionagents.android.core.VoiceSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -101,6 +104,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    private val calling = MutableStateFlow<VoiceSession?>(null)
+    private val voiceShown = MutableStateFlow(false)
+    private val voiceFailed = MutableStateFlow<String?>(null)
+    private var voiceJob: Job? = null
+
+    /** Whether voice mode is up, over the chat. */
+    val isVoiceShown: StateFlow<Boolean> = voiceShown.asStateFlow()
+
+    /** The call in voice mode, once it has started. */
+    val voice: StateFlow<VoiceSession?> = calling.asStateFlow()
+
+    /** Why voice mode could not start, or why the camera could not, or null. */
+    val voiceFailure: StateFlow<String?> = voiceFailed.asStateFlow()
+
     /** The tools the agent may call, which run on this phone. */
     private val tools = DeviceTools(application).all
 
@@ -165,6 +182,78 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Switches to voice mode on this conversation, starting a session for a new one. */
+    fun talk() {
+        screenScope.launch {
+            val chat = open() ?: return@launch
+            markUsed(chat)
+            voiceFailed.value = null
+            voiceShown.value = true
+        }
+    }
+
+    /**
+     * Puts the agent on the chat session's call and joins it, with a second session of its own
+     * that runs no tools: the chat's socket stays open and runs them. The microphone is asked for
+     * first. The agent leaving ends voice mode.
+     */
+    fun startVoice() {
+        val chat = opened.value ?: return
+        if (voiceJob != null) return
+        voiceJob = viewModelScope.launch {
+            if (!Permissions.allOf(getApplication(), Manifest.permission.RECORD_AUDIO)) {
+                voiceFailed.value = "Talking to Juno needs the microphone."
+                return@launch
+            }
+            try {
+                chat.session.startVoice()
+                val voice = VoiceSession.attach(getApplication(), Assistant.agents, chat.session.id)
+                calling.value = voice
+                voice.join()
+                voice.session.conversation.first { it.state == Conversation.State.Ended }
+                closeVoice()
+            } catch (e: AgentsException) {
+                voiceFailed.value = e.message
+            }
+        }
+    }
+
+    /**
+     * Leaves the call and takes the agent off it, which carries the conversation on in writing,
+     * and goes back to the chat. Leaving an attached call keeps the session.
+     */
+    fun hangUp() {
+        val chat = opened.value?.takeIf { voiceShown.value }
+        closeVoice()
+        if (chat != null) {
+            // Not the screen's scope, which may be going: the agent has to be taken off either way.
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    withContext(NonCancellable) { chat.session.stopVoice() }
+                } catch (_: AgentsException) {
+                    // The agent had left already, which is what stopping voice was for.
+                }
+            }
+        }
+    }
+
+    fun setMuted(muted: Boolean) {
+        calling.value?.setMuted(muted)
+    }
+
+    /** Shows Juno the camera or stops, asking for the camera the first time. */
+    fun setCameraEnabled(enabled: Boolean) {
+        val voice = calling.value ?: return
+        viewModelScope.launch {
+            if (enabled && !Permissions.allOf(getApplication(), Manifest.permission.CAMERA)) {
+                voiceFailed.value = "Showing Juno the camera needs the camera."
+                return@launch
+            }
+            voiceFailed.value = null
+            voice.setCameraEnabled(enabled)
+        }
+    }
+
     /** Stops the reply in flight. What was written so far is kept. */
     fun stop() {
         opened.value?.stop()
@@ -180,7 +269,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        hangUp()
         leave()
+    }
+
+    private fun closeVoice() {
+        val voice = calling.value
+        voiceJob?.cancel()
+        voiceJob = null
+        calling.value = null
+        voiceShown.value = false
+        if (voice != null) CoroutineScope(Dispatchers.IO).launch { withContext(NonCancellable) { voice.leave() } }
     }
 
     /** Tells the list about a new conversation once it is used. */

@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -45,6 +48,7 @@ import io.getstream.chat.android.ai.compose.ui.component.AIToolApprover
 import io.getstream.chat.android.ai.compose.ui.component.AITypingIndicator
 import io.getstream.chat.android.ai.compose.ui.component.ChatAiComponentFactory
 import io.getstream.chat.android.ai.compose.ui.component.ChatComposer
+import io.getstream.chat.android.ai.compose.ui.component.ComposerTrailingContentParams
 import io.getstream.chat.android.ai.compose.ui.component.LocalChatAiComponentFactory
 import io.getstream.chat.android.ai.compose.ui.component.MessageData
 import java.util.Calendar
@@ -190,7 +194,7 @@ private fun Welcome(modifier: Modifier = Modifier) {
         )
         Text(greeting(), style = MaterialTheme.typography.titleLarge)
         Text(
-            "Ask me anything, or show me a photo.",
+            "Ask me anything, show me a photo, or tap the waveform to talk.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -205,10 +209,18 @@ private fun greeting(): String {
 }
 
 /**
- * Stream's views, with what the person can do under each finished reply: copy it, share it and
- * rate it. Asking for a reply again needs the router to replace one, which it does not yet.
+ * Stream's views, with the way into voice mode beside the composer, and what the person can do
+ * under each finished reply: copy it, share it and rate it. Asking for a reply again needs the router to replace one, which it does not yet.
  */
 private class AssistantViews(private val viewModel: ChatViewModel) : ChatAiComponentFactory {
+    /** The way into voice mode, beside the message box. */
+    @Composable
+    override fun RowScope.ComposerTrailingContent(params: ComposerTrailingContentParams) {
+        FilledIconButton(onClick = viewModel::talk) {
+            Icon(Icons.Rounded.GraphicEq, contentDescription = "Talk to Juno")
+        }
+    }
+
     @Composable
     override fun AIConversationReplyActions(params: AIConversationReplyActionsParams) {
         // Read here, so the thumbs change as soon as the rating does.

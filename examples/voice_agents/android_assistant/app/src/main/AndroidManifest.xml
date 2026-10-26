@@ -6,7 +6,7 @@
          takes this, asked for at runtime. Through adb reverse they are on localhost, which
          does not. -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
-    <!-- Dictating a question into the composer. -->
+    <!-- Dictating a question into the composer, and voice mode. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- The phone's tools, each asked for the first time a tool needs it: get_location, and
          list_events and add_reminder. -->
@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <!-- Showing Juno the camera in voice mode, asked for the first time it is turned on. -->
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- The router and the token backend run on the Mac over plain http. -->
     <application

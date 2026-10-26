@@ -105,8 +105,13 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
         scope.launch { drawer.close() }
     }
 
+    val voiceShown by chat.isVoiceShown.collectAsStateWithLifecycle()
+    val open by chat.chat.collectAsStateWithLifecycle()
+
     ModalNavigationDrawer(
         drawerState = drawer,
+        // Voice mode is over everything, the drawer's edge included.
+        gesturesEnabled = !voiceShown,
         drawerContent = {
             ModalDrawerSheet {
                 ConversationList(
@@ -142,6 +147,8 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
             }
         }
     }
+    val talking = open
+    if (voiceShown && talking != null) VoiceMode(chat, talking)
 }
 
 private enum class LocalNetwork { Asking, Allowed, Refused }

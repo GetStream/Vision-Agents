@@ -79,6 +79,20 @@ Stream Chat 7.16.0 is on `https://stream-io-repo.com` rather than Maven Central,
   shows them at once; the router uploads them to the conversation's channel and writes them on
   the person's message, where the chat shows them, and the model sees them with that question's
   reply. From Android 9 a photo is turned the way the camera held it; before, it goes as stored.
+- **Voice mode** is the waveform beside the composer. It starts voice on the open conversation,
+  so the agent joins its call with the chat so far, and everything said on the call lands back in
+  the chat. The chat's socket stays open and runs the tools, and a tool that asks first asks on a
+  card over the call; the call is followed by a second session with none. The agent is Stream's
+  voice glow (`AIVoiceGlow`), moving with its voice in Stream's colors and with yours in red, with
+  a word for what it is doing and captions two lines at a time, as in the
+  [Android demo](../android_demo/README.md#what-the-app-shows), whose `Captions.kt` and
+  `VoiceMeter.kt` these are. The microphone is asked for as voice mode opens. Hang up, the close
+  button or Back take the agent off the call and go back to the chat.
+- **The camera** button in voice mode shows Juno what the phone is pointing at, through the back
+  lens, with a preview of it: this phone's own video on the call, drawn with Stream Video's
+  renderer. Ask "what's this?" and the agent's `vision` skill asks for what the camera showed at
+  that moment, which the call's session answers with the last few frames. The camera is asked for
+  the first time it is turned on. Try it on a phone: the emulator's camera is a test scene.
 - **Tools on the phone**, in `DeviceTools.kt`: `get_local_context` (date, time, timezone),
   `get_location` (asks first; the platform's `LocationManager` and `Geocoder`), `list_events`
   (the calendar, through `CalendarContract`), `add_reminder` (asks first) and `send_email` (asks
@@ -98,7 +112,6 @@ URLs, the customer id, the Stream key, the agent's name and the user.
 
 ## What is not here yet
 
-- Voice mode, with its captions and the camera.
 - The connector sign-in: a Gmail or Linear call that waits for one shows its step, with no way
   to connect from the phone yet.
 - Think harder, which iOS offers in the composer's options: Stream's Android composer has no
