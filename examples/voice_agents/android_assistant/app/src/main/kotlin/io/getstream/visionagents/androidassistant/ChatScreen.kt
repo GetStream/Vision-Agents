@@ -23,6 +23,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -30,15 +31,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.getstream.chat.android.ai.compose.conversation.AIReplyActions
+import io.getstream.chat.android.ai.compose.parts.AIClientIdentity
 import io.getstream.chat.android.ai.compose.ui.component.AIConversation
 import io.getstream.chat.android.ai.compose.ui.component.AIConversationReplyActionsParams
 import io.getstream.chat.android.ai.compose.ui.component.AIReplyActionsRow
 import io.getstream.chat.android.ai.compose.ui.component.AISuggestions
+import io.getstream.chat.android.ai.compose.ui.component.AIToolApprover
 import io.getstream.chat.android.ai.compose.ui.component.AITypingIndicator
 import io.getstream.chat.android.ai.compose.ui.component.ChatAiComponentFactory
 import io.getstream.chat.android.ai.compose.ui.component.ChatComposer
@@ -69,6 +73,8 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
     val answering by viewModel.isAnswering.collectAsStateWithLifecycle()
     val failure by viewModel.failure.collectAsStateWithLifecycle()
     val hasOlder by viewModel.hasOlderMessages.collectAsStateWithLifecycle()
+    val chat by viewModel.chat.collectAsStateWithLifecycle()
+    val approver = chat?.let { rememberApprover(it) }
     val views = remember(viewModel) { AssistantViews(viewModel) }
     var draft by rememberSaveable(stateSaver = MessageData.Saver) { mutableStateOf(MessageData()) }
     // How tall the composer is, keyboard included, which the end of the conversation keeps
@@ -84,6 +90,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
                 modifier = Modifier.fillMaxSize(),
                 pendingMessage = pending,
                 isThinking = activity == AgentChat.Activity.Thinking,
+                approver = approver,
                 loadOlderMessages = if (hasOlder) viewModel::loadOlderMessages else null,
                 footer = {
                     (activity as? AgentChat.Activity.Working)?.let { working ->
@@ -145,6 +152,24 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
                     isGenerating = answering,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Answers the questions of the tools that ask first, as the person signed in here.
+ *
+ * The router addresses a question to the person whose message the call answers, and Stream's
+ * components show it only to them. The answer goes back over the session's socket, which is
+ * also what runs the tool once it is allowed.
+ */
+@Composable
+private fun rememberApprover(chat: AgentChat): AIToolApprover {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    return remember(chat) {
+        AIToolApprover(Assistant.user.id, AIClientIdentity.installId(context), scope) { call, allowed ->
+            chat.session.decide(call.id, allowed)
         }
     }
 }

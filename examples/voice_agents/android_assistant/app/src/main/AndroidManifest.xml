@@ -8,6 +8,12 @@
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <!-- Dictating a question into the composer. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- The phone's tools, each asked for the first time a tool needs it: get_location, and
+         list_events and add_reminder. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
 
     <!-- The router and the token backend run on the Mac over plain http. -->
     <application

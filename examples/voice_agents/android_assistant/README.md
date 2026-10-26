@@ -74,6 +74,15 @@ Stream Chat 7.16.0 is on `https://stream-io-repo.com` rather than Maven Central,
   answer streaming in. Older messages load as you scroll up. Under a finished reply you can
   copy, share and rate it; ratings stay on the phone, as the router takes none yet. The composer
   floats over the bottom of the conversation, which fades away under it.
+- **Tools on the phone**, in `DeviceTools.kt`: `get_local_context` (date, time, timezone),
+  `get_location` (asks first; the platform's `LocationManager` and `Geocoder`), `list_events`
+  (the calendar, through `CalendarContract`), `add_reminder` (asks first) and `send_email` (asks
+  first, showing who it goes to). A tool that asks first asks on its step in the reply. The
+  calendar and the location are each asked for the first time a tool needs them, and a tool the
+  person refused tells the agent so. Android has no Reminders an app can add to, so a reminder is
+  an event in the calendar new events go in, at the time it is due, with an alert then; it takes
+  a due time, which iOS's may leave out. `send_email` has swift_assistant's backend send it
+  through the router's proxy for the person's Gmail (`POST /gmail/send`).
 - **Sign-ins go back to the app.** Every new conversation names
   `io.getstream.visionagents.androidassistant:/connected` as its session's `return_url`, the
   app's own scheme in the reverse domain form the router asks for.
@@ -84,8 +93,6 @@ URLs, the customer id, the Stream key, the agent's name and the user.
 
 ## What is not here yet
 
-- The tools that run on the phone (`get_local_context`, `get_location`, `list_events`,
-  `add_reminder`, `send_email`), so the agent cannot read the calendar or send mail.
 - Photos in the composer.
 - Voice mode, with its captions and the camera.
 - The connector sign-in: a Gmail or Linear call that waits for one shows its step, with no way

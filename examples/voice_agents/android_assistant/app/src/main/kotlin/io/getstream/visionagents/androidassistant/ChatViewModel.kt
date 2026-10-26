@@ -99,6 +99,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    /** The tools the agent may call, which run on this phone. */
+    private val tools = DeviceTools(application).all
+
     // What belongs to the conversation on screen, and goes when another is picked.
     private var screenScope = newScreenScope()
     private var openedFor: String? = null
@@ -200,8 +203,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun start(): AgentChat? {
         failed.value = null
         return try {
-            val session = openedFor?.let { Assistant.agents.attach(it) } ?: Assistant.agents.agent(Assistant.AGENT_NAME).chat(
-                SessionOptions(llm = Assistant.CHAT_MODEL, returnUrl = Assistant.RETURN_URL),
+            val session = openedFor?.let { Assistant.agents.attach(it, tools) } ?: Assistant.agents.agent(Assistant.AGENT_NAME).chat(
+                SessionOptions(llm = Assistant.CHAT_MODEL, tools = tools, returnUrl = Assistant.RETURN_URL),
             )
             AgentChat.open(getApplication(), session, screenScope).also { opened.value = it }
         } catch (e: AgentsException) {
