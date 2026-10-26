@@ -182,6 +182,16 @@ public class AgentSession internal constructor(
         }
     }
 
+    /**
+     * Declines the sign-in that a call of one of the agent's connectors waits for, whose step in
+     * the conversation is `awaiting_authorization`. The router answers the call itself, so it
+     * runs nothing and the agent is told the person did not connect. A call that is not waiting
+     * is left alone.
+     */
+    public suspend fun declineLogin(toolCallId: String) {
+        socket.send(Command.ToolApproval(toolCallId, allowed = false))
+    }
+
     /** Puts the agent on the session's call, `agent:<session id>`. See [Sessions.startVoice]. */
     public suspend fun startVoice(): Session = Sessions(backend).startVoice(session.id).also { session = it }
 

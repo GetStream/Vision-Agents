@@ -23,6 +23,9 @@ components have no sign-in card to start one from yet. CI builds it beside the K
 `returnURL` is: the app's own scheme in reverse domain form, such as
 `com.example.app:/connected`, which the router hands a connector's sign-in back to. Left null,
 nothing is sent and the sign-in goes back to the dashboard, as before.
+`AgentSession.declineLogin(toolCallId)` answers such a sign-in with Not now, as Swift's
+`declineLogin` does: the router ends the call, runs nothing and tells the agent the person did
+not connect.
 
 ### A tool on a speech-to-speech conversation can say how it is going
 
