@@ -110,7 +110,7 @@ func (c *Conversation) BeginFollowUp(id, text string) (CommandReceipt, error) {
 		return receipt, nil
 	}
 	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
-		return CommandReceipt{}, stack.Wrap(errors.New("a response is already running"))
+		return CommandReceipt{}, stack.Wrap(ErrResponseRunning)
 	}
 	now := time.Now().UTC()
 	question := ""

@@ -130,14 +130,15 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 
 	// One id for the message, kept across the retries below: an attempt that
 	// started the reply before the wait gave up makes the next a duplicate
-	// rather than a second answer.
+	// rather than a second answer. Only a reply another way into the session is
+	// still writing is waited out; any other failure ends the message, as each
+	// attempt whose turn did not start leaves a cancelled reply in the channel.
 	followUpID := "thread_" + store.NewID()
 	for {
 		err = found.FollowUp(turn, followUpID, event.Message.Text)
-		if err == nil || turn.Err() != nil {
+		if !errors.Is(err, conversation.ErrResponseRunning) || turn.Err() != nil {
 			break
 		}
-		// A reply another way into the session is writing ("a response is already running").
 		time.Sleep(threadTurnPoll)
 	}
 	if err != nil {
