@@ -110,7 +110,8 @@ func (s *RouterSuite) toldTheModel(needle string) {
 
 // smsTurn has person text the line and the Router answer it: the message is written into
 // the person's thread channel, Stream Chat's message.new for it is delivered, and the
-// agent's reply is sent, so none reaches the suite's next test's Telnyx.
+// agent's reply is sent, so none reaches the suite's next test's Telnyx. It returns once the
+// message's turn in the thread is over, so the test starts with the thread free.
 func (s *telnyxLine) smsTurn(person, text string) string {
 	channel := ""
 	before, replies, sent := 0, 0, len(s.telnyx.sent())
@@ -124,7 +125,21 @@ func (s *telnyxLine) smsTurn(person, text string) string {
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
 	s.answeredAfter(channel, replies)
 	s.took(sent + 1)
+	s.threadTurnIsFree(channel)
 	return channel
+}
+
+// threadTurnIsFree waits until the turn that answered a message is let go of. The reply is
+// texted while answerThread still holds the turn: it waits for the session to stop being busy,
+// closes it, and only then releases. A probe that takes the turn and gives it back is the wait.
+// The lease (threadTurnLease) outlasts settleFor, so it running out cannot end the wait.
+func (s *RouterSuite) threadTurnIsFree(channel string) {
+	ctx := context.Background()
+	s.Require().Eventually(func() bool {
+		taken, err := s.store.TakeChannelThreadTurn(ctx, channel, "the-test", time.Now().Add(time.Minute))
+		return err == nil && taken
+	}, settleFor, 10*time.Millisecond, "the turn that answered the message in %s was never let go of", channel)
+	s.Require().NoError(s.store.ReleaseChannelThreadTurn(ctx, channel, "the-test"))
 }
 
 // hasThread is whether the test's customer has a thread channel for person yet.

@@ -30,6 +30,8 @@ final readonly class Policy
         public ?Quota $quota = null,
         // Keep the app out of the router's own Stream app: in app mode it is never written there for want of a regist...
         public ?bool $requireOwnStreamApp = null,
+        // How the scope's sessions are handed back a conversation they carry on. The most specific level wins, field...
+        public ?ResumeHistory $resumeHistory = null,
         // Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed w...
         /** @var array<string, string>|null */
         public ?array $tags = null,
@@ -51,6 +53,7 @@ final readonly class Policy
             promptInjection: array_key_exists('prompt_injection', $data) && $data['prompt_injection'] !== null ? Json::bool($data, 'prompt_injection') : null,
             quota: array_key_exists('quota', $data) && $data['quota'] !== null ? Quota::fromArray(Json::object($data, 'quota')) : null,
             requireOwnStreamApp: array_key_exists('require_own_stream_app', $data) && $data['require_own_stream_app'] !== null ? Json::bool($data, 'require_own_stream_app') : null,
+            resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
             toolOutputRetention: array_key_exists('tool_output_retention', $data) && $data['tool_output_retention'] !== null ? Json::string($data, 'tool_output_retention') : null,
         );
@@ -84,6 +87,9 @@ final readonly class Policy
         }
         if ($this->requireOwnStreamApp !== null) {
             $out['require_own_stream_app'] = $this->requireOwnStreamApp;
+        }
+        if ($this->resumeHistory !== null) {
+            $out['resume_history'] = $this->resumeHistory->toArray();
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;

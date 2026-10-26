@@ -237,8 +237,8 @@ module GetStream
           # tool is left to finish and its answer is dropped rather than sent, unless it asked
           # to be held.
           @lock.synchronize do
-            call = @running[frame["id"].to_s]
-            @running.delete(frame["id"].to_s) if call&.cancel!
+            tool_call_context = @running[frame["id"].to_s]
+            @running.delete(frame["id"].to_s) if tool_call_context&.cancel!
           end
         else
           @lock.synchronize { @running[frame["id"].to_s]&.held! } if frame["type"] == "tool_held"
@@ -268,12 +268,12 @@ module GetStream
         answer[:request_id] = frame["request_id"] unless frame["request_id"].to_s.empty?
         answer[:turn_id] = frame["turn_id"] unless frame["turn_id"].to_s.empty?
 
-        call = ToolCall.from(frame, session_id: id, send: ->(sent) { reply(sent) })
+        tool_call_context = ToolCall.from(frame, session_id: id, send: ->(sent) { reply(sent) })
         busy = @lock.synchronize do
           full = @running.size >= RUNNING_TOOLS
           # Held before the thread starts, so a tool quicker than this line still finds itself
           # wanted.
-          @running[call_id] = call unless full
+          @running[call_id] = tool_call_context unless full
           full
         end
         return reply(answer.merge(error: "too many tools are already running")) if busy
@@ -282,7 +282,7 @@ module GetStream
           # A tool that raises is reported to the model rather than dropped: it is
           # mid-sentence waiting, and can only say something useful if it is told.
           result = begin
-            { output: @tools.call(frame["name"].to_s, frame["arguments"], call) }
+            { output: @tools.call(frame["name"].to_s, frame["arguments"], tool_call_context) }
           rescue StandardError => e
             { error: e.message }
           end

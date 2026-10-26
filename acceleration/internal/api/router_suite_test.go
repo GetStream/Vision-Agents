@@ -1141,6 +1141,8 @@ func (s *RouterSuite) sessionManager(
 		Directory:     directory,
 		Connectors:    connectors,
 		Logger:        logger,
+		// The policies a session's resume_history falls back to, as cmd/router passes them.
+		ResumeHistories: policies,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
@@ -1900,6 +1902,15 @@ func (d testData) briefed(request CreateSessionRequest) (CreateSessionRequest, s
 	brief := "Be a customer whose order " + d.suite.utils.uuid() + " never came."
 	request.Instructions = &brief
 	return request, brief
+}
+
+// storedSession is the id of a session of the suite's app that is not running, its row put
+// straight into the store, for an endpoint that only asks whose a session is.
+func (d testData) storedSession() string {
+	id := "session-" + d.suite.utils.uuid()
+	d.suite.Require().NoError(d.suite.store.SaveSession(context.Background(),
+		&store.AgentSession{ID: id, CustomerID: d.suite.customerID()}))
+	return id
 }
 
 // createUser is a client signed in as a new end user of the suite's app.

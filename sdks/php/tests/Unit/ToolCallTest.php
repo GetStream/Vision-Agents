@@ -40,11 +40,11 @@ final class ToolCallTest extends TestCase
             self::until($socket, $server, 'tool_result');
         });
         $agent = new Agent(name: 'jean', client: $server->client());
-        $agent->tools->register('book', 'Books a flight', [], static function (array $args, ToolCall $call): string {
-            $call->update('Looking at flights');
-            $call->say('One moment.');
-            return implode(' ', [$call->id, $call->sessionId, $call->turnId, $call->user->id, $call->user->name,
-                Json::string($call->user->custom, 'tier'), $call->conversation->cid, $call->approved ? 'approved' : 'asked']);
+        $agent->tools->register('book', 'Books a flight', [], static function (array $args, ToolCall $toolCallContext): string {
+            $toolCallContext->update('Looking at flights');
+            $toolCallContext->say('One moment.');
+            return implode(' ', [$toolCallContext->id, $toolCallContext->sessionId, $toolCallContext->turnId, $toolCallContext->user->id, $toolCallContext->user->name,
+                Json::string($toolCallContext->user->custom, 'tier'), $toolCallContext->conversation->cid, $toolCallContext->approved ? 'approved' : 'asked']);
         });
 
         self::watch($server, $agent);
@@ -117,11 +117,11 @@ final class ToolCallTest extends TestCase
             self::until($socket, $server, 'tool_result');
         });
         $agent = new Agent(name: 'jean', client: $server->client());
-        $agent->tools->register('slow', 'Takes a while', [], static function (array $args, ToolCall $call) use (&$stopped): string {
+        $agent->tools->register('slow', 'Takes a while', [], static function (array $args, ToolCall $toolCallContext) use (&$stopped): string {
             try {
-                delay(5, cancellation: $call->cancellation());
+                delay(5, cancellation: $toolCallContext->cancellation());
             } finally {
-                $stopped = $call->cancelled();
+                $stopped = $toolCallContext->cancelled();
             }
             return 'done';
         }, timeout: 0.05);
@@ -244,13 +244,13 @@ final class ToolCallTest extends TestCase
     private static function payments(Tools $tools): void
     {
         $tools
-            ->register('pay', 'Pays', self::amount(), static function (array $args, ToolCall $call): string {
-                $call->disallowInterruptions();
+            ->register('pay', 'Pays', self::amount(), static function (array $args, ToolCall $toolCallContext): string {
+                $toolCallContext->disallowInterruptions();
                 delay(0.2);
-                return 'paid for ' . $call->sessionId;
+                return 'paid for ' . $toolCallContext->sessionId;
             }, approval: 'Pay {amount}?')
-            ->register('slow', 'Takes a while', [], static function (array $args, ToolCall $call): string {
-                delay(5, cancellation: $call->cancellation());
+            ->register('slow', 'Takes a while', [], static function (array $args, ToolCall $toolCallContext): string {
+                delay(5, cancellation: $toolCallContext->cancellation());
                 return 'done';
             }, interruptible: true)
             ->register('fast', 'Does not', [], static fn (array $args): string => 'done');

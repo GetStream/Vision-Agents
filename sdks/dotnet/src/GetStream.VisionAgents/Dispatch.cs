@@ -450,14 +450,14 @@ public sealed class Dispatch
         var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         // Tracked before the call starts, so a tool_cancel read next finds it.
         _hostedCalls[key] = cancel;
-        var call = ToolCall.Of(frame, "", new ToolLine((sent, _) => TellAsync(sent), _holds, key));
+        var toolCallContext = ToolCall.Of(frame, "", new ToolLine((sent, _) => TellAsync(sent), _holds, key));
         Track(async () =>
         {
             JsonObject result;
             try
             {
                 result = Frames.Of("tool_result", ("tool_call_id", id), ("id", id),
-                    ("output", await tools.CallAsync(name, frame.Text("arguments"), cancel.Token, call).ConfigureAwait(false)));
+                    ("output", await tools.CallAsync(name, frame.Text("arguments"), cancel.Token, toolCallContext).ConfigureAwait(false)));
             }
             catch (Exception failure)
             {

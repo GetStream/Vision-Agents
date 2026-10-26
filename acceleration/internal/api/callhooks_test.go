@@ -164,6 +164,39 @@ func (s *CallHooksSuite) TestACallEventSignedWithTheWrongSecretIsRefused() {
 	s.Equal(http.StatusUnauthorized, status)
 }
 
+// arriveRingingNumber delivers a call.session_started whose call says which number it rang.
+func (s *CallHooksSuite) arriveRingingNumber() int {
+	body := strings.Replace(s.arriving("default:"+s.callID),
+		`"custom": {"line": "support"}`, fmt.Sprintf(`"custom": {"line": "support", "phone_number": %q}`, s.e164), 1)
+	return s.signedly("/v1/phone/hooks/stream", body)
+}
+
+func (s *CallHooksSuite) TestAnArrivingCallTheRouterPlacedIsNotDispatched() {
+	s.hold("default", s.callID)
+	s.placed()
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arriveRingingNumber())
+
+	s.nothingReaches(worker.Calls(), "a call the router placed was answered a second time")
+}
+
+func (s *CallHooksSuite) TestAnArrivingCallToANumberIsStillDispatched() {
+	s.hold("default", s.callID)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arriveRingingNumber())
+
+	select {
+	case call := <-worker.Calls():
+		s.Equal(s.callID, call.CallID)
+	case <-time.After(settleFor):
+		s.Fail("the call never reached the worker")
+	}
+}
+
 func (s *CallHooksSuite) TestATamperedCallEventIsRefused() {
 	body := s.arriving("default:" + s.callID)
 	signature := sign(body, suiteStreamSecret)

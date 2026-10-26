@@ -42,6 +42,7 @@ final readonly class AgentConfig
         // Deprecated: use connectors, a binding to a connector.
         /** @var list<mixed>|null */
         public ?array $plugins = null,
+        public ?ResumeHistory $resumeHistory = null,
         // Absent when calls are reviewed by Stream's default guide.
         public ?AgentReview $review = null,
         public AgentRole|string|null $role = null,
@@ -95,6 +96,7 @@ final readonly class AgentConfig
             mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
+            resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
             review: array_key_exists('review', $data) && $data['review'] !== null ? AgentReview::fromArray(Json::object($data, 'review')) : null,
             role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
@@ -172,6 +174,9 @@ final readonly class AgentConfig
         }
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
+        }
+        if ($this->resumeHistory !== null) {
+            $out['resume_history'] = $this->resumeHistory->toArray();
         }
         if ($this->review !== null) {
             $out['review'] = $this->review->toArray();

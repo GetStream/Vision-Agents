@@ -795,6 +795,111 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 	return exchanges, nil
 }
 
+// ReplyItems are what the replies a conversation's transcript wrote under these turn ids
+// did, by turn id: the answer and tool_result items of the response each one finished, in
+// the order they happened. Only the customer's own sessions on that conversation are read,
+// so a turn id copied into another transcript finds nothing, and a rewound response is
+// left out. A turn whose answer item names no turn id, as one recorded before they did,
+// finds nothing either.
+func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID string, turnIDs []string) (map[string][]AgentResponseItem, error) {
+	if customerID == "" || conversationID == "" {
+		return nil, stack.Wrap(errors.New("store: a customer and a conversation id are required"))
+	}
+	if len(turnIDs) == 0 {
+		return nil, nil
+	}
+	type answered struct {
+		ResponseID string `bun:"response_id"`
+		TurnID     string `bun:"turn_id"`
+		Ordinal    int    `bun:"ordinal"`
+	}
+	type found struct {
+		answers []answered
+		items   []AgentResponseItem
+	}
+	// A response's items are in the shard that ran its session.
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (found, error) {
+		var f found
+		err := db.NewSelect().TableExpr("agent_response_items AS ari").
+			ColumnExpr("ari.response_id, ari.payload->>'turn_id' AS turn_id, ari.ordinal").
+			Join("JOIN agent_responses AS r ON r.id = ari.response_id").
+			Join("JOIN agent_sessions AS s ON s.id = r.session_id").
+			Where("s.customer_id = ?", customerID).
+			Where("s.conversation_id = ?", conversationID).
+			Where("r.customer_id = ?", customerID).
+			Where("r.rewound_at IS NULL").
+			Where("ari.kind = ?", ItemAnswer).
+			Where("ari.payload->>'turn_id' IN (?)", bun.In(turnIDs)).
+			Scan(ctx, &f.answers)
+		if err != nil || len(f.answers) == 0 {
+			return f, err
+		}
+		ids := make([]string, 0, len(f.answers))
+		for _, a := range f.answers {
+			ids = append(ids, a.ResponseID)
+		}
+		err = db.NewSelect().Model(&f.items).
+			Where("response_id IN (?)", bun.In(ids)).
+			Where("kind IN (?)", bun.In([]string{ItemAnswer, ItemToolResult})).
+			Order("response_id ASC", "ordinal ASC").
+			Scan(ctx)
+		return f, err
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: reply items: %w", err))
+	}
+	// A response answered more than once, once its tools came back, is the reply its last
+	// answer finished.
+	last := map[string]answered{}
+	byResponse := map[string][]AgentResponseItem{}
+	for _, f := range lists {
+		for _, a := range f.answers {
+			if held, ok := last[a.ResponseID]; !ok || a.Ordinal > held.Ordinal {
+				last[a.ResponseID] = a
+			}
+		}
+		for _, item := range f.items {
+			byResponse[item.ResponseID] = append(byResponse[item.ResponseID], item)
+		}
+	}
+	replies := make(map[string][]AgentResponseItem, len(last))
+	for responseID, a := range last {
+		replies[a.TurnID] = byResponse[responseID]
+	}
+	return replies, nil
+}
+
+// Opening is the first thing said in a customer's conversation, across every session that
+// held it, or empty when none recorded anything said.
+func (s *Store) Opening(ctx context.Context, customerID, conversationID string) (string, error) {
+	if customerID == "" || conversationID == "" {
+		return "", stack.Wrap(errors.New("store: a customer and a conversation id are required"))
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentResponse, error) {
+		var first []AgentResponse
+		err := db.NewSelect().Model(&first).
+			Column("ars.said", "ars.created_at").
+			Join("JOIN agent_sessions AS s ON s.id = ars.session_id").
+			Where("s.customer_id = ?", customerID).
+			Where("s.conversation_id = ?", conversationID).
+			Where("ars.customer_id = ?", customerID).
+			Where("ars.rewound_at IS NULL").
+			Where("ars.said <> ''").
+			Order("ars.created_at ASC").
+			Limit(1).
+			Scan(ctx)
+		return first, err
+	})
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("store: opening: %w", err))
+	}
+	first := merged(lists, func(a, b AgentResponse) int { return a.CreatedAt.Compare(b.CreatedAt) }, 1)
+	if len(first) == 0 {
+		return "", nil
+	}
+	return first[0].Said, nil
+}
+
 // RewindResponses takes every response after kept out of the session's conversation.
 func (s *Store) RewindResponses(ctx context.Context, customerID, sessionID, kept string, at time.Time) error {
 	if customerID == "" || sessionID == "" || kept == "" {

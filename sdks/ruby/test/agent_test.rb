@@ -205,10 +205,10 @@ class TestAgent < LocalRouterTest
       3.times { frames << peer.receive(timeout: 5) }
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("search", description: "Search flights") do |_args, call|
-      seen << call
-      call.update("checking three airlines")
-      call.say("Still looking, one moment.")
+    tools = VA::Tools.new.register("search", description: "Search flights") do |_args, tool_call_context|
+      seen << tool_call_context
+      tool_call_context.update("checking three airlines")
+      tool_call_context.say("Still looking, one moment.")
       "found two"
     end
 
@@ -219,11 +219,11 @@ class TestAgent < LocalRouterTest
                      "verbatim" => true }, frames.pop(timeout: 5))
       assert_equal "t1", frames.pop(timeout: 5)["tool_call_id"], "the call addressed elsewhere is left"
     end
-    call = seen.pop(timeout: 1)
-    assert_equal %w[t1 sess_1 turn_2], [call.id, call.session_id, call.turn_id]
-    assert_equal VA::ToolUser.new("sam", "Sam", { "tier" => "gold" }), call.user
-    assert_equal VA::ToolConversation.new("agent:kept", { "line" => "support" }), call.conversation
-    assert call.approved?
+    tool_call_context = seen.pop(timeout: 1)
+    assert_equal %w[t1 sess_1 turn_2], [tool_call_context.id, tool_call_context.session_id, tool_call_context.turn_id]
+    assert_equal VA::ToolUser.new("sam", "Sam", { "tier" => "gold" }), tool_call_context.user
+    assert_equal VA::ToolConversation.new("agent:kept", { "line" => "support" }), tool_call_context.conversation
+    assert tool_call_context.approved?
   end
 
   def test_a_held_tool_is_answered_even_once_the_caller_talks_over_the_agent
@@ -240,10 +240,10 @@ class TestAgent < LocalRouterTest
       results << peer.receive_type("tool_result")
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, call|
-      call.disallow_interruptions
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
+      tool_call_context.disallow_interruptions
       release.pop(timeout: 5)
-      call.cancelled? ? "stopped" : "charged"
+      tool_call_context.cancelled? ? "stopped" : "charged"
     end
 
     agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
@@ -261,8 +261,8 @@ class TestAgent < LocalRouterTest
       wrote << (peer.receive_type("tool_result", timeout: 0.5) || :nothing)
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, call|
-      call.disallow_interruptions
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
+      tool_call_context.disallow_interruptions
       wrote << :charged
     end
 

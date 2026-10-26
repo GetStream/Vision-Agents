@@ -32,12 +32,13 @@ public sealed class ToolCallTests
             await Finish(peer);
         });
         await using var agent = Agent(router);
-        agent.Tools.Register("book", "Books a flight", [], async (JsonElement _, ToolCall call, CancellationToken cancellationToken) =>
+        agent.Tools.Register("book", "Books a flight", [], async (JsonElement _, ToolCall toolCallContext, CancellationToken cancellationToken) =>
         {
-            await call.UpdateAsync("Looking at flights", cancellationToken);
-            await call.SayAsync("One moment.", cancellationToken);
-            return (object?)$"{call.Id} {call.SessionId} {call.TurnId} {call.User.Id} {call.User.Name} " +
-                $"{call.User.Custom.Text("tier")} {call.Conversation.Cid} {call.Approved}";
+            await toolCallContext.UpdateAsync("Looking at flights", cancellationToken);
+            await toolCallContext.SayAsync("One moment.", cancellationToken);
+            var user = toolCallContext.User;
+            return (object?)$"{toolCallContext.Id} {toolCallContext.SessionId} {toolCallContext.TurnId} {user.Id} {user.Name} " +
+                $"{user.Custom.Text("tier")} {toolCallContext.Conversation.Cid} {toolCallContext.Approved}";
         });
 
         await Converse(agent);
@@ -303,11 +304,11 @@ public sealed class ToolCallTests
     /// which may be interrupted, and <c>fast</c>.
     /// </summary>
     private static void Payments(Tools tools) => tools
-        .Register("pay", "Pays", Amount(), async (JsonElement _, ToolCall call, CancellationToken cancellationToken) =>
+        .Register("pay", "Pays", Amount(), async (JsonElement _, ToolCall toolCallContext, CancellationToken cancellationToken) =>
         {
-            await call.DisallowInterruptionsAsync(cancellationToken);
+            await toolCallContext.DisallowInterruptionsAsync(cancellationToken);
             await Task.Delay(200, cancellationToken);
-            return (object?)("paid for " + call.SessionId);
+            return (object?)("paid for " + toolCallContext.SessionId);
         }, approval: "Pay {amount}?")
         .Register("slow", "Takes a while", [], async (JsonElement _, CancellationToken cancellationToken) =>
         {

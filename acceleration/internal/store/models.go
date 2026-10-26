@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"encoding/json"
 	"path"
 	"slices"
@@ -331,9 +332,12 @@ type PhoneNumber struct {
 	BridgePasswordSealed     []byte `bun:"bridge_password_sealed,nullzero"`
 	BridgePasswordKEKVersion int    `bun:"bridge_password_kek_version,nullzero"`
 	// UseCaseID is the 10DLC use case the number sends as. Empty sends as the app's default.
-	UseCaseID   string     `bun:"dlc_use_case_id,nullzero"`
-	PurchasedAt time.Time  `bun:"purchased_at,notnull"`
-	ReleasedAt  *time.Time `bun:"released_at"`
+	UseCaseID   string    `bun:"dlc_use_case_id,nullzero"`
+	PurchasedAt time.Time `bun:"purchased_at,notnull"`
+	// AttachedAt is when the number was attached, so its callers reach an agent. A number
+	// can be on a trunk without it, to place calls only.
+	AttachedAt *time.Time `bun:"attached_at"`
+	ReleasedAt *time.Time `bun:"released_at"`
 }
 
 // CallBridge is what a vendor is told to do when the person it called picks up.
@@ -368,17 +372,20 @@ type CallBridge struct {
 type CallResource struct {
 	bun.BaseModel `bun:"table:call_resources,alias:cr"`
 
-	// TrunkID is the Stream SIP trunk this call leg was given, and the row's identity: a
-	// call may own several, its own plus one per transfer into it.
-	TrunkID    string `bun:"trunk_id,pk"`
+	ID int64 `bun:"id,pk,autoincrement"`
+	// TrunkID is the Stream SIP trunk this call leg was given: a call may own several, its
+	// own plus one per transfer into it.
+	TrunkID    string `bun:"trunk_id,notnull"`
 	RouteID    string `bun:"route_id,notnull"`
 	CallType   string `bun:"call_type,notnull"`
 	CallID     string `bun:"call_id,notnull"`
 	CustomerID string `bun:"customer_id,notnull"`
 	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
 	// stored as NULL, is the deployment's own app.
-	StreamAppPK int64     `bun:"stream_app_pk,nullzero"`
-	CreatedAt   time.Time `bun:"created_at,notnull"`
+	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
+	// Shared is a trunk and rule other calls use too: the call's end deletes only this row.
+	Shared    bool      `bun:"shared,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
 }
 
 // What ended a call leg.
@@ -575,6 +582,9 @@ type AgentConfig struct {
 	// organization's policies can shorten it and never lengthen it
 	// (20261113120000_tool_output_retention.sql).
 	ToolOutputRetention options.Retention `bun:"tool_output_retention,notnull"`
+	// ResumeHistory is how the config's sessions are handed back a conversation they
+	// carry on. The zero value is the router's default.
+	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -1748,6 +1758,40 @@ func (m ModelOverwrites) Empty() bool {
 	return m == ModelOverwrites{}
 }
 
+// ResumeHistory is how much of a conversation a model is handed back when a session opens
+// on it: reopened, resumed by id, joined by voice or forked. A field left unset is no
+// opinion, and the zero value is the router's default: replies as text, the newest 100 turns
+// within 60000 characters. It is set at four levels, the most specific winning field by
+// field (Over): a session, its agent config, its app's policy, its organization's.
+type ResumeHistory struct {
+	// IncludeTools hands each reply back with the tool calls it made and what they
+	// returned, as they were recorded. Over MaxCharacters the oldest results are trimmed
+	// first, and the conversation's first message is kept. Nil is no opinion, so a level
+	// can turn off what a broader one turned on.
+	IncludeTools *bool `json:"include_tools,omitempty"`
+	// MaxMessages is how many turns are handed back, zero for 100. Tool calls and their
+	// results are not turns.
+	MaxMessages int `json:"max_messages,omitempty"`
+	// MaxCharacters is how much text is handed back, tool calls and results included, zero
+	// for 60000.
+	MaxCharacters int `json:"max_characters,omitempty"`
+}
+
+// Over is r with base's settings wherever r has none.
+func (r ResumeHistory) Over(base ResumeHistory) ResumeHistory {
+	if r.IncludeTools == nil {
+		r.IncludeTools = base.IncludeTools
+	}
+	r.MaxMessages = cmp.Or(r.MaxMessages, base.MaxMessages)
+	r.MaxCharacters = cmp.Or(r.MaxCharacters, base.MaxCharacters)
+	return r
+}
+
+// Tools reports whether replies are handed back with their tool calls.
+func (r ResumeHistory) Tools() bool {
+	return r.IncludeTools != nil && *r.IncludeTools
+}
+
 // AgentSession is one session a caller opened, kept so it can be found after the process
 // that held it is gone.
 //
@@ -1804,8 +1848,11 @@ type AgentSession struct {
 	ReturnURL string `bun:"return_url,nullzero"`
 	// Remembers is whether the session was opened with a memory user id, so it could have
 	// taught the memory store anything. Nil, as on a row made before it was kept, is not known.
-	Remembers *bool  `bun:"remembers"`
-	State     string `bun:"state,notnull"`
+	Remembers *bool `bun:"remembers"`
+	// ResumeHistory is what the session was opened with, which reopening it keeps. Zero
+	// takes the config's.
+	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,nullzero"`
+	State         string        `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`

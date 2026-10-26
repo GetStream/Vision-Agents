@@ -108,13 +108,13 @@ async def run_call(
     functions: FunctionRegistry,
     name: str,
     arguments: dict[str, Any],
-    call: ToolCall,
+    tool_call_context: ToolCall,
     holds: Holds,
 ) -> Any:
-    """Run one function for `call`, within its own timeout when it has one."""
+    """Run one function for `tool_call_context`, within its own timeout when it has one."""
     timeout = functions.policy(name).timeout
     try:
-        with calling(call):
+        with calling(tool_call_context):
             if not timeout:
                 return await functions.call_function(name, arguments)
             try:
@@ -124,4 +124,4 @@ async def run_call(
             except asyncio.TimeoutError:
                 raise TimeoutError(f"{name} took longer than {timeout:g}s") from None
     finally:
-        holds.forget(call.id)
+        holds.forget(tool_call_context.id)

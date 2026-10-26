@@ -108,8 +108,8 @@ impl Tools {
         O: Serialize,
         E: Display,
     {
-        let run: Run = Arc::new(move |arguments, call| {
-            run(arguments, call)
+        let run: Run = Arc::new(move |arguments, tool_call_context| {
+            run(arguments, tool_call_context)
                 .map(|answered| match answered {
                     Ok(output) => serde_json::to_value(output).map_err(|error| error.to_string()),
                     Err(error) => Err(error.to_string()),
@@ -150,7 +150,7 @@ impl Tools {
         &self,
         name: &str,
         arguments: &str,
-        call: ToolCall,
+        tool_call_context: ToolCall,
     ) -> Result<Value, String> {
         let found = self
             .registered
@@ -167,7 +167,7 @@ impl Tools {
             serde_json::from_str(arguments)
                 .map_err(|error| format!("the arguments are not JSON: {error}"))?
         };
-        let running = run(arguments, call);
+        let running = run(arguments, tool_call_context);
         let output = if timeout_ms > 0 {
             tokio::time::timeout(Duration::from_millis(timeout_ms as u64), running)
                 .await

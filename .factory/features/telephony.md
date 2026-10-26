@@ -88,9 +88,12 @@ template. That detail matters: it makes the SIP caller a participant with a stab
 what per-participant transcription keys on. Without it the caller would be anonymous to the
 agent and every call would look like the same speaker.
 
-Placing a call does the same two things and pins the routing rule to a named call, so the
-answered leg lands where an agent is waiting. The response says which call that is, because
-an agent that is not in it hears nothing when the person picks up. In Python that is one
+Placing a call at Twilio, Telnyx or a customer's `sip_trunk` makes no trunk or rule of its own.
+It dials through the number's line on a shared trunk, with the session id in the
+`x-stream-call-id` header, so the answered leg lands in the call where an agent is waiting. See
+[shared trunks](shared-trunks.md). The other five vendors still make a trunk and a rule pinned
+to a named call, per call. Either way the response says which call that is, because an agent
+that is not in it hears nothing when the person picks up. In Python that is one
 context manager:
 
 ```python

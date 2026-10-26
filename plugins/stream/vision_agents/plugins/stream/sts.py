@@ -343,9 +343,9 @@ class STS(realtime.Realtime):
             "arguments_json": arguments,
         }
 
-        call = call_of(frame, "", SocketLine(self._send, self._holds))
+        tool_call_context = call_of(frame, "", SocketLine(self._send, self._holds))
         try:
-            with calling(call):
+            with calling(tool_call_context):
                 _, result, error = await self._run_one_tool(
                     tool_call, timeout_s=TOOL_TIMEOUT
                 )

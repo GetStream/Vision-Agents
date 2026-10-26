@@ -489,12 +489,16 @@ fn run_tool(frame: Frame, sender: &SocketSender, shared: &Arc<Shared>, tools: &T
         holds: shared.holds.clone(),
         key: id.clone(),
     };
-    let call = ToolCall::of(&frame, &shared.session_id, line);
+    let tool_call_context = ToolCall::of(&frame, &shared.session_id, line);
     let (sender, shared_for_task, tools) = (sender.clone(), shared.clone(), tools.clone());
     let key = id.clone();
     let task = tokio::spawn(async move {
         match tools
-            .call_as(frame.text("name"), frame.text("arguments"), call)
+            .call_as(
+                frame.text("name"),
+                frame.text("arguments"),
+                tool_call_context,
+            )
             .await
         {
             Ok(output) => result["output"] = output,

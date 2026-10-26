@@ -25,7 +25,8 @@ class PlaceCallRequest:
         from_ (str): One of the customer's own numbers, which is what the person sees.
         to (str):
         custom (PlaceCallRequestCustom | Unset): Put on the Stream call, where the agent in it can read it. It is set at
-            Stream rather than at the vendor, so every vendor can carry it.
+            Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be
+            set.
         headers (PlaceCallRequestHeaders | Unset): Carried to the person's leg as custom SIP headers. Only some vendors
             can express these, and one that cannot refuses the call.
         initial_digits (str | Unset): Digits pressed once the person answers, for reaching an extension behind a menu,

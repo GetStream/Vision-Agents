@@ -95,7 +95,7 @@ func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType,
 func (s *Store) NumberRungInApp(ctx context.Context, scope AppScope, e164 string) (PhoneNumber, error) {
 	var held []PhoneNumber
 	if err := s.db.NewSelect().Model(&held).
-		Where("e164 = ?", e164).Where("stream_trunk_id IS NOT NULL").
+		Where("e164 = ?", e164).Where("attached_at IS NOT NULL").
 		Where("released_at IS NULL").ApplyQueryBuilder(scope.where).Limit(20).Scan(ctx); err != nil {
 		return PhoneNumber{}, fmt.Errorf("store: number rung: %w", err)
 	}

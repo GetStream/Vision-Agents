@@ -125,7 +125,7 @@ func (s *StoreSuite) SetupTest() {
 			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
 				" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks,"+
 				" voices, agent_sessions, agent_responses, agent_response_items, users,"+
-				" policies, app_organizations, call_resources, organizations, agent_configs,"+
+				" policies, app_organizations, call_resources, stream_trunks, organizations, agent_configs,"+
 				" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions,"+
 				" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
 				" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting,"+

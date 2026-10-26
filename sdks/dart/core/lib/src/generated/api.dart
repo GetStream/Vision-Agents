@@ -466,6 +466,7 @@ final class CreateSessionRequest {
     this.navigating,
     this.phone,
     this.projectId,
+    this.resumeHistory,
     this.returnUrl,
     this.search,
     this.startVoice,
@@ -594,6 +595,10 @@ final class CreateSessionRequest {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.project_id'),
       },
+      resumeHistory: switch (json['resume_history']) {
+        null => null,
+        final Object value => ResumeHistory.fromJson(value),
+      },
       returnUrl: switch (json['return_url']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.return_url'),
@@ -683,6 +688,7 @@ final class CreateSessionRequest {
   final bool? navigating;
   final SessionPhone? phone;
   final String? projectId;
+  final ResumeHistory? resumeHistory;
   final String? returnUrl;
   final String? search;
   final bool? startVoice;
@@ -725,6 +731,7 @@ final class CreateSessionRequest {
     'navigating': ?navigating,
     if (phone case final value?) 'phone': value.toJson(),
     'project_id': ?projectId,
+    if (resumeHistory case final value?) 'resume_history': value.toJson(),
     'return_url': ?returnUrl,
     'search': ?search,
     'start_voice': ?startVoice,
@@ -1044,6 +1051,39 @@ final class ModelOverwrites {
     'thinking': ?thinking,
     'tts': ?tts,
     'verbosity': ?verbosity,
+  };
+}
+
+/// How a conversation is handed back to the model when a session carries it on.
+final class ResumeHistory {
+  const ResumeHistory({this.includeTools, this.maxCharacters, this.maxMessages});
+
+  factory ResumeHistory.fromJson(Object? value) {
+    final json = _object(value, 'ResumeHistory');
+    return ResumeHistory(
+      includeTools: switch (json['include_tools']) {
+        null => null,
+        final Object value => _bool(value, 'ResumeHistory.include_tools'),
+      },
+      maxCharacters: switch (json['max_characters']) {
+        null => null,
+        final Object value => _int(value, 'ResumeHistory.max_characters'),
+      },
+      maxMessages: switch (json['max_messages']) {
+        null => null,
+        final Object value => _int(value, 'ResumeHistory.max_messages'),
+      },
+    );
+  }
+
+  final bool? includeTools;
+  final int? maxCharacters;
+  final int? maxMessages;
+
+  Map<String, Object?> toJson() => {
+    'include_tools': ?includeTools,
+    'max_characters': ?maxCharacters,
+    'max_messages': ?maxMessages,
   };
 }
 

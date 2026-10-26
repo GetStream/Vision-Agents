@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
     from ..models.plugin_with_options import PluginWithOptions
+    from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
 
@@ -64,6 +65,8 @@ class AgentConfigPatch:
             name (str | Unset): What the config is called, which is unique among the customer's own.
             plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
             plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
+            resume_history (ResumeHistory | Unset): How a conversation is handed back to the model when a session carries it
+                on.
             review (AgentReview | Unset): How a finished call under an agent is reviewed.
             role (AgentRole | Unset): What the agent is for in the app, beyond answering people. agent_moderator is the
                 app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a
@@ -112,6 +115,7 @@ class AgentConfigPatch:
     name: str | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[PluginWithOptions | str] | Unset = UNSET
+    resume_history: ResumeHistory | Unset = UNSET
     review: AgentReview | Unset = UNSET
     role: AgentRole | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
@@ -200,6 +204,10 @@ class AgentConfigPatch:
                     plugins_item = plugins_item_data
                 plugins.append(plugins_item)
 
+        resume_history: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.resume_history, Unset):
+            resume_history = self.resume_history.to_dict()
+
         review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.review, Unset):
             review = self.review.to_dict()
@@ -287,6 +295,8 @@ class AgentConfigPatch:
             field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
+        if resume_history is not UNSET:
+            field_dict["resume_history"] = resume_history
         if review is not UNSET:
             field_dict["review"] = review
         if role is not UNSET:
@@ -335,6 +345,7 @@ class AgentConfigPatch:
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
         from ..models.plugin_with_options import PluginWithOptions
+        from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
 
@@ -438,6 +449,13 @@ class AgentConfigPatch:
 
                 plugins.append(plugins_item)
 
+        _resume_history = d.pop("resume_history", UNSET)
+        resume_history: ResumeHistory | Unset
+        if isinstance(_resume_history, Unset):
+            resume_history = UNSET
+        else:
+            resume_history = ResumeHistory.from_dict(_resume_history)
+
         _review = d.pop("review", UNSET)
         review: AgentReview | Unset
         if isinstance(_review, Unset):
@@ -527,6 +545,7 @@ class AgentConfigPatch:
             name=name,
             plugin_events=plugin_events,
             plugins=plugins,
+            resume_history=resume_history,
             review=review,
             role=role,
             sandbox=sandbox,

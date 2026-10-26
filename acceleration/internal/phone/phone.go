@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -318,6 +319,19 @@ func (b Bridge) WithNumber(e164 string) (Bridge, error) {
 	return b, nil
 }
 
+// CallIDHeader is the SIP header that carries the call id to Stream.
+const CallIDHeader = sipbridge.CallIDHeader
+
+// WithCallID is the bridge with the call id as the x-stream-call-id parameter of its URI,
+// which Twilio and Telnyx deliver to Stream as CallIDHeader. An empty id changes nothing.
+func (b Bridge) WithCallID(id string) Bridge {
+	if id == "" {
+		return b
+	}
+	b.URI += "?x-stream-call-id=" + url.QueryEscape(id)
+	return b
+}
+
 // Inbound points a number at the bridge, so calling it reaches an agent.
 type Inbound struct {
 	// E164 is the number to configure.
@@ -369,6 +383,9 @@ type Outbound struct {
 	// customer's own SIP trunk is set up, which only the router's own bridge sees. Nil
 	// tells nobody; other vendors never call it.
 	Connected func(sipbridge.MediaAddrs)
+	// CallID is sent to Stream on the leg the vendor dials, so a number on a shared trunk
+	// finds its session. It is set only on the shared path; empty sends no header.
+	CallID string
 }
 
 // Features are the terms this call is placed on, which is what a vendor has to be able to
@@ -390,6 +407,29 @@ func (o Outbound) Features() []CallFeature {
 // DigitsPlayer is a provider that presses digits on answer but not every key a keypad has.
 type DigitsPlayer interface {
 	PlaysDigits(digits string) bool
+}
+
+// StreamLeg is how a vendor's leg to Stream is set up.
+type StreamLeg int
+
+const (
+	// StreamLegPerCall is a trunk and routing rule made for the call.
+	StreamLegPerCall StreamLeg = iota
+	// StreamLegShared is the number's own line, with the call id on the leg.
+	StreamLegShared
+)
+
+// StreamLegger is a provider that says how its leg to Stream is set up.
+type StreamLegger interface {
+	StreamLeg() StreamLeg
+}
+
+// StreamLegOf is the provider's stream leg, per call for one that does not say.
+func StreamLegOf(p Provider) StreamLeg {
+	if legger, ok := p.(StreamLegger); ok {
+		return legger.StreamLeg()
+	}
+	return StreamLegPerCall
 }
 
 // Unsupported are the terms this call is placed on that a provider cannot express.

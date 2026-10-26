@@ -223,11 +223,11 @@ describe("render", () => {
     const tools = new Tools().register({
       name: "whoami",
       description: "Who asked",
-      run: async (_input, _signal, call) => {
-        seen = call;
-        call.update("checking");
-        call.say("One moment.");
-        return (await call.disallowInterruptions()).aborted ? "stopped" : "kept";
+      run: async (_input, _signal, toolCallContext) => {
+        seen = toolCallContext;
+        toolCallContext.update("checking");
+        toolCallContext.say("One moment.");
+        return (await toolCallContext.disallowInterruptions()).aborted ? "stopped" : "kept";
       },
     });
 
@@ -241,11 +241,11 @@ describe("render", () => {
       update: (id: string, text: string, verbatim: boolean) => void sent.push([id, text, verbatim]),
       hold: async () => holds,
     });
-    const call = new ToolCall({ id: "call_1" }, line(true));
+    const toolCallContext = new ToolCall({ id: "call_1" }, line(true));
 
-    call.update("checking");
-    call.say("One moment.");
-    const kept = await call.disallowInterruptions();
+    toolCallContext.update("checking");
+    toolCallContext.say("One moment.");
+    const kept = await toolCallContext.disallowInterruptions();
     const stopped = await new ToolCall({ id: "call_2" }, line(false)).disallowInterruptions();
 
     assert.deepEqual(sent, [
