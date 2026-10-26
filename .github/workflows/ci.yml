@@ -57,8 +57,8 @@ jobs:
 
   go:
     runs-on: ubuntu-latest
-    # The backend tests that need Redis skip without ROUTER_REDIS_ADDR (cmd/router, internal/session):
-    # the service gives them one. The health check holds the steps until it answers PING.
+    # Every backend test that needs Redis skips without ROUTER_REDIS_ADDR: the service gives
+    # them one. The health check holds the steps until it answers PING.
     services:
       redis:
         image: redis:7-alpine
