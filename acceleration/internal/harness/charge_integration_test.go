@@ -34,6 +34,8 @@ type HarnessChargeSuite struct {
 	limiter *quota.Limiter
 	fast    *stubLLM
 	slow    *stubLLM
+	// asked holds the subagent's answer back until the turn that asked for it has ended.
+	asked   chan struct{}
 	harness *Harness
 	events  *collector
 }
@@ -73,6 +75,8 @@ func (s *HarnessChargeSuite) build(owner routing.Caller) {
 	s.fast, s.slow = newStubLLM(), newStubLLM()
 	s.fast.automatic = "Let me check."
 	s.slow.automatic = "It is 12.63."
+	s.asked = make(chan struct{})
+	s.slow.holdCreate = s.asked
 	harness, err := New(Options{
 		Model:    s.session(s.fast, owner),
 		Subagent: s.session(s.slow, owner),
@@ -115,8 +119,9 @@ func (s *HarnessChargeSuite) reply(ctx context.Context, turnID, written string) 
 	s.harness.Filter(turnID, written)
 }
 
-// settled waits for one task to settle, and returns how it did.
+// settled lets the subagent answer, waits for one task to settle, and returns how it did.
 func (s *HarnessChargeSuite) settled() Result {
+	close(s.asked)
 	s.Require().Eventually(func() bool { return len(settledIn(s.events.seen())) == 1 },
 		settleFor, 10*time.Millisecond, "the delegated work never settled")
 	return settledIn(s.events.seen())[0].Result
@@ -167,8 +172,12 @@ func (s *HarnessChargeSuite) TestWorkAScheduledTurnHandsOverIsNotCountedOnTheUse
 
 	_, err := s.harness.Delegate(turn, "think", "15% of 84.20", "turn-1", nil, nil)
 	s.Require().NoError(err)
+	s.Require().Eventually(func() bool { return len(s.slow.requests()) == 1 },
+		settleFor, time.Millisecond, "the subagent was never asked")
 	cancel()
 
+	s.Never(func() bool { return len(settledIn(s.events.seen())) > 0 }, 100*time.Millisecond, 5*time.Millisecond,
+		"the work ended with the turn that handed it over")
 	s.Equal(Done, s.settled().State, "the work outlives the turn that handed it over")
 	s.Zero(s.day(), "the work a scheduled turn handed over is not the user's spend")
 }
@@ -180,6 +189,7 @@ func (s *HarnessChargeSuite) TestAConversationAScheduledTurnCompactsIsNotCounted
 	started, err := s.harness.MaybeCompact(longHistory(), compactionMinTokens, 0)
 	s.Require().NoError(err)
 	s.Require().True(started)
+	close(s.asked)
 
 	s.Require().Eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
 		settleFor, 10*time.Millisecond, "the conversation was never compacted")
@@ -193,6 +203,7 @@ func (s *HarnessChargeSuite) TestAConversationTheUsersOwnTurnCompactsIsCountedOn
 	started, err := s.harness.MaybeCompact(longHistory(), compactionMinTokens, 0)
 	s.Require().NoError(err)
 	s.Require().True(started)
+	close(s.asked)
 
 	s.Require().Eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
 		settleFor, 10*time.Millisecond, "the conversation was never compacted")
