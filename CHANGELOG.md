@@ -32,6 +32,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 A message in a thread channel (Slack, SMS, WhatsApp, iMessage) whose session refuses the turn for any reason but a reply still being written is now given up at once and logged. Before, the router tried it again every 50 ms for up to two minutes, writing one more cancelled reply into the channel each time and holding the thread's turn. A message that arrives while a reply is running still waits for it. Only a scheduled task's follow-up now keeps a copy of its reply and files in memory, the one that is read back on a retry (AI-1556, AI-1557).
 
+### Work a scheduled turn hands to the subagent is the customer's spend
+
+Delegated work (a skill, a picture to look at, a summary of a long conversation) started by a turn a scheduled task fired was counted on the end user's daily quota, though the turn itself was not. It is now counted as the turn is: on nobody's day (AI-1560).
+
 ### A scheduled task's reply carries the files its code made
 
 A task delivered by SMS, WhatsApp or iMessage outside a thread now sends the files the turn's code made (`run_code` or delegated work), as an MMS or WhatsApp media after the words; before, only the words went out. A reply of files and no words is delivered on every channel, a thread's included, where it was a `no_reply` failure; a retry sends the same files without a second turn (AI-1951, AI-1950).
