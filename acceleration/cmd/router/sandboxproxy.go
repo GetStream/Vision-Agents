@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"log/slog"
@@ -102,4 +103,15 @@ func secretSweeper(settings config.CodeSandbox, redis *live.Client, directory *n
 	}
 	return daytona.NewSweeper(daytona.SweepOptions{Prefix: settings.SecretPrefix, Sessions: directory,
 		Slots: concurrency.New(redis.Redis(), nil), Logger: logger})
+}
+
+// startSecretSweeper sweeps, until ctx ends, with the sweeper secretSweeper gives, if any.
+func startSecretSweeper(ctx context.Context, settings config.CodeSandbox, redis *live.Client, directory *node.Directory,
+	logger *slog.Logger) error {
+	sweeper, err := secretSweeper(settings, redis, directory, logger)
+	if err != nil || sweeper == nil {
+		return err
+	}
+	go sweeper.Run(ctx)
+	return nil
 }

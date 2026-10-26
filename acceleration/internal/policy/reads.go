@@ -89,6 +89,16 @@ func (e *Enforcer) Credits(ctx context.Context, organizationID string, limit int
 	return page, err == nil, err
 }
 
+// Usage is one page of the organization's usage events the query picks, as the usage service
+// answers the organization itself, or false with no usage service.
+func (e *Enforcer) Usage(ctx context.Context, organizationID string, query usage.UsageQuery) (usage.CustomerUsagePage, bool, error) {
+	if e.settings.Usage == nil {
+		return usage.CustomerUsagePage{}, false, nil
+	}
+	page, err := e.settings.Usage.Usage(ctx, organizationID, query)
+	return page, err == nil, err
+}
+
 // Teams is what the organization's teams spent in their current windows as the usage service
 // counts it, or false with no usage service.
 func (e *Enforcer) Teams(ctx context.Context, organizationID string) (usage.Teams, bool, error) {

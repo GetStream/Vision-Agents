@@ -14683,6 +14683,180 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// One unit of work recorded for the organization: who it was for, what it was, how much of it there was and what it cost. What Stream pays for it is Stream's, and is not here.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class UsageEvent
+    {
+
+        /// <summary>
+        /// The agent the work was done for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_id")]
+        public string? AgentId { get; set; } = default!;
+
+        /// <summary>
+        /// The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:&lt;name&gt;.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The app the work was for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string AppId { get; set; } = default!;
+
+        /// <summary>
+        /// What chose the price or explains the work, such as country or direction.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("attributes")]
+        public System.Collections.Generic.Dictionary<string, string>? Attributes { get; set; } = default!;
+
+        /// <summary>
+        /// Whether cost_micros counts against the organization's credit and limits.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("billable")]
+        public bool Billable { get; set; } = default!;
+
+        /// <summary>
+        /// The call the work was done in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call_id")]
+        public string? CallId { get; set; } = default!;
+
+        /// <summary>
+        /// What the organization is charged for the work, in millionths of a dollar.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long CostMicros { get; set; } = default!;
+
+        /// <summary>
+        /// Why it failed, when it did.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error_code")]
+        public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("meter")]
+        public string Meter { get; set; } = default!;
+
+        /// <summary>
+        /// The model that did it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
+
+        /// <summary>
+        /// When the work happened.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("occurred_at")]
+        public System.DateTimeOffset OccurredAt { get; set; } = default!;
+
+        /// <summary>
+        /// Who did the work, such as openai.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string? Provider { get; set; } = default!;
+
+        /// <summary>
+        /// What within the request the work was for, such as subagent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("purpose")]
+        public string? Purpose { get; set; } = default!;
+
+        /// <summary>
+        /// How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and the like.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("quantities")]
+        public System.Collections.Generic.Dictionary<string, long> Quantities { get; set; } = new System.Collections.Generic.Dictionary<string, long>();
+
+        /// <summary>
+        /// The session the work was done in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("session_id")]
+        public string? SessionId { get; set; } = default!;
+
+        /// <summary>
+        /// Whether the work succeeded.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("success")]
+        public bool Success { get; set; } = default!;
+
+        /// <summary>
+        /// The cost labels the request carried.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        /// <summary>
+        /// The team the user's token named, the name of the team:&lt;name&gt; category among usage_categories. Absent with none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
+        /// The usage categories the token named, its team among them as team:&lt;name&gt;.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("usage_categories")]
+        public System.Collections.Generic.List<string> UsageCategories { get; set; } = new System.Collections.Generic.List<string>();
+
+        /// <summary>
+        /// The event's id: the unit of work is recorded once under it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("usage_id")]
+        public System.Guid UsageId { get; set; } = default!;
+
+        /// <summary>
+        /// The end user the work was for, by the id the app's tokens name them with; only unique within the app. Absent when there was none, or the caller was anonymous.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// One page of the organization's usage events, newest first: by occurred_at, then by usage_id.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class UsageEventPage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<UsageEvent> Items { get; set; } = new System.Collections.Generic.List<UsageEvent>();
+
+        /// <summary>
+        /// Where the next page starts, for cursor; absent on the last page.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]

@@ -213,6 +213,14 @@ func (c *Client) Credits(ctx context.Context, organization string, limit int, cu
 	return answer, err
 }
 
+// Usage reads one page of the organization's usage events the query picks, newest first, as
+// the organization may see them.
+func (c *Client) Usage(ctx context.Context, organization string, query UsageQuery) (CustomerUsagePage, error) {
+	var answer CustomerUsagePage
+	err := c.get(ctx, PathAccounts+"/"+url.PathEscape(organization)+"/usage", query.Values(), &answer)
+	return answer, err
+}
+
 // Teams reads what the organization's teams spent in their current windows.
 func (c *Client) Teams(ctx context.Context, organization string) (Teams, error) {
 	var answer Teams
