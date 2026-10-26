@@ -586,10 +586,18 @@ func answering(customerID, userID string) routing.Owner {
 		APIKey: routing.OriginPhoneInbound, UserID: userID, CallerKind: routing.CallerUser}}
 }
 
-// say writes reply back to whoever sent message, and reports whether the provider took it; a
-// failure is logged.
+// say writes reply back to whoever sent message, and reports whether the provider took it, in
+// part at least; a failure is logged.
 func (s *Service) say(ctx context.Context, line Account, provider Provider, message Message, reply Reply, owner routing.Owner) bool {
-	if err := s.deliver(ctx, line, provider, message.From, message.Thread, reply, owner); err != nil {
+	err := s.deliver(ctx, line, provider, message.From, message.Thread, reply, owner)
+	// A reply partly sent, such as words whose file was refused, went out: it counts as sent.
+	var partly partlySent
+	if errors.As(err, &partly) {
+		s.logger.Warn("a reply went out without all of its files", "channel", line.Kind,
+			"number", line.E164, "error", err)
+		return true
+	}
+	if err != nil {
 		s.logger.Error("could not write back on a channel", "channel", line.Kind,
 			"number", line.E164, "error", err)
 		return false
