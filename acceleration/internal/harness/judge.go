@@ -101,12 +101,6 @@ func judgeQuestions() map[string]decisionmodel.Question {
 				"name, a date, a booking, a preference.",
 			"No such promise was made and they did not go on unanswered, or `heard` asks the "+
 				"agent something, corrects something, or says they are done."),
-		"expects_reply": decisionmodel.Noul(
-			"Does `heard` ask the agent something, ask it to do something, or answer what the "+
-				"agent last asked in `conversation`?",
-			"A question, a request, or the answer the agent asked for.",
-			"Something the speaker volunteers unasked, such as why they are calling or one "+
-				"more detail, which leaves room for them to go on."),
 		"greeting_only": decisionmodel.Noul(
 			"Is `heard` only a greeting, such as \"hi\" or \"hello there\", with nothing asked "+
 				"or said yet?",
@@ -174,10 +168,6 @@ func judged(turn FlowTurn, answers map[string]decisionmodel.Answer) (flowAnswer,
 			// The cadence asks after 350ms of silence and Flux marks the end of a turn about
 			// 570ms after the last word, so answering on the silence alone answered callers
 			// in the middle of what they were asking.
-			return flowAnswer{Disposition: Wait, Floor: Continue}, nil
-		case !turn.Waited && !yes("expects_reply"):
-			// A caller volunteering details goes on after a breath, and answering each one
-			// talked over Voicebench's monologues. One more pause is what they are given.
 			return flowAnswer{Disposition: Wait, Floor: Continue}, nil
 		case answers["ambiguous"].Yes >= judgeAmbiguous:
 			return flowAnswer{Disposition: Clarify, Floor: Continue}, nil
