@@ -210,6 +210,13 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
   the session.
+- A `session` binding whose user has not connected yet, in a chat they can log in in, gets a late
+  grant: the env var is there from the start, built from the connector's latest `sandbox` block,
+  and a request with it gets a 401 (the proxy's «gives no token», or the host's own under Daytona).
+  `run_code`'s description tells the model to call `<alias>__list_tools`, which shows the consent
+  card and waits. Once the user consents, the next run binds the grant: at once behind the proxy,
+  within 18 to 24 s as a Daytona secret. A required binding still refuses the session, and a voice
+  session gets no grant.
 - Before each run a new credential revision updates the secret; a connection that needs a
   reconnect, or was deleted, withdraws it, and so does a binding the agent config dropped, no
   longer marks `sandbox`, or binds to another connector or connection (AI-1686, as the tool

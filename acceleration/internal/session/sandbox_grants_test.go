@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/rueidis"
@@ -28,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
@@ -377,19 +379,20 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerRefusesAConfigItCannotServe() {
 }
 
 // daytonaAPI stands in for Daytona's API: it creates sandboxes, runs code, and keeps the
-// organization's secrets by name. secrets maps the env vars of the last sandbox created to
-// the secret names they read.
+// organization's secrets by name, and values their values. secrets maps the env vars of the
+// last sandbox created to the secret names they read.
 type daytonaAPI struct {
 	*httptest.Server
 	mu      sync.Mutex
 	held    map[string]string
+	values  map[string]string
 	secrets map[string]string
 	// created is the last request for a sandbox, and ran for a run of code.
 	created, ran map[string]any
 }
 
 func (s *SandboxGrantsSuite) daytonaAPI() *daytonaAPI {
-	api := &daytonaAPI{held: map[string]string{}}
+	api := &daytonaAPI{held: map[string]string{}, values: map[string]string{}}
 	api.Server = httptest.NewServer(http.HandlerFunc(api.serve))
 	s.T().Cleanup(api.Close)
 	s.T().Setenv("DAYTONA_API_URL", api.URL+"/api")
@@ -403,10 +406,15 @@ func (a *daytonaAPI) serve(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/secret/")
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/secret":
-		var body struct{ Name string }
+		var body struct{ Name, Value string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		a.held["secret-"+body.Name] = body.Name
+		a.held["secret-"+body.Name], a.values["secret-"+body.Name] = body.Name, body.Value
 		_, _ = fmt.Fprintf(w, `{"id":"secret-%s","name":%q,"placeholder":"dtn_secret_1","hosts":[],"createdAt":"2026-10-21T00:00:00Z","updatedAt":"2026-10-21T00:00:00Z"}`, body.Name, body.Name)
+	case r.Method == http.MethodPatch && id != r.URL.Path:
+		var body struct{ Value string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.values[id] = body.Value
+		_, _ = fmt.Fprintf(w, `{"id":%q,"name":%q,"placeholder":"dtn_secret_1","hosts":[],"createdAt":"2026-10-21T00:00:00Z","updatedAt":"2026-10-21T00:00:00Z"}`, id, a.held[id])
 	case r.Method == http.MethodDelete && id != r.URL.Path:
 		delete(a.held, id)
 		w.WriteHeader(http.StatusNoContent)
@@ -442,6 +450,13 @@ func (a *daytonaAPI) offered(env string) bool {
 		}
 	}
 	return false
+}
+
+// value is what Daytona's secret for the env var the sandbox reads holds.
+func (a *daytonaAPI) value(env string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.values["secret-"+a.secrets[env]]
 }
 
 // TestADeletedConnectionIsWithdrawnBeforeTheNextRun: a connection deleted mid-session is gone
@@ -573,4 +588,283 @@ func (s *SandboxGrantsSuite) TestAConfigThatCannotBeReadJustNowGivesNoTokenAndKe
 	s.Require().NoError(err)
 	s.True(api.offered("CRM_TOKEN"))
 	s.Contains(s.logs.String(), "it keeps the one it has")
+}
+
+// chat is a daytona session of config for alice, kept in a conversation she can be asked to
+// log in in, on a router whose consents begin begun.
+func (s *SandboxGrantsSuite) chat(config store.AgentConfig, begun Consent) Spec {
+	s.manager.options.Connectors.Consents = func(context.Context, ConsentRequest) (Consent, error) { return begun, nil }
+	spec := s.spec(config, "alice", nil)
+	spec.ID, spec.Sandbox, spec.PersistConversation, spec.Text = uuid.NewString(), daytonaProvider, true, true
+	return spec
+}
+
+// chatSandbox is the sandbox of chat's session, with its connectors attached, whose
+// conversation shows every consent.
+func (s *SandboxGrantsSuite) chatSandbox(config store.AgentConfig, begun Consent) (sandbox.Sandbox, *dispatcher) {
+	spec := s.chat(config, begun)
+	d, _, _, err := s.attach(spec)
+	s.Require().NoError(err)
+	s.T().Cleanup(d.closeLogins)
+	if d.logins != nil {
+		d.logins.canAsk = func(string) bool { return true }
+		d.logins.ask = func(string, persistent.ConnectorAuthorization) bool { return true }
+	}
+	box, err := s.manager.box(s.ctx, spec, d)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = box.Close() })
+	return box, d
+}
+
+// consent is a consent of alice's on connection, which her chat shows.
+func consent(connection string) Consent {
+	return Consent{ConnectionID: connection, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(time.Minute)}
+}
+
+// TestASessionBindingGivesTheSandboxTheCallersOwnConnection: the caller's one connected
+// connection is the one the binding opens on, and its token is the one Daytona gets.
+func (s *SandboxGrantsSuite) TestASessionBindingGivesTheSandboxTheCallersOwnConnection() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	s.connection("bob", "secondary")
+	id := s.connection("alice", "primary")
+	config := s.config(sandboxed(s.chosen("crm", "whoami")))
+
+	box, _ := s.chatSandbox(config, Consent{})
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal([]sandbox.Grant{{Connection: core.ConnectionRef{CustomerID: s.customerID, ConnectionID: id}, Binding: "crm",
+		Config: config.ID, Connector: s.connectorID, Selection: selectionSession, Scheme: bearer.Name, Env: "CRM_TOKEN",
+		Hosts: []string{"api.crm.example", "*.crm.example"}}}, box.(sandbox.Granted).Grants())
+	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
+	s.NotContains(harness.SandboxTool(box).Description, "has not connected")
+}
+
+// TestACallerWithNoConnectionGetsALateGrantAndIsToldHowToConnect: the sandbox has the env var
+// from the start, holding no token, and run_code says what a 401 means and which tool connects.
+func (s *SandboxGrantsSuite) TestACallerWithNoConnectionGetsALateGrantAndIsToldHowToConnect() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	s.connection("bob", "primary")
+	config := s.config(sandboxed(s.chosen("crm", "whoami")))
+
+	box, d := s.chatSandbox(config, Consent{})
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal([]sandbox.Grant{{Binding: "crm", Config: config.ID, Connector: s.connectorID, Selection: selectionSession,
+		Env: "CRM_TOKEN", Hosts: []string{"api.crm.example", "*.crm.example"}, Late: true}}, box.(sandbox.Granted).Grants())
+	s.Equal([]string{"crm__list_tools", "crm__call_tool"}, names(d.tools))
+	s.True(api.offered("CRM_TOKEN"))
+	s.NotEmpty(api.value("CRM_TOKEN"))
+	s.NotContains(api.value("CRM_TOKEN"), "token-of-")
+	s.Contains(harness.SandboxTool(box).Description, " A 401 from api.crm.example, *.crm.example means the user has not "+
+		"connected crm yet: crm__list_tools shows them a button to connect it and waits. Once they have, run the code "+
+		"again; if it still gets 401, wait 20 seconds and run it once more.")
+}
+
+// TestALoginFinishedInTheChatBindsTheGrantBeforeTheNextRun: the consent the model's
+// crm__list_tools began connects alice's account, and the next run's secret holds its token.
+func (s *SandboxGrantsSuite) TestALoginFinishedInTheChatBindsTheGrantBeforeTheNextRun() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	mine := s.pending("alice", "primary")
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	asked, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	s.Require().Contains(asked, `"status":"authorization_required"`)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().NotEqual(tokenOf("primary"), api.value("CRM_TOKEN"))
+
+	s.connect(mine, "primary")
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.True(finished)
+	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
+	s.NotContains(s.logs.String(), tokenOf("primary"))
+}
+
+// TestALoginOnARevisionWithoutTheBlockLeavesTheGrantUnbound: alice's connection pins revision
+// 1, which gives the sandbox nothing, so her login opens the tools and binds no token.
+func (s *SandboxGrantsSuite) TestALoginOnARevisionWithoutTheBlockLeavesTheGrantUnbound() {
+	api := s.daytonaAPI()
+	mine := s.pending("alice", "primary")
+	s.sandboxRevision()
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+
+	s.connect(mine, "primary")
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.True(finished)
+	s.NotEqual(tokenOf("primary"), api.value("CRM_TOKEN"))
+	s.Contains(s.logs.String(), "reconnect to use sandbox access")
+}
+
+// TestAnotherUsersConnectionNeverBindsTheGrant: a consent that came back on bob's connection,
+// or bob's own consent finishing, opens nothing in alice's session, so her sandbox gets no
+// token though bob's connection is connected.
+func (s *SandboxGrantsSuite) TestAnotherUsersConnectionNeverBindsTheGrant() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	bobs := s.pending("bob", "primary")
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(bobs))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+
+	s.connect(bobs, "primary")
+	_, onBobs, _ := d.loginFinished(s.ctx, "attempt-alice", bobs)
+	_, bobsOwn, _ := d.loginFinished(s.ctx, "attempt-bob", bobs)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.False(onBobs)
+	s.False(bobsOwn)
+	s.NotEqual(tokenOf("primary"), api.value("CRM_TOKEN"))
+}
+
+// TestARequiredSessionBindingWithNoConnectionStillRefusesTheSession: a late grant is never
+// required; the session fails as on base.
+func (s *SandboxGrantsSuite) TestARequiredSessionBindingWithNoConnectionStillRefusesTheSession() {
+	s.sandboxRevision()
+
+	_, _, _, err := s.attach(s.chat(s.config(required(sandboxed(s.chosen("crm", "whoami")))), Consent{}))
+
+	s.ErrorContains(err, fmt.Sprintf("required connector %q cannot be used: %s", "crm", unavailableNoSelection))
+}
+
+// TestASessionWithNoConversationGetsNoLateGrant: a voice session has nowhere to show a
+// consent, so the binding is not available and the sandbox gets nothing, as on base.
+func (s *SandboxGrantsSuite) TestASessionWithNoConversationGetsNoLateGrant() {
+	s.sandboxRevision()
+	spec := s.chat(s.config(sandboxed(s.chosen("crm", "whoami"))), Consent{})
+	spec.PersistConversation = false
+
+	d, tools, unavailable, err := s.attach(spec)
+
+	s.Require().NoError(err)
+	s.Empty(d.grants)
+	s.Empty(tools)
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableNoSelection}}, unavailable)
+}
+
+// TestALoginWithoutSandboxOrABlockGivesTheSandboxNothing: a binding without sandbox, and one
+// whose connector has no sandbox block or was deleted, wait for a login with no grant.
+func (s *SandboxGrantsSuite) TestALoginWithoutSandboxOrABlockGivesTheSandboxNothing() {
+	noBlock, _ := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), Consent{})
+	s.sandboxRevision()
+	unset, _ := s.chatSandbox(s.config(s.chosen("crm", "whoami")), Consent{})
+	gone := s.config(sandboxed(s.chosen("crm", "whoami")))
+	_, err := s.store.DeleteConnectorDefinition(s.ctx, s.customerID, s.connectorID, true)
+	s.Require().NoError(err)
+	deleted, d := s.chatSandbox(gone, Consent{})
+
+	s.Empty(unset.(sandbox.Granted).Grants())
+	s.Empty(noBlock.(sandbox.Granted).Grants())
+	s.Empty(deleted.(sandbox.Granted).Grants())
+	s.Equal([]string{"crm__list_tools", "crm__call_tool"}, names(d.tools))
+	s.Contains(s.logs.String(), "its connector offers none")
+}
+
+// TestALoginFinishingWhileCodeRunsBindsOnce, under -race: runs, and the broker's bind alone,
+// ask for the binding while the login opens it. The bare bind shares no lock with the login but
+// the login's own, so -race sees an unguarded read; a run also takes the store's.
+func (s *SandboxGrantsSuite) TestALoginFinishingWhileCodeRunsBindsOnce() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	mine := s.pending("alice", "primary")
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	s.connect(mine, "primary")
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 5)
+	stop := make(chan struct{})
+	wg.Go(func() {
+		for range 5 {
+			_, err := box.Run(s.ctx, "print(1)", nil)
+			errs <- err
+		}
+	})
+	wg.Go(func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				d.boundLate(s.ctx, sandbox.Grant{Binding: "crm", Late: true})
+			}
+		}
+	})
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	close(stop)
+	wg.Wait()
+	close(errs)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	for err := range errs {
+		s.NoError(err)
+	}
+	s.Require().NoError(err)
+	s.True(finished)
+	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
+}
+
+// TestTheProxyBrokerBindsALateGrantOnceTheLoginFinishes: the proxy's record holds the late
+// grant with no connection, so the proxy refuses its placeholder, until the run after the
+// login, which puts alice's connection behind the same placeholder.
+func (s *SandboxGrantsSuite) TestTheProxyBrokerBindsALateGrantOnceTheLoginFinishes() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR is not set")
+	}
+	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(redis.Close)
+	api := s.daytonaAPI()
+	s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
+	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://203.0.113.7:8091",
+		CACert: []byte(proxyCA)}
+	s.sandboxRevision()
+	mine := s.pending("alice", "primary")
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	_, err = s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	record := func() egress.Record {
+		_, err := box.Run(s.ctx, "print(1)", nil)
+		s.Require().NoError(err)
+		proxy, err := url.Parse(api.ran["envs"].(map[string]any)["HTTPS_PROXY"].(string))
+		s.Require().NoError(err)
+		credential, _ := proxy.User.Password()
+		sum := sha256.Sum256([]byte(credential))
+		raw, err := redis.Do(s.ctx, redis.B().Get().Key("sandbox:egress:"+hex.EncodeToString(sum[:])).Build()).AsBytes()
+		s.Require().NoError(err)
+		var record egress.Record
+		s.Require().NoError(json.Unmarshal(raw, &record))
+		s.Require().Len(record.Grants, 1)
+		return record
+	}
+	unbound := record()
+
+	s.connect(mine, "primary")
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	bound := record()
+
+	s.True(finished)
+	s.Empty(unbound.Grants[0].Connection.ConnectionID)
+	s.Equal(core.ConnectionRef{CustomerID: s.customerID, ConnectionID: mine}, bound.Grants[0].Connection)
+	s.Equal(bearer.Name, bound.Grants[0].Scheme)
+	s.Equal(api.created["env"].(map[string]any)["CRM_TOKEN"], bound.Grants[0].Placeholder)
+	s.Equal(unbound.Grants[0].Placeholder, bound.Grants[0].Placeholder)
+	token, err := SandboxProxyTokens(s.resolver, s.store, s.registry.Schemes)(s.ctx, bound.Grants[0])
+	s.Require().NoError(err)
+	s.Equal(tokenOf("primary"), token)
 }

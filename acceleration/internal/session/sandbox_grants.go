@@ -44,6 +44,43 @@ func (m *Manager) sandboxGrant(binding store.ConnectorBinding, connection store.
 	return ""
 }
 
+// lateGrant gives the sandbox an env var for a session binding with sandbox set that waits for
+// its person to log in (offerLogin): a late grant, read from the sandbox block of the
+// connector's latest revision, which a consent runs on. Once the login opens the binding, the
+// broker binds the grant before the next run (boundLate). A connector with no sandbox block, or
+// one deleted while the config still binds it, gives the sandbox nothing.
+func (m *Manager) lateGrant(ctx context.Context, spec Spec, binding store.ConnectorBinding, d *dispatcher) error {
+	if !binding.Sandbox {
+		return nil
+	}
+	definition, err := m.options.Store.LatestConnectorDefinition(ctx, spec.CustomerID, binding.ConnectorID)
+	if err != nil && !errors.Is(err, store.ErrNoConnectorDefinition) {
+		return err
+	}
+	if err != nil || definition.Manifest.Sandbox == nil {
+		m.logger.Warn("a connector binding gives the sandbox no access: its connector offers none", "connector", binding.Name)
+		return nil
+	}
+	rule := definition.Manifest.Sandbox
+	d.grants = append(d.grants, sandbox.Grant{Binding: binding.Name, Config: spec.ConfigID, Connector: binding.ConnectorID,
+		Selection: binding.Connection.Type, Env: rule.Env, Hosts: rule.Hosts, Late: true})
+	return nil
+}
+
+// boundLate is a late grant's connection once its login has opened the binding: the grant the
+// binding opened with there. A late grant is made only beside its login (lateGrant). Only this
+// session's own login is read, which opens on a consent this session began, for a connection
+// its caller owns (loginFinished, mayUse).
+func (d *dispatcher) boundLate(_ context.Context, grant sandbox.Grant) (sandbox.Grant, bool) {
+	l := d.logins.byAlias[grant.Binding]
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.opened == nil || len(l.opened.grants) == 0 {
+		return sandbox.Grant{}, false
+	}
+	return l.opened.grants[0], true
+}
+
 // broker is the code_sandbox.broker setting's broker for the session's grants.
 func (m *Manager) broker(spec Spec, d *dispatcher) (sandbox.CredentialBroker, error) {
 	if m.options.SandboxBroker == egress.BrokerName {
@@ -52,7 +89,7 @@ func (m *Manager) broker(spec Spec, d *dispatcher) (sandbox.CredentialBroker, er
 		}
 		options := m.options.SandboxProxy
 		options.Session, options.Allowed = spec.ID, spec.SandboxOptions.AllowedDomains
-		options.Tokens, options.Logger = m.sandboxTokens(d.schemes), m.logger
+		options.Tokens, options.Bind, options.Logger = m.sandboxTokens(d.schemes), d.boundLate, m.logger
 		return egress.NewBroker(options)
 	}
 	if m.options.SandboxSecretPrefix == "" {
@@ -62,7 +99,7 @@ func (m *Manager) broker(spec Spec, d *dispatcher) (sandbox.CredentialBroker, er
 	if m.options.SandboxBroker != metered.SandboxSecretsBroker {
 		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox broker called %q", m.options.SandboxBroker))
 	}
-	return metered.SandboxSecrets(m.options.SandboxSecretPrefix, spec.ID, m.sandboxTokens(d.schemes), m.logger)
+	return metered.SandboxSecrets(m.options.SandboxSecretPrefix, spec.ID, m.sandboxTokens(d.schemes), d.boundLate, m.logger)
 }
 
 // behindProxy refuses a sandbox config the egress proxy cannot serve. Every request goes there,
@@ -86,7 +123,8 @@ func behindProxy(config sandbox.Config) error {
 // of the Authorization header Wrap puts on a request to the grant's first host. A binding the
 // agent config dropped (SandboxBound), or a connection that is not connected, or was deleted,
 // gives sandbox.ErrNoCredential; a renewal that failed just now
-// (resolver.ErrTemporarilyUnavailable) does not.
+// (resolver.ErrTemporarilyUnavailable) does not. A late grant's connection was opened after
+// the session, by its login, so its scheme is read from the registry by name.
 func (m *Manager) sandboxTokens(schemes map[string]core.Scheme) sandbox.Tokens {
 	return func(ctx context.Context, grant sandbox.Grant) (sandbox.Token, error) {
 		if m.options.Connectors.Resolver == nil {
@@ -102,7 +140,11 @@ func (m *Manager) sandboxTokens(schemes map[string]core.Scheme) sandbox.Tokens {
 		if err != nil {
 			return sandbox.Token{}, err
 		}
-		token, err := sandbox.BearerToken(ctx, schemes[grant.Binding], credential, grant.Hosts[0])
+		scheme, found := schemes[grant.Binding]
+		if !found {
+			scheme = m.options.Connectors.Registry.Schemes[grant.Scheme]
+		}
+		token, err := sandbox.BearerToken(ctx, scheme, credential, grant.Hosts[0])
 		if err != nil {
 			return sandbox.Token{}, err
 		}

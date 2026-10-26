@@ -180,7 +180,13 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 		}
 		m.logger.Warn("opening the session without a connector", "connector", binding.Name, "reason", reason)
 		unavailable = append(unavailable, ConnectorUnavailable{Name: binding.Name, ConnectorID: binding.ConnectorID, Reason: reason})
-		m.offerLogin(*spec, binding, reason, selection, d)
+		if !m.offerLogin(*spec, binding, reason, selection, d) {
+			continue
+		}
+		if err := m.lateGrant(opening, *spec, binding, d); err != nil {
+			d.Close()
+			return nil, nil, nil, err
+		}
 	}
 	return d, d.tools, unavailable, nil
 }
