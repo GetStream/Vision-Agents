@@ -597,6 +597,18 @@ func collectIDs(results []any) []string {
 	return ids
 }
 
+// listedID is the ID key a list under key holds: "order_id" for "orders" or "order_ids",
+// and "" for a key that is not plural.
+func listedID(key string) string {
+	if entity, ok := strings.CutSuffix(key, "_ids"); ok && entity != "" {
+		return entity + "_id"
+	}
+	if entity, ok := strings.CutSuffix(key, "s"); ok && entity != "" && !strings.HasSuffix(entity, "s") && !strings.HasSuffix(entity, "_id") {
+		return entity + "_id"
+	}
+	return ""
+}
+
 // entityOf is what an ID argument names: "appointment" for "appointment_id".
 func entityOf(key string) string {
 	return strings.ReplaceAll(strings.TrimSuffix(key, "_id"), "_", " ")
@@ -611,7 +623,9 @@ func handedOut(key string, tools []string) bool {
 	return slices.ContainsFunc(tools, func(tool string) bool { return tool != "" && strings.Contains(tool, "_"+entity) })
 }
 
-// walkIDs calls found with every string or number held under "id" or a key ending in "_id".
+// walkIDs calls found with every string or number held under "id" or a key ending in "_id",
+// and with every one listed under a plural key as the ID of what that key names: τ-bench's
+// get_user_details lists a user's orders as "orders": ["#W5272531"], each an order_id.
 func walkIDs(value any, at string, found func(at, id string)) {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -619,6 +633,9 @@ func walkIDs(value any, at string, found func(at, id string)) {
 			walkIDs(inner, name, found)
 		}
 	case []any:
+		if listed := listedID(at); listed != "" {
+			at = listed
+		}
 		for _, inner := range typed {
 			walkIDs(inner, at, found)
 		}
