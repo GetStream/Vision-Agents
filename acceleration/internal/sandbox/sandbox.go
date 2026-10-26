@@ -174,8 +174,8 @@ func Tool(box Sandbox) llm.Tool {
 				// through the egress proxy, and within 18 to 24 seconds as a Daytona secret
 				// (probe against Daytona's API, 2026-10-25).
 				description += fmt.Sprintf(" A 401 from %s means the user has not connected %s yet: %s__list_tools shows them "+
-					"a button to connect it and waits. Once they have, run the code again; if it still gets 401, wait 20 seconds "+
-					"and run it once more.", hosts, grant.Binding, grant.Binding)
+					"a button to connect it and waits; if you cannot call it, tell the user they must connect %s. Once they have, "+
+					"run the code again; if it still gets 401, wait 20 seconds and run it once more.", hosts, grant.Binding, grant.Binding, grant.Binding)
 			}
 			if !slices.Contains(grant.Hosts, gitHost) {
 				continue
