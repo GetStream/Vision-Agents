@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -41,14 +42,14 @@ import (
 
 func TestProxyBrokerContract(t *testing.T) {
 	var current *rig
-	suite.Run(t, &brokertest.BrokerContract{New: func(t *testing.T, session string, tokens sandbox.Tokens, logger *slog.Logger) brokertest.Subject {
+	suite.Run(t, &brokertest.BrokerContract{New: func(t *testing.T, session string, tokens sandbox.Tokens, bind sandbox.Bind, logger *slog.Logger) brokertest.Subject {
 		// One proxy per test, shared by its sessions.
 		if current == nil || current.test != t.Name() {
 			current = newRig(t, tokens, logger)
 		}
 		r := current
 		var mount sandbox.Mount
-		broker := r.broker(t, session, tokens, logger)
+		broker := r.broker(t, session, tokens, bind, logger)
 		return brokertest.Subject{
 			Broker:  prepared{Broker: broker, mount: &mount},
 			Held:    func(ref string) (string, []string, bool) { return r.held(t, mount, ref) },
@@ -101,7 +102,7 @@ func (s *BrokerSuite) SetupTest() {
 	s.logs = &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(s.logs, nil))
 	s.rig = newRig(s.T(), s.tokens, logger)
-	s.broker = s.rig.broker(s.T(), "session-1", s.tokens, logger)
+	s.broker = s.rig.broker(s.T(), "session-1", s.tokens, nil, logger)
 	var err error
 	s.mount, err = s.broker.Prepare(s.ctx, []sandbox.Grant{github})
 	s.Require().NoError(err)
@@ -457,6 +458,162 @@ func (s *BrokerSuite) TestADisconnectedConnectionIsRefusedAtTheProxy() {
 	s.Empty(s.rig.host.authorizations())
 }
 
+// lateLinear is a grant whose connection the user has not made yet, and linear the one Bind
+// gives it once they have.
+var (
+	lateLinear = sandbox.Grant{Binding: "linear", Env: "LINEAR_TOKEN", Hosts: []string{"uploads.github.com"}, Late: true}
+	linear     = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-linear"}, Binding: "linear", Scheme: "bearer"}
+)
+
+// late is a broker of session-late whose Bind gives lateLinear the connection bound holds once
+// it is set, and the mount it gave github and lateLinear.
+func (s *BrokerSuite) late(bound *sandbox.Grant, mu *sync.Mutex) (*egress.Broker, sandbox.Mount) {
+	broker := s.rig.broker(s.T(), "session-late", s.tokens, func(context.Context, sandbox.Grant) (sandbox.Grant, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if bound.Connection.ConnectionID == "" {
+			return sandbox.Grant{}, false
+		}
+		return *bound, true
+	}, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = broker.Close(context.Background()) })
+	mount, err := broker.Prepare(s.ctx, []sandbox.Grant{github, lateLinear})
+	s.Require().NoError(err)
+	return broker, mount
+}
+
+// send is a request from the sandbox mount to host with placeholder as a bearer token. It
+// fails the test without stopping it, since requests run on goroutines of their own.
+func (s *BrokerSuite) send(mount sandbox.Mount, host, placeholder string) (int, string) {
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet, "https://"+host+"/user", nil)
+	if !s.NoError(err) {
+		return 0, ""
+	}
+	request.Header.Set("Authorization", "Bearer "+placeholder)
+	response, err := s.rig.sandboxClient(s.T(), mount).Do(request)
+	if !s.NoError(err) {
+		return 0, ""
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	s.NoError(err)
+	return response.StatusCode, string(body)
+}
+
+// TestALateGrantIsRefusedWithNoTokenUntilBound: the proxy answers its placeholder 401 «gives no
+// token», as for a disconnected connection, until a run binds it; the next request gets the
+// token.
+func (s *BrokerSuite) TestALateGrantIsRefusedWithNoTokenUntilBound() {
+	var mu sync.Mutex
+	bound := sandbox.Grant{}
+	broker, mount := s.late(&bound, &mu)
+	placeholder := mount.Env["LINEAR_TOKEN"]
+	s.Require().NoError(broker.BeforeRun(s.ctx))
+
+	status, body := s.send(mount, "uploads.github.com", placeholder)
+	s.Equal(http.StatusUnauthorized, status)
+	s.Contains(body, "gives no token: linear")
+	s.Empty(s.rig.host.authorizations())
+
+	mu.Lock()
+	bound = linear
+	mu.Unlock()
+	status, _ = s.send(mount, "uploads.github.com", placeholder)
+	s.Equal(http.StatusUnauthorized, status, "a connection made reaches the proxy with the next run")
+	s.Require().NoError(broker.BeforeRun(s.ctx))
+	status, _ = s.send(mount, "uploads.github.com", placeholder)
+
+	s.Equal(http.StatusOK, status)
+	s.Equal([]string{"Bearer gho_live-token-of-the-connection"}, s.rig.host.authorizations())
+	// The proxy reads the token through the entry's connection and scheme
+	// (egress.ResolverTokens), which the rig's Tokens does not check.
+	credential, _ := mount.Proxy.User.Password()
+	record, found := s.rig.record(s.T(), key(credential))
+	s.Require().True(found)
+	entry := record.Grants[slices.IndexFunc(record.Grants, func(g egress.Grant) bool { return g.Placeholder == placeholder })]
+	s.Equal(linear.Connection, entry.Connection)
+	s.Equal("bearer", entry.Scheme)
+}
+
+// TestABindWhileRequestsGoThroughGivesEachTheTokenOrNothing runs a bind while the sandbox sends
+// requests for both grants (go test -race): each late request is refused or gets the token, and
+// every other one gets its own.
+func (s *BrokerSuite) TestABindWhileRequestsGoThroughGivesEachTheTokenOrNothing() {
+	var mu sync.Mutex
+	bound := sandbox.Grant{}
+	broker, mount := s.late(&bound, &mu)
+	statuses := make(chan int, 40)
+	var requests sync.WaitGroup
+	for range 4 {
+		requests.Go(func() {
+			for range 5 {
+				status, _ := s.send(mount, "uploads.github.com", mount.Env["LINEAR_TOKEN"])
+				statuses <- status
+				status, _ = s.send(mount, "api.github.com", mount.Env["GITHUB_TOKEN"])
+				s.Equal(http.StatusOK, status)
+			}
+		})
+	}
+	mu.Lock()
+	bound = linear
+	mu.Unlock()
+	err := broker.BeforeRun(s.ctx)
+	// The requests report to this test alone.
+	requests.Wait()
+	s.Require().NoError(err)
+	close(statuses)
+
+	for status := range statuses {
+		s.Contains([]int{http.StatusOK, http.StatusUnauthorized}, status)
+	}
+	status, _ := s.send(mount, "uploads.github.com", mount.Env["LINEAR_TOKEN"])
+	s.Equal(http.StatusOK, status)
+	for _, authorization := range s.rig.host.authorizations() {
+		s.Equal("Bearer gho_live-token-of-the-connection", authorization)
+	}
+}
+
+// TestAConfigWithoutLateGrantsIsServedAsBefore is the control: with a Bind and no late grant,
+// the record, the env and the tokens asked for through Prepare and a run are a probe of base
+// 8e132bd37, and Bind is never called.
+func (s *BrokerSuite) TestAConfigWithoutLateGrantsIsServedAsBefore() {
+	var asked []string
+	tokens := func(_ context.Context, grant sandbox.Grant) (sandbox.Token, error) {
+		asked = append(asked, fmt.Sprintf("%s/%s/%s", grant.Binding, grant.Connection.ConnectionID, grant.Scheme))
+		return sandbox.Token{Value: "gho_control", Revision: len(asked)}, nil
+	}
+	gitlab := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-gitlab"}, Binding: "gitlab",
+		Config: "config-1", Connector: "gitlab", Selection: "session", Scheme: "bearer", Env: "GITLAB_TOKEN", Hosts: []string{"gitlab.com"}}
+	broker, err := egress.NewBroker(egress.BrokerOptions{Store: s.rig.store, URL: publicURL, CACert: s.rig.caCert,
+		Session: "session-control", Tokens: tokens, Logger: slog.New(slog.DiscardHandler),
+		Bind: func(context.Context, sandbox.Grant) (sandbox.Grant, bool) {
+			s.Fail("Bind is called with no late grant")
+			return sandbox.Grant{}, false
+		}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = broker.Close(context.Background()) })
+
+	mount, err := broker.Prepare(s.ctx, []sandbox.Grant{github, gitlab})
+	s.Require().NoError(err)
+	s.Require().NoError(broker.BeforeRun(s.ctx))
+
+	credential, _ := mount.Proxy.User.Password()
+	record, found := s.rig.record(s.T(), key(credential))
+	s.Require().True(found)
+	raw, err := json.Marshal(record)
+	s.Require().NoError(err)
+	env, err := json.Marshal(mount.Env)
+	s.Require().NoError(err)
+	placeholder := regexp.MustCompile(`va_ph_[A-Z2-7]{26}`)
+	s.Equal(`{"session":"session-control","grants":[{"connection":{"CustomerID":"app","ConnectionID":"connection-github"},`+
+		`"binding":"github","config":"","connector":"","selection":"","scheme":"bearer","placeholder":"PH","hosts":["api.github.com","uploads.github.com"]},`+
+		`{"connection":{"CustomerID":"app","ConnectionID":"connection-gitlab"},"binding":"gitlab","config":"config-1","connector":"gitlab",`+
+		`"selection":"session","scheme":"bearer","placeholder":"PH","hosts":["gitlab.com"]}]}`, placeholder.ReplaceAllString(string(raw), "PH"))
+	s.Equal(`{"GITHUB_TOKEN":"PH","GITLAB_TOKEN":"PH"}`, placeholder.ReplaceAllString(string(env), "PH"))
+	s.Equal([]string{"github/connection-github/bearer", "gitlab/connection-gitlab/bearer", "github/connection-github/bearer",
+		"gitlab/connection-gitlab/bearer"}, asked)
+}
+
 // publicURL is the proxy as a sandbox reaches it: a public IPv4 address (TEST-NET-3, RFC 5737).
 const publicURL = "http://203.0.113.7:8091"
 
@@ -604,9 +761,9 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 	return r
 }
 
-func (r *rig) broker(t *testing.T, session string, tokens sandbox.Tokens, logger *slog.Logger) *egress.Broker {
+func (r *rig) broker(t *testing.T, session string, tokens sandbox.Tokens, bind sandbox.Bind, logger *slog.Logger) *egress.Broker {
 	broker, err := egress.NewBroker(egress.BrokerOptions{Store: r.store, URL: publicURL, CACert: r.caCert,
-		Session: session + "/" + r.run, Tokens: tokens, Logger: logger})
+		Session: session + "/" + r.run, Tokens: tokens, Bind: bind, Logger: logger})
 	if err != nil {
 		t.Fatal(err)
 	}
