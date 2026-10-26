@@ -56,6 +56,9 @@ Start from the closest existing file:
    source whose tools only read (`providers/AGENTS.md`), or list the tools that only read in
    its `read_only_tools` when others write (`google_drive.yaml`); left out, a tool counts as
    writing.
+   A tool's `needs_scopes` is the scope the consent asks for; when the provider documents a
+   broader scope that gives all it gives, list it under `scopes.covered_by`
+   (`google_drive.yaml`), so a grant holding the broader one is not told to consent again.
    A source's `headers` are fixed request headers sent on every request, such as GitHub's
    `X-MCP-Toolsets` (`github.yaml`); a header the credential, the connection or MCP writes
    is refused.

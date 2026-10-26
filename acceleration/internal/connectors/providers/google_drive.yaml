@@ -14,11 +14,14 @@
 # And the tools' own pages, opened October 23, 2026 («Last updated 2026-07-16»):
 #   [create] https://developers.google.com/workspace/drive/api/reference/mcp/tools_list/create_file
 #   [copy]   https://developers.google.com/workspace/drive/api/reference/mcp/tools_list/copy_file
+# And the Drive API's scope table, opened October 25, 2026 («Last updated 2026-09-03»):
+#   [scopes] https://developers.google.com/workspace/drive/api/guides/api-specific-auth
 id: google_drive
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
 # false, which revision 1 was stored without (refresh.rotating became a pointer). 3 lists the
-# tools that only read. 4 asks for drive.file, so create_file and copy_file work (AI-1933).
-revision: 4
+# tools that only read. 4 asks for drive.file, so create_file and copy_file work (AI-1933). 5
+# takes a grant of drive in place of drive.file (scopes.covered_by).
+revision: 5
 # [plugin]
 name: Google Drive
 category: Documents
@@ -68,6 +71,12 @@ scopes:
   list:
     - https://www.googleapis.com/auth/drive.readonly
     - https://www.googleapis.com/auth/drive.file
+  # drive, «View and manage all your Drive files», gives all drive.file, «Create new Drive
+  # files, or modify existing files, that you open with an app», gives ([scopes]), and [create]
+  # and [copy] take either. drive.appdata, which they take too, reaches only «the app's own
+  # configuration data» ([scopes]), so it covers nothing drive.file gives.
+  covered_by:
+    https://www.googleapis.com/auth/drive.file: [https://www.googleapis.com/auth/drive]
 # No identity, as google_calendar.yaml.
 refresh:
   # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh

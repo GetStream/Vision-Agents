@@ -125,6 +125,28 @@ func (s *SourceSuite) TestAToolNeedingAScopeTheManifestNeverAsksForIsNotOffered(
 	s.Zero(s.provider.calls(contracttest.ToolLarge))
 }
 
+// TestAToolWhoseScopeAnAskedScopeCoversIsListedAndOffered: scopes.list asks for channels:read,
+// which the manifest says covers the channels:manage large also needs, so a consent grants
+// what it needs.
+func (s *SourceSuite) TestAToolWhoseScopeAnAskedScopeCoversIsListedAndOffered() {
+	binding := s.unasked()
+	binding.Manifest.Scopes.CoveredBy = map[string][]string{"channels:manage": {"channels:read"}}
+
+	specs, err := s.source.Discover(s.ctx, binding)
+	s.Require().NoError(err)
+	set, err := s.source.Open(s.ctx, binding, s.grants(contracttest.ToolLarge))
+	s.Require().NoError(err)
+	defer set.Close()
+
+	var names []string
+	for _, spec := range specs {
+		names = append(names, spec.Name)
+	}
+	s.ElementsMatch([]string{contracttest.ToolEcho, contracttest.ToolBroken, contracttest.ToolLarge}, names)
+	s.Len(set.Tools(), 1)
+	s.Equal("crm__"+contracttest.ToolLarge, set.Tools()[0].Name)
+}
+
 func (s *SourceSuite) TestEveryRequestCarriesTheConnectionsCredential() {
 	set := s.open(contracttest.ToolEcho)
 	_, err := set.Call(s.ctx, llm.ToolCall{Name: "crm__echo", Arguments: `{"text":"hi"}`})
