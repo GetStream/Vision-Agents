@@ -2089,13 +2089,14 @@ func (s *Server) registerServer(api huma.API) {
 		Path:        "/v1/stats/spend",
 		Summary:     "What the calling customer spent, grouped",
 		Description: "Spend across every modality at once, which is what a bill is. group_by decides what the " +
-			"series are: \"modality\" for where the money went, who asked for it (\"app\", \"api_key\", " +
-			"\"user\", \"team\" or \"category\"), or a cost label for what it was spent on; a cost label " +
-			"named like one of those is read as it. \"team\" groups by the team the user's token named, " +
-			"work with none under the empty value; \"category\" by the other usage categories, and a request " +
-			"carrying several counts once in each, so those rows add up to more than the total.\n" +
+			"series are: \"modality\" for where the money went, who asked for it (\"who:app\", " +
+			"\"who:api_key\", \"who:user\", \"who:team\" or \"who:category\"), or a cost label for what it " +
+			"was spent on. A label key holds no ':', so a label named app is still grouped by as " +
+			"group_by=app. \"who:team\" groups by the team the user's token named, work with none under the " +
+			"empty value; \"who:category\" by the other usage categories, and a request carrying several " +
+			"counts once in each, so those rows add up to more than the total.\n" +
 			"scope=organization counts every app of the caller's organization rather than the caller's " +
-			"app alone; grouped by \"user\" the value is then <app_id>/<user_id>, since a user id is " +
+			"app alone; grouped by \"who:user\" the value is then <app_id>/<user_id>, since a user id is " +
 			"only unique within its app.\n" +
 			"Only the biggest values keep a series of their own, because a label such as customer_id " +
 			"has as many values as the customer has customers. The rest are summed into \"other\", and " +
@@ -2106,7 +2107,7 @@ func (s *Server) registerServer(api huma.API) {
 		// Declared rather than read off the input, so the default is documented without
 		// being filled in: the handler tells a parameter left out from one sent.
 		Parameters: []*huma.Param{
-			{Name: "group_by", In: "query", Description: "\"modality\", or the cost label to group by.", Schema: &huma.Schema{Type: huma.TypeString, Default: "modality"}},
+			{Name: "group_by", In: "query", Description: "\"modality\", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.", Schema: &huma.Schema{Type: huma.TypeString, Default: "modality"}},
 			{Name: "limit", In: "query", Description: "How many values keep a series of their own.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Maximum: bound(50), Default: 6}},
 		},
 		Responses: map[string]*huma.Response{
@@ -2249,7 +2250,7 @@ func (SpendScope) Schema(registry huma.Registry) *huma.Schema {
 }
 
 type getSpendRequest struct {
-	GroupBy     optionalParam[string]      `query:"group_by" doc:"\"modality\", who asked (app, api_key, user, team or category), or the cost label to group by."`
+	GroupBy     optionalParam[string]      `query:"group_by" doc:"\"modality\", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by."`
 	Scope       optionalParam[SpendScope]  `query:"scope" doc:"Whose spend: app, the default, or organization."`
 	Granularity optionalParam[Granularity] `query:"granularity"`
 	From        time.Time                  `query:"from" doc:"Start of the window, inclusive." required:"true"`

@@ -61,7 +61,7 @@ type CreditEntry struct {
 	Id           int64     `json:"id"`
 	Kind         string    `json:"kind" enum:"top_up,grant,refund,dispute,dispute_reversal,adjustment"`
 	AmountMicros int64     `json:"amount_micros" doc:"Signed: what the entry added to the credit, in millionths of a dollar."`
-	Reference    string    `json:"reference,omitempty" doc:"The payment's own reference, such as the Stripe PaymentIntent of a top-up. Absent on entries Stream's staff wrote."`
+	Reference    string    `json:"reference,omitempty" doc:"The payment's own reference, such as a top-up's payment id. Absent on entries Stream's staff wrote."`
 	CreatedAt    time.Time `json:"created_at"`
 }
 

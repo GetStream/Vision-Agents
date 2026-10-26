@@ -864,13 +864,13 @@ func (s *Store) CustomerTagStats(
 const spendGroupByModality = "modality"
 
 // The group_by values that are who asked rather than a cost label key, from the columns every
-// row carries.
+// row carries. A label key never holds a ':', so none of them shadows a label of the same name.
 const (
-	SpendGroupByApp      = "app"
-	SpendGroupByAPIKey   = "api_key"
-	SpendGroupByUser     = "user"
-	SpendGroupByTeam     = "team"
-	SpendGroupByCategory = "category"
+	SpendGroupByApp      = "who:app"
+	SpendGroupByAPIKey   = "who:api_key"
+	SpendGroupByUser     = "who:user"
+	SpendGroupByTeam     = "who:team"
+	SpendGroupByCategory = "who:category"
 )
 
 // spendGroups is the value each group_by that is not a cost label groups by, and the join it

@@ -513,7 +513,7 @@ any app manages every limit of its organization (an app seen in no organization 
 | --------- | ---- | ------------ |
 | `listLimits`, `createLimit` | `GET`, `POST /v1/spend/limits` | The organization's limits by id, filtered by subject, level, ids, team, category or interval; a new one, 201 |
 | `getLimit`, `updateLimit`, `deleteLimit` | `GET`, `PATCH`, `DELETE /v1/spend/limits/{limit_id}` | One limit; its amount and note only; 204 |
-| `getLimitUsage` | `GET /v1/spend/limits/usage` | One subject's current window in every interval: spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
+| `getLimitUsage` | `GET /v1/spend/limits/usage` | Up to 100 subjects of one kind, in the order asked (repeat `app_id`, `api_key`, `user_id`, `team` or `category`; a list of one goes with every subject): each one's current window in every interval, spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
 | `resetLimitUsage` | `POST /v1/spend/limits/usage/reset` | Resets the subject's spend for its limits in the windows named, with a reason |
 
 A team is `subject: team` (or `app_team` with an `app_id`) and `team: finance`, kept as the
@@ -546,6 +546,27 @@ The organization and app budgets that policies held moved into this table with t
 an app's under the organization it was last seen in, or under itself when it was seen in none.
 The migration stops while an hourly budget exists, since limits have no hourly interval. Coming
 down puts one budget back into each policy from its scope's own limits.
+
+### The account, its credit and its teams
+
+What an organization's own dashboard reads about its money, server-side only:
+
+| Operation | Path | What it does |
+| --------- | ---- | ------------ |
+| `getAccount` | `GET /v1/account` | Status, tier, balance (less what work in flight holds, as `X-Stream-Balance-Micros` says), granted and spent, the warning threshold with `balance_warning_source` (`tier`, `account` or `organization_policy`, which wins) and `balance_state`, what the operator allows (`limits`, `own_limits`) and its spend hard limit with this window's spend and room |
+| `listCredits` | `GET /v1/account/credits` | Credit entries, newest first, a page of up to 100; no actor or note, and a reference only on what the payment processor wrote (actor `stripe`) |
+| `listTeams` | `GET /v1/teams` | Every team a limit names or this month's work carried: its apps, its spend in each current window and its limits; `app_id` narrows it to one app |
+
+The first two read the usage service's customer view with the ingest token, and answer 404
+`billing_not_enabled` with no usage service or for an app in no organization. `listTeams`
+sums the request rows this month when there is no usage service. Staff read the teams of any
+organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
+
+`getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:api_key`,
+`who:user`, `who:team` (work with no team under the empty value) or `who:category` (the team
+left out, and a request counted once in each of its categories). A cost label key holds no
+`:`, so a label named `app` is still `group_by=app`. `scope=organization` counts every app of
+the caller's organization, and there a user is `<app_id>/<user_id>`.
 
 ### Admission
 
@@ -1767,6 +1788,14 @@ changes nothing, writes no audit row and answers the standing as it is now. The 
 space across the four writes: a key already used for another operation, organization or body
 is a 409 `idempotency_key_reused`. Keys are kept in `manage_requests`, for good.
 
+**The customer view.** `GET /v1/accounts/{organization_id}`, `/credits` and `/teams` take the
+ingest token and write nothing: the standing without `status_reason`, with the low-balance
+threshold in force and whose it is (`tier` or `account`) and `own_limits`, the settings the
+account overrides; the credit entries without actor, note or idempotency key, a reference only
+on an entry whose actor is `stripe`; and the current windows of every `team:` category, across
+the organization and within each app that carried it this month. The manage key opens none of
+them. The router's `getAccount`, `listCredits` and `listTeams` read them.
+
 **Forgetting an end user.** A user id is often an email, so an erasure request for one of a
 customer's users reaches the usage records. `router usage forget-user --app <app> --user <id>
 --actor <who>` replaces the id with `forgotten:` and 32 random hex characters (random, since a
@@ -1851,6 +1880,13 @@ first, which also restarts it on the new image.
 cd acceleration && go run ./cmd/router prices reload --development --dry-run
 docker compose up -d --build router && docker compose exec router router prices reload --development
 ```
+
+Customers read the list with `GET /v1/prices` (`getPrices`, any credential, a device's
+included): every entry in force from the router's memory, at the rates they are charged
+(each vendor rate with its markup, which no field names), with the change that wrote it, and
+`upcoming`, what the scheduled changes will set, soonest first, with their reason; a change of
+the markup alone shows as every entry it moves. The vendor rates, the markup, the unpriced
+items and each change's source and author stay on the staff operations.
 
 Until the router prices from the database, it prices every row from its price files:
 `ROUTER_PRICES_FILE` over the embedded `vendor.json`, at the rates they give and with no

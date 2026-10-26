@@ -34,7 +34,7 @@ func (s *Server) registerAccounts(api huma.API) {
 		OperationID: "readAccountCredits", Method: http.MethodGet, Path: usage.PathAccounts + "/{organization_id}/credits",
 		Summary: "List an organization's credit entries, as the organization may",
 		Description: "Newest first, without `actor`, `note` or `idempotency_key`; `reference` only on the entries " +
-			"Stripe's webhook wrote (actor `" + usage.StripeActor + "`), so no staff reference reaches the " +
+			"the payment processor wrote (actor `" + usage.StripeActor + "`), so no staff reference reaches the " +
 			"customer." + customerNote,
 		Tags: []string{tag}, Security: security, Errors: failures,
 	}, s.readAccountCredits)

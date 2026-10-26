@@ -242,7 +242,7 @@ components:
             - adjustment
           type: string
         reference:
-          description: The Stripe object the entry was written for, such as a top-up's PaymentIntent. Absent on every entry the operator's staff wrote.
+          description: The payment processor's id of what the entry was written for, such as a top-up's payment. Absent on every entry the operator's staff wrote.
           type: string
       required:
         - id
@@ -985,7 +985,7 @@ paths:
   /v1/accounts/{organization_id}/credits:
     get:
       description: |-
-        Newest first, without `actor`, `note` or `idempotency_key`; `reference` only on the entries Stripe's webhook wrote (actor `stripe`), so no staff reference reaches the customer.
+        Newest first, without `actor`, `note` or `idempotency_key`; `reference` only on the entries the payment processor wrote (actor `stripe`), so no staff reference reaches the customer.
 
         The customer view: what an organization's own dashboard reads through its router, with the ingest token, never the manage key. It writes nothing, and leaves out what only the operator reads: why an organization is suspended, and who wrote each credit entry and why.
       operationId: readAccountCredits

@@ -12,8 +12,9 @@ import (
 // dashboard reads through its router, on the ingest token and never the manage key.
 const PathAccounts = "/v1/accounts"
 
-// StripeActor is the actor of the credit entries Stripe's webhook writes, whose reference is a
-// Stripe object id the customer may see. Every other writer's reference is the operator's.
+// StripeActor is the actor of the credit entries the payment processor writes, whose reference
+// is its own payment id, which the customer may see. Every other writer's reference is the
+// operator's.
 const StripeActor = "stripe"
 
 // Where an account's low-balance threshold comes from.
@@ -93,12 +94,12 @@ func SetPaths(limits Limits) []string {
 }
 
 // CustomerCredit is one credit entry as its organization may read it: without the operator's
-// actor and note, and with a reference only on an entry Stripe's webhook wrote.
+// actor and note, and with a reference only on an entry the payment processor wrote.
 type CustomerCredit struct {
 	ID           int64      `json:"id"`
 	Kind         CreditKind `json:"kind" enum:"top_up,grant,refund,dispute,dispute_reversal,adjustment"`
 	AmountMicros int64      `json:"amount_micros" doc:"Signed: what the entry added to the organization's credit, in micros."`
-	Reference    string     `json:"reference,omitempty" doc:"The Stripe object the entry was written for, such as a top-up's PaymentIntent. Absent on every entry the operator's staff wrote."`
+	Reference    string     `json:"reference,omitempty" doc:"The payment processor's id of what the entry was written for, such as a top-up's payment. Absent on every entry the operator's staff wrote."`
 	CreatedAt    time.Time  `json:"created_at"`
 }
 

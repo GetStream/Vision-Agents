@@ -3486,7 +3486,7 @@ components:
             - adjustment
           type: string
         reference:
-          description: The payment's own reference, such as the Stripe PaymentIntent of a top-up. Absent on entries Stream's staff wrote.
+          description: The payment's own reference, such as a top-up's payment id. Absent on entries Stream's staff wrote.
           type: string
       required:
         - id
@@ -23367,13 +23367,13 @@ paths:
   /v1/stats/spend:
     get:
       description: |-
-        Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("app", "api_key", "user", "team" or "category"), or a cost label for what it was spent on; a cost label named like one of those is read as it. "team" groups by the team the user's token named, work with none under the empty value; "category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
-        scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
+        Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+        scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
         Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
         Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
       operationId: getSpend
       parameters:
-        - description: '"modality", or the cost label to group by.'
+        - description: '"modality", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.'
           in: query
           name: group_by
           schema:

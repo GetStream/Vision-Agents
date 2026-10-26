@@ -427,12 +427,12 @@ func (s *ServerSuite) TestSpendByUserAcrossTheOrganization() {
 	s.recordWho(s.data.createApp().app.ID, "another-"+s.utils.uuid(), 8_000, "u1")
 
 	s.Equal(map[string]int64{s.customerID() + "/u1": 1_000, sibling + "/u1": 2_000, "": 4_000},
-		spentBy(s.spend("group_by=user&granularity=daily&scope=organization")),
+		spentBy(s.spend("group_by=who%3Auser&granularity=daily&scope=organization")),
 		"one user id in two apps is two users, and another organization's work is not counted")
-	s.Equal(map[string]int64{"u1": 1_000}, spentBy(s.spend("group_by=user&granularity=daily")), "the app alone, by default")
-	s.Equal(map[string]int64{s.customerID(): 1_000, sibling: 6_000}, spentBy(s.spend("group_by=app&granularity=daily&scope=organization")))
+	s.Equal(map[string]int64{"u1": 1_000}, spentBy(s.spend("group_by=who%3Auser&granularity=daily")), "the app alone, by default")
+	s.Equal(map[string]int64{s.customerID(): 1_000, sibling: 6_000}, spentBy(s.spend("group_by=who%3Aapp&granularity=daily&scope=organization")))
 	s.Equal(map[string]int64{"key-" + s.customerID(): 1_000, "key-" + sibling: 6_000},
-		spentBy(s.spend("group_by=api_key&granularity=daily&scope=organization")))
+		spentBy(s.spend("group_by=who%3Aapi_key&granularity=daily&scope=organization")))
 }
 
 func (s *ServerSuite) TestSpendByCategoryCountsARowInEach() {
@@ -441,7 +441,7 @@ func (s *ServerSuite) TestSpendByCategoryCountsARowInEach() {
 	s.recordWho(s.customerID(), organization, 2_000, "")
 
 	s.Equal(map[string]int64{"support": 1_000, "billing": 1_000, "": 2_000},
-		spentBy(s.spend("group_by=category&granularity=daily")), "a row counts in each of its categories, and its team in none")
+		spentBy(s.spend("group_by=who%3Acategory&granularity=daily")), "a row counts in each of its categories, and its team in none")
 }
 
 func (s *ServerSuite) TestSpendByTeam() {
@@ -450,10 +450,18 @@ func (s *ServerSuite) TestSpendByTeam() {
 	s.recordWho(s.customerID(), organization, 2_000, "", "team:sales")
 	s.recordWho(s.customerID(), organization, 4_000, "")
 
-	s.Equal(map[string]int64{"finance": 1_000, "sales": 2_000, "": 4_000}, spentBy(s.spend("group_by=team&granularity=daily")))
-	for value := range spentBy(s.spend("group_by=category&granularity=daily")) {
+	s.Equal(map[string]int64{"finance": 1_000, "sales": 2_000, "": 4_000}, spentBy(s.spend("group_by=who%3Ateam&granularity=daily")))
+	for value := range spentBy(s.spend("group_by=who%3Acategory&granularity=daily")) {
 		s.NotContains(value, "team:")
 	}
+}
+
+func (s *ServerSuite) TestALabelNamedLikeWhoAskedIsStillALabel() {
+	s.recordLabelled(s.base.Add(5*time.Minute), 6000, map[string]string{"app": "1234", "team": "moderation"})
+
+	s.Equal(map[string]int64{"1234": 6000}, spentBy(s.spend("group_by=app&granularity=daily")))
+	s.Equal(map[string]int64{"moderation": 6000}, spentBy(s.spend("group_by=team&granularity=daily")))
+	s.Equal(map[string]int64{s.customerID(): 6000}, spentBy(s.spend("group_by=who%3Aapp&granularity=daily")))
 }
 
 func (s *ServerSuite) TestSpendForTheOrganizationIsServerSideOnly() {
