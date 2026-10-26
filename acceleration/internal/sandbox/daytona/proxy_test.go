@@ -181,11 +181,11 @@ func (s *ProxySuite) TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRu
 	s.Len(s.platform.executed(), 2)
 }
 
-// slowed is a sandbox whose code may run for 10 ms behind an HTTPS proxy, that has run once,
-// after which each check before a run takes check and each run of code takes code. A run's
-// budget is its timeout and 5 s (daytona.go, Run), so 5.01 s.
-func (s *ProxySuite) slowed(check, code time.Duration) *Sandbox {
-	box := s.proxied(sandbox.Config{TimeoutMs: 10}, "https://203.0.113.7:8091")
+// slowed is a sandbox of config behind an HTTPS proxy, that has run once, after which each
+// check before a run takes check and each run of code takes code. A run's budget is its
+// timeout and 5 s (daytona.go, Run): 5.01 s for code that may run 10 ms.
+func (s *ProxySuite) slowed(config sandbox.Config, check, code time.Duration) *Sandbox {
+	box := s.proxied(config, "https://203.0.113.7:8091")
 	_, err := box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
 	s.platform.mu.Lock()
@@ -199,7 +199,7 @@ func (s *ProxySuite) slowed(check, code time.Duration) *Sandbox {
 // past the sandbox's timeout.
 func (s *ProxySuite) TestASlowCheckLeavesTheCodeItsWholeBudget() {
 	s.timeout = 5 * time.Second
-	box := s.slowed(3500*time.Millisecond, 2500*time.Millisecond)
+	box := s.slowed(sandbox.Config{TimeoutMs: 10}, 3500*time.Millisecond, 2500*time.Millisecond)
 
 	result, err := box.Run(s.ctx, "print(2)", nil)
 
@@ -212,7 +212,7 @@ func (s *ProxySuite) TestASlowCheckLeavesTheCodeItsWholeBudget() {
 // by the sandbox's timeout, and a check cut short runs no code.
 func (s *ProxySuite) TestAHungCheckIsCutAtTheSandboxsTimeout() {
 	s.timeout = 2 * time.Second
-	box := s.slowed(3*time.Second, 0)
+	box := s.slowed(sandbox.Config{TimeoutMs: 10}, 3*time.Second, 0)
 
 	_, err := box.Run(s.ctx, "print(2)", nil)
 
@@ -220,10 +220,70 @@ func (s *ProxySuite) TestAHungCheckIsCutAtTheSandboxsTimeout() {
 	s.Len(s.platform.executed(), 1, "no code ran after the check was cut")
 }
 
+// TestABuiltSandboxsCheckIsCutAtTheDefaultTimeout: a built sandbox's timeout is the 20 minutes
+// a build may take, and a hung check holds the gate, so the check is cut at defaultTimeout.
+func (s *ProxySuite) TestABuiltSandboxsCheckIsCutAtTheDefaultTimeout() {
+	box := s.slowed(sandbox.Config{TimeoutMs: 10, CPU: 1}, 3*time.Second, 0)
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	s.Equal(defaultTimeout, box.check)
+	box.check = 2 * time.Second // defaultTimeout, shorter in tests
+
+	_, err := box.Run(s.ctx, "print(2)", nil)
+
+	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
+	s.Len(s.platform.executed(), 1, "no code ran after the check was cut")
+}
+
+// TestACallerGivingUpDuringTheCheckEndsTheRun: the check runs on the caller's context, so a
+// caller that gives up during a hung check is answered then, not at the check's 60 s bound.
+func (s *ProxySuite) TestACallerGivingUpDuringTheCheckEndsTheRun() {
+	box := s.slowed(sandbox.Config{}, 30*time.Second, 0)
+	checking := make(chan struct{}, 1)
+	s.platform.mu.Lock()
+	s.platform.checking = checking
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithCancel(s.ctx)
+	s.T().Cleanup(cancel)
+	go func() {
+		<-checking
+		cancel()
+	}()
+	started := time.Now()
+
+	_, err := box.Run(ctx, "print(2)", nil)
+
+	s.ErrorContains(err, `/process/execute": context canceled`)
+	s.Less(time.Since(started), 20*time.Second, "answered long before the check's end")
+	s.Len(s.platform.executed(), 1, "no code ran after the caller gave up")
+}
+
+// TestACallerGivingUpDuringTheCodeEndsTheRun: the code runs on the caller's context, so a caller
+// that gives up while it runs is answered then, not at the run's 35 s budget.
+func (s *ProxySuite) TestACallerGivingUpDuringTheCodeEndsTheRun() {
+	box := s.slowed(sandbox.Config{}, 0, 0)
+	stall, arrived := make(chan struct{}), make(chan struct{}, 1)
+	s.T().Cleanup(func() { close(stall) })
+	s.platform.mu.Lock()
+	s.platform.stall, s.platform.arrived = stall, arrived
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithCancel(s.ctx)
+	s.T().Cleanup(cancel)
+	go func() {
+		<-arrived
+		cancel()
+	}()
+	started := time.Now()
+
+	_, err := box.Run(ctx, "print(2)", nil)
+
+	s.ErrorContains(err, `/process/code-run": context canceled`)
+	s.Less(time.Since(started), 20*time.Second, "answered long before the run's budget")
+}
+
 // TestCodeOverItsBudgetIsCutAsOnBase is the control: with a quick check, code still has the
 // run's 5.01 s and no more. Its expected error is the one base (54fb4b288) gives.
 func (s *ProxySuite) TestCodeOverItsBudgetIsCutAsOnBase() {
-	box := s.slowed(0, 6*time.Second)
+	box := s.slowed(sandbox.Config{TimeoutMs: 10}, 0, 6*time.Second)
 	started := time.Now()
 
 	_, err := box.Run(s.ctx, "print(2)", nil)
