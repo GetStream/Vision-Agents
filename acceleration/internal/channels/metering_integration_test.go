@@ -13,10 +13,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
@@ -83,6 +88,41 @@ func (s *TextMeteringSuite) TestAReplyThatFailedPartwayIsBilledForWhatWentOut() 
 	s.True(row.Billable)
 	s.Equal(pricing.Quantities{pricing.Messages: 1, pricing.MessageSegments: 1}, row.Meters, "the words, which went out")
 	s.Equal(int64(7_800), row.CostMicros)
+}
+
+// A sandboxed app's day counts a reply whose words went out and whose file the provider refused:
+// once, as Notify counts a notice partly sent.
+func (s *TextMeteringSuite) TestAReplyPartlySentCountsOnceAgainstTheSandboxDay() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
+	}
+	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(redis.Close)
+	gate := dlc.NewGate(s.store, redis, dlc.Sandbox{Enabled: true, Recipients: 2, MessagesPerDay: 30}, nil)
+	s.service.gate = gate
+	writer := "+13479018418"
+	s.Require().NoError(s.store.SetSandboxRecipients(s.ctx, s.customer, []string{writer}))
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if _, media := body["media_urls"]; media {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer refusing.Close()
+	provider := &telnyxProvider{client: refusing.Client(), baseURL: refusing.URL}
+	line := Account{Kind: SMS, E164: "+12187021098", Token: "telnyx-key"}
+	events := make(chan session.Event, 1)
+	events <- agent.TaskSettled{Text: "Here it is.", Files: []sandbox.Attachment{{URL: "https://files/render.png"}}}
+	close(events)
+
+	s.service.send(s.ctx, nil, s.owner(), line, provider, Message{Kind: SMS, From: writer, Thread: writer}, events)
+
+	usage, err := gate.Usage(s.ctx, s.customer)
+	s.Require().NoError(err)
+	s.Equal(int64(1), usage.Messages)
 }
 
 func (s *TextMeteringSuite) TestAnMMSThatArrivedIsBilledAsOne() {

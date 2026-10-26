@@ -188,7 +188,7 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `outside_window` | A WhatsApp thread task whose person last wrote over 24 h ago, with no template to send after the window | no |
 | `thread_gone` | A thread task's thread no longer exists, or is not its user's thread of its customer | no |
 | `connection_removed` | A thread task's line (its connection) was removed | no |
-| `no_reply` | The agent said nothing to carry | yes |
+| `no_reply` | The agent said nothing and made no file to carry | yes |
 | `reply_failed` | The reply was cancelled, interrupted or failed | yes |
 | `no_phone_number` | The user never texted this agent, so there is no number to ring | yes |
 | `no_agent_number` | The config has no SMS or WhatsApp line to ring from | yes |
