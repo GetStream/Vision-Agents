@@ -561,6 +561,9 @@ func replyOf(event session.Event) Reply {
 		return Reply{Text: happened.Text}
 	case agent.TaskSettled:
 		return Reply{Text: happened.Text, Files: filesOf(happened.Files)}
+	case agent.ToolRan:
+		// The files the agent's code handed back, sent as the reply's files.
+		return Reply{Files: filesOf(happened.Files)}
 	}
 	return Reply{}
 }
