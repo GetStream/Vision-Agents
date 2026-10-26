@@ -373,7 +373,7 @@ func (s *Scheduler) run(draining context.Context, claim store.ClaimedScheduledTa
 		// The router is draining and the delivery was waiting to retry: leave
 		// the run to its lease, for another router to take up.
 		s.logger.Info("a scheduled task's retry was left to its lease: the router is draining",
-			"task", task.ID, "run", claim.Run.ID, "customer", task.CustomerID)
+			"task", task.ID, "run", claim.Run.ID, "customer", task.CustomerID, "error", failure)
 		return
 	case owned.Err() != nil:
 		// Close cut the delivery short, or the claim was lost to a change

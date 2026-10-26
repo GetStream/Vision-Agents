@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -866,6 +867,49 @@ func (s *SchedulerSuite) TestADrainStopsARetryWaitAndLeavesTheRunToItsLease() {
 	s.Require().Len(runs, 1, "under the same run")
 	s.Equal(store.ScheduledTaskRunDelivered, runs[0].State)
 	s.Len(other.callsFor(task.ID), 1)
+}
+
+func (s *SchedulerSuite) TestADrainLetsARetryAttemptInFlightFinish() {
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, nil)
+	var attempts atomic.Int32
+	inFlight := make(chan struct{})
+	deliver := func(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
+		if claimed.Task.ID != task.ID {
+			return "conversation", claimed.Task.SessionID, nil
+		}
+		if attempts.Add(1) == 1 {
+			return "", "", errors.New("the conversation would not take it")
+		}
+		close(inFlight)
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		}
+		return "conversation", claimed.Task.SessionID, nil
+	}
+	ctx, drain := context.WithCancel(s.ctx)
+	defer drain()
+	scheduler := NewScheduler(s.db, deliver, slog.New(slog.DiscardHandler))
+	scheduler.retries = []time.Duration{10 * time.Millisecond, time.Hour}
+	scheduler.Start(ctx)
+	s.T().Cleanup(scheduler.Close)
+	select {
+	case <-inFlight:
+	case <-time.After(10 * time.Second):
+		s.Require().Fail("the retry attempt never started")
+	}
+
+	drain()
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskCompleted
+	}, 10*time.Second, 10*time.Millisecond, "the retry attempt in flight finishes")
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunDelivered, runs[0].State)
+	s.EqualValues(2, attempts.Load())
 }
 
 func (s *SchedulerSuite) TestReplayingAMissedRunKeepsTheFailureStreak() {
