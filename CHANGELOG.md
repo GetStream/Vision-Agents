@@ -24,6 +24,18 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ## Bug Fixes
 
+### A Google Drive or Docs grant holding full Drive access no longer needs a consent
+
+`POST /v1/agents/connections/{id}/validate` answered `needs_scopes` for `drive.file` (Google Drive) or `documents` (Google Docs) when the grant held `https://www.googleapis.com/auth/drive`, which Google's tool pages take for `create_file`, `copy_file` and `update_doc`. A manifest's new `scopes.covered_by` names, per needed scope, the broader scopes that meet it; `google_drive` revision 6 and `google_docs` revision 5 say `drive` covers them. A connection moves to the new revision at its next consent.
+
+### A connection is outdated only when a later revision changes what it reads
+
+`definition_status` is `outdated` only when the connector's latest revision changes something the connection reads from the revision it pins: its scopes, auth, endpoints, tools or any other field. A revision that changes only `sensitive` or a source's `outbound` or `read_only_tools` leaves it `current`. The check of a config against a sensitive connector reads those fields from the latest revision. So BigQuery's revision 3 leaves a connection made on revision 1 or 2 `current`, and a connection made before Google Docs' or Google Drive's revision 3 was not outdated by that revision alone (AI-1878).
+
+### BigQuery's `execute_sql_readonly` needs approval beside a sensitive connector
+
+BigQuery revision 3 takes `execute_sql_readonly` out of `read_only_tools`. Its SELECT can call a remote function, whose code may send the rows anywhere. A config that binds it beside a sensitive connector such as Nessy is now refused unless the binding's `require_approval` holds it (AI-1877).
+
 ### The Python and JavaScript SDKs read `sandbox` and `require_approval` on an agent.yaml connector
 
 A `connectors:` entry in agent.yaml may say `sandbox: true` and `require_approval: [...]` in the Python SDK (`plugins/stream`) and the JavaScript SDK, as it may in the Go SDK. Folder sync sends them on that binding. Before, both SDKs refused the keys. `sandbox` left out or `false` sends no key, and `require_approval` left out or null sends none, so the body is the one sent before. A `sandbox` that is not true or false, or a `require_approval` that is not a list, is refused when the folder is read (AI-1961).
@@ -2294,7 +2306,6 @@ saved conversation links remain readable after the session ends.
 - Persistent Stream Chat text conversations with resumable history, thinking/tool activity, immutable tool timestamps, and a durable local write retry queue. The Go SDK exposes conversation binding and history.
 - Synchronous short STT/TTS requests work without a database; text agents can delegate product skills and cancel active tools.
 
-
 - Backend-managed Daytona research profiles keep a source workspace and Cursor process warm. Agent configs and session requests accept `sandbox_profile`; Go agents select it with `ManagedSandbox`, and receive `research_progress` events.
 - Daytona Python sandboxes use the official Go SDK, serialize concurrent creation and retain identity after failed deletion.
 
@@ -2538,13 +2549,11 @@ process has to be publicly reachable.
 ```python
 dispatch = Dispatch()
 
-
 @dispatch.wait_for_call()
 async def answer(call: InboundCall):
     async with agent.answer(call):
         await agent.responses.create("greet the caller")
         await agent.finish()
-
 
 asyncio.run(dispatch.run())
 ```
@@ -3375,10 +3384,8 @@ await agent.simple_response("greet the user")
 @agent.events.subscribe
 async def on_chunk(event: LLMResponseChunkEvent): ...
 
-
 @agent.events.subscribe
 async def on_done(event: LLMResponseCompletedEvent): ...
-
 
 # After — iterate the response stream
 async for item in llm.simple_response("hello"):

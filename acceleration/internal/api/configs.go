@@ -784,7 +784,7 @@ func leftOutGrant(binding AgentConnectorBinding, manifest core.Manifest) (string
 		return "", true
 	}
 	for _, tool := range binding.Tools {
-		if unasked := source.UnaskedScopes(manifest.Scopes.List, tool.Name); len(unasked) > 0 {
+		if unasked := source.UnaskedScopes(manifest.Scopes, tool.Name); len(unasked) > 0 {
 			return fmt.Sprintf("connector binding %q grants %q, which connector %q leaves out: it needs %s, "+
 				"which the connector never asks for", binding.Name, tool.Name, binding.ConnectorId,
 				strings.Join(unasked, ", ")), false
