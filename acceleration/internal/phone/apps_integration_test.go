@@ -1451,6 +1451,32 @@ func (s *AppsSuite) TestAPerCallTrunkWhoseCallNeverEndedIsSweptAfterSixHours() {
 	s.Empty(s.deployment.Rules())
 }
 
+func (s *AppsSuite) TestAPerCallTrunkStreamWouldNotDeleteIsSweptAgainNextTime() {
+	placed, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	s.Require().Len(s.deployment.Trunks(), 1)
+	trunk := s.deployment.Trunks()[0]
+	s.backdate(placed.CallID, 7*time.Hour)
+	s.deployment.RateLimit("/sip/inbound_trunks/" + trunk)
+
+	_, err = s.service.SweepCallResources(s.ctx, time.Now().Add(-6*time.Hour))
+
+	s.Require().NoError(err)
+	s.Equal([]string{trunk}, s.deployment.Trunks())
+	rows, err := s.store.CallResourcesInApp(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID)
+	s.Require().NoError(err)
+	s.NotEmpty(rows, "the row is what the next sweep finds the trunk by")
+
+	s.deployment.LiftRateLimit("/sip/inbound_trunks/" + trunk)
+	_, err = s.service.SweepCallResources(s.ctx, time.Now().Add(-6*time.Hour))
+
+	s.Require().NoError(err)
+	s.Empty(s.deployment.Trunks())
+	rows, err = s.store.CallResourcesInApp(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID)
+	s.Require().NoError(err)
+	s.Empty(rows)
+}
+
 func (s *AppsSuite) TestAPerCallTrunkOfARecentCallIsNotSwept() {
 	placed, err := s.callFrom(s.e164)
 	s.Require().NoError(err)

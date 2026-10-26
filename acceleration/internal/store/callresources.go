@@ -69,21 +69,36 @@ func (s *Store) ReleaseCallResourcesInApp(ctx context.Context, scope AppScope, c
 	return slices.Concat(lists...), nil
 }
 
-// StaleCallResources deletes the call resource rows older than before and returns them, for
-// calls whose end hook never arrived.
+// StaleCallResources are the call resource rows older than before, for calls whose end hook
+// never arrived. They are left in place until ForgetCallResource.
 func (s *Store) StaleCallResources(ctx context.Context, before time.Time) ([]CallResource, error) {
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]CallResource, error) {
 		var stale []CallResource
-		err := db.NewDelete().Model((*CallResource)(nil)).
+		err := db.NewSelect().Model(&stale).
 			Where("created_at < ?", before).
-			Returning("*").
-			Scan(ctx, &stale)
+			Scan(ctx)
 		return stale, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("store: stale call resources: %w", err)
 	}
 	return slices.Concat(lists...), nil
+}
+
+// ForgetCallResource deletes a row StaleCallResources returned. The row may be on any shard,
+// whose ids are their own, so it is matched by its call and trunk too.
+func (s *Store) ForgetCallResource(ctx context.Context, resource CallResource) error {
+	_, err := onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
+		return db.NewDelete().Model((*CallResource)(nil)).
+			Where("id = ?", resource.ID).
+			Where("call_id = ?", resource.CallID).
+			Where("trunk_id = ?", resource.TrunkID).
+			Exec(ctx)
+	})
+	if err != nil {
+		return fmt.Errorf("store: forget call resource: %w", err)
+	}
+	return nil
 }
 
 // CallResourcesInApp is what ReleaseCallResourcesInApp would delete for one call, read

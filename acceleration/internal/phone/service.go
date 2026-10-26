@@ -1199,6 +1199,10 @@ func (s *Service) ReleaseCall(ctx context.Context, scope store.AppScope, callTyp
 // SweepCallResources forgets the calls older than before whose end hook never arrived, and
 // unwires their per-call trunks. It returns how many calls' rows it forgot. A shared line
 // belongs to its number, not the call, so it is left at Stream.
+//
+// A per-call row is forgotten only once Stream deleted its trunk, so a trunk Stream kept is
+// tried again on the next sweep. Two routers sweeping at once may both delete one trunk,
+// and the one that loses only logs it.
 func (s *Service) SweepCallResources(ctx context.Context, before time.Time) (int, error) {
 	if s.store == nil || (s.stream == nil && s.apps == nil) {
 		return 0, nil
@@ -1207,13 +1211,28 @@ func (s *Service) SweepCallResources(ctx context.Context, before time.Time) (int
 	if err != nil {
 		return 0, fmt.Errorf("phone: sweep call resources: %w", err)
 	}
+	var forgot int
 	for _, resource := range stale {
-		if resource.Shared {
-			continue
+		if !resource.Shared {
+			stream, err := s.streamToRemove(ctx, resource.CustomerID, resource.StreamAppPK)
+			if err == nil {
+				if err := stream.DeleteRoute(ctx, resource.RouteID); err != nil {
+					s.logger.Error("could not delete a routing rule", "why", "a call never ended", "route", resource.RouteID, "error", err)
+				}
+				err = stream.DeleteTrunk(ctx, resource.TrunkID)
+			}
+			if err != nil {
+				s.logger.Error("could not delete the trunk of a call that never ended",
+					"trunk", resource.TrunkID, "route", resource.RouteID, "error", err)
+				continue
+			}
 		}
-		s.unwire(ctx, resource.CustomerID, resource.StreamAppPK, resource.RouteID, resource.TrunkID, "a call never ended")
+		if err := s.store.ForgetCallResource(ctx, resource); err != nil {
+			return forgot, fmt.Errorf("phone: sweep call resources: %w", err)
+		}
+		forgot++
 	}
-	return len(stale), nil
+	return forgot, nil
 }
 
 // trunkAllowlist is the addresses a vendor's trunk should accept calls from.
