@@ -341,64 +341,6 @@ func blankRequired(tool harness.Tool, arguments string) []string {
 	return blank
 }
 
-// runFirst is what a call made before the step its tool needs is answered with.
-const runFirst = "%s" + notRun + "error, %s has not succeeded yet in this call. Call %s first, " +
-	"with what the caller has already given."
-
-// needsIdentity is how a tool's description says it may run only for a verified caller.
-var needsIdentity = regexp.MustCompile(`(?i)identity required|after identity|verified (patient|caller|customer|account)`)
-
-// runsBefore is how a tool's description names the tool it must run before.
-var runsBefore = regexp.MustCompile(`(?i)must run before (\w+)`)
-
-// unmetPrerequisite names the tool that has to succeed in this call before tool may run,
-// read from the tools' descriptions, or "" when nothing is missing. Qwen opened a ticket
-// for "123 Main St" before verifying the caller, and the bench counts the order however
-// the call recovers.
-func unmetPrerequisite(tool harness.Tool, tools []harness.Tool, history []llm.Message) string {
-	if strings.HasPrefix(tool.Name, "verify") {
-		return ""
-	}
-	for _, other := range tools {
-		if other.Name == tool.Name {
-			continue
-		}
-		identity := strings.HasPrefix(other.Name, "verify") && needsIdentity.MatchString(tool.Description)
-		before := false
-		if match := runsBefore.FindStringSubmatch(other.Description); match != nil {
-			before = match[1] == tool.Name
-		}
-		if identity && !succeeded(history, other.Name, true) || before && !succeeded(history, other.Name, false) {
-			return other.Name
-		}
-	}
-	return ""
-}
-
-// succeeded reports whether a call to the named tool has come back, and if passed is set,
-// come back without an error and without "ok": false. walk_reboot coming back "ok": false
-// is the failed reboot dispatch_tech needs.
-func succeeded(history []llm.Message, name string, passed bool) bool {
-	for i, message := range history {
-		if message.Role != llm.ToolResult {
-			continue
-		}
-		content := strings.ReplaceAll(message.Content, " ", "")
-		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) || undoneResult(message.Content) ||
-			passed && (strings.Contains(content, `"error"`) || strings.Contains(content, `"ok":false`)) {
-			continue
-		}
-		for j := i - 1; j >= 0; j-- {
-			if slices.ContainsFunc(history[j].ToolCalls, func(call llm.ToolCall) bool {
-				return call.ID == message.ToolCallID && call.Name == name
-			}) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // digitWords are the digits as a caller reads them out, in order.
 var digitWords = []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}
 
@@ -563,8 +505,6 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
-	} else if first := unmetPrerequisite(tool, a.availableTools().Tools, record); first != "" {
-		parts = llm.TextParts(fmt.Sprintf(runFirst, requested.Call.Name, first, first))
 	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools())); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
 	} else if key, known, missing := missingID(record, requested.Call, a.availableTools()); missing {

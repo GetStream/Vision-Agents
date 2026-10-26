@@ -4942,8 +4942,6 @@ func (s *AgentSuite) TestAClaimIsNotBackedByACallTheRouterHeldBack() {
 	s.True(changedSinceCaller(history(done), anyTool))
 	s.False(toolRanSinceCaller(history(held)))
 	s.True(toolRanSinceCaller(history(done)))
-	s.False(succeeded(history(held), "crm__send_message", false))
-	s.True(succeeded(history(done), "crm__send_message", false))
 }
 
 func (s *AgentSuite) TestANameSpelledOutIsCalledWithTheNameAlone() {
@@ -4962,31 +4960,6 @@ func (s *AgentSuite) TestACallThatOnlyFillsInABlankIsTheSameCall() {
 	s.True(fillsIn(`{"name": "Alvarez"}`, `{"name": "Alvarez", "phone": "512-550-1422"}`), "a text argument the first call left out")
 	s.False(fillsIn(`{"party_size": 6}`, `{"party_size": 6, "patio": true}`), "a choice the first call never made")
 	s.True(fillsIn(`{"party_size": 2}`, `{"party_size": 2, "high_chair": false}`), "a choice left at its default")
-}
-
-func (s *AgentSuite) TestAToolIsNotRunBeforeTheStepItsDescriptionNeeds() {
-	tools := []harness.Tool{
-		{Name: "verify_account", Description: "Required before tickets."},
-		{Name: "walk_reboot", Description: "Must run before dispatch_tech."},
-		{Name: "create_ticket", Description: "Open a support ticket. Identity required."},
-		{Name: "dispatch_tech", Description: "Dispatch a technician. Identity required."},
-		{Name: "check_outage", Description: "Check the outage map."},
-	}
-	result := func(name, content string) []llm.Message {
-		return []llm.Message{
-			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: name, Name: name}}},
-			{Role: llm.ToolResult, ToolCallID: name, Content: content},
-		}
-	}
-	s.Equal("verify_account", unmetPrerequisite(tools[2], tools, nil))
-	s.Equal("verify_account", unmetPrerequisite(tools[2], tools, result("verify_account", `{"ok": false}`)))
-	s.Empty(unmetPrerequisite(tools[2], tools, result("verify_account", `{"ok": true}`)))
-	verified := result("verify_account", `{"ok": true}`)
-	s.Equal("walk_reboot", unmetPrerequisite(tools[3], tools, verified))
-	s.Empty(unmetPrerequisite(tools[3], tools, append(verified, result("walk_reboot", `{"ok": false, "error_code": "840"}`)...)),
-		"a reboot that failed is the one a dispatch needs")
-	s.Empty(unmetPrerequisite(tools[4], tools, nil))
-	s.Equal("verify_account", stepNamed(result("create_ticket", fmt.Sprintf(runFirst, "create_ticket", "verify_account", "verify_account")), tools))
 }
 
 func (s *AgentSuite) TestAGoAheadToWorkAlreadyDoneHasNothingToDo() {
