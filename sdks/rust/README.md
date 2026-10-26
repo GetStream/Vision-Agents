@@ -75,10 +75,11 @@ tools.register_call(
         approval: Some(types::SessionToolApproval { title: "Book flight {flight_id}?".into(), ..Default::default() }),
         ..Default::default()
     },
-    async |arguments, call: ToolCall| {
-        call.update("checking seats").await?;
-        call.disallow_interruptions().await?;
-        Ok::<_, Error>(book(&arguments["flight_id"], &call.user.id, &call.id).await)
+    async |arguments, tool_call_context: ToolCall| {
+        tool_call_context.update("checking seats").await?;
+        tool_call_context.disallow_interruptions().await?;
+        let user = &tool_call_context.user.id;
+        Ok::<_, Error>(book(&arguments["flight_id"], user, &tool_call_context.id).await)
     },
 )?;
 ```
@@ -87,17 +88,17 @@ tools.register_call(
   By default it keeps running and the model is told it is still going.
 - `timeout_ms` is how long one call may take, in place of the session's. A call that takes
   longer is stopped and fails.
-- `approval` is a question the caller answers before each call runs, where each `{name}` is
-  one of the tool's parameters. On a voice call the agent asks it out loud and waits 15
-  seconds for a yes, and `call.approved` is then true. In writing it goes to the app.
+- `approval` is a question the caller answers before each call runs, where each `{name}` is one
+  of the tool's parameters. On a voice call the agent asks it out loud and waits 15 seconds for
+  a yes, and `tool_call_context.approved` is then true. In writing it goes to the app.
   `register_call` refuses a `{name}` that is not a parameter, a blank question and a negative
   timeout.
 
-`call.id` is the id the model gave the call, which a call sent again keeps, so it is the key
-to make a side effect happen once; `session_id`, `turn_id`, `user` and `conversation` say where
-it came from. `update(text)` says how the call is going: a voice agent tells the caller in its
-own words once nobody is talking. `say(text)` has it say `text` as written, which a
-speech-to-speech model may paraphrase. `disallow_interruptions` keeps the call going from then
+`tool_call_context.id` is the id the model gave the call, which a call sent again keeps, so it
+is the key to make a side effect happen once; `session_id`, `turn_id`, `user` and `conversation`
+say where it came from. `update(text)` says how the call is going: a voice agent tells the
+caller in its own words once nobody is talking. `say(text)` has it say `text` as written, which
+a speech-to-speech model may paraphrase. `disallow_interruptions` keeps the call going from then
 on, for a write that must not stop halfway, and returns `Error::NotHeld` when the router had
 already cancelled it. A cancelled call is aborted at its next `.await` and is not answered. A
 call the router addresses to another watcher (`run: false`) is left alone.

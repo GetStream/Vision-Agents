@@ -207,9 +207,9 @@ class TestDispatch < LocalRouterTest
     agent = client.agent("travel")
     agent.tools.register("book_flight", description: "Book a flight",
                                         parameters: { type: "object", properties: { flight_id: { type: "string" } } },
-                                        interruptible: true, timeout: 90, approval: "Book flight {flight_id}?") do |_args, call|
-      seen << call
-      call.update("checking seats")
+                                        interruptible: true, timeout: 90, approval: "Book flight {flight_id}?") do |_args, tool_call_context|
+      seen << tool_call_context
+      tool_call_context.update("checking seats")
       "booked"
     end
     dispatch.host(agent)
@@ -226,17 +226,17 @@ class TestDispatch < LocalRouterTest
                    peer.receive_type("tool_update"))
       assert_equal "booked", peer.receive_type("tool_result")["output"]
     end
-    call = seen.pop(timeout: 1)
-    assert_equal %w[t1 s1 turn_3 sam], [call.id, call.session_id, call.turn_id, call.user.id]
+    tool_call_context = seen.pop(timeout: 1)
+    assert_equal %w[t1 s1 turn_3 sam], [tool_call_context.id, tool_call_context.session_id, tool_call_context.turn_id, tool_call_context.user.id]
   end
 
   def test_a_hosted_call_the_router_cancels_is_not_answered
     release = Thread::Queue.new
     stopped = Thread::Queue.new
     agent = client.agent("support")
-    agent.tools.register("investigate", description: "Investigate for a while") do |_args, call|
+    agent.tools.register("investigate", description: "Investigate for a while") do |_args, tool_call_context|
       release.pop(timeout: 5)
-      stopped << call.cancelled?
+      stopped << tool_call_context.cancelled?
       "found it"
     end
     agent.tools.register("ping", description: "Answer at once") { "pong" }

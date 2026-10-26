@@ -115,13 +115,13 @@ def current_call() -> ToolCall:
 
 
 @contextlib.contextmanager
-def calling(call: ToolCall) -> Iterator[ToolCall]:
-    """Make `call` what `current_call()` returns until the block ends.
+def calling(tool_call_context: ToolCall) -> Iterator[ToolCall]:
+    """Make `tool_call_context` what `current_call()` returns until the block ends.
 
     The socket that runs a function sets it, and a test of a function can too.
     """
-    token = _current.set(call)
+    token = _current.set(tool_call_context)
     try:
-        yield call
+        yield tool_call_context
     finally:
         _current.reset(token)

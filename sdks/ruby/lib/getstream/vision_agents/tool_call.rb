@@ -13,10 +13,10 @@ module GetStream
 
     # The call a tool's block is running for, handed to it as the second argument:
     #
-    #   tools.register("book_flight", description: "Book a flight", ...) do |args, call|
-    #     call.update("checking seats")
-    #     call.disallow_interruptions
-    #     bookings.book(args["flight_id"], key: call.id) unless call.cancelled?
+    #   tools.register("book_flight", description: "Book a flight", ...) do |args, tool_call_context|
+    #     tool_call_context.update("checking seats")
+    #     tool_call_context.disallow_interruptions
+    #     bookings.book(args["flight_id"], key: tool_call_context.id) unless tool_call_context.cancelled?
     #   end
     #
     # A Ruby thread cannot be stopped safely from outside, so a call the router cancels or

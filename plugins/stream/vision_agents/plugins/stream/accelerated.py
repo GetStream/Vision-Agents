@@ -559,13 +559,17 @@ class Accelerated(OmniLLM):
             if name == "get_video_frames":
                 result["output"] = await self._capture_video(arguments)
             else:
-                call = call_of(
+                tool_call_context = call_of(
                     frame,
                     self.router_session_id or "",
                     SocketLine(self._command, self._holds),
                 )
                 output = await run_call(
-                    self.function_registry, name, arguments, call, self._holds
+                    self.function_registry,
+                    name,
+                    arguments,
+                    tool_call_context,
+                    self._holds,
                 )
                 result["output"] = _tool_output(output)
         except ValueError as exc:

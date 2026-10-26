@@ -77,11 +77,11 @@ for:
 
 ```csharp
 agent.Tools.Register<Booking, string>("book_flight", "Book a flight for the caller",
-    async (booking, call, cancellationToken) =>
+    async (booking, toolCallContext, cancellationToken) =>
     {
-        await call.UpdateAsync("checking seats", cancellationToken);
-        await call.DisallowInterruptionsAsync(cancellationToken);
-        return await BookAsync(booking.FlightId, call.User.Id, idempotencyKey: call.Id);
+        await toolCallContext.UpdateAsync("checking seats", cancellationToken);
+        await toolCallContext.DisallowInterruptionsAsync(cancellationToken);
+        return await BookAsync(booking.FlightId, toolCallContext.User.Id, idempotencyKey: toolCallContext.Id);
     },
     timeout: TimeSpan.FromSeconds(20), approval: "Book flight {flight_id}?");
 ```
@@ -90,19 +90,19 @@ agent.Tools.Register<Booking, string>("book_flight", "Book a flight for the call
   default it keeps running and the model is told it is still going.
 - `timeout` is how long one call may take, in place of the session's. A call that takes
   longer has its token cancelled and fails.
-- `approval` is a question the caller answers before each call runs, where each `{name}` is
-  one of the tool's parameters. On a voice call the agent asks it out loud and waits 15
-  seconds for a yes, and `call.Approved` is then true. In writing it goes to the app. A
-  `{name}` that is not a parameter throws `ConfigurationException` when the tool is registered.
+- `approval` is a question the caller answers before each call runs, where each `{name}` is one
+  of the tool's parameters. On a voice call the agent asks it out loud and waits 15 seconds for
+  a yes, and `toolCallContext.Approved` is then true. In writing it goes to the app. A `{name}`
+  that is not a parameter throws `ConfigurationException` when the tool is registered.
 
-`call.Id` is the id the model gave the call, which a call sent again keeps, so it is the key
-to make a side effect happen once; `SessionId`, `TurnId`, `User` and `Conversation` say where
-it came from. `UpdateAsync(text)` says how the call is going: a voice agent tells the caller in
-its own words once nobody is talking. `SayAsync(text)` has it say `text` as written, which a
-speech-to-speech model may paraphrase. `DisallowInterruptionsAsync` keeps the call going from
-then on, for a write that must not stop halfway, and throws `CallNotHeldException` when the
-router had already cancelled it. A cancelled call has its token cancelled and is not answered.
-A call the router addresses to another watcher (`run: false`) is left alone.
+`toolCallContext.Id` is the id the model gave the call, which a call sent again keeps, so it is
+the key to make a side effect happen once; `SessionId`, `TurnId`, `User` and `Conversation` say
+where it came from. `UpdateAsync(text)` says how the call is going: a voice agent tells the
+caller in its own words once nobody is talking. `SayAsync(text)` has it say `text` as written,
+which a speech-to-speech model may paraphrase. `DisallowInterruptionsAsync` keeps the call going
+from then on, for a write that must not stop halfway, and throws `CallNotHeldException` when the
+router had already cancelled it. A cancelled call has its token cancelled and is not answered. A
+call the router addresses to another watcher (`run: false`) is left alone.
 
 A stored config is changed in place, and only what is set is sent:
 

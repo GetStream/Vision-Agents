@@ -106,8 +106,8 @@ talking over the agent:
 
 ```go
 func(ctx context.Context, args RebookFlight) (any, error) {
-    call := tools.CallFrom(ctx)
-    call.Update(ctx, "Checking seats on the new flight")
+    toolCallContext := tools.CallFrom(ctx)
+    toolCallContext.Update(ctx, "Checking seats on the new flight")
 
     // Read only: the caller interrupting cancels ctx, and nothing has changed.
     seat, err := airline.HoldSeat(ctx, args.NewFlightID)
@@ -115,19 +115,19 @@ func(ctx context.Context, args RebookFlight) (any, error) {
         return nil, err
     }
 
-    // From here on, the caller interrupting no longer cancels the call.
-    ctx = call.DisallowInterruptions(ctx)
-    call.Say(ctx, "Got a seat, moving your booking now.")
-    return airline.Rebook(ctx, args.BookingID, seat, call.ID)
+    // From here on, the caller interrupting no longer cancels the toolCallContext.
+    ctx = toolCallContext.DisallowInterruptions(ctx)
+    toolCallContext.Say(ctx, "Got a seat, moving your booking now.")
+    return airline.Rebook(ctx, args.BookingID, seat, toolCallContext.ID)
 }
 ```
 
-`call.Update` hands the agent a status, which it tells a voice caller in its own words once
-nobody is talking, and which a conversation shows on the call's step. `call.Say` has it say
-the words as written, or post them in text; a speech-to-speech model may paraphrase them.
-`DisallowInterruptions` returns a context only the call's timeout and the socket ending cancel.
-When the call was already stopped, that context comes back cancelled, so the write never starts.
-Outside a call, all three do nothing.
+`toolCallContext.Update` hands the agent a status, which it tells a voice caller in its own
+words once nobody is talking, and which a conversation shows on the call's step.
+`toolCallContext.Say` has it say the words as written, or post them in text; a speech-to-speech
+model may paraphrase them. `DisallowInterruptions` returns a context only the call's timeout and
+the socket ending cancel. When the call was already stopped, that context comes back cancelled,
+so the write never starts. Outside a call, all three do nothing.
 
 Struct tags describe arguments beyond `schema`: `enum:"economy,business"`, `minimum:"1"`,
 `maximum:"9"`, `pattern`, `format` and `example`. A type that describes itself implements

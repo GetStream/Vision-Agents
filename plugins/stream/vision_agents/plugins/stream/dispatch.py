@@ -493,10 +493,12 @@ class Dispatch:
             "tool_call_id": frame.get("id", ""),
             "id": frame.get("id", ""),
         }
-        call = call_of(frame, "", SocketLine(self._tell, self._holds))
+        tool_call_context = call_of(frame, "", SocketLine(self._tell, self._holds))
         try:
             arguments = json.loads(frame.get("arguments") or "{}")
-            output = await run_call(functions, name, arguments, call, self._holds)
+            output = await run_call(
+                functions, name, arguments, tool_call_context, self._holds
+            )
             result["output"] = output if isinstance(output, str) else json.dumps(output)
         except asyncio.CancelledError:
             raise

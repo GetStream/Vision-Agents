@@ -36,11 +36,11 @@ func (s *ToolCallSuite) TestAFunctionSaysHowItIsGoing() {
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
 	s.Require().NoError(tools.Register(pipeline.Functions(), "lookup_order", "Look an order up",
 		func(ctx context.Context, _ struct{}) (any, error) {
-			call := tools.CallFrom(ctx)
-			if err := call.Update(ctx, "Looking up order 7"); err != nil {
+			toolCallContext := tools.CallFrom(ctx)
+			if err := toolCallContext.Update(ctx, "Looking up order 7"); err != nil {
 				return nil, err
 			}
-			if err := call.Say(ctx, "One moment."); err != nil {
+			if err := toolCallContext.Say(ctx, "One moment."); err != nil {
 				return nil, err
 			}
 			return "shipped", nil

@@ -430,7 +430,7 @@ public sealed class Session : IAsyncDisposable
 
         var cancel = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
         _running[id] = cancel;
-        var call = ToolCall.Of(frame, Id, new ToolLine((sent, token) => SendAsync(sent, token), _holds, id));
+        var toolCallContext = ToolCall.Of(frame, Id, new ToolLine((sent, token) => SendAsync(sent, token), _holds, id));
         _ = Task.Run(async () =>
         {
             JsonObject result;
@@ -442,7 +442,7 @@ public sealed class Session : IAsyncDisposable
                     null => "",
                     var other => other.ToJsonString(),
                 };
-                result = answer("output", await _tools.CallAsync(frame.Text("name"), arguments, cancel.Token, call).ConfigureAwait(false));
+                result = answer("output", await _tools.CallAsync(frame.Text("name"), arguments, cancel.Token, toolCallContext).ConfigureAwait(false));
             }
             catch (Exception) when (cancel.IsCancellationRequested)
             {

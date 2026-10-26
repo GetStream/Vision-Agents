@@ -32,8 +32,8 @@ export interface Tool<In = Readonly<Record<string, unknown>>> {
    * What a person is asked before each call runs. A call that asks waits in
    * `session.approvals` until `session.decide` answers it. On a voice call the agent asks
    * the caller out loud instead, with each `{name}` in the title filled in from the call's
-   * arguments, and runs the call on a yes within 15 seconds (`call.approved`). A tool hosted
-   * through dispatch is asked about only on a voice call.
+   * arguments, and runs the call on a yes within 15 seconds (`toolCallContext.approved`). A
+   * tool hosted through dispatch is asked about only on a voice call.
    */
   approval?: ToolApproval;
   /**
@@ -49,10 +49,10 @@ export interface Tool<In = Readonly<Record<string, unknown>>> {
   /**
    * Runs it. What it returns is rendered for the model; a string is used as it is.
    *
-   * `signal` aborts when the call is cancelled or times out. `call` is the call being
-   * answered, and how the function tells the conversation how it is going.
+   * `signal` aborts when the call is cancelled or times out. `toolCallContext` is the
+   * call being answered, and how the function tells the conversation how it is going.
    */
-  run: (input: In, signal: AbortSignal, call: ToolCall) => unknown;
+  run: (input: In, signal: AbortSignal, toolCallContext: ToolCall) => unknown;
 }
 
 /** The person whose turn asked for a call. */
@@ -283,7 +283,7 @@ export class Tools {
     name: string,
     args: string,
     signal: AbortSignal,
-    call: ToolCall = new ToolCall(),
+    toolCallContext: ToolCall = new ToolCall(),
   ): Promise<string> {
     const tool = this.registered.get(name);
     if (!tool) {
@@ -301,7 +301,7 @@ export class Tools {
       }
     }
     if (!tool.timeoutMs) {
-      return render(await tool.run(input as never, signal, call));
+      return render(await tool.run(input as never, signal, toolCallContext));
     }
 
     const timeout = tool.timeoutMs;
@@ -312,7 +312,11 @@ export class Tools {
     );
     try {
       const running = Promise.resolve(
-        tool.run(input as never, AbortSignal.any([signal, late.signal]), call.lastingUntil(late.signal)),
+        tool.run(
+          input as never,
+          AbortSignal.any([signal, late.signal]),
+          toolCallContext.lastingUntil(late.signal),
+        ),
       );
       const timedOut = new Promise<never>((_, reject) => {
         late.signal.addEventListener("abort", () => reject(late.signal.reason as Error), { once: true });

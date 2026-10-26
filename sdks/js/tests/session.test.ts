@@ -329,10 +329,10 @@ describe("Session", () => {
     const tools = new Tools().register({
       name: "search",
       description: "Search flights",
-      run: (_input, _signal, call) => {
-        seen = call;
-        call.update("checking three airlines");
-        call.say("Still looking, one moment.");
+      run: (_input, _signal, toolCallContext) => {
+        seen = toolCallContext;
+        toolCallContext.update("checking three airlines");
+        toolCallContext.say("Still looking, one moment.");
         return "found two";
       },
     });
@@ -377,8 +377,8 @@ describe("Session", () => {
     const tools = new Tools().register({
       name: "charge",
       description: "Charge the card",
-      run: async (_input, _signal, call) => {
-        writing = await call.disallowInterruptions();
+      run: async (_input, _signal, toolCallContext) => {
+        writing = await toolCallContext.disallowInterruptions();
         await new Promise<void>((resolve) => (release = resolve));
         return "charged";
       },
@@ -405,8 +405,8 @@ describe("Session", () => {
     const tools = new Tools().register({
       name: "charge",
       description: "Charge the card",
-      run: async (_input, _signal, call) => {
-        writing = await call.disallowInterruptions();
+      run: async (_input, _signal, toolCallContext) => {
+        writing = await toolCallContext.disallowInterruptions();
         return writing.aborted ? "never charged" : "charged";
       },
     });

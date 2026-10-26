@@ -120,10 +120,10 @@ func (s *RunSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 }
 
 func (s *RunSuite) TestOutsideACallTheCallIsEmptyRatherThanNil() {
-	call := CallFrom(context.Background())
+	toolCallContext := CallFrom(context.Background())
 
-	s.Require().NotNil(call)
-	s.Empty(call.ID)
+	s.Require().NotNil(toolCallContext)
+	s.Empty(toolCallContext.ID)
 }
 
 func (s *RunSuite) TestCancellingACallStopsItsFunction() {

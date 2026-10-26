@@ -787,10 +787,14 @@ class Session:
         for key in ("request_id", "turn_id"):
             if frame.get(key):
                 result[key] = frame[key]
-        call = call_of(frame, self.id, SocketLine(self._command, self._holds))
+        tool_call_context = call_of(
+            frame, self.id, SocketLine(self._command, self._holds)
+        )
         try:
             arguments = json.loads(frame.get("arguments") or "{}")
-            output = await run_call(self._functions, name, arguments, call, self._holds)
+            output = await run_call(
+                self._functions, name, arguments, tool_call_context, self._holds
+            )
             result["output"] = output if isinstance(output, str) else json.dumps(output)
         except asyncio.CancelledError:
             raise

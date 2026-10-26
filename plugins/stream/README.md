@@ -57,10 +57,10 @@ from vision_agents.core.llm import current_call
     needs_approval="Book flight {flight_id}?",
 )
 async def book_flight(flight_id: str) -> str:
-    call = current_call()
-    await call.update("checking seats")
-    await call.disallow_interruptions()
-    return await bookings.book(flight_id, user=call.user.id, key=call.id)
+    tool_call_context = current_call()
+    await tool_call_context.update("checking seats")
+    await tool_call_context.disallow_interruptions()
+    return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
 ```
 
 - `interruptible=True` lets the caller talking over the agent cancel a call in flight. By

@@ -86,13 +86,13 @@ class TestPolicies:
 
 class TestCurrentCall:
     async def test_outside_a_call_there_is_an_empty_one_that_does_nothing(self):
-        call = current_call()
+        tool_call_context = current_call()
 
-        await call.update("still going")
-        await call.say("one moment")
-        await call.disallow_interruptions()
+        await tool_call_context.update("still going")
+        await tool_call_context.say("one moment")
+        await tool_call_context.disallow_interruptions()
 
-        assert call == ToolCall()
+        assert tool_call_context == ToolCall()
 
     async def test_a_call_set_for_a_function_is_the_one_it_reads(self):
         line = Line()

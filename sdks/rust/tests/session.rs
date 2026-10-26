@@ -722,8 +722,8 @@ fn tool(name: &str) -> types::SessionTool {
 fn holding() -> Tools {
     let tools = Tools::new();
     tools
-        .register_call(tool("pay"), |_, call: ToolCall| async move {
-            call.disallow_interruptions().await?;
+        .register_call(tool("pay"), |_, tool_call_context: ToolCall| async move {
+            tool_call_context.disallow_interruptions().await?;
             tokio::time::sleep(Duration::from_millis(200)).await;
             Ok::<_, Error>("paid")
         })
@@ -739,17 +739,17 @@ async fn a_function_is_told_who_its_call_answers_and_can_say_how_it_is_going() {
     let server = Server::start().await;
     let tools = Tools::new();
     tools
-        .register_call(tool("book"), |_, call: ToolCall| async move {
-            call.update("Looking at flights")
+        .register_call(tool("book"), |_, tool_call_context: ToolCall| async move {
+            tool_call_context.update("Looking at flights")
                 .await
                 .map_err(|error| error.to_string())?;
-            call.say("One moment.")
+            tool_call_context.say("One moment.")
                 .await
                 .map_err(|error| error.to_string())?;
             Ok::<_, String>(json!({
-                "id": call.id, "session": call.session_id, "turn": call.turn_id,
-                "user": [call.user.id, call.user.name], "tier": call.user.custom["tier"],
-                "cid": call.conversation.cid, "approved": call.approved,
+                "id": tool_call_context.id, "session": tool_call_context.session_id, "turn": tool_call_context.turn_id,
+                "user": [tool_call_context.user.id, tool_call_context.user.name], "tier": tool_call_context.user.custom["tier"],
+                "cid": tool_call_context.conversation.cid, "approved": tool_call_context.approved,
             }))
         })
         .unwrap();
