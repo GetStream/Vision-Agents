@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"crypto/rand"
 	"log/slog"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -206,9 +205,6 @@ type converse struct {
 	delegated map[string]string
 	// waiting is the unfinished words each participant is being given longer to finish.
 	waiting map[string]unfinished
-	// announced is when each participant said they would give every detail at once, for
-	// as long as they have not yet asked anything or said they are done.
-	announced map[string]time.Time
 	// wentOn is when each participant last went on talking before hearing any of the reply
 	// to what they had said, until a turn of theirs is answered. The flow controller is
 	// told, because the next part that sounds complete may be no more the end than the last.
@@ -309,7 +305,6 @@ func newConverse(
 		candidates:  map[string]candidate{},
 		delegated:   map[string]string{},
 		waiting:     map[string]unfinished{},
-		announced:   map[string]time.Time{},
 		wentOn:      map[string]time.Time{},
 		overlaps:    map[string]string{},
 		overlapping: map[string]overlapState{},
@@ -639,10 +634,6 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 			// spoken over the agent is still set aside below.
 			ruling.Floor = harness.Stop
 		}
-	}
-
-	if ruling.Disposition == harness.Respond && c.monologue(ready) {
-		ruling.Disposition = harness.Wait
 	}
 
 	clarify, clarified := "", ""
@@ -1134,46 +1125,8 @@ func settlement(result harness.Result) string {
 	return "the subagent could not answer " + result.Skill
 }
 
-var (
-	// announcesMonologue is a caller saying every detail is coming before they want an answer.
-	announcesMonologue = regexp.MustCompile(`(?i)\b(everything|it all|all of it|all the details|every detail)\b.{0,24}\b(up ?front|at once|in one go)\b|\bbear with me\b`)
-	// endsMonologue is a caller handing the turn back: a question, a go-ahead, or done.
-	endsMonologue = regexp.MustCompile(`(?i)\?|\b(that's|that is) (everything|all|it)\b|\bgo ahead\b|\b(can|could|would|will) you\b|\bplease (move|book|change|cancel|reschedule|update|send|check|switch)\b`)
-)
-
-// monologueSpan bounds how long an announcement holds the floor for the caller.
-const monologueSpan = 2 * time.Minute
-
-// monologue reports whether an answer to these words would cut into details the caller
-// said they would give all at once. The model forgets the announcement a few turns later
-// and answers the first complete detail; it is held to it here, for no longer than the
-// patience an unfinished thought gets.
-func (c *converse) monologue(ready candidate) bool {
-	c.mu.Lock()
-	id := ready.Participant.ID
-	// Only this turn's words: an announcement already answered would otherwise be made
-	// again on every turn of a run the transcriber kept open.
-	said := ready.Said()
-	if announcesMonologue.MatchString(said) {
-		c.announced[id] = time.Now()
-	}
-	since, held := c.announced[id]
-	if held && (time.Since(since) > monologueSpan || endsMonologue.MatchString(said)) {
-		delete(c.announced, id)
-		held = false
-	}
-	c.mu.Unlock()
-	if !held {
-		return false
-	}
-	if !c.patient(ready) {
-		c.mu.Lock()
-		delete(c.announced, id)
-		c.mu.Unlock()
-		return false
-	}
-	return true
-}
+// inPartsSpan bounds how long a thought given in parts holds the floor for the caller.
+const inPartsSpan = 2 * time.Minute
 
 // patient reports whether an unfinished thought is still worth waiting on.
 //
@@ -1183,12 +1136,12 @@ func (c *converse) monologue(ready candidate) bool {
 // misheard, and at that point asking them is better than listening to silence.
 // inParts reports whether the participant is giving a thought in parts: they went on
 // talking before hearing any of the reply to what they had said, and have not been
-// answered since. It lapses with an announced monologue's span.
+// answered since. It lapses after inPartsSpan.
 func (c *converse) inParts(participant string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	since, ok := c.wentOn[participant]
-	return ok && time.Since(since) <= monologueSpan
+	return ok && time.Since(since) <= inPartsSpan
 }
 
 // waitedOn says the same words were waited on before.
