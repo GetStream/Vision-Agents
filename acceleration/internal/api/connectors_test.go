@@ -86,7 +86,8 @@ func (s *ConnectorsSuite) TestGitHubShowsWhatASandboxGetsForItsAPI() {
 
 // TestNoOtherConnectorShowsASandbox is the control: on the base, b7187f62, no connector in the
 // list, built-in or custom, was answered with a sandbox key (pr-w13-man/author-1.md, «Control
-// probe»).
+// probe»). On 8e132bd37 only github.yaml has a sandbox block; google_drive.yaml adds the second,
+// asserted exactly below.
 func (s *ConnectorsSuite) TestNoOtherConnectorShowsASandbox() {
 	s.create(s.customConnector(s.customID()))
 	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors?limit=200", nil)
@@ -97,7 +98,9 @@ func (s *ConnectorsSuite) TestNoOtherConnectorShowsASandbox() {
 	s.Require().NoError(json.Unmarshal(raw, &page))
 	s.Require().Greater(len(page.Items), 20)
 	for _, item := range page.Items {
-		if item["id"] != "github" {
+		if item["id"] == "google_drive" {
+			s.Equal(map[string]any{"env": "GOOGLE_DRIVE_TOKEN", "hosts": []any{"www.googleapis.com"}}, item["sandbox"])
+		} else if item["id"] != "github" {
 			s.NotContains(item, "sandbox", item["id"])
 		}
 	}
