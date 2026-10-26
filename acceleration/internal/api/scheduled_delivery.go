@@ -102,9 +102,6 @@ type scheduledDelivery struct {
 	// APIKey and UsageCategories are the task's: the key and categories that scheduled it.
 	APIKey          string   `json:"api_key,omitempty"`
 	UsageCategories []string `json:"usage_categories,omitempty"`
-	// Deadline is when the asker stops waiting for a peer's delivery: the peer delivers
-	// under it, so a call it has no time left to hold is not placed there either.
-	Deadline time.Time `json:"deadline,omitzero"`
 }
 
 func (d scheduledDelivery) owner() session.Owner {
@@ -612,9 +609,6 @@ func (s *Server) handDeliveryToPeer(ctx context.Context, delivery scheduledDeliv
 	if err != nil || address == "" || address == s.directory.Address() {
 		return none, false, nil
 	}
-	ask, cancel := context.WithTimeout(ctx, scheduledPeerWindow())
-	defer cancel()
-	delivery.Deadline, _ = ask.Deadline()
 	body, err := json.Marshal(delivery)
 	if err != nil {
 		return none, false, err
@@ -623,7 +617,9 @@ func (s *Server) handDeliveryToPeer(ctx context.Context, delivery scheduledDeliv
 	if err != nil {
 		return none, false, err
 	}
+	ask, cancel := context.WithTimeout(ctx, scheduledPeerWindow())
 	answer, err := s.forwarder.Ask(ask, address, request, body)
+	cancel()
 	if err == nil && answer.GetStatus() == http.StatusOK {
 		var peer scheduledPeerAnswer
 		if err := json.Unmarshal(answer.GetBody(), &peer); err == nil {
@@ -676,11 +672,6 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ctx := routing.WithScheduledTurn(r.Context())
-	if !delivery.Deadline.IsZero() {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, delivery.Deadline)
-		defer cancel()
-	}
 	deliveredTo, sessionID, err := s.deliverChainHere(ctx, delivery)
 	switch {
 	case errors.Is(err, errScheduledNotHere):
