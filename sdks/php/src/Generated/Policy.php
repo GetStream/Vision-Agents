@@ -33,6 +33,8 @@ final readonly class Policy
         // Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed w...
         /** @var array<string, string>|null */
         public ?array $tags = null,
+        // How long a session keeps what its tools were given and gave back on the turns it records: a tool's argument...
+        public ?string $toolOutputRetention = null,
     ) {
     }
 
@@ -50,6 +52,7 @@ final readonly class Policy
             quota: array_key_exists('quota', $data) && $data['quota'] !== null ? Quota::fromArray(Json::object($data, 'quota')) : null,
             requireOwnStreamApp: array_key_exists('require_own_stream_app', $data) && $data['require_own_stream_app'] !== null ? Json::bool($data, 'require_own_stream_app') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            toolOutputRetention: array_key_exists('tool_output_retention', $data) && $data['tool_output_retention'] !== null ? Json::string($data, 'tool_output_retention') : null,
         );
     }
 
@@ -84,6 +87,9 @@ final readonly class Policy
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
+        }
+        if ($this->toolOutputRetention !== null) {
+            $out['tool_output_retention'] = $this->toolOutputRetention;
         }
         return $out;
     }

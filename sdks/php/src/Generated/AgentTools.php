@@ -9,11 +9,13 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * How an agent is offered its plugin, MCP server and connector tools.
+ * How an agent is offered its tools, and how long what they were given and gave back is kept.
  */
 final readonly class AgentTools
 {
     public function __construct(
+        // How long this agent's sessions keep what any of its tools were given and gave back on the turns they record...
+        public ?string $outputRetention = null,
         // Offer each tool by the first line of its description, with its arguments' descriptions left out, and have t...
         public ?bool $progressive = null,
     ) {
@@ -25,6 +27,7 @@ final readonly class AgentTools
     public static function fromArray(array $data): self
     {
         return new self(
+            outputRetention: array_key_exists('output_retention', $data) && $data['output_retention'] !== null ? Json::string($data, 'output_retention') : null,
             progressive: array_key_exists('progressive', $data) && $data['progressive'] !== null ? Json::bool($data, 'progressive') : null,
         );
     }
@@ -37,6 +40,9 @@ final readonly class AgentTools
     public function toArray(): array
     {
         $out = [];
+        if ($this->outputRetention !== null) {
+            $out['output_retention'] = $this->outputRetention;
+        }
         if ($this->progressive !== null) {
             $out['progressive'] = $this->progressive;
         }

@@ -687,7 +687,7 @@ pub struct AgentResponseItem {
     pub kind: AgentResponseItemKind,
     ///The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
     pub ordinal: i64,
-    ///Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+    ///Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording.
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub payload: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     pub response_id: ::std::string::String,
@@ -926,9 +926,12 @@ pub struct AgentStats {
     ///One row per tool, most called first.
     pub tools: ::std::vec::Vec<ToolStats>,
 }
-///How an agent is offered its plugin, MCP server and connector tools.
+///How an agent is offered its tools, and how long what they were given and gave back is kept.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct AgentTools {
+    ///How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub output_retention: ::std::option::Option<::std::string::String>,
     ///Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub progressive: ::std::option::Option<bool>,
@@ -7628,6 +7631,9 @@ pub struct Policy {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tool_output_retention: ::std::option::Option<::std::string::String>,
 }
 ///Whose policy: an organization's, an app's, or one end user's.
 #[derive(
