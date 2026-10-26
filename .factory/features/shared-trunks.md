@@ -1,6 +1,6 @@
 # Shared trunks
 
-Not in a sprint.
+Asked for directly, so outbound campaigns can run on the phone numbers customers already have.
 
 ## Asked for
 
@@ -136,25 +136,14 @@ Say a number dials about 75 times a day, a vendor rule of thumb. With 25 trunks 
 one app holds 1,250 numbers. One trunk per number would have meant 25 numbers and about 4
 calls at once.
 
-### Verified live, 2026-10-23
-
-- Two outbound calls at once from one attached Twilio number.
-- Two inbound calls at once.
-- Telnyx outbound.
-- `custom` kept on the call.
-- One trunk per vendor after 6 calls.
-- Release removes the trunk and the rule.
-
 ## Not done
 
 - **Five vendors still dial a trunk per call.** Vonage, Plivo, Bird, Sinch and Bandwidth.
   Whether each can carry the header is unchecked.
 - **A rare race.** Attach in app A and a call from the same number in app B, at the same
-  moment, can leave the row attached on A's trunk while A's trunk lacks the number. The fix is
-  to run `AttachNumber` under the group lock.
+  moment, can leave the row attached on A's trunk while A's trunk lacks the number. Attach does
+  not take the group lock.
 - **The deployment's own app holds at most 25 customer and vendor pairs.** Each pair needs a
   trunk, and the app caps at 25.
 - **Trunk credentials must never reach customers.** Anyone holding a shared trunk's password
   can put a leg into any agent call in that app with `x-stream-call-id`.
-- **Rollout.** A number with a live per-call trunk at deploy time cannot join a shared trunk
-  until that trunk is deleted. The sweeper does that after up to about 6 hours.
