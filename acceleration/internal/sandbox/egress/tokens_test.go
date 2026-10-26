@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -60,7 +61,8 @@ func (s *ResolverTokensSuite) SetupSuite() {
 	s.credentials, err = pgsealed.New(db, sealer)
 	s.Require().NoError(err)
 	s.registry = core.Registry{Schemes: map[string]core.Scheme{bearer.Name: bearer.New(), none.Name: none.New(),
-		"empty_bearer": sends{Scheme: bearer.New(), authorization: "Bearer "}, "basic": sends{Scheme: bearer.New(), authorization: "Basic eDp5"}}}
+		"empty_bearer": sends{Scheme: bearer.New(), authorization: "Bearer "}, "basic": sends{Scheme: bearer.New(), authorization: "Basic eDp5"},
+		"host_bearer": hostBearer{Scheme: bearer.New()}}}
 	connections, err := resolver.New(resolver.Config{Store: db, Credentials: s.credentials, Schemes: s.registry.Schemes})
 	s.Require().NoError(err)
 	s.tokens = egress.ResolverTokens(connections, s.registry.Schemes, func(_ context.Context, grant sandbox.Grant) error {
@@ -170,6 +172,21 @@ func (s *ResolverTokensSuite) TestASchemeThatIsNotRegisteredOrSendsNoBearerGives
 	s.ErrorIs(notBearer, sandbox.ErrNotBearer)
 }
 
+// TestTheTokenIsAskedForTheGrantsFirstHost: Hosts[0] is the host the scheme wraps a request for,
+// with a leading *. taken off, whatever the hosts after it are.
+func (s *ResolverTokensSuite) TestTheTokenIsAskedForTheGrantsFirstHost() {
+	for hosts, asked := range map[string]string{"api.forge.example,*.forge.example": "api.forge.example",
+		"*.forge.example,api.forge.example": "forge.example"} {
+		grant := s.grant
+		grant.Scheme, grant.Hosts = "host_bearer", strings.Split(hosts, ",")
+
+		token, err := s.tokens(s.ctx, grant)
+
+		s.Require().NoError(err, hosts)
+		s.Equal(asked, token, hosts)
+	}
+}
+
 // TestAConnectionThatCannotAnswerNowStillHasACredential: a request that ends, or a store
 // that cannot be read, is a 502 to retry, never a 401 asking for a reconnect.
 func (s *ResolverTokensSuite) TestAConnectionThatCannotAnswerNowStillHasACredential() {
@@ -192,6 +209,17 @@ func (s sends) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundT
 	return roundTrip(func(r *http.Request) (*http.Response, error) {
 		r = r.Clone(r.Context())
 		r.Header.Set("Authorization", s.authorization)
+		return base.RoundTrip(r)
+	})
+}
+
+// hostBearer is a scheme that sends the host a request is for as its bearer token.
+type hostBearer struct{ core.Scheme }
+
+func (hostBearer) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return roundTrip(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.Header.Set("Authorization", "Bearer "+r.URL.Host)
 		return base.RoundTrip(r)
 	})
 }
