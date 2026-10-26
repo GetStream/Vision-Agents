@@ -139,7 +139,7 @@ func TestTheSameFileRenderedAgainReplacesTheEarlierOne(t *testing.T) {
 	second := sandbox.Attachment{Name: "render.png", URL: "https://cdn.fake/2"}
 	other := sandbox.Attachment{Name: "depth.png", URL: "https://cdn.fake/3"}
 
-	merged := mergeFiles([]sandbox.Attachment{first, other}, []sandbox.Attachment{second})
+	merged := MergeFiles([]sandbox.Attachment{first, other}, []sandbox.Attachment{second})
 
 	require.Equal(t, []sandbox.Attachment{other, second}, merged)
 }

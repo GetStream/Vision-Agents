@@ -62,6 +62,8 @@ type Server struct {
 	deleted   []string
 	// files is what each sandbox's file system holds, by path.
 	files map[string]map[string][]byte
+	// writes is what every code run leaves in its sandbox's file system, by path.
+	writes map[string][]byte
 	// refuseDeletes answers every delete with a 500.
 	refuseDeletes bool
 	// usage is the analytics API's per-sandbox answer, and periods each sandbox's periods.
@@ -99,6 +101,17 @@ func (s *Server) Holds(box Box) {
 	}
 	box.Labels = maps.Clone(box.Labels)
 	s.boxes[box.ID] = &box
+}
+
+// Writes has every code run from now on leave data at path in its sandbox, as code that
+// writes a file does.
+func (s *Server) Writes(path string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.writes == nil {
+		s.writes = map[string][]byte{}
+	}
+	s.writes[path] = data
 }
 
 // Stop stops a sandbox, as Daytona's auto-stop does.
@@ -354,6 +367,7 @@ func (s *Server) toolbox(w http.ResponseWriter, r *http.Request, id, rest string
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		s.ran = append(s.ran, id+": "+body.Code)
+		maps.Copy(s.files[id], s.writes)
 		answer(w, http.StatusOK, map[string]any{"result": "ran\n", "exitCode": 0})
 	case "process/execute":
 		answer(w, http.StatusOK, map[string]any{"result": "", "exitCode": 0})
