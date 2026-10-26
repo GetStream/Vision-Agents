@@ -117,6 +117,37 @@ func (s *SandboxGrantsSuite) TestTheBrokerIsHandedTheConnectionsBearerToken() {
 	s.NotContains(s.logs.String(), tokenOf("primary"))
 }
 
+// TestTheBrokerIsHandedTheTokenForTheGrantsFirstHost: Hosts[0] is the host the scheme wraps a
+// request for, with a leading *. taken off, whatever the hosts after it are.
+func (s *SandboxGrantsSuite) TestTheBrokerIsHandedTheTokenForTheGrantsFirstHost() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	schemes := map[string]core.Scheme{"crm": hostBearer{Scheme: bearer.New()}}
+
+	for hosts, asked := range map[string]string{"api.crm.example,*.crm.example": "api.crm.example",
+		"*.crm.example,api.crm.example": "crm.example"} {
+		grant := box.(sandbox.Granted).Grants()[0]
+		grant.Hosts = strings.Split(hosts, ",")
+
+		token, err := s.manager.sandboxTokens(schemes)(s.ctx, grant)
+
+		s.Require().NoError(err, hosts)
+		s.Equal(asked, token.Value, hosts)
+	}
+}
+
+// hostBearer is a scheme that sends the host a request is for as its bearer token.
+type hostBearer struct{ core.Scheme }
+
+func (hostBearer) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return roundTripper(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.Header.Set("Authorization", "Bearer "+r.URL.Host)
+		return base.RoundTrip(r)
+	})
+}
+
 // TestAConnectionThatNeedsAReconnectGivesNoCredential: the broker withdraws its secret.
 func (s *SandboxGrantsSuite) TestAConnectionThatNeedsAReconnectGivesNoCredential() {
 	s.sandboxRevision()
