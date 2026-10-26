@@ -3778,25 +3778,6 @@ func (s *AgentSuite) TestAVerificationRefusedOnceIsNotSentTheSameValuesAgain() {
 	s.False(again, "a call that could not be made may be tried again")
 }
 
-func (s *AgentSuite) TestASentenceAboutTheCallerIsNotSaidToThem() {
-	s.True(narrates("The caller said yes after I offered two times."))
-	s.True(narrates("The caller is listening, not reading: tell them the part that answers them."))
-	s.True(narrates("[respond] The user wants a table."))
-	s.False(narrates("The callback number I have is 512 555 0142."))
-	s.False(narrates("Your table is booked."))
-}
-
-func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
-	for said, heard := range map[string]string{
-		"One moment, checking... I've checked the outage map and there are no outages.": "One moment, checking...",
-		"You're all set for Saturday.":                     "",
-		"Let me look. Your table is ready, you're booked.": "Let me look.",
-		"I can help with that. What time would you like?":  "I can help with that. What time would you like?",
-	} {
-		s.Equal(heard, unsaid(said), said)
-	}
-}
-
 func (s *AgentSuite) TestALookupBacksALookButNotAChange() {
 	looked := []llm.Message{
 		{Role: llm.User, Content: "move my appointment to Tuesday"},
@@ -3827,16 +3808,6 @@ func (s *AgentSuite) TestAClaimThatNamesWhatAToolMakesTakesThatTool() {
 		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"id":"T-1842"}`})
 	s.True(backsClaim(ticketed, "I opened a ticket for you.", tools))
 	s.False(backsClaim(ticketed, "Your technician is dispatched for the morning window.", tools))
-}
-
-func (s *AgentSuite) TestWhatFollowsAPromisedStepIsCutFromWhatTheCallerHeard() {
-	said := "Let me verify your account information. I have your PIN as 4471. Is that correct?"
-	s.Equal("Let me verify your account information.", heardOf(said, "[short pause] I have your PIN as 4471."))
-	s.Equal("Let me look.", heardOf("Let me look. Your table is ready, you're booked.", ""))
-	s.True(promisesStep("Let me verify your account information."))
-	s.True(promisesStep("One moment."))
-	s.False(promisesStep("What time would you like?"))
-	s.True(directionTags.MatchString("[checks outage map] I don't see any outages."))
 }
 
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {

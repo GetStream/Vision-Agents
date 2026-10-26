@@ -463,9 +463,6 @@ type Agent struct {
 	// chaseForced is set once a chase that still called nothing has been chased again with
 	// the call required, since the caller last spoke.
 	chaseForced bool
-	// narrationAsked is set once a reply that only talked about the caller has been asked
-	// again, since the caller last spoke.
-	narrationAsked bool
 	// forcedChase is the chase that was made to call a tool, and forcedNote what it was
 	// told, so a forced chase that produced nothing can be asked again without forcing.
 	forcedChase string
@@ -543,21 +540,6 @@ type Agent struct {
 	// openTurn is the turn a streaming voice has an utterance open for, so a turn's
 	// sentences are one billed utterance rather than one each.
 	openTurn string
-	// withheld says a sentence of this reply claimed something was done with no tool
-	// behind it, so it and everything after it went unsaid. Only the model consumer
-	// touches it.
-	withheld bool
-	// withheldFrom is the sentence the withholding began at, for cutting the history at
-	// what the caller heard.
-	withheldFrom string
-	// narrated says a sentence of this reply spoke of the caller rather than to them, so it
-	// and everything after it went unsaid without the chase a withheld claim gets.
-	narrated bool
-	// promised says a sentence of this reply, said before any tool answered, told the caller
-	// a step was under way. A direction the model writes after it ([short pause], [checks
-	// outage map]) is the wait acted out, and what follows it a guess at the step's result.
-	// Only the model consumer touches it.
-	promised bool
 
 	// following serialises the turns the agent takes of its own accord, so two answers
 	// landing together cannot both decide the agent is free to speak.
@@ -2005,7 +1987,6 @@ func (a *Agent) respondTurn(
 	a.toolRounds = 0
 	a.promiseChased = false
 	a.chaseForced = false
-	a.narrationAsked = false
 	a.callerTurns++
 	a.toolReply = false
 	a.asked = asked
@@ -2626,124 +2607,16 @@ func (a *Agent) say(turnID, delta string) {
 	}
 
 	for _, sentence := range a.sentencesOf(speech) {
-		if a.withhold(sentence.text) {
-			continue
-		}
 		if err := a.speakSentence(turnID, sentence.text, a.inMessage(sentence)); err != nil {
 			a.fail(err, "tts")
 		}
 	}
 }
 
-// withhold reports whether a sentence is kept from the caller because it, or one before it
-// in this reply, claims something was done that no tool has done since the caller spoke.
-// Gemma wrote "One moment, checking... I've checked the outage map and there are no
-// outages" in one breath; chased afterwards, the caller had already heard the invented
-// result. Unsaid, the chase that follows makes the call and the result answers instead.
-//
-// Qwen wrote "Let me look up your appointments. [short pause] I see you have one on
-// Thursday": once a step is promised, a direction and everything after it is held back
-// the same way, and the chase makes the call the promise was for.
-func (a *Agent) withhold(sentence string) bool {
-	if a.withheld || a.narrated {
-		return true
-	}
-	if narrates(sentence) {
-		a.narrated = true
-		a.withheldFrom = sentence
-		a.logger.Debug("holding back a reply that talks about the caller", "sentence", sentence)
-		return true
-	}
-	if len(a.availableTools().Tools) == 0 || a.delegating() {
-		return false
-	}
-	pause := a.promised && directionTags.MatchString(sentence)
-	if !pause && !claimsDone(sentence) && !promisesStep(sentence) {
-		return false
-	}
-	a.mu.Lock()
-	backed := backsClaim(a.history, sentence, toolNames(a.availableTools()))
-	ran := toolRanSinceCaller(a.history)
-	a.mu.Unlock()
-	if claimsDone(sentence) && backed || !claimsDone(sentence) && ran {
-		return false
-	}
-	if pause || claimsDone(sentence) {
-		a.withheld = true
-		a.withheldFrom = sentence
-		a.logger.Debug("holding back what no tool has made true", "sentence", sentence)
-		return true
-	}
-	a.promised = true
-	return false
-}
-
-// narrates reports whether a sentence speaks of the caller in the third person, which a
-// reply to them never does. Nemotron wrote its reasoning into the reply ("The caller said
-// yes after I offered two times. This is ambiguous.") and once read out the system's note
-// to it ("The caller is listening, not reading: …").
-func narrates(sentence string) bool {
-	lower := strings.TrimSpace(spokenLower(directionTags.ReplaceAllString(sentence, "")))
-	return slices.ContainsFunc(narrations, func(opening string) bool { return strings.HasPrefix(lower, opening) })
-}
-
-var narrations = []string{"the caller ", "the caller's ", "the user ", "the user's ", "caller said", "user said"}
-
 // spokenLower lowercases a reply for matching with straight apostrophes: Qwen writes
 // "I’ll reschedule".
 func spokenLower(said string) string {
 	return strings.ReplaceAll(strings.ToLower(said), "’", "'")
-}
-
-// promisesStep reports whether a sentence tells the caller a lookup is under way.
-func promisesStep(sentence string) bool {
-	lower := spokenLower(sentence)
-	return slices.ContainsFunc(holdWords, func(hold string) bool { return strings.Contains(lower, hold) }) ||
-		slices.ContainsFunc(actionPromises, func(promise string) bool { return strings.Contains(lower, promise) }) ||
-		slices.ContainsFunc(stepWords, func(step string) bool { return strings.Contains(lower, step) })
-}
-
-// stepWords are what a sentence starting a step says beyond asking the caller to wait.
-var stepWords = []string{
-	"let me verify", "let me confirm your", "let me pull", "let me find", "i'll check",
-	"i will check", "i'll look", "i'll verify", "i'll pull",
-}
-
-// heardOf cuts a reply's text where withholding began, so the history holds what the
-// caller heard.
-func heardOf(said, from string) string {
-	if from != "" {
-		plain := strings.TrimSpace(directionTags.ReplaceAllString(from, ""))
-		if i := strings.Index(said, plain); plain != "" && i >= 0 {
-			return strings.TrimSpace(said[:i])
-		}
-	}
-	return unsaid(said)
-}
-
-var directionTags = regexp.MustCompile(`\[[^\]]*\]`)
-
-// unsaid cuts a reply's text where a withheld claim begins, so the history holds what the
-// caller heard.
-func unsaid(said string) string {
-	lower := spokenLower(said)
-	cut := len(said)
-	for _, claim := range doneClaims {
-		if i := strings.Index(lower, claim); i >= 0 && i < cut {
-			cut = i
-		}
-	}
-	if at := doneClaim.FindStringIndex(lower); at != nil && at[0] < cut {
-		cut = at[0]
-	}
-	if cut == len(said) {
-		return said
-	}
-	start := strings.LastIndexAny(said[:cut], ".!?…")
-	if start < 0 {
-		return ""
-	}
-	return strings.TrimSpace(said[:start+1])
 }
 
 // finish closes out a reply the caller heard.
@@ -2776,15 +2649,12 @@ func (a *Agent) finish(response llm.Response) {
 		}
 	} else {
 		for _, sentence := range a.sentencesOf(tail) {
-			if a.withhold(sentence.text) {
-				continue
-			}
 			if err := a.speakSentence(response.ID, sentence.text, a.inMessage(sentence)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
 		// Whatever did not end in punctuation is still worth saying.
-		if remainder := a.chunk.Flush(); remainder.text != "" && !a.withhold(remainder.text) {
+		if remainder := a.chunk.Flush(); remainder.text != "" {
 			if err := a.speakSentence(response.ID, remainder.text, a.inMessage(remainder)); err != nil {
 				a.fail(err, "tts")
 			}
@@ -2819,10 +2689,6 @@ func (a *Agent) finish(response llm.Response) {
 	// what tells the tracker when the turn has finished being spoken.
 	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
 	said := strings.TrimSpace(a.spoken.String())
-	withheld, narrated := a.withheld, a.narrated
-	if withheld || narrated {
-		said = heardOf(said, a.withheldFrom)
-	}
 	a.resetTurn()
 
 	a.mu.Lock()
@@ -2906,39 +2772,24 @@ func (a *Agent) finish(response llm.Response) {
 		a.mu.Unlock()
 		a.keepPromise(response.ID, forcedNote, false)
 	}
-	if narrated && said == "" && len(calls) == 0 && !forced {
-		// Nemotron met "Yes, please go ahead" with its reasoning and the caller was left
-		// with nothing. A reply nobody heard is asked again whatever was chased before it,
-		// once per caller turn.
-		a.mu.Lock()
-		again := !a.narrationAsked
-		if again {
-			a.narrationAsked, a.promiseChased = true, false
-		}
-		a.mu.Unlock()
-		if again {
-			a.keepPromise(response.ID, speakToTheCaller, false)
-		}
-	}
 	// Work handed to the subagent is the promise being kept, and asking again supersedes it.
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
 		len(a.availableTools().Tools) > 0 {
 		backed := backsClaim(history, said, toolNames(a.availableTools()))
-		owes := withheld || owesACall(said, backed)
-		if owes && strings.HasPrefix(response.ID, toolPrefix) {
+		again := false
+		if owesACall(said, backed) && strings.HasPrefix(response.ID, toolPrefix) {
 			// Qwen met the chase with "Let me check for any outages. One moment, please."
 			// and no call, twice over: a chase that still promises is asked once more, with
 			// the call required.
 			a.mu.Lock()
-			again := a.promiseChased && !a.chaseForced && !changedSinceCaller(history, anyTool)
+			again = a.promiseChased && !a.chaseForced && !changedSinceCaller(history, anyTool)
 			if again {
 				a.promiseChased, a.chaseForced = false, true
 			}
 			a.mu.Unlock()
-			withheld = withheld || again
 		}
 		switch {
-		case withheld:
+		case again:
 			a.keepPromise(response.ID, keepPromise, true)
 		case owesACall(said, backed):
 			// A hold phrase can come before the caller has given what the call needs, and
@@ -3040,10 +2891,6 @@ const keepPromise = "You just told the caller you were checking, or that somethi
 // actOnGoAhead is the note a reply that met a go-ahead with no call is chased up with.
 const actOnGoAhead = "The caller just told you to go ahead. Call the tool that does what they " +
 	"agreed to now, with what you have, without asking for anything optional first."
-
-// speakToTheCaller is the note a reply that only talked about the caller is asked again with.
-const speakToTheCaller = "Your last reply described the caller instead of speaking to them, and " +
-	"they heard none of it. Answer them now, speaking to them directly."
 
 // doneBeforeGoAhead reports whether the agent's last words before the caller's told them
 // the work was done.
@@ -3817,10 +3664,6 @@ func (a *Agent) resetTurn() {
 	a.spoken.Reset()
 	a.sentences = 0
 	a.openTurn = ""
-	a.withheld = false
-	a.withheldFrom = ""
-	a.narrated = false
-	a.promised = false
 	a.mu.Lock()
 	a.saying = ""
 	a.mu.Unlock()

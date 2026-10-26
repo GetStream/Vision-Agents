@@ -518,15 +518,6 @@ func (s *AgentSuite) TestADirectionTheVoiceCannotActIsTakenOutOfTheMessageAndWha
 	s.ElementsMatch([]string{"That is a good one."}, slices.Collect(maps.Values(from)))
 }
 
-func (s *AgentSuite) TestASentenceHeldBackIsInNoUtteranceAndOutOfTheMessage() {
-	message, reported := s.repliedWith(false, "Sure, I can help with that. ", "The caller wants a refund.")
-
-	from := s.spokenFrom(message, reported)
-
-	s.Equal("Sure, I can help with that.", message)
-	s.ElementsMatch([]string{"Sure, I can help with that."}, slices.Collect(maps.Values(from)))
-}
-
 func (s *AgentSuite) TestBlankSpaceBeforeAReplyIsNotInItsMessage() {
 	message, reported := s.repliedWith(false, "\n ", "Hello there. ", "How are you?")
 
