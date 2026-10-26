@@ -832,8 +832,9 @@ func (m *manager) setBroken(running *task, broken string) {
 	m.mu.Unlock()
 }
 
-// HandBack says what a run of code did in words the model can read, and publishes the files
-// it returned where the person can see them, returning the ones that were. A nil publish
+// HandBack says what a run of code did in words the model can read, with how to connect what
+// the run had no token for, and publishes the files it returned where the person can see
+// them, returning the ones that were. A nil publish
 // means the conversation has nowhere to show a file.
 func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Result, logger *slog.Logger) (string, []sandbox.Attachment) {
 	var said string
@@ -876,6 +877,13 @@ func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Res
 	}
 	if len(result.Missing) > 0 {
 		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
+	}
+	for _, binding := range result.Unconnected {
+		said += fmt.Sprintf("\n\n%s is not connected for this user: call %s__list_tools to let them connect it, then run "+
+			"the code again; if you cannot call it, tell the user they must connect %s.", binding, binding, binding)
+	}
+	for _, binding := range result.Connected {
+		said += fmt.Sprintf("\n\n%s was just connected: if this run got 401, wait 20 seconds and run the code again.", binding)
 	}
 	return said, published
 }

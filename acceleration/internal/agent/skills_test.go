@@ -236,6 +236,21 @@ func (s *AgentSuite) TestFilesAWrittenConversationsCodeHandsBackRideOnTheToolRes
 	s.Contains(ran.Result, "attached to the reply the person sees: quote.png")
 }
 
+// TestAWrittenConversationsCodeRunWithoutTheUsersConnectionSaysHowToConnect: the model is
+// told in run_code's own result, which it reads more surely than the tool's description.
+func (s *AgentSuite) TestAWrittenConversationsCodeRunWithoutTheUsersConnectionSaysHowToConnect() {
+	s.box = &codeBox{result: sandbox.Result{Output: "status: 401\n", Unconnected: []string{"github", "linear"}}}
+	s.joinText()
+
+	ran := s.runsTool(runCodeCall("run-1", "print(issues())"), 1)
+
+	s.Require().NoError(ran.Err)
+	s.Equal("status: 401\n\n\ngithub is not connected for this user: call github__list_tools to let them connect it, then "+
+		"run the code again; if you cannot call it, tell the user they must connect github.\n\nlinear is not connected for "+
+		"this user: call linear__list_tools to let them connect it, then run the code again; if you cannot call it, tell "+
+		"the user they must connect linear.", ran.Result)
+}
+
 func (s *AgentSuite) TestAWrittenConversationWithoutASandboxRunsNoCode() {
 	s.skills = quoteSkills()
 	s.joinText()
