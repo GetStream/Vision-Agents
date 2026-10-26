@@ -498,15 +498,6 @@ func (s *AgentSuite) TestEachSentenceIsSaidFromWhereItIsInTheReplysMessage() {
 	}
 }
 
-func (s *AgentSuite) TestDigitsTheVoiceIsToldTheCountOfAreSaidFromTheMessagesOwnWords() {
-	message, reported := s.repliedWith(false, "Your card ends in last four 1234. ", "Is that right?")
-
-	from := s.spokenFrom(message, reported)
-
-	s.Contains(slices.Collect(maps.Values(sentTo(s.voice.spoken()))), "Your card ends in last four digits, 1234.")
-	s.ElementsMatch([]string{"Your card ends in last four 1234.", " Is that right?"}, slices.Collect(maps.Values(from)))
-}
-
 func (s *AgentSuite) TestADirectionTheVoiceActsIsNotCountedInTheMessage() {
 	s.performing = "You may write stage directions in square brackets."
 	message, reported := s.repliedWith(false, "[laughs] That ", "is a good one. Sure thing [sighs] that ", "works for me.")
@@ -525,15 +516,6 @@ func (s *AgentSuite) TestADirectionTheVoiceCannotActIsTakenOutOfTheMessageAndWha
 
 	s.Equal("That is a good one.", message)
 	s.ElementsMatch([]string{"That is a good one."}, slices.Collect(maps.Values(from)))
-}
-
-func (s *AgentSuite) TestASentenceHeldBackIsInNoUtteranceAndOutOfTheMessage() {
-	message, reported := s.repliedWith(false, "Sure, I can help with that. ", "The caller wants a refund.")
-
-	from := s.spokenFrom(message, reported)
-
-	s.Equal("Sure, I can help with that.", message)
-	s.ElementsMatch([]string{"Sure, I can help with that."}, slices.Collect(maps.Values(from)))
 }
 
 func (s *AgentSuite) TestBlankSpaceBeforeAReplyIsNotInItsMessage() {

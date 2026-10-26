@@ -233,6 +233,14 @@ type Spec struct {
 	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
 	// answers the first call to each with its full description instead of running it.
 	ProgressiveTools bool
+	// ToolOutputRetention is how long the turns this session records keep what its tools
+	// were given and gave back: options.RetentionNone for not at all, a duration, or empty
+	// for as long as the session. From the agent's config, and the manager shortens it to
+	// the app's and the organization's policies when the session is created.
+	ToolOutputRetention options.Retention
+	// ResumeHistory is how a conversation the session carries on is handed back to the
+	// model: the session request's, else the agent config's. Zero is the router's default.
+	ResumeHistory store.ResumeHistory
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
 	Scheduling store.AgentScheduling
@@ -378,8 +386,11 @@ func FromConfig(config store.AgentConfig) Spec {
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
 		ProgressiveTools:   config.ProgressiveTools,
+		ResumeHistory:      config.ResumeHistory,
 		Scheduling:         config.Scheduling,
 		Tags:               routing.Tags(config.Tags),
+		// The config's alone until Manager.Create holds it to the policies.
+		ToolOutputRetention: config.ToolOutputRetention,
 	}
 }
 

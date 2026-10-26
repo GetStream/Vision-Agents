@@ -106,8 +106,8 @@ talking over the agent:
 
 ```go
 func(ctx context.Context, args RebookFlight) (any, error) {
-    call := tools.CallFrom(ctx)
-    call.Update(ctx, "Checking seats on the new flight")
+    toolCallContext := tools.CallFrom(ctx)
+    toolCallContext.Update(ctx, "Checking seats on the new flight")
 
     // Read only: the caller interrupting cancels ctx, and nothing has changed.
     seat, err := airline.HoldSeat(ctx, args.NewFlightID)
@@ -115,19 +115,19 @@ func(ctx context.Context, args RebookFlight) (any, error) {
         return nil, err
     }
 
-    // From here on, the caller interrupting no longer cancels the call.
-    ctx = call.DisallowInterruptions(ctx)
-    call.Say(ctx, "Got a seat, moving your booking now.")
-    return airline.Rebook(ctx, args.BookingID, seat, call.ID)
+    // From here on, the caller interrupting no longer cancels the toolCallContext.
+    ctx = toolCallContext.DisallowInterruptions(ctx)
+    toolCallContext.Say(ctx, "Got a seat, moving your booking now.")
+    return airline.Rebook(ctx, args.BookingID, seat, toolCallContext.ID)
 }
 ```
 
-`call.Update` hands the agent a status, which it tells a voice caller in its own words once
-nobody is talking, and which a conversation shows on the call's step. `call.Say` has it say
-the words as written, or post them in text; a speech-to-speech model may paraphrase them.
-`DisallowInterruptions` returns a context only the call's timeout and the socket ending cancel.
-When the call was already stopped, that context comes back cancelled, so the write never starts.
-Outside a call, all three do nothing.
+`toolCallContext.Update` hands the agent a status, which it tells a voice caller in its own
+words once nobody is talking, and which a conversation shows on the call's step.
+`toolCallContext.Say` has it say the words as written, or post them in text; a speech-to-speech
+model may paraphrase them. `DisallowInterruptions` returns a context only the call's timeout and
+the socket ending cancel. When the call was already stopped, that context comes back cancelled,
+so the write never starts. Outside a call, all three do nothing.
 
 Struct tags describe arguments beyond `schema`: `enum:"economy,business"`, `minimum:"1"`,
 `maximum:"9"`, `pattern`, `format` and `example`. A type that describes itself implements
@@ -166,6 +166,26 @@ if err := items.Err(); err != nil {
 finished, because a model takes seconds. `Items` is what the backend wrote down, so it reads
 the same during the conversation and a week after it ended; `session.Events()` is still the
 live view, and the two answer different questions.
+
+A text session's events survive the router restarting. When its socket drops, the SDK opens it
+again, waiting longer between attempts for up to five minutes, and the router sends what it
+missed. `Events()` stays open across it and carries a `resumed` event saying how it went:
+
+```go
+for event := range session.Events() {
+    if event.Kind == "resumed" && !event.Resumed.Complete {
+        // Some of what was said while the socket was away is gone: read it back from
+        // session.Responses.Items. A question the router stopped on its way down is
+        // interrupted and never answered, so ask it again.
+        if command := event.Resumed.Command; command != nil && command.State == "interrupted" {
+            session.Responses.Create(ctx, question)
+        }
+    }
+}
+```
+
+`Command` is the last question `Responses.Create` asked. A call's events are not reconnected:
+the call ends with the router holding it, and `Events()` closes as before.
 
 Old conversations are listed most recently updated first, or found by phrase, best match
 first:

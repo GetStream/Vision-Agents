@@ -155,16 +155,18 @@ to its database (migrations, and the router's own background work).
    - Inbound (person calls the router number): the router number must be attached, and no other
      number of the customer may be. No other dispatch worker of the customer may be connected;
      ask. phonecheck refuses a `sip_trunk` number.
-   - Outbound (the router number calls the person): use an unattached router number. A call
-     placed from an attached number fails while the number's own trunk holds it.
+   - Outbound (the router number calls the person): on Twilio, Telnyx and `sip_trunk`, an
+     attached number may place calls. On Vonage, Plivo, Bird, Sinch and Bandwidth, use an
+     unattached router number: a call placed from an attached number fails while the number's
+     own trunk holds it.
    - A number the skill buys can do outbound first, then be attached for inbound. There is no
      detach: a second bought number for inbound needs the first one released mid-run. That
      release goes in the Approve summary.
    - `sip_trunk` numbers are not bought here. Use an existing one.
 6. **Numbers.** Existing (default) or buy new, per side.
    - Existing router numbers: from the chosen customer's list (step 4). An existing number used
-     for inbound must already be attached and be the only attached one; used for outbound it
-     must be unattached. If not, show it and stop. Never attach or release it.
+     for inbound must already be attached and be the only attached one; used for outbound on
+     Vonage, Plivo, Bird, Sinch or Bandwidth it must be unattached. If not, show it and stop. Never attach or release it.
    - The person number must not be in that list.
    - New router number: search (see the table).
    - New person number: Twilio

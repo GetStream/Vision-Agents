@@ -261,7 +261,9 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		body.McpServers = &servers
 	}
 	if settings.Tools != nil {
-		body.Tools = &acceleration.AgentTools{Progressive: settings.Tools.Progressive}
+		body.Tools = &acceleration.AgentTools{
+			Progressive: settings.Tools.Progressive, OutputRetention: settings.Tools.OutputRetention,
+		}
 	}
 	if settings.Channels != nil {
 		declared := acceleration.AgentChannels{

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -136,7 +138,10 @@ func redactionOf(request *http.Request, credential AccessCredential) redaction {
 	return redactionFrom(found)
 }
 
-// redactionFrom is the redaction of each of found longer than a byte, in order.
+// redactionFrom is the redaction of each of found longer than a byte, in order, each as it is
+// and URL-escaped: a token request's form body is urlencoded (url.Values.Encode, QueryEscape),
+// and its basic auth carries the client secret QueryEscaped (RFC 6749 section 2.3.1), so a
+// provider may echo either form.
 func redactionFrom(found []string) redaction {
 	var r redaction
 	for _, s := range found {
@@ -144,6 +149,11 @@ func redactionFrom(found []string) redaction {
 		// out of the body, and a byte alone names nothing.
 		if len(s) > 1 {
 			r = append(r, s)
+			for _, escaped := range []string{url.QueryEscape(s), url.PathEscape(s)} {
+				if !slices.Contains(r, escaped) {
+					r = append(r, escaped)
+				}
+			}
 		}
 	}
 	return r

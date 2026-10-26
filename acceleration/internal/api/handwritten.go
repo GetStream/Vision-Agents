@@ -53,7 +53,7 @@ func documentHandWritten(api huma.API) {
 			"`decision`, `delegated`, `task_settled` (files " +
 			"lists what the work's code handed back, each a name, mime_type, url and size, uploaded " +
 			"to a persistent conversation's channel and attached to the reply), " +
-			"`task_cancelled`, `tool_call`, `tool_held`, `tool_updated`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
+			"`task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
 			"`backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and " +
 			"message_end, the utterance being heard when it was cut, how many milliseconds of it had been, " +
 			"and where all it had been sent is in the reply's message, when any of it had), " +
@@ -185,20 +185,47 @@ func documentHandWritten(api huma.API) {
 			"the session's user, and the router sends it only once they allow it: `tool_approval` " +
 			"with its `tool_call_id`, the `request_id` of the command it answers and `allowed`, from " +
 			"that user or their backend, `turn_id` left out or not. Declined, or not answered in 10 " +
-			"minutes, it is not sent and the model is told so. It needs no `tool_result`.\n" +
+			"minutes, it is not sent and the model is told so. It needs no `tool_result`. " +
+			"A `tool_approval` no call waits for (answered already, stopped, or naming another " +
+			"`request_id` or `turn_id`) is answered with `tool_approval_ignored`: the " +
+			"`tool_call_id`, `request_id` and `turn_id` it was sent with, each left out when it was, " +
+			"and `reason`, a sentence saying why; the socket stays open. Every watcher is sent it. " +
+			"The call of a durable command answered with its `request_id` and no `turn_id` is " +
+			"answered so too, its `reason` naming the missing `turn_id`. A call outside a durable " +
+			"command waits for its `tool_result`, so an approval sent before it without a " +
+			"`request_id` gets no answer.\n" +
 			"`tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. " +
 			"An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally " +
 			"with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.\n" +
 			"`respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the " +
 			"conversation receives the question and later the findings, without raw images. Video " +
 			"capture uses task-correlated `get_video_frames` tool requests and `tool_result` " +
-			"replies. Frames are never attached automatically to conversational turns.",
+			"replies. Frames are never attached automatically to conversational turns.\n" +
+			"A watcher that may lose its connection, such as to the router restarting, asks for a " +
+			"resumable socket with `resumable=true`. Its first frame is `resumed`, and every frame " +
+			"after it except `hearing` carries a `cursor`. To reconnect, open the socket again with " +
+			"the same credentials and `cursor` set to the last one received: the frames sent after " +
+			"it are sent again, then the live ones. A session keeps its last 256 frames for this, " +
+			"for as long as it is held: a persistent text session until 5 minutes after its last " +
+			"watcher left, a call until it ends. `resumed` carries `cursor`, where the stream now " +
+			"carries on from, and `complete`, false when some frames after the cursor asked from " +
+			"are gone, because the router restarted, the conversation was reopened, or the watcher " +
+			"missed more than 256: read what was missed back from the conversation then. " +
+			"`request_id` names a command the watcher was waiting on, and `resumed.command` is its " +
+			"receipt. A command whose reply the router stopped on its way down is `interrupted`: " +
+			"it is never run again, so a client that still wants the answer asks once more under a " +
+			"new request id. A session the router stopped on its way down closes a resumable socket " +
+			"with 1012 (service restart) rather than 1000, which is the cue to reconnect. A socket " +
+			"that does not ask to resume is sent the frames and the close it always was.",
 		Parameters: []*huma.Param{
 			{Name: "id", In: "path", Description: "The session, as returned when it was created.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "interim", In: "query", Description: "Also send `hearing` frames, which are the words as they are revised.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
 			{Name: "decisions", In: "query", Description: "Send `decision` frames.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: true}},
 			{Name: "replay_pending_tools", In: "query", Description: "Replay pending live voice tool requests to a durable tool host.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
 			{Name: "tools", In: "query", Description: "The session's tools this watcher runs, separated by commas; empty for none. Left out, it runs the session's tools when it is on the side that created the session.", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "resumable", In: "query", Description: "Send `resumed` first and a `cursor` on every frame after it, so the socket can be resumed.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
+			{Name: "cursor", In: "query", Description: "Resume after this frame's `cursor`, sending again what came after it. Implies `resumable`.", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "request_id", In: "query", Description: "A command to report the receipt of in `resumed`, for a watcher that was waiting on it.", Schema: &huma.Schema{Type: huma.TypeString}},
 		},
 		Responses: map[string]*huma.Response{
 			"101": {Description: "The socket is open"},

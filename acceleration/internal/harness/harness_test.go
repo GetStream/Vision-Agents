@@ -451,9 +451,9 @@ func (s *HarnessSuite) TestTheModelIsToldWhatItMayHandOver() {
 	s.Contains(instructions, "<ask skill=", "and how to ask for it")
 }
 
-func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnDoesNot() {
+func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnKeepsTheDefault() {
 	s.build(false)
-	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}}
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}, DefaultEffort: "medium"}
 
 	s.respond("turn-1", "a table for four at 7:30")
 	s.answer(Turn{
@@ -463,9 +463,47 @@ func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnDoesNot() {
 	})
 
 	s.Require().Len(s.fast.requests(), 2)
-	s.Empty(s.fast.requests()[0].Reasoning.Effort, "the caller is waiting on every word")
+	s.Empty(s.fast.requests()[0].Reasoning.Effort, "a model that thinks by default is left to it")
 	s.Equal("low", s.fast.requests()[1].Reasoning.Effort,
 		"at none the model asks to book a free table instead of booking it")
+}
+
+func (s *HarnessSuite) TestACallerTurnThinksALittleWhenTheModelWouldNotThinkAtAll() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}, DefaultEffort: "none"}
+
+	s.respond("turn-1", "Does Michael tell the truth?")
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Equal("low", s.fast.requests()[0].Reasoning.Effort,
+		"at none the model commits to an answer in its first word")
+}
+
+func (s *HarnessSuite) TestACallerTurnOnAModelWithoutLowEffortNamesNone() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "high"}, DefaultEffort: "none"}
+
+	s.respond("turn-1", "hello")
+	s.fast.capabilities = llm.Capabilities{}
+	s.respond("turn-2", "hello again")
+
+	s.Require().Len(s.fast.requests(), 2)
+	s.Empty(s.fast.requests()[0].Reasoning.Effort, "no effort it does not accept")
+	s.Empty(s.fast.requests()[1].Reasoning.Effort, "and none for a model that does not reason")
+}
+
+func (s *HarnessSuite) TestWhatATurnAskedForWinsOverTheCallerTurnFloor() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "high"}, DefaultEffort: "none"}
+
+	s.answer(Turn{
+		ID:      "turn-1",
+		History: []llm.Message{{Role: llm.User, Content: "hello"}},
+		Asked:   llmoptions.LLM{ReasoningEffort: "none"},
+	})
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Equal("none", s.fast.requests()[0].Reasoning.Effort)
 }
 
 func (s *HarnessSuite) TestWhatATurnAskedForWinsOverWhatTheHarnessWouldChoose() {
@@ -707,7 +745,7 @@ func (s *HarnessSuite) TestASkillOfferedByNameIsReadAsItIsWhenItIsUsed() {
 	mu.Lock()
 	stored = "refund within 14 days"
 	mu.Unlock()
-	_, err := s.harness.Delegate("refund", "bought 20 days ago", "turn-2", nil, nil)
+	_, err := s.harness.Delegate(s.ctx, "refund", "bought 20 days ago", "turn-2", nil, nil)
 	s.Require().NoError(err)
 	s.eventually(func() bool { return len(s.slow.requests()) == 2 }, "the subagent was never asked again")
 	s.Equal("refund: refund within 14 days", s.slow.requests()[1].Instructions)
@@ -723,7 +761,7 @@ func (s *HarnessSuite) TestASkillThatCannotBeReadFailsRatherThanRunningWithoutIn
 	s.build(true)
 	s.respond("turn-1", "can I get my money back")
 
-	_, err := s.harness.Delegate("refund", "bought 20 days ago", "turn-1", nil, nil)
+	_, err := s.harness.Delegate(s.ctx, "refund", "bought 20 days ago", "turn-1", nil, nil)
 	s.Require().NoError(err)
 
 	settled := s.awaitSettled(1)[0]
@@ -735,7 +773,7 @@ func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
 	s.build(true)
 	s.respond("turn-1", "what is in this picture")
 	picture := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}}
-	_, err := s.harness.Delegate("think", "what is in this picture", "turn-1",
+	_, err := s.harness.Delegate(s.ctx, "think", "what is in this picture", "turn-1",
 		[]llm.ContentPart{{Image: &picture}}, nil)
 	s.Require().NoError(err)
 
@@ -778,7 +816,7 @@ func (s *HarnessSuite) TestAColleagueIsHandedTheConversationWithoutAReplysImages
 		Images:       []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}}},
 	})
 
-	_, err := s.harness.Delegate("think", "work out what the caller should do", "turn-1", nil, nil)
+	_, err := s.harness.Delegate(s.ctx, "think", "work out what the caller should do", "turn-1", nil, nil)
 	s.Require().NoError(err)
 
 	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
@@ -1228,9 +1266,9 @@ func (s *HarnessSuite) TestARevisedConversationDiscardsACompletedClarificationFr
 
 func (s *HarnessSuite) TestCancellingOneTurnPreservesAnotherTurnsCompletedWork() {
 	s.build(true)
-	first, err := s.harness.Delegate("think", "work out the discount", "turn-1", nil, nil)
+	first, err := s.harness.Delegate(s.ctx, "think", "work out the discount", "turn-1", nil, nil)
 	s.Require().NoError(err)
-	second, err := s.harness.Delegate("recall", "remember the delivery address", "turn-2", nil, nil)
+	second, err := s.harness.Delegate(s.ctx, "recall", "remember the delivery address", "turn-2", nil, nil)
 	s.Require().NoError(err)
 	s.eventually(func() bool { return len(s.slow.requests()) == 2 }, "both tasks must start")
 	s.slow.settle(first, "NEED: What percentage should I use?")
@@ -1263,9 +1301,9 @@ func (s *HarnessSuite) TestACompletedResultQueuedBeforeCancellationIsDiscarded()
 		s.NoError(h.Close())
 		<-events.done
 	})
-	first, err := h.Delegate("recall", "remember the delivery address", "turn-1", nil, nil)
+	first, err := h.Delegate(s.ctx, "recall", "remember the delivery address", "turn-1", nil, nil)
 	s.Require().NoError(err)
-	second, err := h.Delegate("think", "work out the discount", "turn-2", nil, nil)
+	second, err := h.Delegate(s.ctx, "think", "work out the discount", "turn-2", nil, nil)
 	s.Require().NoError(err)
 	<-h.Events()
 	<-h.Events()
@@ -1773,7 +1811,7 @@ func (s *HarnessSuite) TestOpeningTheSubagentDoesNotBlockDelegationOrSpeech() {
 	events := collect(h)
 	defer func() { s.NoError(h.Close()); <-events.done }()
 	accepted := make(chan error, 1)
-	go func() { _, err := h.Delegate("vision", "look", "turn-1", nil, nil); accepted <- err }()
+	go func() { _, err := h.Delegate(s.ctx, "vision", "look", "turn-1", nil, nil); accepted <- err }()
 	select {
 	case err := <-accepted:
 		s.Require().NoError(err)
@@ -1795,7 +1833,10 @@ func (s *HarnessSuite) TestSlowProviderHeadersDoNotBlockTaskAcceptance() {
 	m := newManager(s.session(provider), 2, nil, llmoptions.LLM{}, slog.New(slog.DiscardHandler))
 	defer m.Close()
 	accepted := make(chan string, 1)
-	go func() { id, _ := m.Create(testSkills().Skills[0], "question", nil, "turn", false); accepted <- id }()
+	go func() {
+		id, _ := m.Create(s.ctx, testSkills().Skills[0], "question", nil, "turn", false)
+		accepted <- id
+	}()
 	var id string
 	select {
 	case id = <-accepted:
@@ -1811,40 +1852,4 @@ func (s *HarnessSuite) TestSlowProviderHeadersDoNotBlockTaskAcceptance() {
 	case <-time.After(time.Second):
 		s.T().Fatal("cancellation did not stop provider startup")
 	}
-}
-
-func (s *HarnessSuite) TestATurnThatMustCallOneToolIsOfferedThatToolAlone() {
-	s.tools = testTools()
-	s.build(false)
-	only := s.tools.Tools[1].Name
-
-	s.answer(Turn{
-		ID:        "tool-1",
-		History:   []llm.Message{{Role: llm.User, Content: "the reboot did not help"}},
-		AfterTool: true,
-		MustCall:  true,
-		OnlyTool:  only,
-	})
-
-	s.Require().Len(s.fast.requests(), 1)
-	offered := s.fast.requests()[0].Tools
-	s.Require().Len(offered, 1)
-	s.Equal(only, offered[0].Name)
-	s.Equal("required", s.fast.requests()[0].ToolChoice)
-}
-
-func (s *HarnessSuite) TestAToolTheTurnNamesThatIsNotOfferedLeavesTheOthers() {
-	s.tools = testTools()
-	s.build(false)
-
-	s.answer(Turn{
-		ID:        "tool-1",
-		History:   []llm.Message{{Role: llm.User, Content: "the reboot did not help"}},
-		AfterTool: true,
-		MustCall:  true,
-		OnlyTool:  "walk_reboot",
-	})
-
-	s.Require().Len(s.fast.requests(), 1)
-	s.Len(s.fast.requests()[0].Tools, 2)
 }

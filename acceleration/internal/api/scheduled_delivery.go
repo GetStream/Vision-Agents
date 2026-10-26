@@ -16,9 +16,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -173,7 +175,7 @@ func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.Claimed
 		APIKey:          task.APIKey,
 		UsageCategories: task.UsageCategories,
 		Timezone:        task.Timezone,
-		CommandID:       "st_" + claimed.Run.ID,
+		CommandID:       conversation.ReadBackPrefix + claimed.Run.ID,
 		Text:            scheduledPrompt(claimed, time.Now()),
 		Channels:        task.Channels,
 		Due:             due,
@@ -322,11 +324,11 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 		if err := s.reachableText(ctx, delivery, channel); err != nil {
 			return "", "", undelivered(scheduling.ReasonUnreachable, err)
 		}
-		text, err := s.captureReply(ctx, found, delivery)
+		text, files, err := s.captureReply(ctx, found, delivery)
 		if err != nil {
 			return "", "", err
 		}
-		if err := s.notifyText(ctx, delivery, channel, text); err != nil {
+		if err := s.notifyText(ctx, delivery, channel, text, files); err != nil {
 			return "", "", err
 		}
 		return channel, found.ID(), nil
@@ -370,21 +372,23 @@ func waitOutCall(ctx context.Context, found *session.Session, window time.Durati
 }
 
 // captureReply runs the follow-up in found and reads what the agent
-// answers, settled the way a channel's replies settle: quiet for the
-// settle gap, with nothing left running. The words are the conversation's
-// own; a channel carries them out, holding no second copy of the turn. A
-// follow-up the conversation already holds is not run again: its words are
-// read back.
-func (s *Server) captureReply(ctx context.Context, found *session.Session, delivery scheduledDelivery) (string, error) {
+// answers, and the files its code made, settled the way a channel's replies
+// settle: quiet for the settle gap, with nothing left running. The words are
+// the conversation's own; a channel carries them out, holding no second copy
+// of the turn. A follow-up the conversation already holds is not run again:
+// its words and files are read back.
+func (s *Server) captureReply(ctx context.Context, found *session.Session, delivery scheduledDelivery) (string, []sandbox.Attachment, error) {
 	if _, _, known := found.FollowUpReply(delivery.CommandID); known {
-		return readBackReply(ctx, found, delivery.CommandID)
+		reply, err := readBackReply(ctx, found, delivery.CommandID)
+		return reply.Text, reply.Files, err
 	}
 	events, detach := found.Watch()
 	defer detach()
 	if err := followUpWithin(ctx, found, delivery); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var said []string
+	var files []sandbox.Attachment
 	active := found.Busy()
 	last := time.Now()
 	deadline := time.Now().Add(scheduledReplyWindow)
@@ -393,58 +397,65 @@ func (s *Server) captureReply(ctx context.Context, found *session.Session, deliv
 	for {
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", nil, ctx.Err()
 		case event, open := <-events:
 			if !open {
-				return replyText(said)
+				return captured(said, files)
 			}
 			active, last = true, time.Now()
 			if text := spokenOf(event); text != "" && (len(said) == 0 || said[len(said)-1] != text) {
 				said = append(said, text)
 			}
+			// Merged as the conversation keeps them, so a retry reading them back sends the same.
+			files = conversation.MergeFiles(files, madeBy(event))
 		case <-ticker.C:
 			if found.Busy() {
 				active = true
 			}
 			switch {
 			case time.Now().After(deadline):
-				return replyText(said)
+				return captured(said, files)
 			case active && !found.Busy() && time.Since(last) >= scheduledReplySettle:
-				return replyText(said)
+				return captured(said, files)
 			}
 		}
 	}
 }
 
-// readBackReply is what the reply a follow-up already has said, once it
+// readBackReply is the reply a follow-up already has, with its files, once it
 // has finished: the turn ran for a channel tried before this one, or for an
 // earlier attempt at the occurrence.
-func readBackReply(ctx context.Context, found *session.Session, id string) (string, error) {
+func readBackReply(ctx context.Context, found *session.Session, id string) (conversation.FinishedReply, error) {
 	deadline := time.Now().Add(scheduledReplyWindow)
 	for {
-		state, text, _ := found.FollowUpReply(id)
+		state, _, _ := found.FollowUpReply(id)
 		switch state {
 		case "completed":
-			return replyText([]string{text})
+			reply := found.FollowUpFinished(id)
+			if _, _, err := captured([]string{reply.Text}, reply.Files); err != nil {
+				return conversation.FinishedReply{}, err
+			}
+			return reply, nil
 		case "cancelled", "interrupted", "failed":
-			return "", undelivered(scheduling.ReasonReplyFailed, fmt.Errorf("the reply to this occurrence was %s", state))
+			return conversation.FinishedReply{}, undelivered(scheduling.ReasonReplyFailed, fmt.Errorf("the reply to this occurrence was %s", state))
 		}
 		if time.Now().After(deadline) {
-			return "", undelivered(scheduling.ReasonNoReply, errors.New("the reply to this occurrence is still being written"))
+			return conversation.FinishedReply{}, undelivered(scheduling.ReasonNoReply, errors.New("the reply to this occurrence is still being written"))
 		}
 		if err := waitFor(ctx, scheduledPoll); err != nil {
-			return "", err
+			return conversation.FinishedReply{}, err
 		}
 	}
 }
 
-// replyText is what a captured turn said, or why there is nothing to carry.
-func replyText(said []string) (string, error) {
+// captured is what a captured turn said and made, or why there is nothing to
+// carry. A reply of files alone, such as a chart, is carried.
+func captured(said []string, files []sandbox.Attachment) (string, []sandbox.Attachment, error) {
 	text := strings.Join(said, "\n")
-	if text == "" {
-		return "", undelivered(scheduling.ReasonNoReply, errors.New("the agent said nothing to carry"))
+	if text == "" && len(files) == 0 {
+		return "", nil, undelivered(scheduling.ReasonNoReply, errors.New("the agent said and made nothing to carry"))
 	}
-	return text, nil
+	return text, files, nil
 }
 
 // spokenOf is what an event is worth carrying out, if anything: the
@@ -459,25 +470,36 @@ func spokenOf(event session.Event) string {
 	return ""
 }
 
+// madeBy is the files an event hands back: what the code a tool or settled work ran made.
+func madeBy(event session.Event) []sandbox.Attachment {
+	switch happened := event.(type) {
+	case agent.ToolRan:
+		return happened.Files
+	case agent.TaskSettled:
+		return happened.Files
+	}
+	return nil
+}
+
 // reachableText says whether a channel would carry the task's words to its
 // user now, the words aside.
 func (s *Server) reachableText(ctx context.Context, delivery scheduledDelivery, channel string) error {
 	if s.channels == nil {
 		return errors.New("this router carries no channels")
 	}
-	return s.channels.Reachable(ctx, textNotice(delivery, channel, ""))
+	return s.channels.Reachable(ctx, textNotice(delivery, channel, "", nil))
 }
 
-// notifyText carries the words a turn produced out on a channel, to the
-// user the task belongs to, on the agent whose line it is.
-func (s *Server) notifyText(ctx context.Context, delivery scheduledDelivery, channel, text string) error {
-	return s.channels.Notify(ctx, textNotice(delivery, channel, text))
+// notifyText carries the words and files a turn produced out on a channel, to
+// the user the task belongs to, on the agent whose line it is.
+func (s *Server) notifyText(ctx context.Context, delivery scheduledDelivery, channel, text string, files []sandbox.Attachment) error {
+	return s.channels.Notify(ctx, textNotice(delivery, channel, text, files))
 }
 
-func textNotice(delivery scheduledDelivery, channel, text string) channels.Notice {
+func textNotice(delivery scheduledDelivery, channel, text string, files []sandbox.Attachment) channels.Notice {
 	return channels.Notice{
 		CustomerID: delivery.CustomerID, ConfigID: delivery.ConfigID,
-		Kind: channels.Kind(channel), UserID: delivery.UserID, Text: text,
+		Kind: channels.Kind(channel), UserID: delivery.UserID, Text: text, Files: files,
 	}
 }
 
@@ -917,7 +939,7 @@ func followUpWithin(ctx context.Context, found *session.Session, delivery schedu
 		if err == nil {
 			return nil
 		}
-		if !strings.Contains(err.Error(), "a response is already running") || time.Now().After(deadline) {
+		if !errors.Is(err, conversation.ErrResponseRunning) || time.Now().After(deadline) {
 			return err
 		}
 		if err := waitFor(ctx, scheduledPoll); err != nil {

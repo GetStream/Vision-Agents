@@ -19,6 +19,11 @@ import {
 import { loadFolder } from "../src/node.js";
 import { TestRouter } from "./router.js";
 
+// The sync body of a connector entry with neither sandbox nor require_approval, probed on
+// 8e132bd37, before agent.yaml read either.
+const PROBED_CONNECTOR_BODY =
+  '{"name":"jean","instructions":"Be brief.","connectors":[{"name":"github","connector_id":"github","tools":[],"tool_patterns":["*"],"required":true,"connection":{"type":"session"}}],"hash":"38df39c4d53c61a144cbb643b522795d61737c5239450b70fd44955053aedf10"}';
+
 const session = {
   id: "sess_1",
   call_id: "demo",
@@ -562,6 +567,69 @@ describe("Agent", () => {
           },
         ]);
         assert.equal(router.requestsTo("GET", "/v1/agents/connections").length, 0);
+      });
+
+      async function syncedFrom(declaration: string): Promise<Record<string, unknown>> {
+        const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
+        await mkdir(root);
+        await writeFile(join(root, "agent.yaml"), declaration);
+        await writeFile(join(root, "instructions.md"), "Be brief.\n");
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
+      }
+
+      it("sends sandbox and require_approval from agent.yaml on each binding that sets them", async () => {
+        router.serve("GET", "/v1/agents/connections", { body: { items: [connection("conn-1", "company")], has_more: false } });
+
+        const body = await syncedFrom(
+          [
+            "name: jean",
+            "connectors:",
+            "  - name: github",
+            "    sandbox: true",
+            "  - name: code",
+            "    connector: github",
+            "    connection: company",
+            "    sandbox: true",
+            "  - name: issues",
+            "    connector: linear",
+            "    require_approval: [create_*, update_issue]",
+            "  - name: mail",
+            "    sandbox: false",
+            "    require_approval: []",
+            "  - linear",
+            "",
+          ].join("\n"),
+        );
+
+        const session = { type: "session" };
+        assert.deepEqual(body["connectors"], [
+          { name: "github", connector_id: "github", tools: [], tool_patterns: ["*"], sandbox: true, connection: session },
+          {
+            name: "code",
+            connector_id: "github",
+            tools: [],
+            tool_patterns: ["*"],
+            sandbox: true,
+            connection: { type: "fixed", connection_id: "conn-1" },
+          },
+          {
+            name: "issues",
+            connector_id: "linear",
+            tools: [],
+            tool_patterns: ["*"],
+            require_approval: ["create_*", "update_issue"],
+            connection: session,
+          },
+          { name: "mail", connector_id: "mail", tools: [], tool_patterns: ["*"], require_approval: [], connection: session },
+          { name: "linear", connector_id: "linear", tools: [], tool_patterns: ["*"], connection: session },
+        ]);
+      });
+
+      it("sends the body it sent before for a connector that sets neither", async () => {
+        const body = await syncedFrom("name: jean\nconnectors:\n  - name: github\n    required: true\n");
+
+        assert.equal(JSON.stringify(body), PROBED_CONNECTOR_BODY);
       });
 
       it("sends no connectors when agent.yaml has none, and an empty list when it lists none", async () => {

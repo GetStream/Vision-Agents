@@ -237,8 +237,8 @@ final class Dispatch
             }
         } finally {
             array_map(EventLoop::cancel(...), $watchers);
-            foreach ($this->hostedCalls as $call) {
-                $call->stop();
+            foreach ($this->hostedCalls as $toolCallContext) {
+                $toolCallContext->stop();
             }
             $this->holds->release();
             Future\awaitAll($this->running);
@@ -327,18 +327,18 @@ final class Dispatch
         }
         $arguments = $frame['arguments'] ?? '';
         $key = self::hostedKey($frame);
-        $call = ToolCall::fromFrame($frame, '', $this->tell(...), $this->holds, $key);
-        $this->hostedCalls[$key] = $call;
-        $this->track(function () use ($tools, $id, $name, $arguments, $key, $call): void {
+        $toolCallContext = ToolCall::fromFrame($frame, '', $this->tell(...), $this->holds, $key);
+        $this->hostedCalls[$key] = $toolCallContext;
+        $this->track(function () use ($tools, $id, $name, $arguments, $key, $toolCallContext): void {
             $result = ['type' => 'tool_result', 'tool_call_id' => $id, 'id' => $id];
             try {
-                $result['output'] = $tools->call($name, is_string($arguments) ? $arguments : Json::encode($arguments), $call);
+                $result['output'] = $tools->call($name, is_string($arguments) ? $arguments : Json::encode($arguments), $toolCallContext);
             } catch (Throwable $failed) {
                 $result['error'] = $failed->getMessage();
             }
             $this->holds->forget($key);
             // Gone from the table means cancelled: the model has moved on without it.
-            if (($this->hostedCalls[$key] ?? null) === $call) {
+            if (($this->hostedCalls[$key] ?? null) === $toolCallContext) {
                 unset($this->hostedCalls[$key]);
                 $this->tell($result);
             }

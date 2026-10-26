@@ -593,6 +593,23 @@ func TestSyncSendsWhetherToolsAreOfferedProgressively(t *testing.T) {
 	}
 }
 
+func TestSyncSendsHowLongToolOutputIsKept(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "tools:\n  output_retention: 30d\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if sent := router.syncs[0].Tools; sent == nil || sent.OutputRetention == nil || *sent.OutputRetention != "30d" {
+		t.Errorf("tools went as %+v", sent)
+	}
+}
+
 func TestSyncSendsWhoLogsIntoEachMCPServer(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `mcp_servers:

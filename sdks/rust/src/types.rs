@@ -151,6 +151,8 @@ pub struct AgentConfig {
     ///Deprecated: use connectors, a binding to a connector.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     ///Absent when calls are reviewed by Stream's default guide.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub review: ::std::option::Option<AgentReview>,
@@ -237,6 +239,8 @@ pub struct AgentConfigPatch {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub review: ::std::option::Option<AgentReview>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub role: ::std::option::Option<AgentRole>,
@@ -320,6 +324,9 @@ pub struct AgentConfigRequest {
     ///Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    ///How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     ///How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub review: ::std::option::Option<AgentReview>,
@@ -687,7 +694,7 @@ pub struct AgentResponseItem {
     pub kind: AgentResponseItemKind,
     ///The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
     pub ordinal: i64,
-    ///Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+    ///Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording.
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub payload: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     pub response_id: ::std::string::String,
@@ -926,9 +933,12 @@ pub struct AgentStats {
     ///One row per tool, most called first.
     pub tools: ::std::vec::Vec<ToolStats>,
 }
-///How an agent is offered its plugin, MCP server and connector tools.
+///How an agent is offered its tools, and how long what they were given and gave back is kept.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct AgentTools {
+    ///How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub output_retention: ::std::option::Option<::std::string::String>,
     ///Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub progressive: ::std::option::Option<bool>,
@@ -2483,7 +2493,7 @@ pub struct ConnectionCredentials {
     )]
     pub values: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
 }
-///current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
+///current when the connection reads its connector's latest revision, or an earlier one that differs from it only in what a config is checked against (sensitive, and which tools only read or send data out), outdated when a later one changes what the connection reads, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3946,6 +3956,9 @@ pub struct CreateSessionRequest {
     ///What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub project_id: ::std::option::Option<::std::string::String>,
+    ///How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     ///The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub return_url: ::std::option::Option<::std::string::String>,
@@ -7365,7 +7378,7 @@ pub struct PhoneVendor {
 ///`PlaceCallRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PlaceCallRequest {
-    ///Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
+    ///Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set.
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
@@ -7622,12 +7635,18 @@ pub struct Policy {
     ///Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub require_own_stream_app: ::std::option::Option<bool>,
+    ///How the scope's sessions are handed back a conversation they carry on. The most specific level wins, field by field: a server-side session request, then its agent config, then the app's policy, then the organization's, then the router's default (text only, 100 turns, 60000 characters).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     ///Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tool_output_retention: ::std::option::Option<::std::string::String>,
 }
 ///Whose policy: an organization's, an app's, or one end user's.
 #[derive(
@@ -8341,6 +8360,19 @@ pub struct RespondRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
     pub text: ::std::string::String,
+}
+///How a conversation is handed back to the model when a session carries it on.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct ResumeHistory {
+    ///Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub include_tools: ::std::option::Option<bool>,
+    ///How many characters are handed back, tool calls and results included: about four to a token. The whole of it is sent, and billed, with the first reply after the conversation is resumed, and is cached from then on by models that cache, so keep it well inside the model's context window. Omitted is 60000.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_characters: ::std::option::Option<i64>,
+    ///How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_messages: ::std::option::Option<i64>,
 }
 ///Who moved a use case: the app, Stream staff or the vendor.
 #[derive(
@@ -11241,6 +11273,9 @@ pub struct SyncAgentRequest {
     ///Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    ///How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub role: ::std::option::Option<AgentRole>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]

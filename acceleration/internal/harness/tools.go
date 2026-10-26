@@ -176,34 +176,26 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"not called that tool, call it now. Never tell the caller what a tool would find (an " +
 	"outage, a free slot, a record) without its result in this conversation: call it first. " +
 	"When a check comes back with what the caller asked for and you have what the next tool " +
-	"needs, call it in that reply rather than asking whether to go ahead, and never ask them " +
-	"to confirm a request they have already made (\"you'd like to move it to Tuesday, is that " +
-	"correct?\"): make it. Anything you tell " +
+	"needs, call it in that reply rather than asking whether to go ahead. Anything you tell " +
 	"them you will do (book, move, call back, escalate, open a ticket) you do with its tool " +
 	"in the same reply. " +
 	"Never fill an argument with a name, number or detail the caller has not given (no " +
 	"\"John Doe\"): ask for it. When there is a tool that verifies the caller, call it before " +
-	"any tool that reads or changes the caller's records. A tool whose arguments need nothing " +
-	"about the caller (logging an escalation or a callback with a reason) does not wait for " +
-	"verification: a caller who will not be verified is exactly who it is for. " +
+	"any tool that reads or changes the caller's records. " +
 	"Never write a pause to stand for a tool's work and go on as if it had answered: call " +
 	"the tool and end your reply there. " +
-	"Every reply that calls a tool says in a few words what it is checking or doing first " +
-	"(\"Let me check the outage map\"), straight after another tool's result too. " +
+	"Every reply that calls a tool says in a few words what it is checking or doing first, " +
+	"straight after another tool's result too. " +
 	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
 	"to them in the same reply, digit by digit for an ID or number and exactly as you pass " +
-	"them to the tool (\"last four 553017 Oak Road\" is read back as \"last four digits, 5530, at 17 Oak " +
-	"Road\"), opening with \"One " +
-	"moment, let me check that\" when you call the tool in that reply. Values a tool has " +
+	"them to the tool, opening with \"One moment, let me check that\" when you call the " +
+	"tool in that reply. Values a tool has " +
 	"already accepted are not read back again: after a check passes, go straight on. " +
 	"An ID one of your tools hands out (a ticket, an appointment, an order) comes only from " +
 	"that tool's result: call the tool that makes it first, and never fill it with a number " +
 	"the caller said. " +
 	"When the caller takes back something they said (\"actually\", \"no, make that\", \"oh " +
 	"wait\"), the later value replaces the earlier one in every argument, \"none\" included. " +
-	"A new value they report for something that changed (\"my new member ID is...\") takes " +
-	"nothing back: the one they had before is still what verifies them, and the new one goes " +
-	"to the tool that records the change. " +
 	"When your instructions say to log or record something when a situation comes up, call " +
 	"its tool in the reply where it comes up, before asking the caller for anything. " +
 	"Once a tool that books or changes something succeeds, the next thing the caller hears " +
@@ -212,21 +204,14 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"If your instructions say to wait for agreement after a read-back, end your turn after " +
 	"it, with no hold phrase and no call, until they agree. " +
 	"A yes or go-ahead after a read-back means call the tool now with what you have, without " +
-	"asking for anything optional again. When a tool does the step you would describe, such " +
-	"as walking the caller through something, call it instead of describing the step, " +
-	"even if the caller says they already tried that step themselves: the tool records " +
-	"that it was done and later steps may need it. " +
+	"asking for anything optional again. " +
 	"Never guess an id: pass one only as a tool result gave it, and if you have not seen " +
 	"it, first call the tool that lists them. " +
 	"When you read details back or confirm a change, say each value whole, exactly as you " +
 	"pass it to the tool. When the caller spells a name letter by letter, use their " +
 	"spelling, not what the name sounded like. " +
 	"Call a tool only to do something the caller has asked for, never to greet or to note " +
-	"that nothing has happened yet. A day or part of a day the caller names (Tuesday, " +
-	"morning) is a date and time a tool can take as said: pass it, do not ask which one. " +
-	"A word the caller says to somebody else (Mom, honey) is never their name. When a " +
-	"counted number (the last four) runs on into the next value, take exactly that many " +
-	"digits and the rest belongs to the next value, such as a house number before a street."
+	"that nothing has happened yet."
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the

@@ -388,6 +388,57 @@ func TestASecondQuestionWaitsForTheAnswerToTheFirst(t *testing.T) {
 	}
 }
 
+func TestAQuestionTheRouterStoppedIsAskedOnceMore(t *testing.T) {
+	router := newWorked(t, nil)
+	var asked atomic.Int64
+	router.hold = func(_ *testing.T, held *socket, text string) {
+		if asked.Add(1) > 1 {
+			_ = held.WriteJSON(stream.Frame{"type": "responded", "text": "answered " + text})
+			return
+		}
+		// The router restarts mid-answer, and the one after it says the answer was stopped.
+		held.mu.Lock()
+		_ = held.connection.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseServiceRestart, "router restarting"))
+		held.mu.Unlock()
+		_ = router.replacing(t, held).WriteJSON(stream.Frame{"type": "resumed", "complete": false,
+			"command": stream.Frame{"request_id": "question-1", "state": "interrupted"}})
+	}
+	router.hand = func(connection *websocket.Conn) {
+		_ = connection.WriteJSON(written("support-42", "where is my order"))
+	}
+
+	dispatch, _ := answering(t, router, nil)
+	defer waited(t, dispatch)()
+
+	eventually(t, "the stopped question was never asked again", func() bool { return len(router.questions()) == 2 })
+	time.Sleep(100 * time.Millisecond)
+	if asked := router.questions(); len(asked) != 2 || asked[0] != asked[1] {
+		t.Errorf("the router was asked %v, want the same question twice", asked)
+	}
+}
+
+// replacing waits for the socket a session's pipeline reconnects with after held.
+func (w *worked) replacing(t *testing.T, held *socket) *socket {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		w.mu.Lock()
+		for _, open := range w.sockets {
+			if open != held {
+				w.mu.Unlock()
+				return open
+			}
+		}
+		w.mu.Unlock()
+		select {
+		case <-deadline:
+			t.Fatal("the session's socket was never reconnected")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
 func TestAConversationKeepsRunningFunctionsAfterALongAnswer(t *testing.T) {
 	// The session's events are a buffered channel the pipeline's socket reader writes
 	// into, and that reader is also what delivers tool calls. A worker that answers a

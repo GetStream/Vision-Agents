@@ -179,6 +179,30 @@ func (b *bridge) nameOf(id string) (string, bool) {
 	return pending.call.Name, waiting
 }
 
+// waitsOn reports whether the call id still waits for its result on the turn.
+func (b *bridge) waitsOn(id, turnID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, waiting := b.pending[id]
+	return waiting && !pending.resolved && pending.ctx.Err() == nil && pending.turnID == turnID
+}
+
+// turnOf is the turn the call id was made on, when it is still waiting.
+func (b *bridge) turnOf(id string) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, waiting := b.pending[id]
+	return pending.turnID, waiting
+}
+
+// Waiting reports whether the call is still waiting for its result.
+func (b *bridge) Waiting(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, ok := b.pending[id]
+	return ok && !b.closed && !pending.resolved && pending.ctx.Err() == nil
+}
+
 // Resolve hands an answer back to the call waiting for it, reporting whether one was.
 //
 // An answer for a call nobody is waiting on is dropped rather than an error, because the

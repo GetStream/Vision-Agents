@@ -476,6 +476,7 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 | ------- | ------------ |
 | `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
 | `quota` | What one end user may spend in a UTC day, in place of the deployment's default: the organization's for every user of its apps, the app's over it, and a named user's own (`/v1/policies/users/{user_id}`) over both. Unlike the rest, a more specific level wins rather than the stricter. See [Daily limits](#daily-limits) |
+| `tool_output_retention` | How long sessions keep what their tools were given and gave back: `none`, or `1h` to `3650d` such as `30d`. The shortest of the organization's, the app's and the agent config's `tools.output_retention` applies. See [What is recorded](#what-is-recorded) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
 
 The screen asks one question per harm in OpenRouter's prompt injection list (instruction
@@ -1593,6 +1594,36 @@ DAG for each turn. The router records metrics regardless of this logging flag.
 Model-call durations annotate the stages they overlap and are not added to the
 speech-to-audio path.
 
+**A tool's output is kept for as long as somebody says.** A recorded session keeps each
+turn in `agent_responses` and what happened inside it in `agent_response_items`: the
+question, each tool call and its result, the answer. A tool's arguments and output can be
+anything its API returns, personal data included, so how long they are kept is a setting:
+
+| Where it is set | Field |
+| --------------- | ----- |
+| The organization's policy (`PUT /v1/policies/organization`) | `tool_output_retention` |
+| The app's policy (`PUT /v1/policies/app`) | `tool_output_retention` |
+| The agent config, or `tools:` in agent.yaml | `tools.output_retention` |
+
+Each is `none`, a duration from `1h` to `3650d` such as `12h` or `30d`, or left out. The
+shortest of the three applies when a session opens, so an agent can keep less than its app
+and never more, and with all three left out a session keeps everything, as before.
+`incognito` is the per-session switch that records nothing at all.
+
+- `none` writes a tool call and its result with no text (a search's query, a tool's result),
+  no arguments, and `"error": "redacted"` in place of an error's wording. The item keeps its
+  kind, tool name, time, `call_id` and `"redacted": true`.
+- A duration writes the item whole with a time to redact it, and every router redacts the
+  items of its own shard that are due every ten minutes, in batches of 1,000 up to 100,000 a
+  run, through a partial index that holds only the items still waiting. The log line
+  `redacted tool output` carries how many.
+- Redacting keeps the row, so everything that reads items still works: the items endpoint
+  lists the same items in the same order, `GET /v1/stats/agents` still counts each tool call, its
+  failures and its latency (the token estimate drops to the tool's name), and a rewind or a
+  fork, which carry only questions and answers, are unchanged.
+- The setting applies to tool calls recorded after it is set. `DELETE /v1/agents/sessions/{id}`
+  deletes a session's turns and items, tool output included, at once.
+
 **Memory and phone are recorded but not routed.** There is one memory store and one vendor
 per number, so the provider and route paths do not serve those modalities while the
 statistics paths do.
@@ -2223,6 +2254,44 @@ is reopened is marked interrupted. Writes not yet in Stream when the process sto
 are lost. Stream credentials are required; Postgres and Redis are not. Closing the
 last client of a persisted text session ends that session; the saved channel
 remains available.
+
+### How much of a conversation a resumed session is handed
+
+`resume_history` changes what the model is handed when a session carries a conversation on:
+reopened after it ended, resumed by `conversation_id`, joined by voice, or forked from Chat. It
+is opt-in and set at four levels, the most specific winning field by field: a server-side
+`POST /v1/agents/sessions`, then the session's agent config, then the app's policy
+(`PUT /v1/policies/app`), then the organization's (`PUT /v1/policies/organization`). A field set
+at none of them is the default above, and `include_tools: false` turns off what a broader level
+turned on. This is a feature switch rather than a limit, so unlike a policy's data retention it
+is not the strictest level that wins. The session row keeps what the session was opened with,
+policies included, so reopening it in another process reads the conversation the same way.
+
+- `max_messages` (1 to 100) and `max_characters` (1,000 to 400,000) replace the 100-turn and
+  60,000-character caps. Tool calls and results count toward the characters, not the turns.
+- `include_tools` hands each reply back with the tool calls it made and their results, read
+  from the recorded response items (`agent_response_items`) and matched to the reply by the
+  `turn_id` its Chat message and its `answer` item both carry. Each step the model took is an
+  assistant message with its calls, followed by one result per call, so every result answers
+  a call before it, as OpenAI Responses, Anthropic Messages and the OpenAI-compatible
+  providers all require. A call that never returned is left out with its result; a reply
+  recorded before answers carried a `turn_id`, one whose items were deleted with their
+  session or rewound, and one with a result redacted under a retention setting are handed
+  back as text, as without the setting. Over `max_characters`, the oldest results become
+  `[result trimmed]` first, then the oldest turns are left out, and the conversation's first
+  user message is kept throughout (read from the response rows when the transcript read back
+  does not reach it). `context_truncated` is true whenever anything was trimmed or left out.
+- A speech-to-speech model is told the conversation as text in its instructions, so a native
+  voice session reads the replies and not their tool calls, whatever the setting says.
+- A fork at a `response_id`, a fork of a session that kept no channel, and a rewind are
+  rebuilt from the response rows as questions and answers, whatever the setting says.
+- Results are replayed as they were stored: credentials redacted, and a result over 8 KB cut
+  to its first 2,048 characters.
+- The restored history is sent in full with the first reply after the conversation is
+  resumed, and billed then. A model that caches reads it from the cache from the second
+  reply on; compaction only starts once a reply has reported its usage. Keep
+  `max_characters` well inside the model's context window (about four characters to a
+  token): nothing refuses one that does not fit before the provider does.
 
 The Go SDK exposes `agents.ChatOptions{ConversationID: cid}`,
 `Session.ConversationID()`, `Session.ContextTruncated()`,

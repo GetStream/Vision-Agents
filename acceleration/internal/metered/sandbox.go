@@ -141,9 +141,10 @@ func (s *Sandboxes) Labels(owner routing.Owner) map[string]string {
 }
 
 // SandboxSecrets is the broker that keeps a session's connector credentials with Daytona as
-// secrets named after prefix and the session. Daytona bills nothing for them.
-func SandboxSecrets(prefix, session string, tokens sandbox.Tokens, logger *slog.Logger) (sandbox.CredentialBroker, error) {
-	return daytona.NewSecrets(daytona.SecretsOptions{Prefix: prefix, Session: session, Tokens: tokens, Logger: logger})
+// secrets named after prefix and the session, binding a late grant with bind. Daytona bills
+// nothing for them.
+func SandboxSecrets(prefix, session string, tokens sandbox.Tokens, bind sandbox.Bind, logger *slog.Logger) (sandbox.CredentialBroker, error) {
+	return daytona.NewSecrets(daytona.SecretsOptions{Prefix: prefix, Session: session, Tokens: tokens, Bind: bind, Logger: logger})
 }
 
 // SandboxUsed is what seconds of a sandbox holding reserved used, billed as model: its vCPU,

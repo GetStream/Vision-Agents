@@ -114,6 +114,10 @@ type ManagerOptions struct {
 	Conversations *persistent.Service
 
 	Store *store.Store
+	// Policies is what each session's tool output retention is held to: the app's and the
+	// organization's, which its agent config can shorten and not lengthen. Nil holds it to
+	// the agent config alone.
+	Policies *policy.Enforcer
 	// Configs reads what a session is opened from -- the skills it names -- through
 	// whatever cache is in front of Postgres. Built over Store when it is not given, in
 	// which case every read is a query, which is what a deployment without Redis does.
@@ -143,6 +147,9 @@ type ManagerOptions struct {
 	// SandboxLimits says what sandbox each session's organization may have, and bounds how many
 	// of them run at once. Nil bounds nothing.
 	SandboxLimits *policy.Enforcer
+	// ResumeHistories are the app and organization policies a session's resume_history
+	// falls back to where its own and its config's say nothing. Nil leaves those two alone.
+	ResumeHistories ResumeHistories
 	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
 	// code in a sandbox, metered.SandboxSecretsBroker or egress.BrokerName.
 	SandboxBroker string
@@ -402,6 +409,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}
 
+	if m.records != nil && !spec.Incognito {
+		floor, err := m.options.Policies.ToolOutputRetention(ctx, spec.CustomerID)
+		if err != nil {
+			m.logger.Warn("could not read the tool output retention, keeping none",
+				"customer", spec.CustomerID, "session", spec.ID, "error", err)
+		}
+		spec.ToolOutputRetention = floor.Shorter(spec.ToolOutputRetention)
+	}
+
 	// The Stream app the session acts in is settled once, before anything is done there,
 	// and the whole session keeps it: its call, its transcript and the rows it writes.
 	stream, err := m.stream(ctx, spec)
@@ -442,6 +458,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	var conv *persistent.Conversation
 	var previous []llm.Message
+	if m.options.ResumeHistories != nil {
+		spec.ResumeHistory = spec.ResumeHistory.Over(m.options.ResumeHistories.ResumeHistory(ctx, spec.CustomerID))
+	}
+	reading := m.restoring(ctx, spec)
 	if spec.PersistConversation {
 		service, err := m.Conversations()
 		if err != nil {
@@ -459,7 +479,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if cid == "" {
 			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
 		}
-		conv, previous, truncated, err = open(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if errors.Is(err, streamapp.ErrReadOnly) {
 			return nil, ErrConversationReadOnly
 		}
@@ -501,7 +521,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// carries on from what was said while the transcripts stay separate. The parent's
 		// half goes first because it happened first.
 		if spec.Recall != nil && spec.Recall.Messages == nil {
-			recalled, cut, err := service.ContextForCaller(ctx, spec.CustomerID,
+			recalled, cut, err := service.ContextForCaller(reading, spec.CustomerID,
 				spec.Recall.AgentID, spec.Recall.ConversationID, spec.Caller.UserID)
 			if err != nil {
 				conv.Release()
@@ -528,7 +548,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			}
 		}
 		var truncated bool
-		previous, truncated, err = service.ContextForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
+		previous, truncated, err = service.ContextForCaller(reading, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
@@ -1533,7 +1553,7 @@ func (m *Manager) Shutdown() error {
 	}
 	var failures []error
 	for _, found := range running {
-		if err := found.Close(); err != nil {
+		if err := found.halt(); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -1593,7 +1613,12 @@ func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (s
 		}
 		asked.Grants, asked.Broker = connectors.grants, broker
 	}
-	return m.options.Sandboxes.Open(owner(spec), asked)
+	box, err := m.options.Sandboxes.Open(owner(spec), asked)
+	if err != nil || !slices.ContainsFunc(asked.Grants, func(grant sandbox.Grant) bool { return grant.Late }) {
+		return box, err
+	}
+	return &connecting{Sandbox: box, d: connectors, delayed: m.options.SandboxBroker != egress.BrokerName, asks: spec.Text,
+		opened: map[string]bool{}}, nil
 }
 
 // reading reports whether this session has anything to look things up in, which is a

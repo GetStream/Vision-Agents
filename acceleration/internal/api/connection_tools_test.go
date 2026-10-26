@@ -473,7 +473,7 @@ func (s *ConnectionToolsSuite) TestSavingANoneConnectionAgainMovesAnOutdatedConn
 	connector := s.builtin(none.Name, 1, "")
 	id := s.connectionTo(connector)
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
-	s.builtin(none.Name, 2, "")
+	s.builtin(none.Name, 2, revisedAuthorizeParams)
 	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
 
 	var saved Connection
@@ -553,7 +553,7 @@ func (s *ConnectionToolsSuite) TestAClientCredentialsConnectionKeepsItsRevisionW
 			oauth2cc.SuppliedClientID: s.provider.ClientID, oauth2cc.SuppliedClientSecret: s.provider.ClientSecret}}
 	}
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", body(), nil))
-	s.builtin(oauth2cc.Name, 2, "")
+	s.builtin(oauth2cc.Name, 2, revisedAuthorizeParams)
 	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
 
 	var saved Connection
@@ -685,6 +685,43 @@ func (s *ConnectionToolsSuite) TestAToolNeedingAScopeTheConnectorNeverAsksForIsL
 	s.Equal("echo", tools.Tools[0].Name)
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(string(body), `no tool named \"fail\"`)
+}
+
+// TestAGrantOfAScopeThatCoversTheOneAToolNeedsValidatesAsConnected: Drive's create_file takes
+// drive in place of drive.file (google_drive.yaml), so a grant moved from a plugin that asked
+// for drive needs no consent.
+func (s *ConnectionToolsSuite) TestAGrantOfAScopeThatCoversTheOneAToolNeedsValidatesAsConnected() {
+	id := s.driveShaped(driveFileCoveredByDrive, googleDrive)
+
+	validation := s.validate(id)
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.Code)
+	s.Empty(validation.MissingScopes)
+}
+
+// TestAGrantOfANarrowerScopeStillLacksTheOneAToolNeeds: drive.readonly covers nothing
+// drive.file gives. The answer is base's (8e132bd3).
+func (s *ConnectionToolsSuite) TestAGrantOfANarrowerScopeStillLacksTheOneAToolNeeds() {
+	id := s.driveShaped(driveFileCoveredByDrive, googleDriveReadonly)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsScopes, string(validation.Status))
+	s.Equal(codeScopeRequired, validation.Code)
+	s.Equal([]string{googleDriveFile}, validation.MissingScopes)
+}
+
+// TestABroaderGrantLacksTheScopeAToolNeedsWhenNothingCoversIt is the control: with no
+// covered_by, a grant of drive lacks drive.file, as on base (8e132bd3).
+func (s *ConnectionToolsSuite) TestABroaderGrantLacksTheScopeAToolNeedsWhenNothingCoversIt() {
+	id := s.driveShaped("", googleDrive)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsScopes, string(validation.Status))
+	s.Equal(codeScopeRequired, validation.Code)
+	s.Equal([]string{googleDriveFile}, validation.MissingScopes)
 }
 
 func (s *ConnectionToolsSuite) TestAGrantWithEveryScopeItsToolsNeedValidatesAsConnected() {
@@ -881,6 +918,39 @@ func (s *ConnectionToolsSuite) scoped(scope string) string {
 `, scope)
 }
 
+// Google Drive's scopes, as google_drive.yaml names them.
+const (
+	googleDrive         = "https://www.googleapis.com/auth/drive"
+	googleDriveFile     = "https://www.googleapis.com/auth/drive.file"
+	googleDriveReadonly = "https://www.googleapis.com/auth/drive.readonly"
+	// driveFileCoveredByDrive is google_drive.yaml's scopes.covered_by.
+	driveFileCoveredByDrive = "  covered_by:\n    " + googleDriveFile + ": [" + googleDrive + "]\n"
+)
+
+// driveShaped is an oauth2_code connection to a connector shaped as google_drive.yaml is, with
+// coveredBy under its scopes, whose echo needs drive.file, holding granted. An imported grant
+// may hold only what scopes.list asks for, so granted is written to the row, as router plugins
+// migrate stores a plugin's configured scopes (oauth2code.MovedGrant).
+func (s *ConnectionToolsSuite) driveShaped(coveredBy, granted string) string {
+	id := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	yaml := strings.Replace(s.manifest(id, 1, oauth2code.Name, "    tools:\n      - name: echo\n        needs_scopes: ["+googleDriveFile+"]\n"),
+		"  list: [chat:write, channels:read]\n", "  list: ["+googleDriveReadonly+", "+googleDriveFile+"]\n"+coveredBy, 1)
+	manifest, err := core.ParseManifest([]byte(yaml))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(id), &created))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
+		s.importedGrant(s.token, googleDriveReadonly), nil))
+	scopes, err := json.Marshal([]string{granted})
+	s.Require().NoError(err)
+	_, err = s.store.DB().ExecContext(context.Background(), "UPDATE connector_connections SET granted_scopes = ?::jsonb WHERE id = ?",
+		string(scopes), created.ID)
+	s.Require().NoError(err)
+	return created.ID
+}
+
 // scopedTo is an oauth2_code connection whose grant was imported with scope, to a connector
 // whose mcp source says tools.
 func (s *ConnectionToolsSuite) scopedTo(tools, scope string) string {
@@ -941,6 +1011,11 @@ sources:
     endpoint: mcp
 ` + tools
 }
+
+// revisedAuthorizeParams is the manifest YAML of a revision that changes what a connection reads
+// as little as a field can (the authorize URL its consent is sent to), so a connection before it
+// is outdated. Not description: only the catalog shows that.
+const revisedAuthorizeParams = "authorize_params:\n  prompt: consent\n"
 
 // brokenFirst is the manifest YAML a revision marks revision 1 broken with.
 const brokenFirst = "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n"

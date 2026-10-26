@@ -26,6 +26,7 @@ package io.getstream.visionagents.android.core.generated
 import io.getstream.visionagents.android.core.generated.Greeting
 import io.getstream.visionagents.android.core.generated.HistoryMessage
 import io.getstream.visionagents.android.core.generated.ModelOverwrites
+import io.getstream.visionagents.android.core.generated.ResumeHistory
 import io.getstream.visionagents.android.core.generated.SessionCall
 import io.getstream.visionagents.android.core.generated.SessionConnectorBinding
 import io.getstream.visionagents.android.core.generated.SessionMemory
@@ -69,6 +70,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param navigating The agent placed this call, so let recordings finish and answer their menus.
  * @param phone 
  * @param projectId What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+ * @param resumeHistory 
  * @param returnUrl The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
  * @param search Omit it and the config decides, or search-fast when there is no config.
  * @param startVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
@@ -178,6 +180,9 @@ internal data class CreateSessionRequest (
     /* What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins. */
     @SerialName(value = "project_id")
     val projectId: kotlin.String? = null,
+
+    @SerialName(value = "resume_history")
+    val resumeHistory: ResumeHistory? = null,
 
     /* The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands. */
     @SerialName(value = "return_url")

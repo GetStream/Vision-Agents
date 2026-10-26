@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/ed25519header"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -73,6 +74,7 @@ func TestTelnyxChannelSuite(t *testing.T) {
 // which claims every task due in its database, whoever made it.
 func (s *TelnyxChannelSuite) SetupSuite() {
 	s.database = "telnyx_channel"
+	s.daytona = daytonatest.Start(s.T())
 	s.telnyxLine.SetupSuite()
 }
 

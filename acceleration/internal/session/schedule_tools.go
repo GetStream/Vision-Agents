@@ -248,6 +248,9 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 		if errors.Is(err, store.ErrTooManyScheduledTasks) {
 			return refusal(tooManyTasks, fmt.Sprintf("the user already has %d tasks running, the most this agent allows; cancel one first, or pause one until it is wanted", maxActive)), nil
 		}
+		if errors.Is(err, store.ErrNoAgentConfig) {
+			return refusal(unknownConfig, "this agent has been deleted, so it cannot schedule a task"), nil
+		}
 		return nil, err
 	}
 	r.kickScheduled()
@@ -442,6 +445,9 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 		return refusal(scheduling.CodeInvalidSchedule, "action must be reschedule, snooze, skip_next, pause or resume"), nil
 	}
 	if err := r.db.SaveScheduledTask(ctx, &task); err != nil {
+		if errors.Is(err, store.ErrNoAgentConfig) {
+			return refusal(unknownConfig, "this agent has been deleted, so the task cannot run again"), nil
+		}
 		return nil, err
 	}
 	r.kickScheduled()

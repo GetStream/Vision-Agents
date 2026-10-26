@@ -12,6 +12,7 @@ package sts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -190,6 +191,25 @@ type CallUpdate struct {
 	// takes instructions in place of the session's.
 	Guidance     string
 	Instructions string
+}
+
+// statusGuidance and sayGuidance are what a model is asked to say about a call that is
+// still open: a status in its own words, or words as written, which a model can only be
+// asked for.
+const (
+	statusGuidance = "Something the caller asked for is still being worked on, and whoever is doing it " +
+		"reports: %q. Tell the caller where it has got to in one short sentence, in your own words. It is " +
+		"still running: do not call it again and do not guess its result."
+	sayGuidance = "Something the caller asked for is still being worked on. Say this to the caller now, " +
+		"in these words or close to them: %q. It is still running: do not call it again and do not guess its result."
+)
+
+// Guidance is how a model is asked to say status, or with verbatim, to say it as written.
+func Guidance(status string, verbatim bool) string {
+	if verbatim {
+		return fmt.Sprintf(sayGuidance, status)
+	}
+	return fmt.Sprintf(statusGuidance, status)
 }
 
 // Voiced is a model that can say which voice it speaks in. Empty means the vendor

@@ -123,6 +123,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "connecting", Model: "connector-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "logging-in", Model: "login-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "slow", Model: "slow-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "stuck", Model: "stuck-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "recites", Model: "recites-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "holding", Model: "holding-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},
@@ -784,6 +785,7 @@ type stubConversation struct {
 	typed        chan string
 	answers      chan string
 	interrupts   chan int
+	updates      chan sts.CallUpdate
 	closed       chan struct{}
 }
 
@@ -819,6 +821,7 @@ func newStubConversation(capabilities sts.Capabilities) *stubConversation {
 		typed:        make(chan string, 16),
 		answers:      make(chan string, 16),
 		interrupts:   make(chan int, 16),
+		updates:      make(chan sts.CallUpdate, 16),
 		closed:       make(chan struct{}),
 	}
 }
@@ -839,7 +842,12 @@ func (s *stubConversation) Answer(callID, output string, _ error) error {
 	s.answers <- callID + "=" + output
 	return nil
 }
-func (s *stubConversation) Prompt(string) error          { return nil }
+func (s *stubConversation) Prompt(string) error { return nil }
+func (s *stubConversation) UpdatesCalls() bool  { return true }
+func (s *stubConversation) UpdateCall(update sts.CallUpdate) error {
+	s.updates <- update
+	return nil
+}
 func (s *stubConversation) Interrupt(playedMs int) error { s.interrupts <- playedMs; return nil }
 func (s *stubConversation) Events() <-chan sts.Event     { return s.emitter.Events() }
 

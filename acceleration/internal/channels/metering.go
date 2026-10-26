@@ -105,7 +105,7 @@ func (s *Service) received(ctx context.Context, account store.ChannelAccount, me
 
 // deliver sends a reply over a provider and records it, a failure included, for owner. A reply
 // sent in parts whose later part failed is billed for the parts that went out, as the provider
-// bills them, and still answers its error.
+// bills them, and still answers its error, as a partlySent.
 func (s *Service) deliver(ctx context.Context, line Account, provider Provider, to, thread string, reply Reply,
 	owner routing.Owner) error {
 	meter := s.textMeter(ctx, line.Kind, store.Outbound, to, owner)
@@ -120,7 +120,15 @@ func (s *Service) deliver(ctx context.Context, line Account, provider Provider, 
 		return sent, err
 	})
 	if partly != nil {
-		return partly
+		return partlySent{err: partly}
 	}
 	return err
 }
+
+// partlySent is a reply whose first parts, such as its words, went out and a later part,
+// such as a file the provider refused, did not. Sending it again repeats what went out.
+type partlySent struct{ err error }
+
+func (p partlySent) Error() string { return p.err.Error() }
+
+func (p partlySent) Unwrap() error { return p.err }

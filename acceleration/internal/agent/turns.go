@@ -63,8 +63,6 @@ const (
 	kindCaller = "caller"
 	// kindTool says what a tool returned.
 	kindTool = "tool"
-	// kindChase asks the model again for a call a reply promised and did not make.
-	kindChase = "chase"
 	// kindFollowUp says what delegated work came back with.
 	kindFollowUp    = "follow-up"
 	kindBackchannel = "backchannel"

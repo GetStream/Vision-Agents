@@ -73,7 +73,7 @@ var configColumns = []string{
 	"name", "role", "mode", "stt", "tts", "sts", "voice", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
 	"skills", "plugins", "connectors", "left_out_connectors", "plugin_events", "mcp_servers", "channels", "scheduling", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
-	"dispatch_incoming_call", "dispatch_text", "episode_cards", "progressive_tools", "sync_hash", "updated_at",
+	"dispatch_incoming_call", "dispatch_text", "episode_cards", "progressive_tools", "tool_output_retention", "resume_history", "sync_hash", "updated_at",
 }
 
 // UpdateAgentConfig replaces a config a customer holds. Every field is written, so an
@@ -83,6 +83,24 @@ var configColumns = []string{
 // that keeps it is not a new bind. A new bind of a channel connection another live config
 // binds is refused as CreateAgentConfig refuses it.
 func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) error {
+	return s.updateAgentConfig(ctx, config, false, nil)
+}
+
+// UpdateAgentConfigButPlugins is UpdateAgentConfig for a writer that does not change the
+// plugins: they are written as they are stored when the write lands, read with the row locked
+// FOR UPDATE, so a plugin a login named since the config was read is kept. allow is asked
+// about the config as it is about to be written, as AddConfigPlugin asks it, since the
+// plugins it holds may not be the ones checked before; nothing is written when it fails, and
+// its error is returned as is. config is left holding the plugins written.
+func (s *Store) UpdateAgentConfigButPlugins(ctx context.Context, config *AgentConfig, allow ConfigCheck) error {
+	return s.updateAgentConfig(ctx, config, true, allow)
+}
+
+// ConfigCheck is asked about a config as a write is about to store it, with the config's row
+// locked. It reads definitions on the write's transaction.
+type ConfigCheck func(ctx context.Context, config AgentConfig, definitions Definitions) error
+
+func (s *Store) updateAgentConfig(ctx context.Context, config *AgentConfig, keepPlugins bool, allow ConfigCheck) error {
 	if config.CustomerID == "" || config.ID == "" {
 		return stack.Wrap(errors.New("store: a customer and a config id are required"))
 	}
@@ -122,6 +140,26 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 		if err := refuseSecondChannelAgent(ctx, tx, config, stored.Connectors, stored.TestCopy()); err != nil {
 			return err
 		}
+		// The row's lock after the channel owner's, the order AddConnectorBinding takes them in.
+		if keepPlugins {
+			var locked AgentConfig
+			err := tx.NewSelect().Model(&locked).Column("plugins").
+				Where("id = ?", config.ID).
+				Where("customer_id = ?", config.CustomerID).
+				Where("deleted_at IS NULL").
+				For("UPDATE").
+				Scan(ctx)
+			if errors.Is(err, sql.ErrNoRows) {
+				return unknownAgentConfig(config.ID)
+			}
+			if err != nil {
+				return fmt.Errorf("store: update agent config: %w", err)
+			}
+			config.Plugins = locked.Plugins
+			if err := allow(ctx, *config, txDefinitions{tx}); err != nil {
+				return err
+			}
+		}
 		result, err := tx.NewUpdate().Model(config).
 			Column(configColumns...).
 			Where("id = ?", config.ID).
@@ -158,7 +196,7 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // row lock, as AddConfigPlugin asks it; nothing is written when it fails, and its error is
 // returned. For router plugins migrate (T61 in acceleration/docs/connectors/subtasks.md on
 // connectors/planning).
-func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID string, binding ConnectorBinding, allow func(context.Context, AgentConfig) error) (config AgentConfig, added bool, err error) {
+func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID string, binding ConnectorBinding, allow ConfigCheck) (config AgentConfig, added bool, err error) {
 	if customerID == "" || configID == "" || binding.Name == "" {
 		return AgentConfig{}, false, stack.Wrap(errors.New("store: a customer, a config and a binding name are required"))
 	}
@@ -207,7 +245,7 @@ func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID st
 		}
 		config.Connectors = append(config.Connectors, binding)
 		if allow != nil {
-			if err := allow(ctx, config); err != nil {
+			if err := allow(ctx, config, txDefinitions{tx}); err != nil {
 				return err
 			}
 		}

@@ -625,6 +625,24 @@ type DeletedConnection struct {
 	HadGrant bool
 }
 
+// GrantedConnectorConnectionsOfUser is every live connection of one user of the customer's
+// that holds credentials, oldest first: the grants DeleteUserConnectorConnections drops.
+func (s *Store) GrantedConnectorConnectionsOfUser(ctx context.Context, customerID, userID string) ([]ConnectorConnection, error) {
+	var connections []ConnectorConnection
+	err := s.db.NewSelect().Model(&connections).
+		Where("cc.customer_id = ?", customerID).
+		Where("cc.owner_type = ?", OwnerUser).
+		Where("cc.owner_id = ?", userID).
+		Where("cc.deleted_at IS NULL").
+		Where("cc.credentials_sealed <> ''::bytea").
+		Order("cc.created_at", "cc.id").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: list a user's granted connector connections: %w", err))
+	}
+	return connections, nil
+}
+
 // DeleteUserConnectorConnections hard deletes every connection of one user of the
 // customer's, live or already soft deleted, with their attempts and their invocations, so
 // the user's id and their accounts' ids are gone (architecture doc, «Add» item 9: «hard

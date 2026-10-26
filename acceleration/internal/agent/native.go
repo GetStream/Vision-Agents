@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
@@ -59,8 +60,9 @@ func (a *Agent) Prompt(ctx context.Context, text string) error {
 
 // respondNative injects a typed turn. The model answers it as it would a spoken one, and
 // the reply arrives on the same events. Images are refused: what a native model sees is
-// its own business, and a typed turn is words.
-func (a *Agent) respondNative(text string, images []llm.ImagePart) error {
+// its own business, and a typed turn is words. Whether a scheduled task fired it is kept
+// for the work the model hands over until the caller is next heard.
+func (a *Agent) respondNative(ctx context.Context, text string, images []llm.ImagePart) error {
 	if len(images) > 0 {
 		return stack.Wrap(errors.New("agent: a speech-to-speech agent takes no images on a typed turn"))
 	}
@@ -75,6 +77,7 @@ func (a *Agent) respondNative(text string, images []llm.ImagePart) error {
 	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
 	a.heardText = text
 	a.lastParticipant = caller
+	a.scheduled = routing.ScheduledTurn(ctx)
 	a.mu.Unlock()
 	return session.SendText(text, caller)
 }
@@ -183,8 +186,12 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			a.mu.Unlock()
 			continue
 		case sts.SpeechStarted:
+			// The caller is heard, so the turn is no longer the scheduled task's. Cleared
+			// here rather than in consumeSTS: a tool call that follows runs at once, ahead
+			// of the queue.
 			a.mu.Lock()
 			a.nativeListening = true
+			a.scheduled = false
 			a.mu.Unlock()
 		case sts.SpeechStopped:
 			a.mu.Lock()
@@ -478,6 +485,7 @@ func (a *Agent) heardNative(transcript sts.InputTranscript) {
 	a.heardText = text
 	a.lastParticipant = participant
 	a.lastHeardAt = time.Now()
+	a.scheduled = false
 	// SpeechStopped starts the wait. Transcription can finish after the reply, so it
 	// must not open another wait for a turn the model has already answered.
 	a.mu.Unlock()
@@ -720,8 +728,9 @@ func (a *Agent) nativeDelegate(call llm.ToolCall) ([]llm.ContentPart, bool, erro
 			history = append(history, message)
 		}
 	}
+	charged := a.chargedLocked(context.Background())
 	a.mu.Unlock()
-	id, err := a.harness.Delegate(arguments.Skill, arguments.Prompt, call.ID, nil, history)
+	id, err := a.harness.Delegate(charged, arguments.Skill, arguments.Prompt, call.ID, nil, history)
 	if err != nil {
 		return nil, false, err
 	}

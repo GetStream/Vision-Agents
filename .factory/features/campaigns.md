@@ -26,6 +26,10 @@ call through [telephony](telephony.md), creates a session from the named config 
 the call to end before taking another. The contact's own instructions go last in the prompt,
 after the config's, so they are the most recent thing the model read.
 
+Parallel calls from one number work for Twilio, Telnyx and SIP trunks. They go through shared
+trunks, so a second call from a number no longer fails while the first is up. See
+[shared trunks](shared-trunks.md). The other five vendors still make a trunk per call.
+
 ## Contacts are claimed, not handed out
 
 `ClaimContact` marks a row `SKIP LOCKED`. Two routers running the same campaign therefore

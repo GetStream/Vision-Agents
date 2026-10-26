@@ -98,8 +98,8 @@ func (c *Conversation) upload(ctx context.Context, file sandbox.File, uploader s
 	return sandbox.Attachment{Name: name, MIME: file.MIME, URL: *url, Size: len(file.Data)}, nil
 }
 
-// mergeFiles adds files to a reply, a later file of the same name replacing the earlier.
-func mergeFiles(existing, additions []sandbox.Attachment) []sandbox.Attachment {
+// MergeFiles adds files to a reply, a later file of the same name replacing the earlier.
+func MergeFiles(existing, additions []sandbox.Attachment) []sandbox.Attachment {
 	merged := append([]sandbox.Attachment(nil), existing...)
 	for _, file := range additions {
 		merged = slices.DeleteFunc(merged, func(kept sandbox.Attachment) bool { return kept.Name == file.Name })

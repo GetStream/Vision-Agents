@@ -2834,6 +2834,9 @@ type AgentConfig struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
+
 	// Review How a finished call under an agent is reviewed.
 	Review *AgentReview `json:"review,omitempty"`
 
@@ -2860,7 +2863,7 @@ type AgentConfig struct {
 	SyncHash *string            `json:"sync_hash,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
 	Tools        *AgentTools   `json:"tools,omitempty"`
 	Tts          *string       `json:"tts,omitempty"`
 	UpdatedAt    time.Time     `json:"updated_at"`
@@ -2911,6 +2914,9 @@ type AgentConfigPatch struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
+
 	// Review How a finished call under an agent is reviewed.
 	Review *AgentReview `json:"review,omitempty"`
 
@@ -2934,7 +2940,7 @@ type AgentConfigPatch struct {
 	Subagent *string            `json:"subagent,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
 	Tools *AgentTools   `json:"tools,omitempty"`
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
@@ -2996,6 +3002,9 @@ type AgentConfigRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
+
 	// Review How a finished call under an agent is reviewed.
 	Review *AgentReview `json:"review,omitempty"`
 
@@ -3029,7 +3038,7 @@ type AgentConfigRequest struct {
 	// Tags Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
 	Tags *map[string]string `json:"tags,omitempty"`
 
-	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
 	Tools *AgentTools   `json:"tools,omitempty"`
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
@@ -3160,7 +3169,7 @@ type AgentResponseItem struct {
 	// Ordinal The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
 	Ordinal int `json:"ordinal"`
 
-	// Payload Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+	// Payload Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording.
 	Payload    *map[string]interface{} `json:"payload,omitempty"`
 	ResponseId string                  `json:"response_id"`
 	SessionId  *string                 `json:"session_id,omitempty"`
@@ -3223,8 +3232,13 @@ type AgentStats struct {
 	Tools []ToolStats `json:"tools"`
 }
 
-// AgentTools How an agent is offered its plugin, MCP server and connector tools.
+// AgentTools How an agent is offered its tools, and how long what they were given and gave back is kept.
 type AgentTools struct {
+	// OutputRetention How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set.
+	//
+	// Example: 30d
+	OutputRetention *string `json:"output_retention,omitempty"`
+
 	// Progressive Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
 	Progressive *bool `json:"progressive,omitempty"`
 }
@@ -4003,7 +4017,7 @@ type Connection struct {
 	// DefinitionRevision The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again, or a none connection's empty credentials (PUT .../credentials), moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
 	DefinitionRevision *int64 `json:"definition_revision,omitempty"`
 
-	// DefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
+	// DefinitionStatus current when the connection reads its connector's latest revision, or an earlier one that differs from it only in what a config is checked against (sensitive, and which tools only read or send data out), outdated when a later one changes what the connection reads, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 	DefinitionStatus ConnectionDefinitionStatus `json:"definition_status"`
 
 	// ExpiresAt When the current credential expires. Absent when there is none or it does not.
@@ -4053,7 +4067,7 @@ type ConnectionCredentials struct {
 	Values *map[string]string `json:"values,omitempty"`
 }
 
-// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
+// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, or an earlier one that differs from it only in what a config is checked against (sensitive, and which tools only read or send data out), outdated when a later one changes what the connection reads, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 type ConnectionDefinitionStatus string
 
 // ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, the shape of its arguments, how long it took and how it failed. No value the call was asked, and nothing it answered, is kept.
@@ -4800,6 +4814,9 @@ type CreateSessionRequest struct {
 
 	// ProjectId What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
 	ProjectId *string `json:"project_id,omitempty"`
+
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
 
 	// ReturnUrl The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
 	ReturnUrl *string `json:"return_url,omitempty"`
@@ -6253,7 +6270,7 @@ type PhoneVendor struct {
 
 // PlaceCallRequest defines model for PlaceCallRequest.
 type PlaceCallRequest struct {
-	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
+	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set.
 	Custom *map[string]string `json:"custom,omitempty"`
 
 	// From One of the customer's own numbers, which is what the person sees.
@@ -6446,10 +6463,18 @@ type Policy struct {
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
 
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
+
 	// Tags Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
 	//
 	// Example: {"application":"support"}
 	Tags *map[string]string `json:"tags,omitempty"`
+
+	// ToolOutputRetention How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
+	//
+	// Example: 30d
+	ToolOutputRetention *string `json:"tool_output_retention,omitempty"`
 }
 
 // PolicyScope Whose policy: an organization's, an app's, or one end user's.
@@ -6914,6 +6939,18 @@ type RespondRequest struct {
 	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
 	RequestId *string `json:"request_id,omitempty"`
 	Text      string  `json:"text"`
+}
+
+// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+type ResumeHistory struct {
+	// IncludeTools Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default.
+	IncludeTools *bool `json:"include_tools,omitempty"`
+
+	// MaxCharacters How many characters are handed back, tool calls and results included: about four to a token. The whole of it is sent, and billed, with the first reply after the conversation is resumed, and is cached from then on by models that cache, so keep it well inside the model's context window. Omitted is 60000.
+	MaxCharacters *int64 `json:"max_characters,omitempty"`
+
+	// MaxMessages How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
+	MaxMessages *int64 `json:"max_messages,omitempty"`
 }
 
 // ReviewActor Who moved a use case: the app, Stream staff or the vendor.
@@ -8305,6 +8342,9 @@ type SyncAgentRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
+	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
+
 	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 	Role *AgentRole `json:"role,omitempty"`
 
@@ -8330,7 +8370,7 @@ type SyncAgentRequest struct {
 	Subagent *string            `json:"subagent,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
 	Tools *AgentTools   `json:"tools,omitempty"`
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
@@ -11148,7 +11188,7 @@ type ClientInterface interface {
 
 	// DeleteConnectorOAuthClient Remove the app's own OAuth client for a connector
 	//
-	// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+	// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12105,7 +12145,7 @@ type ClientInterface interface {
 
 	// DeleteUserConnections Delete every connection of one user
 	//
-	// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+	// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. Where the connector's manifest says revoke_on_delete (Nessy), the provider is asked to revoke each grant once the connections are gone, and a refusal is logged; for every other connector it is not asked. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
 	//
 	// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
 	//
@@ -14896,7 +14936,7 @@ func (c *Client) RotateConnectorEventDestinationSecret(ctx context.Context, id s
 
 // DeleteConnectorOAuthClient Remove the app's own OAuth client for a connector
 //
-// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -16889,7 +16929,7 @@ func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, r
 
 // DeleteUserConnections Delete every connection of one user
 //
-// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. Where the connector's manifest says revoke_on_delete (Nessy), the provider is asked to revoke each grant once the connections are gone, and a refusal is logged; for every other connector it is not asked. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
 //
 // It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
 //
@@ -31449,7 +31489,7 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteConnectorOAuthClientWithResponse Remove the app's own OAuth client for a connector
 	//
-	// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+	// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -32510,7 +32550,7 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteUserConnectionsWithResponse Delete every connection of one user
 	//
-	// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+	// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. Where the connector's manifest says revoke_on_delete (Nessy), the provider is asked to revoke each grant once the connections are gone, and a refusal is logged; for every other connector it is not asked. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
 	//
 	// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
 	//
@@ -50898,6 +50938,8 @@ type PlacePhoneCallResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -50936,6 +50978,11 @@ func (r PlacePhoneCallResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PlacePhoneCallResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PlacePhoneCallResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -59417,7 +59464,7 @@ func (c *ClientWithResponses) RotateConnectorEventDestinationSecretWithResponse(
 
 // DeleteConnectorOAuthClientWithResponse Remove the app's own OAuth client for a connector
 //
-// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -61102,7 +61149,7 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 
 // DeleteUserConnectionsWithResponse Delete every connection of one user
 //
-// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. Where the connector's manifest says revoke_on_delete (Nessy), the provider is asked to revoke each grant once the connections are gone, and a refusal is logged; for every other connector it is not asked. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
 //
 // It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
 //
@@ -83109,6 +83156,13 @@ func ParsePlacePhoneCallResponse(rsp *http.Response) (*PlacePhoneCallResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

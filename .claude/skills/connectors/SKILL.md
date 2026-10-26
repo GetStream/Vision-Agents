@@ -210,6 +210,23 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
   the session.
+- Google Drive has a block from revision 5 (`GOOGLE_DRIVE_TOKEN`, host `www.googleapis.com`; AI-1958),
+  so its connections of revisions 2-4 give the sandbox nothing until reconnected. Its token
+  carries `drive.file`, so code can also create files and change files the app opened. A
+  `session` Drive binding of a user with no connection gets a late grant (below).
+- A `session` binding whose user has not connected yet, in a chat they can log in in, gets a late
+  grant: the env var is there from the start, built from the connector's latest `sandbox` block,
+  and a request with it gets a 401 (the proxy's «gives no token», or the host's own under Daytona).
+  `run_code`'s description tells the model to call `<alias>__list_tools`, which shows the consent
+  card and waits. In a chat the run itself shows the card too, holding nothing, one open consent per binding;
+  the session reads the connection every 3 s and carries on once it connects (AI-1982). Until the user
+  has logged in, every `run_code` result adds a line that says so,
+  whatever the code did: if the code needed the binding (a 401 from the grant's hosts), call
+  `<alias>__list_tools` (`Result.Unconnected`). Once the user consents, the next run
+  binds the grant: at once behind the proxy, within 18 to 24 s as a Daytona secret, whose run that
+  binds it says to wait 20 s on a 401 (`Result.Connected`; a run the login finished during says it
+  too). A required binding still refuses the session, and a voice
+  session gets no grant.
 - Before each run a new credential revision updates the secret; a connection that needs a
   reconnect, or was deleted, withdraws it, and so does a binding the agent config dropped, no
   longer marks `sandbox`, or binds to another connector or connection (AI-1686, as the tool

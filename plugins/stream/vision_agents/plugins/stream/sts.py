@@ -10,11 +10,13 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.llm.tool_call import calling
 from vision_agents.core.utils.utils import cancel_and_wait
 
 from ._backend import Backend
 from ._routerconfig import ensure_router
 from ._socket import Socket
+from ._tool_line import Holds, SocketLine, call_of
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,7 @@ class STS(realtime.Realtime):
         self._replies: dict[int, str] = {}
         self._stale = 0
         self._speaking = 0
+        self._holds = Holds()
 
     async def connect(self) -> None:
         """Open the socket and wait for the router to say the model is ready."""
@@ -279,6 +282,13 @@ class STS(realtime.Realtime):
             await self._completed(frame)
         elif kind == "tool_call":
             self._run_tool_in_background(self._call_tool(frame))
+        elif kind == "tool_held":
+            self._holds.answer(str(frame.get("id", "")), True)
+        elif kind == "tool_cancel":
+            # The model stopped waiting on these. A function still waiting to be held is told
+            # it was not; one already running is left to finish.
+            for call_id in frame.get("ids") or []:
+                self._holds.answer(str(call_id), False)
         elif kind == "session_expiring":
             logger.warning(
                 "the model's session is about to be cut off", extra={"frame": frame}
@@ -313,6 +323,11 @@ class STS(realtime.Realtime):
         )
         self._emit_response_event("", response_id=response_id)
 
+    async def _send(self, frame: dict[str, Any]) -> None:
+        """Send a running call's frame, which has nowhere to go once the socket closed."""
+        if self._socket is not None and self._socket.open:
+            await self._socket.send(frame)
+
     async def _call_tool(self, frame: dict[str, Any]) -> None:
         """Run the tool the model asked for and send back what it produced."""
         call_id = frame.get("id", "")
@@ -328,7 +343,14 @@ class STS(realtime.Realtime):
             "arguments_json": arguments,
         }
 
-        _, result, error = await self._run_one_tool(tool_call, timeout_s=TOOL_TIMEOUT)
+        tool_call_context = call_of(frame, "", SocketLine(self._send, self._holds))
+        try:
+            with calling(tool_call_context):
+                _, result, error = await self._run_one_tool(
+                    tool_call, timeout_s=TOOL_TIMEOUT
+                )
+        finally:
+            self._holds.forget(call_id)
         if self._socket is None or not self._socket.open:
             return
         if error:

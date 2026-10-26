@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -41,6 +42,22 @@ type schedulingScript struct {
 	failing int
 	// held, when set, keeps the scheduled turns of every model back until it is closed.
 	held chan struct{}
+	// silent has every model answer without a word, running only the tool calls queued.
+	silent bool
+}
+
+// saySilently has every model answer from now on without a word, as a turn whose only
+// answer is the file its code made.
+func (s *schedulingScript) saySilently() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.silent = true
+}
+
+func (s *schedulingScript) silently() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.silent
 }
 
 // failScheduled has every model opened from now on fail its next times a scheduled task comes
@@ -115,7 +132,7 @@ func (s *schedulingScript) next() []llm.ToolCall {
 func (s *schedulingScript) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.turns, s.rounds, s.failing, s.held = nil, nil, 0, nil
+	s.turns, s.rounds, s.failing, s.held, s.silent = nil, nil, 0, nil, false
 }
 
 // schedulingModel is a model that asks for the tool calls its test queued and
@@ -204,7 +221,9 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		}()
 		return script.Stream(), nil
 	}
-	script.OutputText("Done.")
+	if !m.script.silently() {
+		script.OutputText("Done.")
+	}
 	if len(calls) > 0 {
 		script.ToolCalls(calls...)
 	}
@@ -326,7 +345,8 @@ func TestScheduledTasksSuite(t *testing.T) {
 }
 
 func (s *ScheduledTasksSuite) SetupSuite() {
-	s.sink = &channelSink{sent: map[string][]string{}}
+	s.sink = &channelSink{sent: map[string][]string{}, media: map[string][]string{}}
+	s.daytona = daytonatest.Start(s.T())
 	s.channelAPI = httptest.NewTLSServer(http.HandlerFunc(s.sink.serve))
 	s.T().Cleanup(s.channelAPI.Close)
 	// A worker claims every task due in its database, so the suite's workers and those of
@@ -1140,6 +1160,130 @@ func (s *ScheduledTasksSuite) TestTheAgentCannotRescheduleAFailedTaskOfAConfigDe
 	s.say(user, opened.Id, "try it again in two hours")
 	s.Contains(s.ranResult(watching), `"error":"unknown_config"`)
 	s.Equal(store.ScheduledTaskFailed, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
+func (s *ScheduledTasksSuite) TestDeletingAConfigWritesItsTasksHeldOccurrenceMissed() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	// An occurrence held through quiet hours: running, with no worker on it.
+	until := time.Now().Add(8 * time.Hour)
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &store.ScheduledTaskRun{
+		TaskID: created.Id, CustomerID: s.customerID(), ScheduledFor: time.Now().Add(-time.Minute), PostponedUntil: &until,
+	}))
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	var page ScheduledTaskRunPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks/"+created.Id+"/runs", nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Equal(store.ScheduledTaskRunMissed, page.Items[0].State, "the paused task's held occurrence is not left running for good")
+	s.NotNil(page.Items[0].FinishedAt)
+}
+
+// whileDeleting makes a request while a delete of the config is under way, as
+// another request deleting it at the same moment would: the delete's write is
+// in and not committed when the request reaches the config. It commits once the
+// request waits on that write, and returns when the request is done.
+func (s *ScheduledTasksSuite) whileDeleting(config string, request func()) {
+	ctx := context.Background()
+	deleting, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = deleting.Rollback() }()
+	_, err = deleting.ExecContext(ctx, "UPDATE agent_configs SET deleted_at = now() WHERE id = ?", config)
+	s.Require().NoError(err)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		request()
+	}()
+	// The suite's database is its own, so a backend waiting on a lock in it is the request.
+	s.Require().Eventually(func() bool {
+		var waiting int
+		err := s.store.DB().QueryRowContext(ctx, "SELECT count(*) FROM pg_stat_activity"+
+			" WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the request read the config without waiting for the delete under way")
+	s.Require().NoError(deleting.Commit())
+	<-done
+}
+
+func (s *ScheduledTasksSuite) TestATaskCreatedWhileItsConfigIsDeletedIsRefused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+
+	var status int
+	var failure string
+	s.whileDeleting(config, func() {
+		status, failure = s.serverClient.actingFor(user).failure(http.MethodPost, "/v1/agents/scheduled-tasks", taskRequest(config))
+	})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
+	s.Empty(s.tasksOf(user), "no task is left active on a config the delete's pause has already passed")
+}
+
+func (s *ScheduledTasksSuite) TestATaskResumedWhileItsConfigIsDeletedStaysPaused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, path+"/pause", nil, nil))
+
+	var status int
+	var failure string
+	s.whileDeleting(config, func() { status, failure = user.failure(http.MethodPost, path+"/resume", nil) })
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
+func (s *ScheduledTasksSuite) TestATaskEditedWhileItsConfigIsDeletedIsLeftAsItWas() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+
+	var status int
+	var failure string
+	s.whileDeleting(config, func() {
+		status, failure = user.failure(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+			UpdateScheduledTaskRequest{Title: pointerTo("Renamed")})
+	})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
+	s.Equal("Stretch", s.taskReloaded(store.ScheduledTask{ID: created.Id}).Title)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotScheduleATaskOnAConfigDeletedUnderItsSession() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H","timezone":"Europe/Amsterdam"}`})
+	s.say(user, opened.Id, "remind me to stretch in two hours")
+	s.Contains(s.ranResult(watching), `"error":"unknown_config"`)
+	s.Empty(s.tasksOf(user))
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotResumeATaskWhileItsConfigIsDeleted() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/pause", nil, nil))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"resume"}`})
+	s.whileDeleting(config, func() { s.say(user, opened.Id, "turn it back on") })
+	s.Contains(s.ranResult(watching), `"error":"unknown_config"`)
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
 }
 
 func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
@@ -2195,8 +2339,23 @@ func (s *ScheduledTasksSuite) TestACallersOwnScheduleTaskKeepsTheName() {
 type channelSink struct {
 	mu   sync.Mutex
 	sent map[string][]string
+	// media is the URLs of every file sent to a person on Telnyx, in order.
+	media map[string][]string
 	// failing is how many more sends to a person the provider refuses.
 	failing map[string]int
+	// refusingMedia is the people every file sent to is refused for, as Telnyx refuses an MMS
+	// to a number outside the US and Canada.
+	refusingMedia map[string]bool
+}
+
+// refuseMedia has the provider refuse every file sent to number, and take its words.
+func (c *channelSink) refuseMedia(number string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refusingMedia == nil {
+		c.refusingMedia = map[string]bool{}
+	}
+	c.refusingMedia[number] = true
 }
 
 // fail has the provider refuse the next times sends to number.
@@ -2211,8 +2370,9 @@ func (c *channelSink) fail(number string, times int) {
 
 func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		To   string          `json:"to"`
-		Text json.RawMessage `json:"text"`
+		To    string          `json:"to"`
+		Text  json.RawMessage `json:"text"`
+		Media []string        `json:"media_urls"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	text := ""
@@ -2231,7 +2391,16 @@ func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"the provider is down"}}`, http.StatusBadGateway)
 		return
 	}
-	c.sent[body.To] = append(c.sent[body.To], text)
+	if len(body.Media) > 0 && c.refusingMedia[body.To] {
+		c.mu.Unlock()
+		http.Error(w, `{"errors":[{"detail":"MMS is not supported for this destination"}]}`, http.StatusBadRequest)
+		return
+	}
+	if len(body.Media) > 0 {
+		c.media[body.To] = append(c.media[body.To], body.Media...)
+	} else {
+		c.sent[body.To] = append(c.sent[body.To], text)
+	}
 	c.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2243,6 +2412,13 @@ func (c *channelSink) to(number string) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.sent[number]...)
+}
+
+// mediaTo is the URL of every file the sink was sent for one person on Telnyx, in order.
+func (c *channelSink) mediaTo(number string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.media[number]...)
 }
 
 // connectWhatsApp hands the router a WhatsApp line's credentials.
@@ -2338,11 +2514,16 @@ func (s *ScheduledTasksSuite) seedSMSLine(number string) {
 	}))
 }
 
-func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
-	number, writer := s.lineNumber(), s.writerNumber()
+// smsTask is a task the backend schedules for a user who texts the agent's SMS line from
+// writer, delivered by SMS, on an agent config changed as change says.
+func (s *ScheduledTasksSuite) smsTask(writer string, change func(*AgentConfigRequest)) *testClient {
+	number := s.lineNumber()
 	s.seedSMSLine(number)
 	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
 		request.Channels = &AgentChannels{Sms: &ChannelLineRequest{Number: number}}
+		if change != nil {
+			change(request)
+		}
 	})
 	user := s.data.createUser()
 	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
@@ -2351,6 +2532,12 @@ func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
 	}))
 	opened := s.openScheduling(user, config, nil)
 	s.taskOn(user, config, opened.Id, []string{"sms"})
+	return user
+}
+
+func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
+	writer := s.writerNumber()
+	user := s.smsTask(writer, nil)
 	s.runWorker()
 	s.makeDue(s.tasksOf(user)[0])
 
@@ -2358,7 +2545,89 @@ func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
 	s.Equal("sms", run.DeliveredTo)
 	s.Require().Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
-	s.Equal("Done.", s.sink.to(writer)[0])
+	s.Never(func() bool { return len(s.sink.to(writer)) > 1 }, dropped, 20*time.Millisecond, "texted once")
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Empty(s.sink.mediaTo(writer), "a reply that made no file sends none")
+}
+
+// A file the task's code made is texted after the reply's words, as an MMS.
+func (s *ScheduledTasksSuite) TestATaskTextedBySMSCarriesTheFileItsCodeMade() {
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	report := s.codeHandsBackAReport()
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Require().Eventually(func() bool { return len(s.sink.mediaTo(writer)) > 0 },
+		10*time.Second, 50*time.Millisecond, "no file was texted to %s", writer)
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Equal([]string{report}, s.sink.mediaTo(writer))
+}
+
+// A reply of only the file the task's code made, with no words, is texted as the file.
+func (s *ScheduledTasksSuite) TestATaskWhoseReplyIsOnlyAFileTextsTheFile() {
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	report := s.codeHandsBackAReport()
+	s.schedulingScript.saySilently()
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal([]string{report}, s.sink.mediaTo(writer))
+	s.Empty(s.sink.to(writer), "there were no words to text")
+}
+
+// A reply whose words went out and whose file the line refused is delivered: another attempt
+// would text the words again.
+func (s *ScheduledTasksSuite) TestATaskWhoseFileTheLineRefusesTextsItsWordsOnce() {
+	s.retryAtOnce()
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	s.codeHandsBackAReport()
+	s.sink.refuseMedia(writer)
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Never(func() bool { return len(s.sink.to(writer)) > 1 }, dropped, 20*time.Millisecond, "texted once")
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Empty(s.sink.mediaTo(writer), "the file was refused")
+}
+
+// A file the task's code wrote twice is texted once, its latest, as the conversation keeps it.
+func (s *ScheduledTasksSuite) TestAFileTheTasksCodeWroteTwiceIsTextedOnce() {
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	report := s.codeHandsBackAReport(reportRun(), reportRun())
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal([]string{report}, s.sink.mediaTo(writer))
+}
+
+// A retry after the line refused the reply texts the file the first attempt's turn made,
+// without running the task again.
+func (s *ScheduledTasksSuite) TestARetriedSMSTaskTextsTheFileItsTurnAlreadyMade() {
+	s.retryAtOnce()
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	report := s.codeHandsBackAReport()
+	s.sink.fail(writer, 1)
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Len(s.sink.to(writer), 1, "the words went once")
+	s.Equal([]string{report}, s.sink.mediaTo(writer))
+	s.Equal(1, s.model().turnsOn("<scheduled_task"), "the retry ran no second turn")
 }
 
 func (s *ScheduledTasksSuite) TestAWhatsAppTaskOutsideItsWindowLandsInTheConversation() {

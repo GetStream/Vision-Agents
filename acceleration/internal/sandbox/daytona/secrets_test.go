@@ -23,7 +23,7 @@ import (
 
 func TestSecretsBrokerContract(t *testing.T) {
 	var stub *platform
-	suite.Run(t, &brokertest.BrokerContract{New: func(t *testing.T, session string, tokens sandbox.Tokens, logger *slog.Logger) brokertest.Subject {
+	suite.Run(t, &brokertest.BrokerContract{New: func(t *testing.T, session string, tokens sandbox.Tokens, bind sandbox.Bind, logger *slog.Logger) brokertest.Subject {
 		// One provider per test, shared by its sessions.
 		if stub == nil || stub.test != t.Name() {
 			stub = newPlatform()
@@ -31,7 +31,7 @@ func TestSecretsBrokerContract(t *testing.T) {
 			t.Cleanup(stub.server.Close)
 		}
 		secrets, err := NewSecrets(SecretsOptions{APIKey: "key-1", APIURL: stub.server.URL + "/api", Prefix: "stg",
-			Session: session, Tokens: tokens, Logger: logger})
+			Session: session, Tokens: tokens, Bind: bind, Logger: logger})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,6 +135,101 @@ func (s *SecretsSuite) TestDaytonasBrokerSendsDaytonaWhatItDidBefore() {
 	s.Equal(`[{"authorization":"Bearer key-1","code":"print(1)","language":"python","path":"/toolbox/sandbox-2/process/code-run","timeout":30}]`,
 		string(ran))
 	s.Equal([]string{"{\"command\":\"mkdir -p 'dir'\"}\n"}, s.platform.rawCommands)
+}
+
+// lateBox is a sandbox of session-1 with github and a late grant of linear, whose Bind gives the
+// connection bound holds once it is set, and whose tokens are s.token.
+func (s *SecretsSuite) lateBox(bound *sandbox.Grant) *Sandbox {
+	key, url := "key-1", s.platform.server.URL+"/api"
+	broker, err := NewSecrets(SecretsOptions{APIKey: key, APIURL: url, Prefix: "stg", Session: "session-1",
+		Tokens: func(context.Context, sandbox.Grant) (sandbox.Token, error) { return s.token, s.tokenErr },
+		Bind: func(context.Context, sandbox.Grant) (sandbox.Grant, bool) {
+			return *bound, bound.Connection.ConnectionID != ""
+		},
+		Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	linear := sandbox.Grant{Binding: "linear", Env: "LINEAR_TOKEN", Hosts: []string{"api.linear.app"}, Late: true}
+	box, err := New(Options{APIKey: key, APIURL: url, Grants: []sandbox.Grant{github, linear}, Broker: broker})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = box.Close() })
+	return box
+}
+
+// TestALateGrantsSecretHoldsAStandInUntilABindPutsTheTokenIn: Daytona creates no sandbox that
+// names a missing secret, so the late grant's is made with the stand-in, and the first run after
+// its bind puts the token in, whatever revision the credential is at.
+func (s *SecretsSuite) TestALateGrantsSecretHoldsAStandInUntilABindPutsTheTokenIn() {
+	s.token = sandbox.Token{Value: "lin_zero", Revision: 0}
+	bound := sandbox.Grant{}
+	box := s.lateBox(&bound)
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.ElementsMatch([]any{map[string]any{"GITHUB_TOKEN": s.platform.secrets["secret-1"].Name},
+		map[string]any{"LINEAR_TOKEN": s.platform.secrets["secret-2"].Name}}, s.platform.requests()[0]["secrets"])
+	s.Equal("va_unbound", s.platform.secrets["secret-2"].Value)
+	s.Equal([]string{"api.linear.app"}, s.platform.secrets["secret-2"].Hosts)
+
+	bound = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-linear"}, Binding: "linear", Scheme: "bearer"}
+	for range 2 {
+		_, err = box.Run(s.ctx, "print(1)", nil)
+		s.Require().NoError(err)
+	}
+
+	s.Equal("lin_zero", s.platform.secrets["secret-2"].Value)
+	s.Equal([]string{"POST /api/secret", "POST /api/secret", "POST /api/sandbox", "PATCH /api/secret/secret-2"}, s.platform.history())
+}
+
+// TestALateGrantsTokenDaytonaRefusedIsPutInOnTheNextRun: the run fails, and the next one tries
+// again rather than keep the stand-in.
+func (s *SecretsSuite) TestALateGrantsTokenDaytonaRefusedIsPutInOnTheNextRun() {
+	s.token = sandbox.Token{Value: "lin_zero", Revision: 0}
+	bound := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-linear"}, Binding: "linear", Scheme: "bearer"}
+	box := s.lateBox(&bound)
+	s.platform.refuseUpdate = "linear"
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().Error(err)
+	s.Equal("va_unbound", s.platform.secrets["secret-2"].Value)
+
+	s.platform.refuseUpdate = ""
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	s.Equal("lin_zero", s.platform.secrets["secret-2"].Value)
+}
+
+// TestAConfigWithoutLateGrantsSendsDaytonaWhatItDidBefore is the control: with a Bind and no
+// late grant, the calls to Daytona, what each secret holds and the tokens asked for through
+// Prepare and two runs are a probe of base 8e132bd37, and Bind is never called.
+func (s *SecretsSuite) TestAConfigWithoutLateGrantsSendsDaytonaWhatItDidBefore() {
+	var asked []string
+	revision := 1
+	broker, err := NewSecrets(SecretsOptions{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Prefix: "stg", Session: "session-1",
+		Tokens: func(_ context.Context, grant sandbox.Grant) (sandbox.Token, error) {
+			asked = append(asked, grant.Binding+"/"+grant.Connection.ConnectionID)
+			return sandbox.Token{Value: fmt.Sprintf("tok_%s_%d", grant.Binding, revision), Revision: revision}, nil
+		},
+		Bind: func(context.Context, sandbox.Grant) (sandbox.Grant, bool) {
+			s.Fail("Bind is called with no late grant")
+			return sandbox.Grant{}, false
+		}, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	gitlab := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-gitlab"},
+		Binding: "gitlab", Env: "GITLAB_TOKEN", Hosts: []string{"gitlab.com"}}
+
+	mount, err := broker.Prepare(s.ctx, []sandbox.Grant{github, gitlab})
+	s.Require().NoError(err)
+	s.Require().NoError(broker.BeforeRun(s.ctx))
+	revision = 2
+	s.Require().NoError(broker.BeforeRun(s.ctx))
+
+	s.Len(mount.Secrets, 2)
+	s.Equal([]string{"POST /api/secret", "POST /api/secret", "PATCH /api/secret/secret-1", "PATCH /api/secret/secret-2"}, s.platform.history())
+	s.Equal("tok_github_2", s.platform.secrets["secret-1"].Value)
+	s.Equal([]string{"api.github.com", "uploads.github.com"}, s.platform.secrets["secret-1"].Hosts)
+	s.Equal("tok_gitlab_2", s.platform.secrets["secret-2"].Value)
+	s.Equal([]string{"gitlab.com"}, s.platform.secrets["secret-2"].Hosts)
+	s.Equal([]string{"github/connection-1", "gitlab/connection-gitlab", "github/connection-1", "gitlab/connection-gitlab",
+		"github/connection-1", "gitlab/connection-gitlab"}, asked)
 }
 
 func (s *SecretsSuite) TestTheSandboxIsCreatedWithTheSecretMadeForItsGrant() {

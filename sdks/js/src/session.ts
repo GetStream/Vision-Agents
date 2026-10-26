@@ -586,8 +586,8 @@ export class Session {
         throw new Error(`${name} was asked for, and no tools are registered`);
       }
       const line = socketLine((sent) => this.socket?.open && this.socket.send(sent), this.holds);
-      const call = toolCallOf(frame, this.id, line, this.ending.signal);
-      result["output"] = await this.tools.call(name, text(frame, "arguments"), cancel.signal, call);
+      const toolCallContext = toolCallOf(frame, this.id, line, this.ending.signal);
+      result["output"] = await this.tools.call(name, text(frame, "arguments"), cancel.signal, toolCallContext);
     } catch (cause) {
       result["error"] = cause instanceof Error ? cause.message : String(cause);
     } finally {

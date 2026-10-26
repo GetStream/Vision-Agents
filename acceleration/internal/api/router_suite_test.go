@@ -77,6 +77,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
@@ -413,6 +414,9 @@ type RouterSuite struct {
 	// inbound answers what arrives on the app's channels.
 	inbound *channels.Service
 
+	// daytona is where the sessions' sandboxes are made, for a suite whose agents run code to
+	// set before it starts the harness. Nil makes them on the Daytona the environment names.
+	daytona *daytonatest.Server
 	// sandbox is what an app with no approved use case may do, for a suite about the
 	// sandbox to set before it starts the harness. The zero value is off.
 	sandbox dlc.Sandbox
@@ -570,7 +574,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.transports = transports
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
-		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, logger)
+		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, policies, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
@@ -955,6 +959,11 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("slow", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Here it is.", takes: time.Second}, nil
 	})
+	// A model that outlasts the moment a closing session gives its reply to finish, for a
+	// reply that is still being written when the router stops.
+	reasoning.Register("stuck", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Too late.", takes: time.Minute}, nil
+	})
 
 	// A model that reaches for the caller's own tool on its first turn. One of these per
 	// session rather than one for the suite, so a test reads back its own turn.
@@ -1105,6 +1114,7 @@ func (s *RouterSuite) sessionManager(
 	streams *Streams,
 	directory *node.Directory,
 	connectors session.Connectors,
+	policies *policy.Enforcer,
 	logger *slog.Logger,
 ) *session.Manager {
 	conversations := conversation.NewForChats(conversation.StreamApps(s.stream))
@@ -1120,7 +1130,12 @@ func (s *RouterSuite) sessionManager(
 	if !s.memoryOff {
 		metering = metered.NewMemory(remembering, s.metering)
 	}
+	var sandboxes *metered.Sandboxes
+	if s.daytona != nil {
+		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(), Logger: logger})
+	}
 	sessions, err := session.NewManager(session.ManagerOptions{
+		Sandboxes:     sandboxes,
 		LLM:           streams.LLM,
 		STT:           streams.STT,
 		TTS:           streams.TTS,
@@ -1129,11 +1144,14 @@ func (s *RouterSuite) sessionManager(
 		Conversations: conversations,
 		Stream:        s.stream,
 		Store:         s.store,
+		Policies:      policies,
 		Live:          s.live,
 		Configs:       s.configs,
 		Directory:     directory,
 		Connectors:    connectors,
 		Logger:        logger,
+		// The policies a session's resume_history falls back to, as cmd/router passes them.
+		ResumeHistories: policies,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
@@ -1358,6 +1376,13 @@ func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Se
 // what its peers' credentials are checked against, and logging to logger. Nil is a node
 // with no keyring.
 func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server) {
+	other, server, _ := s.otherNodeHolding(workers, keyring, logger)
+	return other, server
+}
+
+// otherNodeHolding is otherRouterSealedBy with the sessions it runs, for a test that stops
+// them the way a router going down does.
+func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
@@ -1410,7 +1435,7 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)
-	return other, server
+	return other, server, sessions
 }
 
 // deploymentWorkers is one node's view of the dispatch workers across the deployment.
@@ -1886,6 +1911,15 @@ func (d testData) briefed(request CreateSessionRequest) (CreateSessionRequest, s
 	brief := "Be a customer whose order " + d.suite.utils.uuid() + " never came."
 	request.Instructions = &brief
 	return request, brief
+}
+
+// storedSession is the id of a session of the suite's app that is not running, its row put
+// straight into the store, for an endpoint that only asks whose a session is.
+func (d testData) storedSession() string {
+	id := "session-" + d.suite.utils.uuid()
+	d.suite.Require().NoError(d.suite.store.SaveSession(context.Background(),
+		&store.AgentSession{ID: id, CustomerID: d.suite.customerID()}))
+	return id
 }
 
 // createUser is a client signed in as a new end user of the suite's app.

@@ -92,6 +92,11 @@ const (
 	// names a URL with a path and a query, and runs on past 256 bytes in two-byte runes. Not a
 	// vendor behaviour: the worst a provider's own text can hold.
 	DescribedRefusal Personality = "described_refusal"
+	// EchoedErrorCode answers every token request and every revoke with 400 and an error
+	// member (RFC 6749 §5.2, RFC 7009 §2.2.1) that is what the request carried: the code and
+	// the code_verifier, the refresh token, or the token to revoke, then the client secret. Not
+	// a vendor behaviour: the worst a provider's own error member can hold.
+	EchoedErrorCode Personality = "echoed_error_code"
 	// LostResponse performs a refresh, rotation included, then closes the connection before
 	// answering. The old refresh token is spent and the new one never arrives. It changes how
 	// a refresh is delivered, not what it does, so it combines with RotatingRefreshWithGrace
@@ -222,7 +227,7 @@ const (
 
 // tokenEndpoint are the personalities that decide what the token endpoint does; at most one
 // can be on.
-var tokenEndpoint = []Personality{RotatingRefreshWithGrace, NonRotatingRefresh, NoRefreshToken, InvalidGrant, DescribedRefusal, Unavailable, ServerError, CutOffRefusal}
+var tokenEndpoint = []Personality{RotatingRefreshWithGrace, NonRotatingRefresh, NoRefreshToken, InvalidGrant, DescribedRefusal, EchoedErrorCode, Unavailable, ServerError, CutOffRefusal}
 
 // Server is the fake provider. Its fields are fixed when New returns.
 type Server struct {

@@ -121,6 +121,18 @@ such worker, a model that sees images is shown them itself, with its next reply 
 reads only text is told the tool failed. One socket message holds at most 5 MB, so shrink a
 photo first.
 
+### Showing the agent the camera
+
+On a call, `voice.join(camera = true)` or `voice.setCameraEnabled(true)` lets the agent look
+through the phone's back camera, with nothing declared. While the camera is on, what the call
+publishes is sampled twice a second and the last eight frames kept; when the agent's `vision`
+skill asks what the camera showed, `voice.session` answers with the frames taken at or before
+the moment of the question, or says the camera showed nothing in the last five seconds, so the
+agent asks the person to show it again. Turning the camera off forgets them.
+
+The frames come through `call.videoFilter`. A filter the app set there, or Stream Video's
+moderation blur, keeps running underneath, so what the agent sees is what the call publishes.
+
 ### Finding a conversation again
 
 Lists come a page at a time. Pass a page's `nextCursor` back as `cursor`, with the same filters,

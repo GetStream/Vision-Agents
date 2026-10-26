@@ -34,15 +34,47 @@ func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIAndGitHosts()
 	}
 }
 
+// From revision 5, Google Drive's REST API host (AI-1958).
+func (s *SandboxSuite) TestGoogleDriveGivesASandboxItsTokenForTheRESTAPIHost() {
+	drive := s.manifest("google_drive")
+	s.Equal(6, drive.Revision)
+	s.Require().NotEmpty(drive.Schemes)
+
+	for _, scheme := range drive.Schemes {
+		resolved, err := drive.Resolve(scheme, nil, nil)
+		s.Require().NoError(err, scheme)
+
+		s.Equal(&core.SandboxRule{Env: "GOOGLE_DRIVE_TOKEN", Hosts: []string{"www.googleapis.com"}}, resolved.Sandbox, scheme)
+	}
+}
+
+// The router refuses two sandbox bindings with the same env (internal/api/configs.go), so no two
+// built-ins may name one.
+func (s *SandboxSuite) TestNoTwoBuiltInsShareASandboxEnv() {
+	files, err := fs.Glob(providers.FS, "*.yaml")
+	s.Require().NoError(err)
+	owner := map[string]string{}
+	for _, file := range files {
+		id := strings.TrimSuffix(file, ".yaml")
+		rule := s.manifest(id).Sandbox
+		if rule == nil {
+			continue
+		}
+		s.NotContains(owner, rule.Env, "%s and %s share %s", id, owner[rule.Env], rule.Env)
+		owner[rule.Env] = id
+	}
+}
+
 // The control: on the base, b7187f62, no built-in had a sandbox block
-// (git grep -n '^sandbox' b7187f622 -- acceleration/internal/connectors/providers: nothing).
+// (git grep -n '^sandbox' b7187f622 -- acceleration/internal/connectors/providers: nothing); on
+// 8e132bd37 only github.yaml has one (the same grep).
 func (s *SandboxSuite) TestNoOtherBuiltInHasASandbox() {
 	files, err := fs.Glob(providers.FS, "*.yaml")
 	s.Require().NoError(err)
 	s.Require().NotEmpty(files)
 	for _, file := range files {
 		id := strings.TrimSuffix(file, ".yaml")
-		if id == "github" {
+		if id == "github" || id == "google_drive" {
 			continue
 		}
 		s.Nil(s.manifest(id).Sandbox, id)

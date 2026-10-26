@@ -27,6 +27,13 @@ const BrokerName = "daytona"
 // Daytona took a 512-character name on 2026-10-21, so no part is cut short.
 var unnamed = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
+// unbound is what a late grant's secret holds until its connection is bound. The secret must
+// exist when the sandbox is created: Daytona refuses a sandbox that names a missing one with a
+// 400, and a value updated later reaches the running sandbox within 18 to 24 seconds (probe
+// against Daytona's API, 2026-10-25). The host refuses it as it would any credential it does not
+// know.
+const unbound = "va_unbound"
+
 // SecretsOptions are what Secrets needs: Daytona's API, and the session's names and tokens.
 type SecretsOptions struct {
 	APIKey, APIURL string
@@ -37,7 +44,9 @@ type SecretsOptions struct {
 	// Session is the session the secrets are for.
 	Session string
 	Tokens  sandbox.Tokens
-	Logger  *slog.Logger
+	// Bind gives a late grant its connection before each run. A late grant needs it.
+	Bind   sandbox.Bind
+	Logger *slog.Logger
 }
 
 // Secrets is the sandbox.CredentialBroker over Daytona Secrets
@@ -52,11 +61,13 @@ type Secrets struct {
 	held []*secret
 }
 
-// secret is one grant's secret at Daytona, and the credential revision it holds.
+// secret is one grant's secret at Daytona, and the credential revision it holds. A late grant's
+// holds unbound until a run after its bind puts its token in.
 type secret struct {
 	grant    sandbox.Grant
 	id, name string
 	revision int
+	unbound  bool
 }
 
 func NewSecrets(o SecretsOptions) (*Secrets, error) {
@@ -87,9 +98,18 @@ func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 		if len(grant.Hosts) == 0 {
 			return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: connector %q has no host for the sandbox to send its credential to", grant.Binding), s.release(ctx))
 		}
+		if grant.Late && s.options.Bind == nil {
+			return sandbox.Mount{}, errors.Join(stack.Wrap(fmt.Errorf("daytona: connector %q is bound late, and the broker has no Bind", grant.Binding)), s.release(ctx))
+		}
+		if grant.Late && grant.Required {
+			return sandbox.Mount{}, errors.Join(stack.Wrap(fmt.Errorf("daytona: connector %q is bound late, so it cannot be required", grant.Binding)), s.release(ctx))
+		}
 		// A provider's refresh error may quote its answer, so only its class is logged, and a
-		// required grant's error carries none of it.
-		token, err := s.options.Tokens(ctx, grant)
+		// required grant's error carries none of it. A late grant has no connection to ask yet.
+		token, err := sandbox.Token{Value: unbound}, error(nil)
+		if !grant.Late {
+			token, err = s.options.Tokens(ctx, grant)
+		}
 		if err != nil {
 			if grant.Required {
 				reason := sandbox.ErrNoCredential
@@ -110,7 +130,7 @@ func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 		if err != nil {
 			return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: secret %s: %w", name, err), s.release(ctx))
 		}
-		s.held = append(s.held, &secret{grant: grant, id: created.ID, name: name, revision: token.Revision})
+		s.held = append(s.held, &secret{grant: grant, id: created.ID, name: name, revision: token.Revision, unbound: grant.Late})
 		mount.Secrets[grant.Env] = name
 	}
 	return mount, nil
@@ -121,6 +141,14 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 	defer s.mu.Unlock()
 	var kept []*secret
 	for i, held := range s.held {
+		if held.grant.Late {
+			bound, ok := s.options.Bind(ctx, held.grant)
+			if !ok || !held.grant.Binds(bound) {
+				kept = append(kept, held)
+				continue
+			}
+			held.grant = held.grant.Bound(bound)
+		}
 		token, err := s.options.Tokens(ctx, held.grant)
 		if err != nil && !errors.Is(err, sandbox.ErrNoCredential) {
 			kept = append(kept, held)
@@ -139,7 +167,7 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 			continue
 		}
 		kept = append(kept, held)
-		if token.Revision == held.revision {
+		if token.Revision == held.revision && !held.unbound {
 			continue
 		}
 		// Daytona applies an update to every sandbox that uses the secret within 15 seconds
@@ -148,7 +176,7 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 			s.held = append(kept, s.held[i+1:]...)
 			return fmt.Errorf("daytona: refresh secret %s: %w", held.name, err)
 		}
-		held.revision = token.Revision
+		held.revision, held.unbound = token.Revision, false
 	}
 	s.held = kept
 	return nil

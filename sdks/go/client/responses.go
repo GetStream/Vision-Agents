@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 // itemPage is how many items are read per request while unwinding, and itemCeiling is as many
@@ -169,6 +170,9 @@ type Responses struct {
 
 	client    *Client
 	sessionID string
+	// pipeline is told which question the session waits on, so a socket that reconnects
+	// learns how it ended. Nil for a session nothing here is watching.
+	pipeline *stream.Pipeline
 }
 
 // Input is something sent along with what is asked: an Image or a Clip to show the agent, the
@@ -285,6 +289,9 @@ func (r *Responses) Create(ctx context.Context, text string, inputs ...Input) (*
 		request.RequestId = pointer(hex.EncodeToString(id))
 	}
 
+	if r.pipeline != nil && request.RequestId != nil {
+		r.pipeline.Awaiting(*request.RequestId)
+	}
 	created, err := api.CreateResponseWithResponse(ctx, r.sessionID, request)
 	if err != nil {
 		return nil, fmt.Errorf("client: asking %s: %w", r.sessionID, err)

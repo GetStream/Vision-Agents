@@ -92,12 +92,12 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 	if err := followUpWithin(turn, found, delivery); err != nil {
 		return "", "", err
 	}
-	if _, err := readBackReply(turn, found, delivery.CommandID); err != nil {
-		return "", "", err
-	}
 	// The reply as the conversation stored it, with its files: as it finished, or read back
 	// for a follow-up that finished on an earlier attempt.
-	reply := found.FollowUpFinished(delivery.CommandID)
+	reply, err := readBackReply(turn, found, delivery.CommandID)
+	if err != nil {
+		return "", "", err
+	}
 	if !retried {
 		select {
 		case reply = <-replies:

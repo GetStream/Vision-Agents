@@ -14,11 +14,14 @@
 # And the tools' own pages, opened October 23, 2026 («Last updated 2026-07-16»):
 #   [create] https://developers.google.com/workspace/drive/api/reference/mcp/tools_list/create_file
 #   [copy]   https://developers.google.com/workspace/drive/api/reference/mcp/tools_list/copy_file
+# And the Drive API's scope table, opened October 25, 2026 («Last updated 2026-09-03»):
+#   [scopes] https://developers.google.com/workspace/drive/api/guides/api-specific-auth
 id: google_drive
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
 # false, which revision 1 was stored without (refresh.rotating became a pointer). 3 lists the
-# tools that only read. 4 asks for drive.file, so create_file and copy_file work (AI-1933).
-revision: 4
+# tools that only read. 4 asks for drive.file, so create_file and copy_file work (AI-1933). 5 adds
+# the sandbox block (AI-1958). 6 takes a grant of drive in place of drive.file (scopes.covered_by).
+revision: 6
 # [plugin]
 name: Google Drive
 category: Documents
@@ -68,6 +71,12 @@ scopes:
   list:
     - https://www.googleapis.com/auth/drive.readonly
     - https://www.googleapis.com/auth/drive.file
+  # drive, «View and manage all your Drive files», gives all drive.file, «Create new Drive
+  # files, or modify existing files, that you open with an app», gives ([scopes]), and [create]
+  # and [copy] take either. drive.appdata, which they take too, reaches only «the app's own
+  # configuration data» ([scopes]), so it covers nothing drive.file gives.
+  covered_by:
+    https://www.googleapis.com/auth/drive.file: [https://www.googleapis.com/auth/drive]
 # No identity, as google_calendar.yaml.
 refresh:
   # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh
@@ -99,3 +108,28 @@ sources:
       - list_recent_files
       - read_file_content
       - search_files
+# Code in a session's sandbox reads a placeholder from GOOGLE_DRIVE_TOKEN, and the sandbox's
+# egress puts the connection's access token in its place only in a request to these hosts. The
+# name is our own choice: Google documents no env var for a token, so it is `# unverified`. It
+# differs from the other Google connectors' names, because the router refuses two sandbox
+# bindings with the same env (internal/api/configs.go, sandboxBindingsComplaint). Code sends it
+# as «Authorization: Bearer»: [web] (opened 2026-10-25), «HTTP GET examples», calls
+# drive.files so, «GET /drive/v2/files HTTP/1.1 Host: www.googleapis.com Authorization: Bearer
+# access_token», and calls the header the preferred form over an access_token query
+# parameter, which the egress does not replace. The scopes are the ones scopes.list asks for,
+# so the token reads files (drive.readonly) and, from drive.file ([scopes], «Create new Drive
+# files, or modify existing files, that you open with an app or that the user shares with an
+# app»), can also create files and change the files the app opened. A sandbox binding cannot
+# narrow that (the router refuses `sandbox` beside `require_approval` on one binding), which
+# the owner accepted (AI-1958). A connection pinned to revision 4 or earlier gets no block
+# until it is reconnected.
+#   [scopes] https://developers.google.com/workspace/drive/api/guides/api-specific-auth (opened
+#            2026-10-25)
+#   [rest]   https://www.googleapis.com/discovery/v1/apis/drive/v3/rest (opened 2026-10-25)
+sandbox:
+  env: GOOGLE_DRIVE_TOKEN
+  hosts:
+    # [rest]: rootUrl https://www.googleapis.com/, servicePath drive/v3/, so Drive v3 is at
+    # https://www.googleapis.com/drive/v3/. The host serves other Google REST APIs too; the
+    # token's scopes bound what it can do there.
+    - www.googleapis.com

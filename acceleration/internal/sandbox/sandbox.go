@@ -41,6 +41,11 @@ type Result struct {
 	// Missing are the files it was asked to hand back and did not write, or that were
 	// too large to.
 	Missing []string
+	// Unconnected are the late grants whose user has not connected them yet, so the run had
+	// no token for them. Connected are the bindings of those whose user connected them since
+	// the last run, whose token reaches code some seconds after the run began.
+	Unconnected []Grant
+	Connected   []string
 }
 
 // File is something the code wrote that is wanted outside the sandbox.
@@ -168,6 +173,14 @@ func Tool(box Sandbox) llm.Tool {
 					"the value is a placeholder that works only for %s, only in a request header.", strings.Join(bearer, ", "), grant.Env, grant.Env, hosts)
 			} else {
 				description += fmt.Sprintf(" $%s is a placeholder that works only for %s, only in a request header.", grant.Env, hosts)
+			}
+			if grant.Late {
+				// Its token reaches code from the next run after the user connects, at once
+				// through the egress proxy, and within 18 to 24 seconds as a Daytona secret
+				// (probe against Daytona's API, 2026-10-25).
+				description += fmt.Sprintf(" A 401 from %s means the user has not connected %s yet: %s__list_tools shows them "+
+					"a button to connect it and waits; if you cannot call it, tell the user they must connect %s. Once they have, "+
+					"run the code again; if it still gets 401, wait 20 seconds and run it once more.", hosts, grant.Binding, grant.Binding, grant.Binding)
 			}
 			if !slices.Contains(grant.Hosts, gitHost) {
 				continue

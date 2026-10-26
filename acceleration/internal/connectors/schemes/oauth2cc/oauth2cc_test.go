@@ -416,6 +416,34 @@ func (s *OAuth2CCSuite) TestARefusedClientLeavesItsSecretOutOfEveryLogLine() {
 	}
 }
 
+// A token endpoint or a revocation endpoint answering with the client secret, or the token to
+// revoke, as its error member leaves it out of the error a caller logs and of the outcome's
+// code (AI-1649).
+func (s *OAuth2CCSuite) TestAnErrorMemberEchoingWhatTheRequestCarriedQuotesNoSecret() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
+	scheme := s.scheme(srv.Client())
+	stored := s.complete(srv, scheme, manifest(srv))
+	var payload struct {
+		AccessToken string `json:"access_token"`
+	}
+	s.Require().NoError(json.Unmarshal(stored.Payload, &payload))
+	s.Require().NotEmpty(payload.AccessToken)
+	srv.Use(fakeprovider.ClientCredentials, fakeprovider.EchoedErrorCode)
+
+	revoked := scheme.Revoke(s.ctx, stored, manifest(srv))
+	s.now = s.now.Add(fakeprovider.AccessTTL)
+	_, _, minted := scheme.Retrieve(s.ctx, stored, manifest(srv), core.RetrieveOptions{})
+
+	s.Require().Error(revoked)
+	s.Require().Error(minted)
+	s.Equal("[redacted]", s.outcome(minted).Code)
+	for _, err := range []error{revoked, minted} {
+		s.NotContains(err.Error(), payload.AccessToken)
+		s.NotContains(err.Error(), srv.ClientSecret)
+		s.Contains(err.Error(), "HTTP 400: [redacted]")
+	}
+}
+
 // RFC 6749 section 5.2's codes for a client the server refuses, Salesforce's spelling of
 // one, a 401 (which section 5.2 lets a server answer invalid_client with) and invalid_grant:
 // the client is the whole grant here, so only new client credentials help.

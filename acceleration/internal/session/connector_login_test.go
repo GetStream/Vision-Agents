@@ -666,7 +666,7 @@ func (s *ConnectorLoginSuite) invocations(connection string, count int) []store.
 }
 
 // pending is a connection of user's to account that was never connected.
-func (s *ConnectorLoginSuite) pending(user, account string) string {
+func (s *connectorFixture) pending(user, account string) string {
 	connection := &store.ConnectorConnection{
 		CustomerID: s.customerID, ConnectorID: s.connectorID, DefinitionRevision: s.revision,
 		OwnerType: store.OwnerUser, OwnerID: user, AuthScheme: bearer.Name, Inputs: map[string]string{"account": account},
@@ -691,7 +691,7 @@ func (s *ConnectorLoginSuite) noneConnection(user, account string) string {
 }
 
 // connect is a consent finishing on id: account's token stored, the connection connected.
-func (s *ConnectorLoginSuite) connect(id, account string) {
+func (s *connectorFixture) connect(id, account string) {
 	stored, _, err := bearer.New().Complete(s.ctx, core.CompleteInput{Supplied: map[string]string{bearer.SuppliedToken: tokenOf(account)}})
 	s.Require().NoError(err)
 	s.setState(id, func(state *core.CredentialState) {
@@ -846,6 +846,80 @@ func (s *ConnectorLoginSuite) TestALoginFinishedOnAnotherRouterIsPickedUpWhileTh
 	s.False(handedBack, "a hand-back that arrives after is not run again")
 }
 
+// driftedWhy is what the model is told of crm's whoami once the provider changed the schema it
+// was pinned at, and driftedWhoami the answer to a call of it; configWhy and configWhoami the
+// same for a schema the agent config names. staleDigest is a digest no tool has.
+const (
+	driftedWhy    = "crm's whoami cannot be used: the provider changed its schema since it was approved, so an admin must approve the new schema first. Tell the user that; do not offer to connect it."
+	driftedWhoami = `{"status":"tool_unavailable","message":"` + driftedWhy + `"}`
+	configWhy     = "crm's whoami cannot be used: the provider changed its schema since the agent config granted it, so an admin must save the agent config again with the new schema first. Tell the user that; do not offer to connect it."
+	configWhoami  = `{"status":"tool_unavailable","message":"` + configWhy + `"}`
+	staleDigest   = "0000000000000000000000000000000000000000000000000000000000000000"
+)
+
+// TestALoginOnADriftedToolOpensWithTheOtherTools: the config granted whoami at a schema the
+// provider has since changed. Once the person connects, the login opens with echo, whose
+// waiting call runs; whoami is left out, and a call of it says why rather than ask for a login.
+// The binding is warned about once, not on every poll.
+func (s *ConnectorLoginSuite) TestALoginOnADriftedToolOpensWithTheOtherTools() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(10 * time.Minute)}
+	manager := s.managerWith(fixtureRequestTimeout)
+	var logged bytes.Buffer
+	manager.logger = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	d := s.heldOn(manager, s.config(s.chosen("crm", "whoami", "echo")))
+	s.provider.redescribe("primary", "Says which account this is, and now something else too.")
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__call_tool", `{"tool":"echo","arguments":{"note":"hi"}}`)
+	s.Require().Eventually(func() bool { return s.stepOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.connect(mine, "primary")
+	_, finished, handed := d.loginFinished(s.ctx, "attempt-alice", mine)
+	got := s.answerOf(answer)
+	drifted, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	listed, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	_, ungranted := s.call(d, "crm__call_tool", `{"tool":"secret"}`)
+
+	s.True(finished)
+	s.Equal(1, handed)
+	s.Require().NoError(got.err)
+	s.Equal("you said hi", got.said)
+	s.Equal(persistent.AuthorizationConnected, s.endedOf("call-1"))
+	s.JSONEq(configWhoami, drifted)
+	s.JSONEq(`{"tools":[{"name":"echo","description":"Answers with the note it was sent.",`+
+		`"input_schema":{"type":"object","properties":{"note":{"type":"string"}}}}],`+
+		`"left_out":[{"name":"whoami","message":"`+configWhy+`"}]}`, listed)
+	s.Error(ungranted, "a tool the grant does not name is still unknown")
+	s.Equal(1, strings.Count(logged.String(), "a granted tool is not offered"), logged.String())
+	s.NotContains(logged.String(), "a login in the conversation is on a connection the session cannot use")
+}
+
+// TestALoginOnADriftedToolPickedUpWhileTheCallWaitsStopsPolling: the consent finished on
+// another router, so the waiting call's poll is what opens the login. It opens once, with the
+// tools that still match, and the call carries on rather than poll until the consent expires.
+func (s *ConnectorLoginSuite) TestALoginOnADriftedToolPickedUpWhileTheCallWaitsStopsPolling() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(10 * time.Minute)}
+	manager := s.managerWith(fixtureRequestTimeout)
+	var logged bytes.Buffer
+	manager.logger = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	d := s.heldOn(manager, s.config(s.chosen("crm", "whoami", "echo")))
+	s.provider.redescribe("primary", "Says which account this is, and now something else too.")
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().Eventually(func() bool { return s.stepOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.connect(mine, "primary")
+	got := s.answerOf(answer)
+	time.Sleep(loginPoll + time.Second)
+
+	s.Require().NoError(got.err)
+	s.JSONEq(configWhoami, got.said)
+	s.Equal(persistent.AuthorizationConnected, s.endedOf("call-1"))
+	s.Equal(1, strings.Count(logged.String(), "a granted tool is not offered"), logged.String())
+	s.NotContains(logged.String(), "a login in the conversation is on a connection the session cannot use")
+}
+
 // An interruption, or the session closing, ends the turn's context, and the call with it rather
 // than leave it waiting out the consent.
 func (s *ConnectorLoginSuite) TestATurnThatEndsStopsTheWait() {
@@ -897,7 +971,12 @@ func (s *ConnectorLoginSuite) TestAStoppedReplysCallNeverRunsOnALaterLogin() {
 // s.ended how each one's sign-in ended. A step waits until it ends, or s.stopped marks its
 // reply stopped.
 func (s *ConnectorLoginSuite) held() *dispatcher {
-	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
+	return s.heldOn(s.managerWith(fixtureRequestTimeout), s.config(s.chosen("crm", "whoami")))
+}
+
+// heldOn is held for config's bindings, on manager.
+func (s *ConnectorLoginSuite) heldOn(manager *Manager, config store.AgentConfig) *dispatcher {
+	d, _, _, err := s.attachWithConsentsOn(manager, s.persisted(s.spec(config, "alice", nil)))
 	s.Require().NoError(err)
 	d.logins.await = func(owner, callID string, found persistent.Authorization) bool {
 		s.mu.Lock()

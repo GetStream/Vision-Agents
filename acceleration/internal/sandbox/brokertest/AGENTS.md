@@ -4,7 +4,7 @@ The suite every `sandbox.CredentialBroker` passes, so what the session relies on
 
 ## How a broker runs it
 
-One test function builds the suite with `New`, which returns a `Subject` for a session id, the `sandbox.Tokens` the test controls and a logger:
+One test function builds the suite with `New`, which returns a `Subject` for a session id, the `sandbox.Tokens` and `sandbox.Bind` the test controls (`Bind` may be nil) and a logger:
 
 - `Broker` is the broker under test.
 - `Held(ref)` is the credential and hosts the provider keeps under a `Mount.Secrets` value.
@@ -25,6 +25,7 @@ One test function builds the suite with `New`, which returns a `Subject` for a s
 | A16: a binding the agent config drops mid-session: a live egress refuses its next request, every broker withdraws it before the next run, and putting it back gives the sandbox nothing again (AI-1686) | `TestABindingRemovedMidSessionIsWithdrawn` |
 | A13: no token, and no provider answer, in a log line or an error (`TearDownTest`, after every test), on Prepare and on refresh | `TestAProviderThatRefusesLeavesTheTokenInNoError`, `TestARefusedRefreshIsAnErrorWithoutTheToken`, `TestARequiredGrantsRefusalQuotesNoProviderAnswer`, `TestNoProviderAnswerReachesTheLogs` |
 | A15: git pushes a commit holding the placeholder, with the placeholder as Basic auth's password; github.com gets the token in `Authorization` alone and the file as it was. Only a broker with a `Subject.Push` runs it (egress: `git http-backend` behind a TLS stand-in for github.com). Daytona's skips: its egress is Daytona's, and no test here reaches it. Its `run_code` description is checked in `daytona/secrets_test.go`, and the live staging E2E of 2026-10-22 (session 01a16514-923c-7843-9214-40a94453f194) showed it replaces the placeholder in git's Base64 Basic header | `TestAGitPushCarriesTheTokenInAuthorizationAlone` |
+| A late grant (connect-on-demand): its env var is there from the start; no request gets a token for it, its own or another grant's, and its token is never asked for, until a run after `Bind` gives its connection; `Bind` changes no binding, env var or host; without `Bind` the sandbox is refused. Daytona's secret holds a stand-in until then (`daytona/secrets.go`, `unbound`) | `TestALateGrantGetsATokenOnlyOnceBound`, `TestALateGrantWithoutBindRefusesTheSandbox` |
 | A new revision is handed over before the next run; a disconnected or required grant behaves as the session expects | `TestANewRevisionIsHandedOverBeforeTheNextRun`, `TestADisconnectedConnectionGivesNoEnvAndAWarning`, `TestARequiredGrantWithoutACredentialRefusesTheSandbox` |
 
 Spans are not checked: a provider SDK makes its own only when told to, with an exporter of its own, so a span check here would check nothing.

@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -129,6 +130,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	}
 	config.MCPServers = servers
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := outputRetentionComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
@@ -248,11 +252,16 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
+	config.ToolOutputRetention = outputRetentionOf(existing.ToolOutputRetention, request.Body.Tools)
 	config.ReviewInstructions = reviewOf(existing.ReviewInstructions, request.Body.Review)
 	// Field by field, as the doc says of an update: a block naming only the limit keeps
 	// enabled and the zone.
 	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
+	config.ResumeHistory = resumeHistoryOr(existing.ResumeHistory, request.Body.ResumeHistory)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := outputRetentionComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
@@ -784,7 +793,7 @@ func leftOutGrant(binding AgentConnectorBinding, manifest core.Manifest) (string
 		return "", true
 	}
 	for _, tool := range binding.Tools {
-		if unasked := source.UnaskedScopes(manifest.Scopes.List, tool.Name); len(unasked) > 0 {
+		if unasked := source.UnaskedScopes(manifest.Scopes, tool.Name); len(unasked) > 0 {
 			return fmt.Sprintf("connector binding %q grants %q, which connector %q leaves out: it needs %s, "+
 				"which the connector never asks for", binding.Name, tool.Name, binding.ConnectorId,
 				strings.Join(unasked, ", ")), false
@@ -882,7 +891,7 @@ func sandboxOfConfig(config store.AgentConfig) *savedSandbox {
 // Only a binding's require_approval asks a person before a call is sent; the others ask
 // nobody. It reads the config as it is about to be stored. router plugins migrate asks it
 // of a binding it adds (pluginmigrate.Options.Complaint).
-func SensitiveBindingsComplaint(ctx context.Context, definitions *store.Store, customerID string, config store.AgentConfig) (string, bool, error) {
+func SensitiveBindingsComplaint(ctx context.Context, definitions store.Definitions, customerID string, config store.AgentConfig) (string, bool, error) {
 	var sensitive *store.ConnectorBinding
 	var outbound, unheld []string
 	for i, binding := range config.Connectors {
@@ -935,6 +944,19 @@ func SensitiveBindingsComplaint(ctx context.Context, definitions *store.Store, c
 // sensitiveBindingsComplaint is SensitiveBindingsComplaint over the server's store.
 func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
 	return SensitiveBindingsComplaint(ctx, s.store, customerID, config)
+}
+
+// sensitiveCheck is SensitiveBindingsComplaint as a store write asks it, under the config's
+// row lock: a refusal is the 400 an API write answers with.
+func sensitiveCheck(customerID string) store.ConfigCheck {
+	return func(ctx context.Context, config store.AgentConfig, definitions store.Definitions) error {
+		if message, ok, err := SensitiveBindingsComplaint(ctx, definitions, customerID, config); err != nil {
+			return err
+		} else if !ok {
+			return invalidRequest(message)
+		}
+		return nil
+	}
 }
 
 // bindingSendsOut reports whether a binding offers a tool that may send data out with nobody
@@ -1832,8 +1854,10 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	config.EpisodeCards = value(request.EpisodeCards)
 	if request.Tools != nil {
 		config.ProgressiveTools = value(request.Tools.Progressive)
+		config.ToolOutputRetention = options.Retention(value(request.Tools.OutputRetention))
 	}
 	config.Scheduling = schedulingOf(request.Scheduling)
+	config.ResumeHistory = resumeHistoryOr(store.ResumeHistory{}, request.ResumeHistory)
 	config.ReviewInstructions = reviewOf("", request.Review)
 	return config
 }
@@ -1919,8 +1943,9 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	episodeCards := config.EpisodeCards
 	rendered.EpisodeCards = &episodeCards
 	progressive := config.ProgressiveTools
-	rendered.Tools = &AgentTools{Progressive: &progressive}
+	rendered.Tools = &AgentTools{Progressive: &progressive, OutputRetention: optional(string(config.ToolOutputRetention))}
 	rendered.Scheduling = renderedScheduling(config.Scheduling)
+	rendered.ResumeHistory = renderedResumeHistory(config.ResumeHistory)
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
@@ -2187,6 +2212,7 @@ type AgentConfigRequest struct {
 	Review             *AgentReview             `json:"review,omitempty" doc:"How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay."`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
+	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
@@ -2225,6 +2251,7 @@ type AgentConfig struct {
 	Review             *AgentReview             `json:"review,omitempty" doc:"Absent when calls are reviewed by Stream's default guide."`
 	Tools              *AgentTools              `json:"tools,omitempty"`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
+	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
@@ -2249,11 +2276,12 @@ type AgentConfig struct {
 
 // AgentTools is how an agent is offered its plugin, MCP server and connector tools.
 type AgentTools struct {
-	Progressive *bool `json:"progressive,omitempty" doc:"Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays."`
+	Progressive     *bool   `json:"progressive,omitempty" doc:"Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays."`
+	OutputRetention *string `json:"output_retention,omitempty" pattern:"^(|none|[1-9][0-9]*[hd])$" patternDescription:"none, a number of hours such as 12h, or a number of days such as 30d" example:"30d" doc:"How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set."`
 }
 
 func (*AgentTools) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "How an agent is offered its plugin, MCP server and connector tools."
+	schema.Description = "How an agent is offered its tools, and how long what they were given and gave back is kept."
 	return schema
 }
 
@@ -2274,6 +2302,49 @@ func reviewOf(stored string, review *AgentReview) string {
 		return stored
 	}
 	return override(stored, review.Instructions)
+}
+
+// ResumeHistory is how a conversation is handed back to the model when a session carries
+// it on.
+type ResumeHistory struct {
+	IncludeTools  *bool `json:"include_tools,omitempty" doc:"Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default."`
+	MaxMessages   *int  `json:"max_messages,omitempty" minimum:"1" maximum:"100" doc:"How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100."`
+	MaxCharacters *int  `json:"max_characters,omitempty" minimum:"1000" maximum:"400000" doc:"How many characters are handed back, tool calls and results included: about four to a token. The whole of it is sent, and billed, with the first reply after the conversation is resumed, and is cached from then on by models that cache, so keep it well inside the model's context window. Omitted is 60000."`
+}
+
+func (*ResumeHistory) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How a conversation is handed back to the model when a session carries it on."
+	return schema
+}
+
+// resumeHistoryOr writes the fields a caller sent over stored: a field left out keeps
+// what is stored.
+func resumeHistoryOr(stored store.ResumeHistory, sent *ResumeHistory) store.ResumeHistory {
+	if sent == nil {
+		return stored
+	}
+	if sent.IncludeTools != nil {
+		stored.IncludeTools = sent.IncludeTools
+	}
+	stored.MaxMessages = override(stored.MaxMessages, sent.MaxMessages)
+	stored.MaxCharacters = override(stored.MaxCharacters, sent.MaxCharacters)
+	return stored
+}
+
+// renderedResumeHistory renders stored settings for the wire, and nothing for the default.
+// A cap never set is left out rather than rendered as 0, which its minimum refuses.
+func renderedResumeHistory(stored store.ResumeHistory) *ResumeHistory {
+	if stored == (store.ResumeHistory{}) {
+		return nil
+	}
+	rendered := &ResumeHistory{IncludeTools: stored.IncludeTools}
+	if stored.MaxMessages > 0 {
+		rendered.MaxMessages = &stored.MaxMessages
+	}
+	if stored.MaxCharacters > 0 {
+		rendered.MaxCharacters = &stored.MaxCharacters
+	}
+	return rendered
 }
 
 // AgentScheduling is an agent's scheduled-task settings.
@@ -2347,6 +2418,20 @@ func schedulingComplaint(config store.AgentConfig) (string, bool) {
 		return "scheduling.default_timezone: " + err.Error(), false
 	}
 	return "", true
+}
+
+// outputRetentionOf is the tool output retention once tools is written over stored: what
+// it says, or stored when it says nothing.
+func outputRetentionOf(stored options.Retention, tools *AgentTools) options.Retention {
+	if tools == nil || tools.OutputRetention == nil {
+		return stored
+	}
+	return options.Retention(*tools.OutputRetention)
+}
+
+// outputRetentionComplaint refuses a tool output retention out of bounds.
+func outputRetentionComplaint(config store.AgentConfig) (string, bool) {
+	return toolOutputRetentionComplaint("tools.output_retention", config.ToolOutputRetention)
 }
 
 // progressiveOf is whether tools are offered progressively once tools is written over

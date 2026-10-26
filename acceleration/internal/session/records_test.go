@@ -12,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -394,4 +395,59 @@ type framesRunner struct {
 
 func (r framesRunner) Run(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
 	return r.parts, nil
+}
+
+// usedATool plays one turn that looks something up, calls a tool and answers.
+func (s *RecordSuite) usedATool() {
+	s.took(
+		agent.Responding{TurnID: "turn-1", Prompt: "Where is my order?"},
+		agent.LookedUp{TurnID: "turn-1", Query: "order A-1 for someone@example.com"},
+		agent.ToolStarted{TurnID: "turn-1", ID: "call-1", Tool: "orders"},
+		agent.ToolRan{TurnID: "turn-1", ID: "call-1", Tool: "orders", Arguments: `{"order":"A-1"}`,
+			Result: `{"email":"someone@example.com"}`, Err: errors.New("404 for someone@example.com")},
+		agent.Responded{TurnID: "turn-1", Text: "It ships tomorrow."},
+	)
+}
+
+func (s *RecordSuite) TestToolOutputIsRecordedWholeWithoutARetention() {
+	s.usedATool()
+
+	s.Require().Len(s.held.items, 5)
+	result := s.held.items[3]
+	s.Equal(`{"email":"someone@example.com"}`, result.Text)
+	s.Equal(`{"order":"A-1"}`, result.Payload["arguments"])
+	s.Nil(result.RedactAt)
+}
+
+func (s *RecordSuite) TestAToolOutputRetentionOfNoneRecordsNoneOfIt() {
+	s.session.spec.ToolOutputRetention = options.RetentionNone
+
+	s.usedATool()
+
+	s.Require().Len(s.held.items, 5)
+	s.Equal("Where is my order?", s.held.items[0].Text, "what was asked is not tool output")
+	s.Empty(s.held.items[1].Text, "a search's query went to a tool")
+	result := s.held.items[3]
+	s.Equal(store.ItemToolResult, result.Kind)
+	s.Equal("orders", result.ToolName)
+	s.Empty(result.Text)
+	s.Equal(map[string]any{"call_id": "call-1", "error": "redacted", "redacted": true}, result.Payload)
+	s.Nil(result.RedactAt, "nothing is left to redact later")
+	s.Equal("It ships tomorrow.", s.held.items[4].Text)
+}
+
+func (s *RecordSuite) TestAToolOutputRetentionMarksToolItemsToBeRedactedOnceItRunsOut() {
+	s.session.spec.ToolOutputRetention = "7d"
+
+	s.usedATool()
+
+	for _, item := range s.held.items {
+		if item.Kind != store.ItemToolCall && item.Kind != store.ItemToolResult {
+			s.Nilf(item.RedactAt, "a %s item is kept as long as the session", item.Kind)
+			continue
+		}
+		s.Require().NotNil(item.RedactAt)
+		s.Equal(7*24*time.Hour, item.RedactAt.Sub(item.At))
+	}
+	s.Equal(`{"email":"someone@example.com"}`, s.held.items[3].Text, "kept whole until then")
 }

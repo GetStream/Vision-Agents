@@ -44,6 +44,9 @@ type dispatcher struct {
 	spec   Spec
 	routes map[string]route
 	tools  []harness.Tool
+	// leftOut are the offered names of granted tools a binding left out, whose schema the
+	// provider changed since they were approved (unavailableTool), each with why.
+	leftOut map[string]string
 	// toolsets are every toolset opened, closed with the session.
 	toolsets  []core.Toolset
 	closeOnce sync.Once
@@ -101,6 +104,9 @@ func (d *dispatcher) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 			// A binding waiting for its person to log in answers with the login.
 			if waiting, ok := d.logins.waiting(alias); ok {
 				return d.runLogin(ctx, waiting, call)
+			}
+			if why, found := d.leftOut[call.Name]; found {
+				return llm.TextParts(toolLeftOut(why)), nil
 			}
 			return nil, errUnknownTool(call.Name)
 		}

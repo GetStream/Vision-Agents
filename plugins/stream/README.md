@@ -57,10 +57,10 @@ from vision_agents.core.llm import current_call
     needs_approval="Book flight {flight_id}?",
 )
 async def book_flight(flight_id: str) -> str:
-    call = current_call()
-    await call.update("checking seats")
-    await call.disallow_interruptions()
-    return await bookings.book(flight_id, user=call.user.id, key=call.id)
+    tool_call_context = current_call()
+    await tool_call_context.update("checking seats")
+    await tool_call_context.disallow_interruptions()
+    return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
 ```
 
 - `interruptible=True` lets the caller talking over the agent cancel a call in flight. By
@@ -146,6 +146,9 @@ nobody knows is refused rather than dropped: a misspelled `llm` that went quietl
 leave the agent running on a model the file does not name.
 `plugins` and `plugin_events` are refused too: connectors replaced them, so name each
 under `connectors` instead.
+A connector entry is its id alone, or a mapping with `name` and any of `connector`, `tools`,
+`connection`, `required`, `sandbox: true` (code in the sandbox may call the connector's API)
+and `require_approval` (tools whose every call waits for the user to allow it).
 
 A page in `knowledge/urls.yaml` written as a mapping may say `refresh_hours: 24` to be read
 again on a schedule. `simulations/*.yaml` each list simulations (`name`, `scenario`,

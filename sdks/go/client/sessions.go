@@ -416,6 +416,7 @@ func newSession(client *Client, agent *Agent, pipeline *stream.Pipeline, created
 			client:    client,
 			sessionID: created.Id,
 			Items:     newItems(client, created.Id, ""),
+			pipeline:  pipeline,
 		},
 		Voice:    voice,
 		client:   client,

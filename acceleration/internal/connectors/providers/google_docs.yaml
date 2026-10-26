@@ -14,11 +14,14 @@
 #         2026-10-07T14:28:24Z, as google_calendar.yaml quotes it.
 # And the tool's own page, opened October 23, 2026 («Last updated 2026-10-01»):
 #   [update] https://developers.google.com/workspace/docs/api/reference/mcp/tools_list/update_doc
+# And the Docs API's scope table, opened October 25, 2026 («Last updated 2026-09-03»):
+#   [scopes] https://developers.google.com/workspace/docs/api/auth
 id: google_docs
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
 # false, which revision 1 was stored without (refresh.rotating became a pointer). 3 lists the
-# tools that only read. 4 asks for documents, so update_doc works (AI-1933).
-revision: 4
+# tools that only read. 4 asks for documents, so update_doc works (AI-1933). 5 takes a grant
+# of drive in place of documents (scopes.covered_by).
+revision: 5
 # [plugin]
 name: Google Docs
 category: Documents
@@ -71,6 +74,12 @@ scopes:
     - https://www.googleapis.com/auth/documents.readonly
     - https://www.googleapis.com/auth/drive.readonly
     - https://www.googleapis.com/auth/documents
+  # drive, «See, edit, create, and delete all of your Google Drive files», gives all documents,
+  # «See, edit, create, and delete all your Google Docs documents», gives ([scopes]), and
+  # [update] takes either. drive.file, which it takes too, reaches «only the specific Google
+  # Drive files you use with this app» ([scopes]), so it does not cover documents.
+  covered_by:
+    https://www.googleapis.com/auth/documents: [https://www.googleapis.com/auth/drive]
 # No identity, as google_calendar.yaml.
 refresh:
   # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh
