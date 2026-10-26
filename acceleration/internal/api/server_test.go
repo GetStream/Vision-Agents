@@ -394,6 +394,77 @@ func (s *ServerSuite) TestNobodyIsToldWhatAnAppSpentWithoutCredentials() {
 		"/v1/stats/spend?granularity=daily&from="+s.from()+"&to="+s.to(24*time.Hour), nil, nil))
 }
 
+// recordWho stores billable work of app, billed to organization, for user under categories.
+func (s *ServerSuite) recordWho(app, organization string, costMicros int64, user string, categories ...string) {
+	s.Require().NoError(s.store.RecordRequest(context.Background(), &store.Request{
+		Modality: "llm", CustomerID: app, OrganizationID: organization, APIKey: "key-" + app, UserID: user,
+		UsageCategories: categories, Provider: "stub", Model: "stub-llm", StartedAt: s.base.Add(5 * time.Minute),
+		CostMicros: costMicros, Billable: true, Success: true,
+	}))
+}
+
+// sibling is another app of the suite's app's organization.
+func (s *ServerSuite) sibling() string {
+	app := store.App{OrganizationID: s.app.organization.ID, Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &app))
+	return app.ID
+}
+
+// spentBy is each group's spend, by value.
+func spentBy(buckets []SpendBucket) map[string]int64 {
+	spent := map[string]int64{}
+	for _, bucket := range buckets {
+		spent[bucket.Value] += bucket.CostMicrosTotal
+	}
+	return spent
+}
+
+func (s *ServerSuite) TestSpendByUserAcrossTheOrganization() {
+	organization, sibling := s.app.organization.ID, s.sibling()
+	s.recordWho(s.customerID(), organization, 1_000, "u1")
+	s.recordWho(sibling, organization, 2_000, "u1")
+	s.recordWho(sibling, organization, 4_000, "")
+	s.recordWho(s.data.createApp().app.ID, "another-"+s.utils.uuid(), 8_000, "u1")
+
+	s.Equal(map[string]int64{s.customerID() + "/u1": 1_000, sibling + "/u1": 2_000, "": 4_000},
+		spentBy(s.spend("group_by=user&granularity=daily&scope=organization")),
+		"one user id in two apps is two users, and another organization's work is not counted")
+	s.Equal(map[string]int64{"u1": 1_000}, spentBy(s.spend("group_by=user&granularity=daily")), "the app alone, by default")
+	s.Equal(map[string]int64{s.customerID(): 1_000, sibling: 6_000}, spentBy(s.spend("group_by=app&granularity=daily&scope=organization")))
+	s.Equal(map[string]int64{"key-" + s.customerID(): 1_000, "key-" + sibling: 6_000},
+		spentBy(s.spend("group_by=api_key&granularity=daily&scope=organization")))
+}
+
+func (s *ServerSuite) TestSpendByCategoryCountsARowInEach() {
+	organization := s.app.organization.ID
+	s.recordWho(s.customerID(), organization, 1_000, "", "support", "billing", "team:finance")
+	s.recordWho(s.customerID(), organization, 2_000, "")
+
+	s.Equal(map[string]int64{"support": 1_000, "billing": 1_000, "": 2_000},
+		spentBy(s.spend("group_by=category&granularity=daily")), "a row counts in each of its categories, and its team in none")
+}
+
+func (s *ServerSuite) TestSpendByTeam() {
+	organization := s.app.organization.ID
+	s.recordWho(s.customerID(), organization, 1_000, "", "team:finance", "support")
+	s.recordWho(s.customerID(), organization, 2_000, "", "team:sales")
+	s.recordWho(s.customerID(), organization, 4_000, "")
+
+	s.Equal(map[string]int64{"finance": 1_000, "sales": 2_000, "": 4_000}, spentBy(s.spend("group_by=team&granularity=daily")))
+	for value := range spentBy(s.spend("group_by=category&granularity=daily")) {
+		s.NotContains(value, "team:")
+	}
+}
+
+func (s *ServerSuite) TestSpendForTheOrganizationIsServerSideOnly() {
+	path := "/v1/stats/spend?scope=organization&from=" + s.from() + "&to=" + s.to(24*time.Hour)
+
+	status, failure := s.client.failure(http.MethodGet, path, nil)
+
+	s.Equal(http.StatusForbidden, status, failure)
+	s.Contains(failure, "server-side only")
+}
+
 // from and to are the window a statistic is asked for, as the API spells it.
 func (s *ServerSuite) from() string { return s.base.Format(time.RFC3339) }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -220,8 +221,8 @@ type LimitWindow struct {
 // SpendHardLimitWindow is the operator's limit on the organization in one window.
 type SpendHardLimitWindow struct {
 	LimitMicros int64     `json:"limit_micros"`
-	SpentMicros int64     `json:"spent_micros"`
-	RoomMicros  int64     `json:"room_micros"`
+	SpentMicros int64     `json:"spent_micros" doc:"What the organization spent in the window, as the usage records count it."`
+	RoomMicros  int64     `json:"room_micros" doc:"What it may still spend in the window: the limit less what it spent and what work in flight holds."`
 	WindowEnd   time.Time `json:"window_end"`
 }
 
@@ -291,14 +292,51 @@ type manageListLimitsRequest struct {
 	OrganizationId string `query:"organization_id" required:"true"`
 }
 
-// LimitUsageParams name the one subject a usage read is of.
+// maxUsageSubjects is the most subjects one usage read names.
+const maxUsageSubjects = 100
+
+// LimitUsageParams name the subjects a usage read is of: each id the subject has, repeated for
+// several subjects, a list of one going with every subject.
 type LimitUsageParams struct {
 	Subject  LimitSubject `query:"subject" required:"true"`
-	AppId    string       `query:"app_id"`
-	ApiKey   string       `query:"api_key"`
-	UserId   string       `query:"user_id"`
-	Team     string       `query:"team"`
-	Category string       `query:"category"`
+	AppId    []string     `query:"app_id,explode" maxItems:"100" doc:"The app of each subject, for every subject but organization, category and team. One goes with every subject."`
+	ApiKey   []string     `query:"api_key,explode" maxItems:"100" doc:"The key of each subject, for subject api_key."`
+	UserId   []string     `query:"user_id,explode" maxItems:"100" doc:"The end user of each subject, for subject user."`
+	Team     []string     `query:"team,explode" maxItems:"100" doc:"The team of each subject, for subject team or app_team."`
+	Category []string     `query:"category,explode" maxItems:"100" doc:"The usage category of each subject, for subject category or app_category."`
+}
+
+// targets are the subjects the params name, in order: every list of more than one names that
+// many subjects, each taking its place's id, and a list of one goes with every subject.
+func (p *LimitUsageParams) targets() ([]LimitTarget, error) {
+	lists := map[string][]string{"app_id": p.AppId, "api_key": p.ApiKey, "user_id": p.UserId, "team": p.Team, "category": p.Category}
+	count := 1
+	for _, list := range lists {
+		count = max(count, len(list))
+	}
+	if count > maxUsageSubjects {
+		return nil, invalidRequest(fmt.Sprintf("a usage read names at most %d subjects, this one %d", maxUsageSubjects, count))
+	}
+	for _, name := range slices.Sorted(maps.Keys(lists)) {
+		if list := lists[name]; len(list) > 1 && len(list) != count {
+			return nil, invalidRequest(fmt.Sprintf("%s names %d subjects and another list %d: send each list once per subject, or one value for all of them", name, len(list), count))
+		}
+	}
+	at := func(list []string, i int) string {
+		switch len(list) {
+		case 0:
+			return ""
+		case 1:
+			return list[0]
+		}
+		return list[i]
+	}
+	targets := make([]LimitTarget, count)
+	for i := range targets {
+		targets[i] = LimitTarget{Subject: p.Subject, AppId: at(p.AppId, i), ApiKey: at(p.ApiKey, i), UserId: at(p.UserId, i),
+			Team: at(p.Team, i), Category: at(p.Category, i)}
+	}
+	return targets, nil
 }
 
 type manageLimitUsageRequest struct {
@@ -328,6 +366,9 @@ type createdLimitResponse struct {
 }
 type limitPageResponse struct{ Body LimitPage }
 type subjectUsageResponse struct{ Body SubjectUsage }
+type subjectUsagesResponse struct {
+	Body []SubjectUsage `nullable:"false"`
+}
 
 func (s *Server) registerLimits(api huma.API) {
 	errs := []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound}
@@ -450,19 +491,23 @@ func (s *Server) registerLimits(api huma.API) {
 		return nil, s.deleteLimit(ctx, "", request.LimitId, LimitAuditOf(managedBy(ctx), RequestIDFrom(ctx), ""))
 	})
 
-	read := op("getLimitUsage", http.MethodGet, "/v1/spend/limits/usage", "Read what a subject spent against its limits",
-		"The subject's current window in every interval: what it spent, the limit in force with its "+
-			"effective amount, its baseline since a reset and its room, and once for the organization the "+
-			"operator's spend hard limit, which is what admission refuses first. Spend is read from the "+
-			"usage records, so it is what admission counts within a few seconds.")
-	huma.Register(api, read, func(ctx context.Context, request *LimitUsageParams) (*subjectUsageResponse, error) {
+	read := op("getLimitUsage", http.MethodGet, "/v1/spend/limits/usage", "Read what subjects spent against their limits",
+		"Each subject's current window in every interval: what it spent, the limit in force with its "+
+			"effective amount, its baseline since a reset and its room, and for the organization the "+
+			"operator's spend hard limit, which is what admission refuses first, the same on every subject. "+
+			"Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id "+
+			"(app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within "+
+			"one app or once per subject, so every list has one value or one per subject. One subject "+
+			"answers a list of one. Spend is read from the usage records, so it is what admission counts "+
+			"within a few seconds.")
+	huma.Register(api, read, func(ctx context.Context, request *LimitUsageParams) (*subjectUsagesResponse, error) {
 		organization, _, err := s.limitsCaller(ctx)
 		if err != nil {
 			return nil, err
 		}
 		return s.limitUsage(ctx, organization, s.billedOrganization(ctx), request)
 	})
-	huma.Register(api, manage(read), func(ctx context.Context, request *manageLimitUsageRequest) (*subjectUsageResponse, error) {
+	huma.Register(api, manage(read), func(ctx context.Context, request *manageLimitUsageRequest) (*subjectUsagesResponse, error) {
 		if s.store == nil {
 			return nil, errNoLimits
 		}
@@ -871,30 +916,43 @@ func usageTarget(sent LimitTarget, organization string) (usage.SubjectRef, error
 	return ref, err
 }
 
-func (s *Server) limitUsage(ctx context.Context, organization string, billed bool, request *LimitUsageParams) (*subjectUsageResponse, error) {
-	ref, err := usageTarget(LimitTarget{
-		Subject: request.Subject, AppId: request.AppId, ApiKey: request.ApiKey, UserId: request.UserId,
-		Team: request.Team, Category: request.Category,
-	}, organization)
+func (s *Server) limitUsage(ctx context.Context, organization string, billed bool, request *LimitUsageParams) (*subjectUsagesResponse, error) {
+	targets, err := request.targets()
 	if err != nil {
 		return nil, err
 	}
-	answer, err := s.subjectUsage(ctx, ref, billed)
+	refs := make([]usage.SubjectRef, len(targets))
+	for i, sent := range targets {
+		if refs[i], err = usageTarget(sent, organization); err != nil {
+			return nil, err
+		}
+	}
+	answer, err := s.subjectsUsage(ctx, organization, refs, billed)
 	if err != nil {
 		return nil, err
 	}
-	return &subjectUsageResponse{Body: answer}, nil
+	return &subjectUsagesResponse{Body: answer}, nil
 }
 
 // subjectUsage is what a subject spent in its current windows against its limits, with the
 // operator's spend hard limit on the organization.
 func (s *Server) subjectUsage(ctx context.Context, ref usage.SubjectRef, billed bool) (SubjectUsage, error) {
-	if s.policies == nil {
-		return SubjectUsage{}, errNoLimits
-	}
-	limits, err := s.store.LimitsFor(ctx, []string{ref.OrganizationID})
+	answer, err := s.subjectsUsage(ctx, ref.OrganizationID, []usage.SubjectRef{ref}, billed)
 	if err != nil {
 		return SubjectUsage{}, err
+	}
+	return answer[0], nil
+}
+
+// subjectsUsage is subjectUsage of every subject of one organization, in order, its limits,
+// resets, grants, standing and spend each read once.
+func (s *Server) subjectsUsage(ctx context.Context, organization string, refs []usage.SubjectRef, billed bool) ([]SubjectUsage, error) {
+	if s.policies == nil {
+		return nil, errNoLimits
+	}
+	limits, err := s.store.LimitsFor(ctx, []string{organization})
+	if err != nil {
+		return nil, err
 	}
 	now := time.Now()
 	earliest := now
@@ -903,53 +961,66 @@ func (s *Server) subjectUsage(ctx context.Context, ref usage.SubjectRef, billed 
 			earliest = start
 		}
 	}
-	resets, err := s.store.Resets(ctx, []string{ref.OrganizationID}, earliest)
+	resets, err := s.store.Resets(ctx, []string{organization}, earliest)
 	if err != nil {
-		return SubjectUsage{}, err
+		return nil, err
 	}
-	spent, err := s.policies.SubjectSpend(ctx, ref, billed)
+	spent, err := s.policies.SubjectsSpend(ctx, refs, billed)
 	if err != nil {
-		return SubjectUsage{}, stack.Wrap(err)
+		return nil, stack.Wrap(err)
 	}
-	grants, err := s.subjectGrants(ctx, ref, now)
+	live, err := s.store.LiveGrants(ctx, []string{organization}, now)
 	if err != nil {
-		return SubjectUsage{}, err
+		return nil, err
 	}
-	drawable := slices.ContainsFunc(grants, func(grant LimitGrant) bool { return grant.State == GrantLive })
-	subject, team, category := apiSubject(ref.Subject, ref.Category)
-	answer := SubjectUsage{Subject: subject, AppId: ref.AppID, ApiKey: ref.APIKey, UserId: ref.UserID, Team: team, Category: category, Grants: grants}
-	for _, interval := range usage.Intervals {
-		start, end := usage.Window(interval, now)
-		window := LimitWindow{Interval: LimitInterval(interval), WindowStart: start, WindowEnd: end}
-		if read, ok := spent[interval]; ok && read.WindowStart.Equal(start) {
-			window.SpentMicros = read.SpentMicros
-		}
-		if limit, ok := policy.Resolve(limits, ref, interval); ok {
-			window.BaselineMicros = policy.Baseline(resets, ref, interval, start)
-			window.Limit = &LimitInForce{Id: limit.ID, Level: LimitLevel(limit.Level), LimitMicros: limit.LimitMicros, EffectiveLimitMicros: effective(limits, limit)}
-			room := policy.Room(limit, window.BaselineMicros, window.SpentMicros)
-			window.RoomMicros = &room
-			window.OnGrant = room <= 0 && drawable
-		}
-		answer.Windows = append(answer.Windows, window)
-	}
+	var hardLimit *SpendHardLimitUsage
 	if billed {
-		standing, ok, err := s.policies.Standing(ctx, ref.OrganizationID)
+		standing, ok, err := s.policies.Standing(ctx, organization)
 		if err != nil {
-			return SubjectUsage{}, stack.Wrap(err)
+			return nil, stack.Wrap(err)
 		}
 		if ok {
-			answer.SpendHardLimit = hardLimitUsage(standing, now)
+			hardLimit = hardLimitUsage(standing.Limits, standing.SpendWindows, s.policies.Held(organization), now)
 		}
 	}
-	return answer, nil
+	answers := make([]SubjectUsage, 0, len(refs))
+	for i, ref := range refs {
+		grants := []LimitGrant{}
+		for _, grant := range live {
+			if grant.Ref() == ref {
+				grants = append(grants, grantOf(grant, now))
+			}
+		}
+		drawable := slices.ContainsFunc(grants, func(grant LimitGrant) bool { return grant.State == GrantLive })
+		subject, team, category := apiSubject(ref.Subject, ref.Category)
+		answer := SubjectUsage{Subject: subject, AppId: ref.AppID, ApiKey: ref.APIKey, UserId: ref.UserID, Team: team, Category: category,
+			Grants: grants, SpendHardLimit: hardLimit}
+		for _, interval := range usage.Intervals {
+			start, end := usage.Window(interval, now)
+			window := LimitWindow{Interval: LimitInterval(interval), WindowStart: start, WindowEnd: end}
+			if read, ok := spent[i][interval]; ok && read.WindowStart.Equal(start) {
+				window.SpentMicros = read.SpentMicros
+			}
+			if limit, ok := policy.Resolve(limits, ref, interval); ok {
+				window.BaselineMicros = policy.Baseline(resets, ref, interval, start)
+				window.Limit = &LimitInForce{Id: limit.ID, Level: LimitLevel(limit.Level), LimitMicros: limit.LimitMicros, EffectiveLimitMicros: effective(limits, limit)}
+				room := policy.Room(limit, window.BaselineMicros, window.SpentMicros)
+				window.RoomMicros = &room
+				window.OnGrant = room <= 0 && drawable
+			}
+			answer.Windows = append(answer.Windows, window)
+		}
+		answers = append(answers, answer)
+	}
+	return answers, nil
 }
 
-// hardLimitUsage is the operator's spend hard limit as the standing has it, or nil when it sets
-// none.
-func hardLimitUsage(standing usage.Standing, now time.Time) *SpendHardLimitUsage {
-	window := func(interval usage.Interval, spent usage.WindowSpend) *SpendHardLimitWindow {
-		limit, ok := standing.Limits.SpendHardLimitMicros(interval)
+// hardLimitUsage is the operator's spend hard limit as the settings in force have it, with the
+// organization's spend in the windows and what work in flight holds against each, or nil when
+// it sets none. The room is what admission would admit.
+func hardLimitUsage(limits usage.Limits, windows usage.SpendWindows, held policy.Held, now time.Time) *SpendHardLimitUsage {
+	window := func(interval usage.Interval, spent usage.WindowSpend, holds int64) *SpendHardLimitWindow {
+		limit, ok := limits.SpendHardLimitMicros(interval)
 		if !ok {
 			return nil
 		}
@@ -958,11 +1029,11 @@ func hardLimitUsage(standing usage.Standing, now time.Time) *SpendHardLimitUsage
 		if spent.WindowStart.Equal(start) {
 			micros = spent.SpentMicros
 		}
-		return &SpendHardLimitWindow{LimitMicros: limit, SpentMicros: micros, RoomMicros: limit - micros, WindowEnd: end}
+		return &SpendHardLimitWindow{LimitMicros: limit, SpentMicros: micros, RoomMicros: limit - micros - holds, WindowEnd: end}
 	}
 	answer := &SpendHardLimitUsage{
-		Daily:   window(usage.Daily, standing.SpendWindows.Daily),
-		Monthly: window(usage.Monthly, standing.SpendWindows.Monthly),
+		Daily:   window(usage.Daily, windows.Daily, held.DailyMicros),
+		Monthly: window(usage.Monthly, windows.Monthly, held.MonthlyMicros),
 	}
 	if answer.Daily == nil && answer.Monthly == nil {
 		return nil

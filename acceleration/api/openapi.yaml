@@ -73,6 +73,74 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
       description: The request cannot be served now and may be retried. With code spend_check_unavailable, the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; Retry-After says when to try again, and work on a model that costs nothing is still served.
   schemas:
+    Account:
+      description: 'The calling organization''s account: its balance, its credit and spend, its status and tier, the threshold it is warned at, and what Stream allows it. Why an organization is suspended is Stream''s, and is not here.'
+      properties:
+        balance_micros:
+          description: 'What the organization has to spend now, in millionths of a dollar: its credit less what it spent and what work in flight holds, the figure every answer''s X-Stream-Balance-Micros says.'
+          format: int64
+          type: integer
+        balance_state:
+          description: 'Where balance_micros stands: exhausted at or below 0, low at or below the threshold.'
+          enum:
+            - ok
+            - low
+            - exhausted
+          type: string
+        balance_warning_micros:
+          description: 'The balance at or below which the organization is warned: X-Stream-Balance-Warning says low, and its stream event destinations get account.balance_low. 0 when nothing sets one.'
+          format: int64
+          type: integer
+        balance_warning_source:
+          description: 'Whose threshold it is: the tier''s, the one Stream set for this organization, or the organization policy''s balance_warning_micros, which wins over both.'
+          enum:
+            - tier
+            - account
+            - organization_policy
+          type: string
+        granted_micros:
+          description: 'Every credit entry summed: top-ups, grants, refunds and adjustments.'
+          format: int64
+          type: integer
+        limits:
+          $ref: '#/components/schemas/Limits'
+          description: 'What Stream allows the organization: its tier''s settings, with those Stream set for this organization laid over them.'
+        organization_id:
+          type: string
+        own_limits:
+          description: The settings in limits Stream set for this organization rather than leaving its tier's, as dotted paths such as channels.voice.concurrent.
+          items:
+            type: string
+          nullable: true
+          type: array
+        spend_hard_limit:
+          $ref: '#/components/schemas/SpendHardLimitUsage'
+          description: The most the organization may spend in the UTC day and the calendar month, whatever its credit and its own limits, with what it spent and what is left. Absent when Stream sets none.
+        spent_micros:
+          description: Every billable unit of work recorded, summed.
+          format: int64
+          type: integer
+        status:
+          description: 'suspended: Stream refuses every request of the organization, free work included, until it restores it.'
+          enum:
+            - active
+            - suspended
+          type: string
+        tier:
+          description: The tier the organization is billed on.
+          type: string
+      required:
+        - organization_id
+        - status
+        - tier
+        - balance_micros
+        - granted_micros
+        - spent_micros
+        - balance_warning_micros
+        - balance_warning_source
+        - balance_state
+        - limits
+      type: object
     ActivityBucket:
       properties:
         active_users:
@@ -1707,6 +1775,31 @@ components:
         - sms
         - imessage
       type: string
+    ChannelLimits:
+      additionalProperties: false
+      properties:
+        concurrent:
+          description: How many at once, for a calling channel.
+          format: int64
+          minimum: 0
+          type: integer
+        countries:
+          description: The destination countries allowed, as ISO 3166-1 alpha-2 codes. Absent or empty allows any; in overrides, a non-empty list replaces the tier's.
+          items:
+            type: string
+          nullable: true
+          type: array
+        per_day:
+          description: 'How many a UTC day: messages, or minutes for a calling channel.'
+          format: int64
+          minimum: 0
+          type: integer
+        recipients_per_day:
+          description: How many distinct recipients a UTC day.
+          format: int64
+          minimum: 0
+          type: integer
+      type: object
     ChannelLineRequest:
       properties:
         number:
@@ -3371,6 +3464,50 @@ components:
           description: Required.
           type: string
       type: object
+    CreditEntry:
+      properties:
+        amount_micros:
+          description: 'Signed: what the entry added to the credit, in millionths of a dollar.'
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        kind:
+          enum:
+            - top_up
+            - grant
+            - refund
+            - dispute
+            - dispute_reversal
+            - adjustment
+          type: string
+        reference:
+          description: The payment's own reference, such as the Stripe PaymentIntent of a top-up. Absent on entries Stream's staff wrote.
+          type: string
+      required:
+        - id
+        - kind
+        - amount_micros
+        - created_at
+      type: object
+    CreditPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/CreditEntry'
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
     CustomConnectorRequest:
       additionalProperties: false
       description: A custom MCP server for the app's agents to connect to. An unknown field is refused rather than ignored.
@@ -3838,7 +3975,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller''s app is in no organization it bills, so there is no account to read), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -4948,6 +5085,26 @@ components:
         - baseline_micros
         - on_grant
       type: object
+    Limits:
+      additionalProperties: false
+      properties:
+        channels:
+          additionalProperties:
+            $ref: '#/components/schemas/ChannelLimits'
+          description: Limits on each messaging and calling channel, by channel name (sms, whatsapp, rcs, imessage, voice, ...).
+          type: object
+        low_balance_micros:
+          description: The balance, in micros, under which the organization is warned.
+          format: int64
+          minimum: 0
+          type: integer
+        sandbox:
+          $ref: '#/components/schemas/SandboxLimits'
+          description: Bounds of the organization's sandboxes.
+        spend_hard_limit:
+          $ref: '#/components/schemas/SpendHardLimit'
+          description: The most the organization may spend, whatever its credit and its own limits.
+      type: object
     LinkChannelRequest:
       properties:
         config_id:
@@ -5961,6 +6118,58 @@ components:
         - digits
         - vendor
       type: object
+    Price:
+      description: 'What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.'
+      properties:
+        change:
+          description: 'The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.'
+          type: string
+        description:
+          description: 'In upcoming: why the change is made.'
+          type: string
+        effective_at:
+          description: When it took effect, or takes effect. Absent when no change set it.
+          format: date-time
+          type: string
+        free:
+          description: The work costs nothing.
+          type: boolean
+        local:
+          description: The deployment runs the model itself; with no rates it costs nothing.
+          type: boolean
+        modality:
+          description: Such as llm, stt, tts, sms or phone.
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: What a customer is charged, by meter.
+          type: object
+        tiers:
+          description: What a customer is charged for long prompts.
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        when:
+          additionalProperties:
+            type: string
+          description: 'The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item''s default entry.'
+          type: object
+        withdrawn:
+          description: 'In upcoming: the item stops being priced at effective_at.'
+          type: boolean
+      required:
+        - free
+        - local
+        - modality
+        - provider
+        - model
+      type: object
     PriceChange:
       properties:
         cancel_reason:
@@ -6414,6 +6623,27 @@ components:
           type: string
       required:
         - markup_bps
+      type: object
+    Prices:
+      properties:
+        at:
+          description: The moment the list is read at.
+          format: date-time
+          type: string
+        entries:
+          description: Every item priced now, by modality, provider and model.
+          items:
+            $ref: '#/components/schemas/Price'
+          type: array
+        upcoming:
+          description: What the changes scheduled after at will set, soonest first.
+          items:
+            $ref: '#/components/schemas/Price'
+          type: array
+      required:
+        - at
+        - entries
+        - upcoming
       type: object
     Provider:
       properties:
@@ -6897,6 +7127,37 @@ components:
       enum:
         - daytona
       type: string
+    SandboxLimits:
+      additionalProperties: false
+      properties:
+        max_concurrent:
+          description: How many sandboxes at once.
+          format: int64
+          minimum: 0
+          type: integer
+        max_cpu:
+          description: The most vCPUs of one sandbox.
+          format: int64
+          minimum: 0
+          type: integer
+        max_disk_gb:
+          description: The most disk of one sandbox, in GiB.
+          format: int64
+          minimum: 0
+          type: integer
+        max_memory_gb:
+          description: The most memory of one sandbox, in GiB.
+          format: int64
+          minimum: 0
+          type: integer
+        network:
+          description: 'What a sandbox may reach: nothing, an allow list, or anything.'
+          enum:
+            - none
+            - allow_list
+            - any
+          type: string
+      type: object
     SandboxOptions:
       additionalProperties: false
       description: How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
@@ -8257,6 +8518,20 @@ components:
         - request_count
         - value
       type: object
+    SpendHardLimit:
+      additionalProperties: false
+      properties:
+        daily_micros:
+          description: The most spent in one UTC day, in micros; 0 or absent is no limit.
+          format: int64
+          minimum: 0
+          type: integer
+        monthly_micros:
+          description: The most spent in one calendar month (UTC), in micros; 0 or absent is no limit.
+          format: int64
+          minimum: 0
+          type: integer
+      type: object
     SpendHardLimitUsage:
       description: The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
       properties:
@@ -8271,9 +8546,11 @@ components:
           format: int64
           type: integer
         room_micros:
+          description: 'What it may still spend in the window: the limit less what it spent and what work in flight holds.'
           format: int64
           type: integer
         spent_micros:
+          description: What the organization spent in the window, as the usage records count it.
           format: int64
           type: integer
         window_end:
@@ -8285,6 +8562,12 @@ components:
         - room_micros
         - window_end
       type: object
+    SpendScope:
+      description: 'Whose spend is counted: the calling app''s, or every app''s of its organization. organization is server-side only.'
+      enum:
+        - app
+        - organization
+      type: string
     StartSessionVoiceRequest:
       properties:
         call:
@@ -8912,6 +9195,32 @@ components:
         - request_count
         - share
         - value
+      type: object
+    Team:
+      description: 'One of the organization''s teams: one a spend limit names, or one this month''s work carried. A team has no members: each user''s token names its team.'
+      properties:
+        apps:
+          description: The apps whose work carried the team this calendar month (UTC), by id.
+          items:
+            type: string
+          type: array
+        limits:
+          description: The team's spend limits, across the organization and within each app, by id.
+          items:
+            $ref: '#/components/schemas/Limit'
+          type: array
+        name:
+          type: string
+        spent:
+          description: What the team spent in the current daily, weekly, biweekly and monthly windows.
+          items:
+            $ref: '#/components/schemas/WindowSpend'
+          type: array
+      required:
+        - name
+        - apps
+        - spent
+        - limits
       type: object
     TelephonySuspension:
       properties:
@@ -10216,6 +10525,25 @@ components:
           description: sms or voice.
           type: string
       type: object
+    WindowSpend:
+      properties:
+        interval:
+          $ref: '#/components/schemas/LimitInterval'
+        spent_micros:
+          format: int64
+          type: integer
+        window_end:
+          format: date-time
+          type: string
+        window_start:
+          format: date-time
+          type: string
+      required:
+        - interval
+        - window_start
+        - window_end
+        - spent_micros
+      type: object
   securitySchemes:
     ApiKey:
       description: The public half of a credential, which names the app and the secret to verify with. A socket sends it as the api_key query parameter, because a browser WebSocket cannot set a header.
@@ -10631,6 +10959,100 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Route one modality over a socket, for a pipeline running elsewhere
+  /v1/account:
+    get:
+      description: |-
+        The caller's organization's balance, credit, spend, status, tier, the threshold it is warned at and where that comes from, what Stream allows it, and Stream's spend hard limit on it with this window's spend. The balance is what admission counts, less the work in flight, so it agrees with X-Stream-Balance-Micros. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+
+        Server-side only: a request that is not server-side answers 403 server_side_only.
+      operationId: getAccount
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+          description: OK
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Read the organization's account
+  /v1/account/credits:
+    get:
+      description: |-
+        Newest first: top-ups, grants, refunds, disputes and adjustments. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+
+        Server-side only: a request that is not server-side answers 403 server_side_only.
+      operationId: listCredits
+      parameters:
+        - description: Up to 100. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 100. Omitted is 50.
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditPage'
+          description: OK
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: List the organization's credit entries
   /v1/agents/calls:
     get:
       description: A session lives in memory and is gone when the process is, so a call is recorded as it starts and again as it ends. This is what answers what happened yesterday, and what is happening now after a restart.
@@ -19562,7 +19984,7 @@ paths:
   /v1/manage/spend/limits/usage:
     get:
       description: |-
-        The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
         Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
       operationId: manageGetLimitUsage
@@ -19573,31 +19995,61 @@ paths:
           required: true
           schema:
             $ref: '#/components/schemas/LimitSubject'
-        - explode: false
+        - description: The app of each subject, for every subject but organization, category and team. One goes with every subject.
+          explode: true
           in: query
           name: app_id
           schema:
-            type: string
-        - explode: false
+            description: The app of each subject, for every subject but organization, category and team. One goes with every subject.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
+        - description: The key of each subject, for subject api_key.
+          explode: true
           in: query
           name: api_key
           schema:
-            type: string
-        - explode: false
+            description: The key of each subject, for subject api_key.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
+        - description: The end user of each subject, for subject user.
+          explode: true
           in: query
           name: user_id
           schema:
-            type: string
-        - explode: false
+            description: The end user of each subject, for subject user.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
+        - description: The team of each subject, for subject team or app_team.
+          explode: true
           in: query
           name: team
           schema:
-            type: string
-        - explode: false
+            description: The team of each subject, for subject team or app_team.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
+        - description: The usage category of each subject, for subject category or app_category.
+          explode: true
           in: query
           name: category
           schema:
-            type: string
+            description: The usage category of each subject, for subject category or app_category.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
         - explode: false
           in: query
           name: organization_id
@@ -19609,7 +20061,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubjectUsage'
+                items:
+                  $ref: '#/components/schemas/SubjectUsage'
+                type: array
           description: OK
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -19623,7 +20077,7 @@ paths:
           $ref: '#/components/responses/InternalError'
       security:
         - ManageKey: []
-      summary: Read what a subject spent against its limits
+      summary: Read what subjects spent against their limits
       tags:
         - Staff
   /v1/manage/spend/limits/usage/reset:
@@ -19688,6 +20142,53 @@ paths:
       security:
         - ManageKey: []
       summary: Check a management call gets through
+      tags:
+        - Staff
+  /v1/manage/teams:
+    get:
+      description: |-
+        Every team a spend limit names or this month's work carried, by name, with the apps that carried it this month, what it spent in each current window and its limits, each with what it can spend once its parents are counted. A team has no members: a user's token names its team. With app_id, only what happened within that app. Spend is the usage service's, or with none the request rows summed. The organization is the one named.
+
+        Stream staff only, for support: it needs the manage key.
+      operationId: manageListTeams
+      parameters:
+        - description: 'Only what happened within this app: each team''s spend and limits there, and only the teams it saw.'
+          explode: false
+          in: query
+          name: app_id
+          schema:
+            description: 'Only what happened within this app: each team''s spend and limits there, and only the teams it saw.'
+            type: string
+        - explode: false
+          in: query
+          name: organization_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Team'
+                type: array
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      security:
+        - ManageKey: []
+      summary: List the organization's teams
       tags:
         - Staff
   /v1/ops/customers/{customer_id}/connectors/{id}/provider-app:
@@ -21751,6 +22252,50 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Replace one end user's own quota
+  /v1/prices:
+    get:
+      description: 'Every item this router prices, at the rates a customer is charged, which are what every answer''s X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier''s rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.'
+      operationId: getPrices
+      parameters:
+        - description: Only this modality's items, such as llm, stt, tts, sms or phone.
+          explode: false
+          in: query
+          name: modality
+          schema:
+            description: Only this modality's items, such as llm, stt, tts, sms or phone.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Prices'
+          description: OK
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Read the price list
+      tags:
+        - Prices
+      x-client-accessible: true
   /v1/router/configs:
     get:
       description: 'A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.'
@@ -22522,7 +23067,7 @@ paths:
   /v1/spend/limits/usage:
     get:
       description: |-
-        The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
         Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
       operationId: getLimitUsage
@@ -22533,37 +23078,69 @@ paths:
           required: true
           schema:
             $ref: '#/components/schemas/LimitSubject'
-        - explode: false
+        - description: The app of each subject, for every subject but organization, category and team. One goes with every subject.
+          explode: true
           in: query
           name: app_id
           schema:
-            type: string
-        - explode: false
+            description: The app of each subject, for every subject but organization, category and team. One goes with every subject.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
+        - description: The key of each subject, for subject api_key.
+          explode: true
           in: query
           name: api_key
           schema:
-            type: string
-        - explode: false
+            description: The key of each subject, for subject api_key.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
+        - description: The end user of each subject, for subject user.
+          explode: true
           in: query
           name: user_id
           schema:
-            type: string
-        - explode: false
+            description: The end user of each subject, for subject user.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
+        - description: The team of each subject, for subject team or app_team.
+          explode: true
           in: query
           name: team
           schema:
-            type: string
-        - explode: false
+            description: The team of each subject, for subject team or app_team.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
+        - description: The usage category of each subject, for subject category or app_category.
+          explode: true
           in: query
           name: category
           schema:
-            type: string
+            description: The usage category of each subject, for subject category or app_category.
+            items:
+              type: string
+            maxItems: 100
+            nullable: true
+            type: array
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubjectUsage'
+                items:
+                  $ref: '#/components/schemas/SubjectUsage'
+                type: array
           description: OK
           headers:
             X-Stream-Balance-Micros:
@@ -22588,7 +23165,7 @@ paths:
           $ref: '#/components/responses/InternalError'
         "503":
           $ref: '#/components/responses/Unavailable'
-      summary: Read what a subject spent against its limits
+      summary: Read what subjects spent against their limits
   /v1/spend/limits/usage/reset:
     post:
       description: |-
@@ -22790,7 +23367,8 @@ paths:
   /v1/stats/spend:
     get:
       description: |-
-        Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, or a cost label for what it was spent on.
+        Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("app", "api_key", "user", "team" or "category"), or a cost label for what it was spent on; a cost label named like one of those is read as it. "team" groups by the team the user's token named, work with none under the empty value; "category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+        scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
         Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
         Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
       operationId: getSpend
@@ -22809,6 +23387,13 @@ paths:
             maximum: 50
             minimum: 1
             type: integer
+        - description: 'Whose spend: app, the default, or organization.'
+          explode: false
+          in: query
+          name: scope
+          schema:
+            $ref: '#/components/schemas/SpendScope'
+            description: 'Whose spend: app, the default, or organization.'
         - explode: false
           in: query
           name: granularity
@@ -23055,6 +23640,54 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: One transcription job, and its transcript once it has one
+  /v1/teams:
+    get:
+      description: |-
+        Every team a spend limit names or this month's work carried, by name, with the apps that carried it this month, what it spent in each current window and its limits, each with what it can spend once its parents are counted. A team has no members: a user's token names its team. With app_id, only what happened within that app. Spend is the usage service's, or with none the request rows summed.
+
+        Server-side only: a request that is not server-side answers 403 server_side_only.
+      operationId: listTeams
+      parameters:
+        - description: 'Only what happened within this app: each team''s spend and limits there, and only the teams it saw.'
+          explode: false
+          in: query
+          name: app_id
+          schema:
+            description: 'Only what happened within this app: each team''s spend and limits there, and only the teams it saw.'
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Team'
+                type: array
+          description: OK
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: List the organization's teams
   /v1/tts/recordings:
     post:
       description: 'The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.'
