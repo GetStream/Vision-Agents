@@ -2483,7 +2483,7 @@ pub struct ConnectionCredentials {
     )]
     pub values: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
 }
-///current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
+///current when the connection reads its connector's latest revision, or an earlier one that differs from it only in what a config is checked against (sensitive, and which tools only read or send data out), outdated when a later one changes what the connection reads, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
