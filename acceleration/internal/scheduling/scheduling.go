@@ -292,13 +292,18 @@ func FromStored(task store.ScheduledTask) (*Schedule, error) {
 	return schedule, nil
 }
 
-// FromNow moves a repeat whose start has passed to start at its first
-// occurrence after now, and returns that occurrence; false when none is left
-// before until. RFC 5545 counts DTSTART as the first occurrence
+// FromNow moves a repeat whose first occurrence has passed to start at its
+// first occurrence after now, and returns that occurrence; false when none is
+// left before until. A first occurrence still ahead leaves the start as
+// written, even one the rule itself skips (a Wednesday start of a Monday
+// repeat). RFC 5545 counts DTSTART as the first occurrence
 // (https://www.icalendar.org/iCalendar-RFC-5545/3-3-10-recurrence-rule.html),
 // so COUNT then counts from now: three times is three deliveries, however
 // many the written start has let pass.
 func (s *Schedule) FromNow(now time.Time) (time.Time, bool) {
+	if first, ok := s.First(); ok && first.After(now) {
+		return first, true
+	}
 	if s.rule != nil {
 		// The search reads the rule without its COUNT, which only starts
 		// counting at the start found; DTStart rebuilds from OrigOptions.

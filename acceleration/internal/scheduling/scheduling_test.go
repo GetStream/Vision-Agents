@@ -574,6 +574,8 @@ func TestANextRunOnAnotherDayLeavesTheStartAtItsFirstPass(t *testing.T) {
 func TestARepeatCreatedWithItsStartPassedStartsAtItsNextOccurrence(t *testing.T) {
 	// Berlin falls back on 25 Oct 2026 at 01:00 UTC; 02:10 CET is the second pass.
 	berlin := time.Date(2026, 10, 25, 1, 10, 0, 0, time.UTC)
+	// Berlin springs forward on 28 Mar 2027 at 01:00 UTC: 02:30 that day is in the gap.
+	spring := time.Date(2027, 3, 27, 12, 0, 0, 0, time.UTC)
 	for name, test := range map[string]struct {
 		now      time.Time
 		input    Input
@@ -585,6 +587,16 @@ func TestARepeatCreatedWithItsStartPassedStartsAtItsNextOccurrence(t *testing.T)
 			now: monday, input: Input{At: "2026-10-20T09:00", Repeat: "FREQ=DAILY;COUNT=3", Timezone: "UTC"},
 			start:    "2026-10-20T09:00",
 			upcoming: []string{"2026-10-20T09:00:00Z", "2026-10-21T09:00:00Z", "2026-10-22T09:00:00Z"},
+		},
+		"a future start the rule skips is left as written": {
+			now: monday, input: Input{At: "2026-10-21T09:00", Repeat: "FREQ=WEEKLY;BYDAY=MO;COUNT=2", Timezone: "UTC"},
+			start:    "2026-10-21T09:00",
+			upcoming: []string{"2026-10-26T09:00:00Z", "2026-11-02T09:00:00Z"},
+		},
+		"a future start before its month day is left as written": {
+			now: monday, input: Input{At: "2026-10-21T09:00", Repeat: "FREQ=MONTHLY;BYMONTHDAY=1;COUNT=2", Timezone: "UTC"},
+			start:    "2026-10-21T09:00",
+			upcoming: []string{"2026-11-01T09:00:00Z", "2026-12-01T09:00:00Z"},
 		},
 		"a passed start with COUNT runs the whole count from the next": {
 			now: monday, input: Input{At: "2026-10-19T09:00", Repeat: "FREQ=DAILY;COUNT=3", Timezone: "UTC"},
@@ -639,6 +651,11 @@ func TestARepeatCreatedWithItsStartPassedStartsAtItsNextOccurrence(t *testing.T)
 			now: berlin, input: Input{At: "2026-10-25T02:30:00+01:00", Repeat: "FREQ=DAILY;COUNT=2", Timezone: "Europe/Berlin"},
 			start:    "2026-10-25T02:30",
 			upcoming: []string{"2026-10-25T01:30:00Z", "2026-10-26T01:30:00Z"},
+		},
+		"a start moved into a spring-forward gap keeps its clock reading after": {
+			now: spring, input: Input{At: "2027-03-20T02:30", Repeat: "FREQ=DAILY;COUNT=3", Timezone: "Europe/Berlin"},
+			start:    "2027-03-28T02:30",
+			upcoming: []string{"2027-03-28T01:30:00Z", "2027-03-29T00:30:00Z", "2027-03-30T00:30:00Z"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
