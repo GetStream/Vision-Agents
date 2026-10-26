@@ -327,6 +327,10 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 	}
 }
 
+// errNoApprovalWaits answers a tool_approval no call waits for.
+var errNoApprovalWaits = errors.New("tool_approval reached no call waiting for it: the call was already " +
+	"answered or stopped, or its tool_call_id, request_id or turn_id names none")
+
 // errUnreadableFrame ends a socket on a frame that is not JSON of the shape it reads.
 var errUnreadableFrame = invalidRequest("a frame on this socket is not JSON it can read")
 
@@ -400,7 +404,7 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 
 	case "tool_approval":
 		if command.Allowed == nil {
-			found.Report(fmt.Errorf("tool_approval needs allowed"), "tool")
+			found.ReportTool(command.ToolCallID, fmt.Errorf("tool_approval needs allowed"))
 			return true
 		}
 		// A connector call the router holds for the person's approval is sent only once they
@@ -412,10 +416,16 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 		if !*command.Allowed && found.DeclineLogin(command.ToolCallID) {
 			return true
 		}
-		if !found.DecideCommandTool(command.ToolCallID, command.CommandID, command.TurnID, *command.Allowed, command.Summary) {
-			s.logger.Debug("a tool approval answered nothing",
-				"session", found.ID(), "call", command.ToolCallID)
+		if found.DecideCommandTool(command.ToolCallID, command.CommandID, command.TurnID, *command.Allowed, command.Summary) {
+			return true
 		}
+		// A client call outside a durable command records no answer: the approval comes before
+		// its tool_result, which settles it. The JS SDK's decide sends one there.
+		if command.CommandID == "" && found.WaitsForResult(command.ToolCallID) {
+			return true
+		}
+		// The sender cannot tell otherwise that the person's answer reached nothing.
+		found.ReportTool(command.ToolCallID, errNoApprovalWaits)
 
 	case "say":
 		if err := found.Say(context.Background(), command.Text); err != nil {
@@ -801,7 +811,11 @@ func frameOf(event session.Event) (frame, bool) {
 		}, true
 
 	case agent.Error:
-		return frame{"type": "error", "context": typed.Context, "error": errorText(typed.Err)}, true
+		failed := frame{"type": "error", "context": typed.Context, "error": errorText(typed.Err)}
+		if typed.ToolCallID != "" {
+			failed["tool_call_id"] = typed.ToolCallID
+		}
+		return failed, true
 
 	case agent.Left:
 		return frame{"type": "left", "at": typed.At}, true

@@ -498,6 +498,8 @@ type Error struct {
 	Err error
 	// Context says which part failed, e.g. "stt", "llm", "tts" or "edge".
 	Context string
+	// ToolCallID is the call a "tool" failure is about, when it is about one.
+	ToolCallID string
 }
 
 func (e Error) Error() string { return e.Err.Error() }

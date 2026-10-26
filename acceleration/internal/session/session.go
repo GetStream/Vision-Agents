@@ -760,6 +760,18 @@ func (s *Session) Report(err error, context string) {
 	s.broadcast(agent.Error{Err: err, Context: context})
 }
 
+// ReportTool is Report for a command about the call id, which the failure names so the
+// watcher that sent it can tell which of its answers it is.
+func (s *Session) ReportTool(id string, err error) {
+	s.broadcast(agent.Error{Err: err, Context: "tool", ToolCallID: id})
+}
+
+// WaitsForResult reports whether the call id waits for a watcher's tool_result.
+func (s *Session) WaitsForResult(id string) bool {
+	_, waiting := s.tools.nameOf(id)
+	return waiting
+}
+
 // Ask answers a piece of text in writing, without speaking any of it, and writes the answer
 // into the conversation.
 //

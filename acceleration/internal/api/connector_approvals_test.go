@@ -126,7 +126,7 @@ func (s *SessionConnectorsSuite) TestACallNeedingApprovalRunsOnceTheUserAllowsIt
 	s.Equal(held.before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider before the answer")
 	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
 		"request_id": held.request, "allowed": true}))
-	ran := s.await(held.events, "tool_ran")
+	ran := s.awaitWithoutError(held.events, "tool_ran")
 
 	s.Equal(connectorEcho, ran["tool"])
 	s.Equal(connectorEchoText, ran["result"])
@@ -156,7 +156,7 @@ func (s *SessionConnectorsSuite) TestAnAnswerWithTheTurnsIDRunsTheCall() {
 	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
 		"request_id": held.request, "turn_id": turnID, "allowed": true}))
 
-	s.Equal(connectorEchoText, s.await(held.events, "tool_ran")["result"])
+	s.Equal(connectorEchoText, s.awaitWithoutError(held.events, "tool_ran")["result"])
 	s.Greater(s.provider.Hits(fakeprovider.PathMCP), held.before)
 }
 
@@ -198,6 +198,38 @@ func (s *SessionConnectorsSuite) TestAnotherUserCannotAnswerTheCall() {
 
 	s.Equal(http.StatusNotFound, status)
 	s.Equal(held.before, s.provider.Hits(fakeprovider.PathMCP))
+	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
+		"request_id": held.request, "allowed": true}))
+	s.Equal(connectorEchoText, s.await(held.events, "tool_ran")["result"])
+}
+
+// A held call is answered once: a second answer reaches nothing, and its sender is told so.
+func (s *SessionConnectorsSuite) TestASecondAnswerToAHeldCallIsAnswered() {
+	held := s.heldCall(s.client)
+	step := s.awaitingApprovalOn(held.events)
+	answer := map[string]any{"type": "tool_approval", "tool_call_id": step["id"], "request_id": held.request, "allowed": true}
+	s.Require().NoError(held.events.WriteJSON(answer))
+	s.await(held.events, "tool_ran")
+
+	s.Require().NoError(held.events.WriteJSON(answer))
+
+	refused := s.await(held.events, "error")
+	s.Equal(step["id"], refused["tool_call_id"])
+	s.Equal(errNoApprovalWaits.Error(), refused["error"])
+}
+
+// An answer naming another command reaches nothing and is answered; the call goes on waiting
+// for the answer on its own command.
+func (s *SessionConnectorsSuite) TestAnAnswerNamingAnotherRequestIsAnsweredAndTheCallGoesOnWaiting() {
+	held := s.heldCall(s.client)
+	step := s.awaitingApprovalOn(held.events)
+
+	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
+		"request_id": s.utils.uuid(), "allowed": true}))
+
+	refused := s.await(held.events, "error")
+	s.Equal(step["id"], refused["tool_call_id"])
+	s.Equal(held.before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider")
 	s.Require().NoError(held.events.WriteJSON(map[string]any{"type": "tool_approval", "tool_call_id": step["id"],
 		"request_id": held.request, "allowed": true}))
 	s.Equal(connectorEchoText, s.await(held.events, "tool_ran")["result"])

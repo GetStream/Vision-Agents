@@ -185,7 +185,12 @@ func documentHandWritten(api huma.API) {
 			"the session's user, and the router sends it only once they allow it: `tool_approval` " +
 			"with its `tool_call_id`, the `request_id` of the command it answers and `allowed`, from " +
 			"that user or their backend, `turn_id` left out or not. Declined, or not answered in 10 " +
-			"minutes, it is not sent and the model is told so. It needs no `tool_result`.\n" +
+			"minutes, it is not sent and the model is told so. It needs no `tool_result`. " +
+			"A `tool_approval` without `allowed`, or one no call waits for (answered already, " +
+			"stopped, or naming another `request_id` or `turn_id`), is answered with an `error` " +
+			"frame with `context` `tool` and its `tool_call_id`, and the socket stays open. A call " +
+			"outside a durable command waits for its `tool_result`, so an approval sent before it " +
+			"without a `request_id` gets no answer.\n" +
 			"`tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. " +
 			"An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally " +
 			"with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.\n" +

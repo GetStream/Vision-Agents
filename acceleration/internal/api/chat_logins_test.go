@@ -533,6 +533,7 @@ func (s *ChatLoginsSuite) TestADeclinedLoginEndsTheCallWithoutRunningIt() {
 	for ran == nil || declined == nil {
 		var frame map[string]any
 		s.Require().NoError(events.ReadJSON(&frame))
+		s.Require().NotEqual("error", frame["type"], "the decline was answered with an error: %v", frame)
 		switch frame["type"] {
 		case "tool_ran":
 			if frame["tool"] == loginCallTool {

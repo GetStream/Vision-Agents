@@ -20,6 +20,10 @@ Before billable work starts the router now reserves what it may cost: a search, 
 
 ## Bug Fixes
 
+### A tool_approval that reaches no call is answered
+
+A `tool_approval` on the session socket that no call waits for now gets an `error` frame with `context` `tool`, its `tool_call_id` and the reason, and the socket stays open. This covers an approval sent twice, one for a call that already stopped, and one naming another `request_id` or `turn_id`. Before, it was dropped without a word. A `tool_approval` without `allowed` now names its `tool_call_id` too. An approval sent before the `tool_result` of a call outside a durable command is answered as before: with nothing (AI-1881).
+
 ### A connector tool whose schema changed no longer breaks its whole binding
 
 When the provider lists a granted tool with another schema than the one approved, a session's binding now opens with its other tools (while it still offers one tool), also when the binding is required (reported in `connector_unavailable` as `tool_unavailable`) or has sandbox access (the sandbox keeps it), and when the person connects it in the conversation: that login no longer waits until its consent expires. A call of the left-out tool answers `tool_unavailable` with what gives it back: for a tool granted by name or by pattern, an admin's approval of the new schema (`POST /v1/agents/connections/{id}/tools/approve`); for a schema digest the agent config names, saving the config at the new schema. A login's `list_tools` names it under `left_out`. A granted tool the provider no longer lists is still unknown to the session, and still fails a required binding (AI-1932).
