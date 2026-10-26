@@ -210,6 +210,10 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
   the session.
+- Google Drive has a block from revision 5 (`GOOGLE_DRIVE_TOKEN`, host `www.googleapis.com`; AI-1958),
+  so its connections of revisions 2-4 give the sandbox nothing until reconnected. Its token
+  carries `drive.file`, so code can also create files and change files the app opened. A
+  `session` Drive binding gets a grant only for a user who has a connection.
 - Before each run a new credential revision updates the secret; a connection that needs a
   reconnect, or was deleted, withdraws it, and so does a binding the agent config dropped, no
   longer marks `sandbox`, or binds to another connector or connection (AI-1686, as the tool
