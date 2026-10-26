@@ -122,7 +122,7 @@ func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sa
 			continue
 		}
 		if !c.d.logins.byAlias[grant.Binding].loggedIn() {
-			result.Unconnected = append(result.Unconnected, grant.Binding)
+			result.Unconnected = append(result.Unconnected, grant)
 			continue
 		}
 		c.opened[grant.Binding] = true

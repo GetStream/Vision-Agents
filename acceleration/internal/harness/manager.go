@@ -878,9 +878,10 @@ func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Res
 	if len(result.Missing) > 0 {
 		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
 	}
-	for _, binding := range result.Unconnected {
-		said += fmt.Sprintf("\n\n%s is not connected for this user: call %s__list_tools to let them connect it, then run "+
-			"the code again; if you cannot call it, tell the user they must connect %s.", binding, binding, binding)
+	for _, grant := range result.Unconnected {
+		said += fmt.Sprintf("\n\nIf this code needed %s (a 401 from %s), the user has not connected it: call %s__list_tools "+
+			"so they can, then run the code again; if you cannot call it, tell the user they must connect %s.",
+			grant.Binding, strings.Join(grant.Hosts, ", "), grant.Binding, grant.Binding)
 	}
 	for _, binding := range result.Connected {
 		said += fmt.Sprintf("\n\n%s was just connected: if this run got 401, wait 20 seconds and run the code again.", binding)

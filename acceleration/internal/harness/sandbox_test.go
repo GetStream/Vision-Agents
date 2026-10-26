@@ -365,7 +365,8 @@ func (s *HarnessSuite) TestAFileTheCodeDidNotWriteIsNamed() {
 // TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHaveThemConnect: the subagent cannot
 // call github__list_tools, so the line also says to tell the user.
 func (s *HarnessSuite) TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHaveThemConnect() {
-	s.box = &stubSandbox{result: sandbox.Result{Output: "status: 401", Unconnected: []string{"github"}}}
+	s.box = &stubSandbox{result: sandbox.Result{Output: "status: 401", Unconnected: []sandbox.Grant{
+		{Binding: "github", Hosts: []string{"api.github.com"}}}}}
 	s.build(true)
 	s.slow.calls = runCode("call-1", "print(issues())")
 	s.slow.automatic = "Connect GitHub first."
@@ -375,8 +376,9 @@ func (s *HarnessSuite) TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHav
 
 	s.awaitSettled(1)
 	told := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1].Content
-	s.Equal("status: 401\n\ngithub is not connected for this user: call github__list_tools to let them connect it, then "+
-		"run the code again; if you cannot call it, tell the user they must connect github.", told)
+	s.Equal("status: 401\n\nIf this code needed github (a 401 from api.github.com), the user has not connected it: call "+
+		"github__list_tools so they can, then run the code again; if you cannot call it, tell the user they must connect "+
+		"github.", told)
 }
 
 // TestCodeRunJustAfterTheConnectionTellsTheSubagentToWaitFor401: a token on its way to the

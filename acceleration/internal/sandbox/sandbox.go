@@ -41,10 +41,11 @@ type Result struct {
 	// Missing are the files it was asked to hand back and did not write, or that were
 	// too large to.
 	Missing []string
-	// Unconnected are the bindings of late grants whose user has not connected them yet, so
-	// the run had no token for them. Connected are those whose user connected them since the
-	// last run, whose token reaches code some seconds after the run began.
-	Unconnected, Connected []string
+	// Unconnected are the late grants whose user has not connected them yet, so the run had
+	// no token for them. Connected are the bindings of those whose user connected them since
+	// the last run, whose token reaches code some seconds after the run began.
+	Unconnected []Grant
+	Connected   []string
 }
 
 // File is something the code wrote that is wanted outside the sandbox.

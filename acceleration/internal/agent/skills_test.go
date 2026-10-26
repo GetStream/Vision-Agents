@@ -239,16 +239,18 @@ func (s *AgentSuite) TestFilesAWrittenConversationsCodeHandsBackRideOnTheToolRes
 // TestAWrittenConversationsCodeRunWithoutTheUsersConnectionSaysHowToConnect: the model is
 // told in run_code's own result, which it reads more surely than the tool's description.
 func (s *AgentSuite) TestAWrittenConversationsCodeRunWithoutTheUsersConnectionSaysHowToConnect() {
-	s.box = &codeBox{result: sandbox.Result{Output: "status: 401\n", Unconnected: []string{"github", "linear"}}}
+	s.box = &codeBox{result: sandbox.Result{Output: "status: 401\n", Unconnected: []sandbox.Grant{
+		{Binding: "github", Hosts: []string{"api.github.com"}}, {Binding: "linear", Hosts: []string{"api.linear.app", "linear.app"}}}}}
 	s.joinText()
 
 	ran := s.runsTool(runCodeCall("run-1", "print(issues())"), 1)
 
 	s.Require().NoError(ran.Err)
-	s.Equal("status: 401\n\n\ngithub is not connected for this user: call github__list_tools to let them connect it, then "+
-		"run the code again; if you cannot call it, tell the user they must connect github.\n\nlinear is not connected for "+
-		"this user: call linear__list_tools to let them connect it, then run the code again; if you cannot call it, tell "+
-		"the user they must connect linear.", ran.Result)
+	s.Equal("status: 401\n\n\nIf this code needed github (a 401 from api.github.com), the user has not connected it: call "+
+		"github__list_tools so they can, then run the code again; if you cannot call it, tell the user they must connect "+
+		"github.\n\nIf this code needed linear (a 401 from api.linear.app, linear.app), the user has not connected it: call "+
+		"linear__list_tools so they can, then run the code again; if you cannot call it, tell the user they must connect "+
+		"linear.", ran.Result)
 }
 
 func (s *AgentSuite) TestAWrittenConversationWithoutASandboxRunsNoCode() {

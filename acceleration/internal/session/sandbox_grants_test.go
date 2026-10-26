@@ -621,6 +621,15 @@ func consent(connection string) Consent {
 	return Consent{ConnectionID: connection, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(time.Minute)}
 }
 
+// bindings are the grants' bindings.
+func bindings(grants []sandbox.Grant) []string {
+	var named []string
+	for _, grant := range grants {
+		named = append(named, grant.Binding)
+	}
+	return named
+}
+
 // TestASessionBindingGivesTheSandboxTheCallersOwnConnection: the caller's one connected
 // connection is the one the binding opens on, and its token is the one Daytona gets.
 func (s *SandboxGrantsSuite) TestASessionBindingGivesTheSandboxTheCallersOwnConnection() {
@@ -659,10 +668,11 @@ func (s *SandboxGrantsSuite) TestACallerWithNoConnectionGetsALateGrantAndIsToldH
 	result, err := box.Run(s.ctx, "print(1)", nil)
 
 	s.Require().NoError(err)
-	s.Equal(sandbox.Result{Unconnected: []string{"crm"}}, result, "every run says so until the user connects")
+	s.Equal(sandbox.Result{Unconnected: box.(sandbox.Granted).Grants()}, result, "every run says so until the user connects")
 	said, _ := harness.HandBack(s.ctx, nil, result, s.manager.logger)
-	s.Equal("The code ran and printed nothing.\n\ncrm is not connected for this user: call crm__list_tools to let them "+
-		"connect it, then run the code again; if you cannot call it, tell the user they must connect crm.", said)
+	s.Equal("The code ran and printed nothing.\n\nIf this code needed crm (a 401 from api.crm.example, *.crm.example), the "+
+		"user has not connected it: call crm__list_tools so they can, then run the code again; if you cannot call it, tell "+
+		"the user they must connect crm.", said)
 	s.Equal([]sandbox.Grant{{Binding: "crm", Config: config.ID, Connector: s.connectorID, Selection: selectionSession,
 		Env: "CRM_TOKEN", Hosts: []string{"api.crm.example", "*.crm.example"}, Late: true}}, box.(sandbox.Granted).Grants())
 	s.Equal([]string{"crm__list_tools", "crm__call_tool"}, names(d.tools))
@@ -685,7 +695,8 @@ func (s *SandboxGrantsSuite) TestARunNamesOnlyTheLateGrantsNotConnected() {
 	result, err := box.Run(s.ctx, "print(1)", nil)
 
 	s.Require().NoError(err)
-	s.Equal(sandbox.Result{Unconnected: []string{"crm"}}, result)
+	s.Equal([]string{"app", "crm"}, bindings(box.(sandbox.Granted).Grants()))
+	s.Equal(sandbox.Result{Unconnected: box.(sandbox.Granted).Grants()[1:]}, result)
 }
 
 // TestALoginFinishedInTheChatBindsTheGrantBeforeTheNextRun: the consent the model's
@@ -713,7 +724,7 @@ func (s *SandboxGrantsSuite) TestALoginFinishedInTheChatBindsTheGrantBeforeTheNe
 	s.Require().NoError(err)
 	s.True(finished)
 	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
-	s.Equal([]string{"crm"}, unbound.Unconnected)
+	s.Equal([]string{"crm"}, bindings(unbound.Unconnected))
 	s.Equal(sandbox.Result{Connected: []string{"crm"}}, bound, "a Daytona secret's token is still on its way")
 	s.Equal(sandbox.Result{}, later, "and said once")
 	s.NotContains(s.logs.String(), tokenOf("primary"))
@@ -789,7 +800,7 @@ func (s *SandboxGrantsSuite) TestALoginBindsOnlyItsOwnBinding() {
 	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
 	result, err := box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
-	s.Equal(sandbox.Result{Unconnected: []string{"crm2"}, Connected: []string{"crm"}}, result)
+	s.Equal(sandbox.Result{Unconnected: box.(sandbox.Granted).Grants()[1:], Connected: []string{"crm"}}, result)
 	grants := box.(sandbox.Granted).Grants()
 	_, crm := d.boundLate(s.ctx, grants[0])
 	_, crm2 := d.boundLate(s.ctx, grants[1])
@@ -957,7 +968,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerBindsALateGrantOnceTheLoginFinish
 		return record
 	}
 	unbound := record()
-	s.Equal(sandbox.Result{Unconnected: []string{"crm"}}, result)
+	s.Equal(sandbox.Result{Unconnected: box.(sandbox.Granted).Grants()}, result)
 
 	s.connect(mine, "primary")
 	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
