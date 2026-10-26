@@ -810,7 +810,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 		return "", err
 	}
 	if a.native() {
-		return "", a.respondNative(text, images)
+		return "", a.respondNative(ctx, text, images)
 	}
 	caller := stt.Participant{ID: typedCaller}
 	sender, _ := routing.CallerFrom(ctx)
@@ -850,7 +850,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				metadata, _ := json.Marshal(described)
 				parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 			}
-			if _, err := current.Delegate(visionSkill, text, id, parts, nil); err != nil {
+			if _, err := current.Delegate(ctx, visionSkill, text, id, parts, nil); err != nil {
 				return "", err
 			}
 			typed()
@@ -2314,20 +2314,25 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 		return nil
 	}
 	current := a.harness
-	ctx := a.ctx
-	if !a.sender.IsZero() {
-		ctx = routing.WithCaller(ctx, a.sender)
-	}
-	if a.scheduled {
-		ctx = routing.WithScheduledTurn(ctx)
-	}
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(a.chargedLocked(a.ctx))
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()
 
 	go a.startReply(current, turn, ctx, screen)
 	return nil
+}
+
+// chargedLocked marks ctx with who the turn being answered is counted on (llmrouter
+// Session.charged): whoever sent it, and whether a scheduled task fired it.
+func (a *Agent) chargedLocked(ctx context.Context) context.Context {
+	if !a.sender.IsZero() {
+		ctx = routing.WithCaller(ctx, a.sender)
+	}
+	if a.scheduled {
+		ctx = routing.WithScheduledTurn(ctx)
+	}
+	return ctx
 }
 
 // startReply opens the model stream and drains it. It is a goroutine of its own because

@@ -906,3 +906,30 @@ func (s *EpisodeReadingSuite) TestAFollowUpWhoseTurnCouldNotStartIsNotADuplicate
 	s.False(known, "a follow-up that started no turn is forgotten")
 	s.Error(created.FollowUp(s.ctx, "st_run", "the task is due"), "the retry tries the turn again rather than being answered Duplicate")
 }
+
+// A follow-up whose turn could not start leaves one cancelled reply in the channel, however the
+// caller goes on: the message hook gives such a refusal up at once (AI-1556), so a refusal costs
+// the channel one message, not one per poll.
+func (s *EpisodeReadingSuite) TestAFollowUpWhoseTurnCouldNotStartLeavesOneCancelledReply() {
+	thread := s.thread("author")
+	created, err := s.manager.Create(persistent.RouterOpensThread(s.ctx, thread), Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena",
+		Text: true, PersistConversation: true, ConversationID: thread, Thread: true,
+		LLMTarget: "en-low-latency", Instructions: "be brief",
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
+	s.Require().NoError(created.current().Close())
+
+	s.Require().Error(created.FollowUp(s.ctx, "thread_message", "carry on"))
+
+	var stored []map[string]any
+	s.Require().Eventually(func() bool {
+		stored = s.chat.Stored(strings.TrimPrefix(thread, "agent:"))
+		return len(stored) > 0
+	}, settleFor, 10*time.Millisecond, "the refused follow-up wrote no reply")
+	s.Len(stored, 1)
+	custom, _ := stored[0]["custom"].(map[string]any)
+	message, _ := custom["support_message"].(map[string]any)
+	s.Equal("cancelled", message["state"], "%v", stored[0])
+}

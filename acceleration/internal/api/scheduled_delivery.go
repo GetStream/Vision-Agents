@@ -175,7 +175,7 @@ func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.Claimed
 		APIKey:          task.APIKey,
 		UsageCategories: task.UsageCategories,
 		Timezone:        task.Timezone,
-		CommandID:       "st_" + claimed.Run.ID,
+		CommandID:       conversation.ReadBackPrefix + claimed.Run.ID,
 		Text:            scheduledPrompt(claimed, time.Now()),
 		Channels:        task.Channels,
 		Due:             due,
@@ -939,7 +939,7 @@ func followUpWithin(ctx context.Context, found *session.Session, delivery schedu
 		if err == nil {
 			return nil
 		}
-		if !strings.Contains(err.Error(), "a response is already running") || time.Now().After(deadline) {
+		if !errors.Is(err, conversation.ErrResponseRunning) || time.Now().After(deadline) {
 			return err
 		}
 		if err := waitFor(ctx, scheduledPoll); err != nil {

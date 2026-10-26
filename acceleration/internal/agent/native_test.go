@@ -230,6 +230,58 @@ func (s *AgentSuite) TestNativeDelegationKeepsTalkingAndDeliversTheResultWhenIdl
 	s.Equal(1, countOf[Delegated](s.reported()), "a duplicated tool call must not restart the task")
 }
 
+func (s *AgentSuite) TestWorkANativeModelHandsOverInATurnAScheduledTaskFiredIsAskedAsScheduled() {
+	// A scheduled turn is the customer's spend, and so is the work the model hands over
+	// for it, until the caller is next heard.
+	peer := s.joinNativeDelegating()
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.nativeSend(peer, `{"type":"conversation.item.input_audio_transcription.completed","transcript":"And for eight people?"}`)
+	s.Eventually(func() bool { return countOf[Heard](s.reported()) == 1 }, time.Second, time.Millisecond)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r2","call_id":"call2","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Price eight seats\"}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 2 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{true, false}, s.subagent.askedScheduled(), "the work the caller's own turn hands over is theirs")
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInATypedTurnIsNotAskedAsScheduled() {
+	peer := s.joinNativeDelegating()
+	_, err := s.agent.RespondTo(s.ctx, "What is my booking total?", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{false}, s.subagent.askedScheduled())
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInATurnTheCallerSpokeIntoBeforeItsTranscriptIsNotAskedAsScheduled() {
+	peer := s.joinNativeDelegating()
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r2","call_id":"call2","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Price eight seats\"}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{false}, s.subagent.askedScheduled(), "the caller's voice came before the transcript")
+}
+
 func (s *AgentSuite) TestNativeDelegationCancelsWorkWithoutEndingTheCall() {
 	peer := s.joinNativeDelegating()
 	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)

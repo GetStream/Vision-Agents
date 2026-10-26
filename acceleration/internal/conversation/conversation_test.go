@@ -763,7 +763,7 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	_, err = c.BeginCommand("submission-1", "different question", "")
 	require.ErrorIs(t, err, ErrCommandConflict)
 	_, err = c.BeginCommand("submission-2", "another question", "")
-	require.ErrorContains(t, err, "already running")
+	require.ErrorIs(t, err, ErrResponseRunning)
 	db.mu.Lock()
 	db.fail = false
 	db.mu.Unlock()
