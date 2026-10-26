@@ -200,6 +200,14 @@ func (s *SweepSuite) live(session string) {
 	s.keys = append(s.keys, "w15sweep:"+s.prefix+":session:"+session)
 }
 
+// unreadable has the directory fail to say whether session is live: its claim's key holds a
+// list, and Redis answers a GET of a list with WRONGTYPE.
+func (s *SweepSuite) unreadable(session string) {
+	key := "w15sweep:" + s.prefix + ":session:" + session
+	s.Require().NoError(s.redis.Do(s.ctx, s.redis.B().Rpush().Key(key).Element("w17").Build()).Error())
+	s.keys = append(s.keys, key)
+}
+
 // sweeper sweeps the test's prefix, with liveness read from directory, and asks it again at once.
 func (s *SweepSuite) sweeper(directory *node.Directory) *Sweeper {
 	return s.sweeperEvery(directory, 50*time.Millisecond)
@@ -289,6 +297,98 @@ func (s *SweepSuite) TestASweepDeletesNothingBeforeItAsksAgain() {
 	s.Error(sweeper.Sweep(ctx))
 
 	s.Len(s.org.names(), 1)
+}
+
+// A sweep cancelled while it waits to ask again ends then, so a router that stops is not held
+// up for recheckAfter.
+func (s *SweepSuite) TestASweepCancelledWhileItWaitsEndsAtOnce() {
+	s.org.add(s.named("session-ended", "github"), 2*time.Hour)
+	sweeper := s.sweeper(s.directory)
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	sweeper.wait = func(ctx context.Context) error {
+		time.AfterFunc(100*time.Millisecond, cancel)
+		return waitToRecheck(ctx)
+	}
+	start := time.Now()
+
+	s.ErrorIs(sweeper.Sweep(ctx), context.Canceled)
+
+	s.Less(time.Since(start), recheckAfter/2)
+	s.Len(s.org.names(), 1)
+}
+
+// A sweep that finds no secret to delete has nothing to ask again, so it does not wait.
+func (s *SweepSuite) TestASweepWithNothingToDeleteDoesNotWait() {
+	s.live("session-live")
+	s.org.add(s.named("session-live", "github"), 2*time.Hour)
+	s.org.add(s.named("session-young", "github"), time.Minute)
+	sweeper := s.sweeper(s.directory)
+	sweeper.wait = waitToRecheck
+	start := time.Now()
+
+	s.Require().NoError(sweeper.Sweep(s.ctx))
+
+	s.Less(time.Since(start), recheckAfter/2)
+	s.Len(s.org.names(), 2)
+}
+
+// A live session's claim is gone for at most its lifetime before its node writes it back, so a
+// sweep asks again only after that.
+func (s *SweepSuite) TestASweepAsksAgainOnlyAfterAClaimWouldBeWrittenBack() {
+	s.live("session-live")
+
+	lasts, err := s.redis.Do(s.ctx, s.redis.B().Pttl().Key("w15sweep:"+s.prefix+":session:session-live").Build()).AsInt64()
+
+	s.Require().NoError(err)
+	s.Require().Positive(lasts, "the claim is written with a lifetime")
+	s.Greater(recheckAfter, time.Duration(lasts)*time.Millisecond)
+}
+
+// A sweep ends within the lease that keeps a second router from sweeping beside it, also where
+// its caller would let it run longer.
+func (s *SweepSuite) TestASweepEndsWithinItsLease() {
+	s.org.add(s.named("session-ended", "github"), 2*time.Hour)
+	sweeper := s.sweeper(s.directory)
+	var deadline time.Time
+	sweeper.wait = func(ctx context.Context) error {
+		deadline, _ = ctx.Deadline()
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, 2*sweepLease)
+	defer cancel()
+	start := time.Now()
+
+	s.Require().NoError(sweeper.Sweep(ctx))
+
+	s.WithinRange(deadline, start.Add(sweepLease), time.Now().Add(sweepLease))
+}
+
+// A session whose liveness cannot be read keeps its secret, and the secrets listed after it are
+// still swept.
+func (s *SweepSuite) TestASecretListedAfterAnUnreadableOneIsStillDeleted() {
+	s.unreadable("session-unreadable")
+	s.org.add(s.named("session-unreadable", "github"), 2*time.Hour)
+	s.org.add(s.named("session-ended", "github"), 2*time.Hour)
+
+	s.Error(s.sweeper(s.directory).Sweep(s.ctx))
+
+	s.Equal([]string{s.named("session-unreadable", "github")}, s.org.names())
+}
+
+// A session whose liveness cannot be read when the sweep asks again keeps its secret, and the
+// sweep says it could not tell.
+func (s *SweepSuite) TestASessionUnreadableWhenAskedAgainFailsTheSweep() {
+	s.org.add(s.named("session-1", "github"), 2*time.Hour)
+	sweeper := s.sweeper(s.directory)
+	sweeper.wait = func(context.Context) error {
+		s.unreadable("session-1")
+		return nil
+	}
+
+	s.ErrorContains(sweeper.Sweep(s.ctx), "is the session of secret "+s.named("session-1", "github")+" live")
+
+	s.Equal([]string{s.named("session-1", "github")}, s.org.names())
 }
 
 func (s *SweepSuite) TestANameThisRouterDidNotMakeIsKept() {

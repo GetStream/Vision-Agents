@@ -4,12 +4,16 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -27,6 +31,9 @@ type SecretSweepSuite struct {
 	directory *node.Directory
 	daytona   *httptest.Server
 	logger    *slog.Logger
+	// prefix is this run's secret prefix, so a run beside it (another process on the same Redis)
+	// has its own lease and directory.
+	prefix string
 
 	mu sync.Mutex
 	// asked are the requests Daytona got, each its path and the name it lists.
@@ -45,7 +52,8 @@ func (s *SecretSweepSuite) SetupSuite() {
 	redis, err := live.New(live.Options{Address: address})
 	s.Require().NoError(err)
 	s.redis, s.logger = redis, slog.New(slog.DiscardHandler)
-	s.directory, err = node.NewDirectory(node.DirectoryOptions{Redis: redis.Redis(), Address: "10.0.0.1:1", Prefix: "w15sweep:router",
+	s.prefix = "w17sweep" + strings.ToLower(rand.Text())
+	s.directory, err = node.NewDirectory(node.DirectoryOptions{Redis: redis.Redis(), Address: "10.0.0.1:1", Prefix: s.prefix + ":router",
 		Logger: s.logger})
 	s.Require().NoError(err)
 }
@@ -78,7 +86,7 @@ func (s *SecretSweepSuite) SetupTest() {
 
 func (s *SecretSweepSuite) TearDownTest() {
 	ctx := context.Background()
-	s.Require().NoError(s.redis.Redis().Do(ctx, s.redis.Redis().B().Del().Key("sandbox:secret-sweep:w15sweep").Build()).Error())
+	s.Require().NoError(s.redis.Redis().Do(ctx, s.redis.Redis().B().Del().Key("sandbox:secret-sweep:"+s.prefix).Build()).Error())
 }
 
 // swept is what Daytona was asked for by the sweep secretSweeper gives settings, if any.
@@ -93,6 +101,44 @@ func (s *SecretSweepSuite) swept(settings config.CodeSandbox, redis *live.Client
 	return s.asked
 }
 
+// asking is what Daytona has been asked so far.
+func (s *SecretSweepSuite) asking() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.asked)
+}
+
+// TestTheRouterStartsTheSweeper: the router sweeps when it starts, with nothing else asking for a
+// sweep, and its sweep ends with the lease given back.
+func (s *SecretSweepSuite) TestTheRouterStartsTheSweeper() {
+	settings := config.Defaults().CodeSandbox
+	settings.SecretPrefix = s.prefix
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.Require().NoError(startSecretSweeper(ctx, settings, s.redis, s.directory, s.logger))
+
+	s.Eventually(func() bool { return slices.Contains(s.asking(), "/api/secret/paginated va_"+s.prefix+"_") },
+		5*time.Second, 10*time.Millisecond)
+	// The next test sweeps under the same lease.
+	s.Eventually(func() bool {
+		held, err := s.redis.Redis().Do(ctx, s.redis.Redis().B().Exists().Key("sandbox:secret-sweep:"+s.prefix).Build()).AsInt64()
+		return err == nil && held == 0
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+// TestADefaultRouterStartsNoSweeper is the control for the start: on base 54fb4b288 main.go runs a
+// sweeper only where secretSweeper gives one, and it gives none here (TestADefaultRouterSweepsNoSecrets).
+func (s *SecretSweepSuite) TestADefaultRouterStartsNoSweeper() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.Require().NoError(startSecretSweeper(ctx, config.Defaults().CodeSandbox, s.redis, s.directory, s.logger))
+
+	time.Sleep(300 * time.Millisecond)
+	s.Empty(s.asking())
+}
+
 // TestADefaultRouterSweepsNoSecrets is the control: on base e5d6d8057 nothing in the router
 // lists Daytona's secrets (`git grep -n 'Secret.List' e5d6d8057 -- acceleration` finds none),
 // so Daytona is asked nothing.
@@ -102,14 +148,14 @@ func (s *SecretSweepSuite) TestADefaultRouterSweepsNoSecrets() {
 
 func (s *SecretSweepSuite) TestTheDaytonaBrokerSweepsItsOwnPrefix() {
 	settings := config.Defaults().CodeSandbox
-	settings.SecretPrefix = "w15sweep"
+	settings.SecretPrefix = s.prefix
 
-	s.Contains(s.swept(settings, s.redis, s.directory), "/api/secret/paginated va_w15sweep_")
+	s.Contains(s.swept(settings, s.redis, s.directory), "/api/secret/paginated va_"+s.prefix+"_")
 }
 
 func (s *SecretSweepSuite) TestTheProxyBrokerSweepsNoSecrets() {
 	settings := config.Defaults().CodeSandbox
-	settings.Broker, settings.SecretPrefix = config.CodeSandboxBrokerProxy, "w15sweep"
+	settings.Broker, settings.SecretPrefix = config.CodeSandboxBrokerProxy, s.prefix
 
 	s.Empty(s.swept(settings, s.redis, s.directory))
 }
@@ -117,7 +163,7 @@ func (s *SecretSweepSuite) TestTheProxyBrokerSweepsNoSecrets() {
 func (s *SecretSweepSuite) TestARouterWithoutDaytonaSweepsNoSecrets() {
 	s.T().Setenv("DAYTONA_API_KEY", "")
 	settings := config.Defaults().CodeSandbox
-	settings.SecretPrefix = "w15sweep"
+	settings.SecretPrefix = s.prefix
 
 	s.Empty(s.swept(settings, s.redis, s.directory))
 }
@@ -126,7 +172,7 @@ func (s *SecretSweepSuite) TestARouterWithoutDaytonaSweepsNoSecrets() {
 // on another router.
 func (s *SecretSweepSuite) TestARouterWithoutRedisSweepsNoSecrets() {
 	settings := config.Defaults().CodeSandbox
-	settings.SecretPrefix = "w15sweep"
+	settings.SecretPrefix = s.prefix
 
 	s.Empty(s.swept(settings, nil, nil))
 }
