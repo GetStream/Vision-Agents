@@ -102,15 +102,23 @@ type connecting struct {
 	// where the egress proxy reads it on every request.
 	delayed bool
 	mu      sync.Mutex
-	// opened are the late grants' bindings a run found connected, which no result names again.
+	// opened are the late grants' bindings a run's BeforeRun found connected, which no result
+	// names again.
 	opened map[string]bool
 }
 
 func (c *connecting) Grants() []sandbox.Grant { return c.d.grants }
 
-// Run reads the logins after the run, whose BeforeRun bound each grant connected by then: one
-// connected since is named as connected, not as unconnected.
+// Run reads the logins before and after the run. A grant connected before it was bound by its
+// BeforeRun, and is opened. One connected only during the run is named as connected, not as
+// unconnected, and not opened: the next run's BeforeRun binds it, and names it again.
 func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sandbox.Result, error) {
+	before := map[string]bool{}
+	for _, grant := range c.d.grants {
+		if grant.Late {
+			before[grant.Binding] = c.d.logins.byAlias[grant.Binding].loggedIn()
+		}
+	}
 	result, err := c.Sandbox.Run(ctx, code, outputs)
 	if err != nil {
 		return result, err
@@ -125,7 +133,9 @@ func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sa
 			result.Unconnected = append(result.Unconnected, grant)
 			continue
 		}
-		c.opened[grant.Binding] = true
+		if before[grant.Binding] {
+			c.opened[grant.Binding] = true
+		}
 		if !c.delayed {
 			continue
 		}

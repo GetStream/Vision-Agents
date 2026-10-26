@@ -730,6 +730,44 @@ func (s *SandboxGrantsSuite) TestALoginFinishedInTheChatBindsTheGrantBeforeTheNe
 	s.NotContains(s.logs.String(), tokenOf("primary"))
 }
 
+// TestALoginFinishedWhileCodeRunsIsSaidAgainByTheRunThatBindsIt: the login lands during the
+// code-run request, after that run's BeforeRun, so its secret still has no token; the next
+// run's BeforeRun puts it there and says so again.
+func (s *SandboxGrantsSuite) TestALoginFinishedWhileCodeRunsIsSaidAgainByTheRunThatBindsIt() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	mine := s.pending("alice", "primary")
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	var finished bool
+	var once sync.Once
+	api.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/process/code-run") {
+			once.Do(func() {
+				s.connect(mine, "primary")
+				_, finished, _ = d.loginFinished(s.ctx, "attempt-alice", mine)
+			})
+		}
+		api.serve(w, r)
+	})
+
+	during, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	unboundDuring := api.value("CRM_TOKEN") != tokenOf("primary")
+	next, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	later, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.True(finished)
+	s.True(unboundDuring, "the run during the login bound nothing")
+	s.Equal(sandbox.Result{Connected: []string{"crm"}}, during, "connected, not to be connected again")
+	s.Equal(sandbox.Result{Connected: []string{"crm"}}, next, "this run put the token in the secret")
+	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
+	s.Equal(sandbox.Result{}, later)
+}
+
 // TestALoginOnARevisionWithoutTheBlockLeavesTheGrantUnbound: alice's connection pins revision
 // 1, which gives the sandbox nothing, so her login opens the tools and binds no token.
 func (s *SandboxGrantsSuite) TestALoginOnARevisionWithoutTheBlockLeavesTheGrantUnbound() {
@@ -926,9 +964,13 @@ func (s *SandboxGrantsSuite) TestALoginFinishingWhileCodeRunsBindsOnce() {
 	for bindings := range connected {
 		told = append(told, bindings...)
 	}
+	after, afterErr := box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
+	s.Require().NoError(afterErr)
 	s.True(finished)
-	s.Equal([]string{"crm"}, told, "one run of all says it was just connected")
+	s.NotEmpty(told, "a run during the login, and the one that binds it, say it was just connected")
+	s.Subset([]string{"crm"}, told)
+	s.Equal(sandbox.Result{}, after, "and none after the one that bound it")
 	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
 }
 
