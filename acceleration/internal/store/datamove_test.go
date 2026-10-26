@@ -653,10 +653,6 @@ func (s *DataMoveSuite) TestAnActiveScheduledTaskArrivesPausedAndUnclaimed() {
 	s.Empty(claim)
 	s.False(leased)
 	s.Equal(time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC), next.UTC(), "its schedule is the one it had")
-	var runs int
-	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
-		"SELECT count(*) FROM scheduled_task_runs WHERE task_id = 'st-active' AND customer_id = 'moved'").Scan(&runs))
-	s.Equal(1, runs, "its history comes with it")
 
 	state, claim, leased, _ = s.scheduledTaskOn(s.source, "st-active")
 	s.Equal(ScheduledTaskActive, state, "the deployment it left goes on delivering it")

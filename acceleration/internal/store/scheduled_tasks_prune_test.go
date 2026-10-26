@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -37,17 +38,17 @@ VALUES (?, ?, ?, now() - interval '400 days' + make_interval(secs => ?), ?, ?, ?
 	s.Require().NoError(err)
 }
 
-func (s *StoreSuite) taskIDs() []string {
+func (s *StoreSuite) ids(query string) []string {
 	var ids []string
-	s.Require().NoError(s.store.db.NewRaw("SELECT customer_id || '/' || id FROM scheduled_tasks ORDER BY 1").Scan(s.ctx, &ids))
+	s.Require().NoError(s.store.db.NewRaw(query).Scan(s.ctx, &ids))
 	return ids
 }
 
-func (s *StoreSuite) runIDs() []string {
-	var ids []string
-	s.Require().NoError(s.store.db.NewRaw("SELECT id FROM scheduled_task_runs ORDER BY 1").Scan(s.ctx, &ids))
-	return ids
+func (s *StoreSuite) taskIDs() []string {
+	return s.ids("SELECT customer_id || '/' || id FROM scheduled_tasks ORDER BY 1")
 }
+
+func (s *StoreSuite) runIDs() []string { return s.ids("SELECT id FROM scheduled_task_runs ORDER BY 1") }
 
 func (s *StoreSuite) TestPruneDeletesRunsThatFinishedMoreThanNinetyDaysAgo() {
 	s.task("t", nil)
@@ -160,14 +161,12 @@ func (s *StoreSuite) TestPruneRunsBesideFinishesWithoutDeadlock() {
 			errs <- err
 		})
 	}
-	var runs, tasks int64
-	var mu sync.Mutex
+	var runs, tasks atomic.Int64
 	for range 4 {
 		wg.Go(func() {
 			r, t, err := s.store.PruneScheduledTasks(s.ctx)
-			mu.Lock()
-			runs, tasks = runs+r, tasks+t
-			mu.Unlock()
+			runs.Add(r)
+			tasks.Add(t)
 			errs <- err
 		})
 	}
@@ -177,7 +176,41 @@ func (s *StoreSuite) TestPruneRunsBesideFinishesWithoutDeadlock() {
 		s.Require().NoError(err)
 	}
 
-	s.EqualValues(live*30, runs, "every old run goes once, whichever router's prune takes it")
-	s.EqualValues(40, tasks)
+	s.EqualValues(live*30, runs.Load(), "every old run goes once, whichever router's prune takes it")
+	s.EqualValues(40, tasks.Load())
 	s.Len(s.runIDs(), live, "the finishes of this moment stay")
+}
+
+// A prune that finds a row another router's prune holds leaves it to that router and goes on,
+// where waiting for it would stall both.
+func (s *StoreSuite) TestPruneLeavesTheRowsAnotherPruneHoldsAndDoesNotWait() {
+	s.aged("held-task", "acme", ScheduledTaskCompleted, 91*day)
+	s.aged("free-task", "acme", ScheduledTaskCompleted, 91*day)
+	s.ranFor("held-run", "acme", "held-task", ScheduledTaskTriggerManual, ScheduledTaskRunDelivered, 91*day)
+	s.ranFor("free-run", "acme", "held-task", ScheduledTaskTriggerManual, ScheduledTaskRunDelivered, 91*day)
+
+	other, err := s.store.db.BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer other.Rollback() //nolint:errcheck // the test commits or has failed
+	_, err = other.ExecContext(s.ctx, "SELECT 1 FROM scheduled_task_runs WHERE id = 'held-run' FOR UPDATE")
+	s.Require().NoError(err)
+	_, err = other.ExecContext(s.ctx, "SELECT 1 FROM scheduled_tasks WHERE id = 'held-task' FOR UPDATE")
+	s.Require().NoError(err)
+
+	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+	defer cancel()
+	runs, tasks, err := s.store.PruneScheduledTasks(ctx)
+
+	s.Require().NoError(err, "the prune waited for rows it could have left")
+	s.EqualValues(1, runs)
+	s.EqualValues(1, tasks)
+	s.Equal([]string{"held-run"}, s.runIDs())
+	s.Equal([]string{"acme/held-task"}, s.taskIDs())
+
+	s.Require().NoError(other.Commit())
+	runs, tasks, err = s.store.PruneScheduledTasks(s.ctx)
+	s.Require().NoError(err)
+	s.EqualValues(1, runs)
+	s.EqualValues(1, tasks)
+	s.Empty(s.taskIDs())
 }

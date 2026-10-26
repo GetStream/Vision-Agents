@@ -26,6 +26,10 @@ Before billable work starts the router now reserves what it may cost: a search, 
 
 A `session` binding with `sandbox: true` whose user has no connection yet, in a chat session, now gives the sandbox its env var at once. A request with it is refused with a 401 until the user connects; `run_code`'s description tells the model to call `<alias>__list_tools`, which shows the user the connect card and waits. After the consent, the next run sends the user's token, within about 20 seconds under the Daytona broker. A required binding still refuses the session, and a voice session gets nothing, as before (AI-1960). Each `run_code` result also names, until the user logs in, every such binding not yet connected and tells the model, if the code needed it (a 401 from its hosts), to call its `<alias>__list_tools`; under the Daytona broker the run that binds the login says to wait 20 seconds on a 401 (AI-1969). In a chat, a run of code that finds such a binding not connected now shows the user its connect card itself, without waiting and with no tool call by the model, once per open consent; once the user connects, the agent is told to carry on, and the next run sends their token (AI-1982).
 
+### Finished scheduled-task history is deleted after 90 days
+
+A daily job on every router deletes the runs of scheduled tasks that finished more than 90 days ago, and the tasks that completed or failed more than 90 days ago with their runs. An active or paused task is never deleted, however old; its old runs are. Each row copies the user's instructions, and a daily task added a run a day for good. `router replicate` now imports every scheduled task that is active on the source as paused, with its worker's claim cleared: the source goes on delivering it until the move is cut over, so the copy would have delivered it twice. Resume the tasks at cut-over.
+
 ## Bug Fixes
 
 ### Code run again after the user connects a connector runs, instead of returning the old 401
