@@ -32,6 +32,8 @@ type ProxySuite struct {
 	ctx      context.Context
 	platform *platform
 	redis    rueidis.Client
+	// timeout is the sandbox's Timeout; zero is the default.
+	timeout time.Duration
 }
 
 func TestProxySuite(t *testing.T) {
@@ -53,6 +55,7 @@ func (s *ProxySuite) SetupTest() {
 	s.ctx = context.Background()
 	s.platform = newPlatform()
 	s.T().Cleanup(s.platform.server.Close)
+	s.timeout = 0
 }
 
 // disconnected is a grant whose connection gives the sandbox no credential.
@@ -75,7 +78,7 @@ func (s *ProxySuite) proxied(config sandbox.Config, proxy string, more ...sandbo
 		Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Config: config, Grants: append([]sandbox.Grant{github}, more...),
-		Broker: broker})
+		Broker: broker, Timeout: s.timeout})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
 	return box
@@ -176,6 +179,57 @@ func (s *ProxySuite) TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRu
 	_, err = box.Run(s.ctx, "print(3)", nil)
 	s.ErrorContains(err, "readying the sandbox for a run: exit code 1: the TLS tunnel to the proxy did not start: OSError")
 	s.Len(s.platform.executed(), 2)
+}
+
+// slowed is a sandbox whose code may run for 10 ms behind an HTTPS proxy, that has run once,
+// after which each check before a run takes check and each run of code takes code. A run's
+// budget is its timeout and 5 s (daytona.go, Run), so 5.01 s.
+func (s *ProxySuite) slowed(check, code time.Duration) *Sandbox {
+	box := s.proxied(sandbox.Config{TimeoutMs: 10}, "https://203.0.113.7:8091")
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.platform.mu.Lock()
+	s.platform.slowCommand, s.platform.slowRun = check, code
+	s.platform.mu.Unlock()
+	return box
+}
+
+// TestASlowCheckLeavesTheCodeItsWholeBudget: the check before a run is bounded on its own, so
+// code that ends within the run's budget runs to its end however long the check took, even
+// past the sandbox's timeout.
+func (s *ProxySuite) TestASlowCheckLeavesTheCodeItsWholeBudget() {
+	s.timeout = 5 * time.Second
+	box := s.slowed(3500*time.Millisecond, 2500*time.Millisecond)
+
+	result, err := box.Run(s.ctx, "print(2)", nil)
+
+	s.Require().NoError(err)
+	s.Equal("12.63\n", result.Output)
+	s.Len(s.platform.executed(), 2)
+}
+
+// TestAHungCheckIsCutAtTheSandboxsTimeout: the check is bounded as any other call to Daytona,
+// by the sandbox's timeout, and a check cut short runs no code.
+func (s *ProxySuite) TestAHungCheckIsCutAtTheSandboxsTimeout() {
+	s.timeout = 2 * time.Second
+	box := s.slowed(3*time.Second, 0)
+
+	_, err := box.Run(s.ctx, "print(2)", nil)
+
+	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
+	s.Len(s.platform.executed(), 1, "no code ran after the check was cut")
+}
+
+// TestCodeOverItsBudgetIsCutAsOnBase is the control: with a quick check, code still has the
+// run's 5.01 s and no more. Its expected error is the one base (54fb4b288) gives.
+func (s *ProxySuite) TestCodeOverItsBudgetIsCutAsOnBase() {
+	box := s.slowed(0, 6*time.Second)
+	started := time.Now()
+
+	_, err := box.Run(s.ctx, "print(2)", nil)
+
+	s.ErrorContains(err, `/process/code-run": context deadline exceeded`)
+	s.Less(time.Since(started), 6*time.Second, "cut at the run's budget, before the code's end")
 }
 
 // TestRunCodeTellsTheModelGitTakesThePlaceholder: the proxy takes it as Basic auth's password.

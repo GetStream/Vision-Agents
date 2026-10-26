@@ -73,6 +73,8 @@ type platform struct {
 	test string
 	// stall, while open, holds every code-run, and arrived hears of each one held.
 	stall, arrived chan struct{}
+	// slowCommand and slowRun are how long each shell command and each code-run take to answer.
+	slowCommand, slowRun time.Duration
 }
 
 // heldSecret is a secret as Daytona keeps it.
@@ -89,10 +91,17 @@ func newPlatform() *platform {
 }
 
 func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/process/execute") {
+		p.mu.Lock()
+		slow := p.slowCommand
+		p.mu.Unlock()
+		time.Sleep(slow)
+	}
 	if strings.HasSuffix(r.URL.Path, "/process/code-run") {
 		p.mu.Lock()
-		stall, arrived := p.stall, p.arrived
+		stall, arrived, slow := p.stall, p.arrived, p.slowRun
 		p.mu.Unlock()
+		time.Sleep(slow)
 		if stall != nil {
 			arrived <- struct{}{}
 			<-stall

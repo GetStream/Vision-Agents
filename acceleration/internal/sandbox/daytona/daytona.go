@@ -238,10 +238,12 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 				return err
 			}
 		}
-		run, cancel := context.WithTimeout(ctx, s.runTimeout+5*time.Second)
-		defer cancel()
+		// The checks are bounded as any other call to Daytona, so they leave the code its
+		// whole run timeout.
+		check, end := context.WithTimeout(ctx, s.timeout)
+		defer end()
 		for _, command := range s.mount.EachRun {
-			checked, err := s.box.Process.ExecuteCommand(run, "sh -c "+quoted(command), options.WithCommandEnv(s.mount.RunEnv))
+			checked, err := s.box.Process.ExecuteCommand(check, "sh -c "+quoted(command), options.WithCommandEnv(s.mount.RunEnv))
 			if err != nil {
 				return stack.Wrap(err)
 			}
@@ -249,6 +251,8 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 				return stack.Wrap(fmt.Errorf("daytona: readying the sandbox for a run: exit code %d: %s", checked.ExitCode, checked.Result))
 			}
 		}
+		run, cancel := context.WithTimeout(ctx, s.runTimeout+5*time.Second)
+		defer cancel()
 		var err error
 		ran, err = s.box.Process.CodeRun(run, code, options.WithCodeRunTimeout(s.runTimeout),
 			options.WithCodeRunParams(types.CodeRunParams{Env: s.mount.RunEnv}))
