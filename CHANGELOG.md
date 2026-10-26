@@ -32,6 +32,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 Delegated work (a skill, a picture to look at, a summary of a long conversation) started by a turn a scheduled task fired was counted on the end user's daily quota, though the turn itself was not. It is now counted as the turn is: on nobody's day (AI-1560).
 
+### A scheduled task's reply carries the files its code made
+
+A task delivered by SMS, WhatsApp or iMessage outside a thread now sends the files the turn's code made (`run_code` or delegated work), as an MMS or WhatsApp media after the words; before, only the words went out. A reply of files and no words is delivered on every channel, a thread's included, where it was a `no_reply` failure; a retry sends the same files without a second turn (AI-1951, AI-1950).
+
 ### A draining router no longer waits out a scheduled task's retry
 
 A scheduled delivery that failed and was waiting to try again held the router's drain for up to 12.5 minutes, as long as the waits last. Once the router drains, the wait ends and the run is left to its lease: another router takes it up under the same run (AI-1561).
