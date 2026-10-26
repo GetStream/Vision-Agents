@@ -1144,11 +1144,10 @@ function connectorOf(
 
   const approval = keys.get("require_approval");
   if (approval && (approval.nested.length > 0 || scalar(approval.inline) !== undefined)) {
-    declared.requireApproval = approval.nested.length
+    const listed = approval.nested.length
       ? approval.nested.map((item) => listItem(item, "require_approval", where))
-      : /^\[\s*\]$/.test(approval.inline)
-        ? []
-        : flowList(approval.inline, "require_approval", where);
+      : flowList(approval.inline, "require_approval", where);
+    declared.requireApproval = listed.filter((item) => item);
   }
   return declared;
 }
