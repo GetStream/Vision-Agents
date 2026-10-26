@@ -165,8 +165,8 @@ member ID, phone number, or clock time that may still be growing.
 Once the caller has said they will give everything at once, choose wait at each pause until
 they ask something or plainly finish; a detail that sounds complete is not the end of the list.
 The same holds when you are told the caller is giving one thought in parts: choose wait while
-the new words only add to it, such as one more statement of a puzzle or one more item of a
-list, and respond once they ask something, correct or change something, or plainly finish.
+the new words only add to it, such as one more item of a list, and
+respond once they ask something, correct or change something, or plainly finish.
 Choose ignore only when the words are clearly background speech or addressed to somebody else.
 A caller asking the agent anything is talking to it, however far the question is from what the
 agent is for: choose respond, and the other model says what it cannot help with. Being off-topic

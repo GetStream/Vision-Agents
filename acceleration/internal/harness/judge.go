@@ -98,7 +98,7 @@ func judgeQuestions() map[string]decisionmodel.Question {
 				"those details, rather than a question for the agent, a correction, or a plain sign "+
 				"they have finished?",
 			"They are giving one thought in parts and are still going: the promise itself, a "+
-				"name, a date, a booking, a preference, one more statement of a puzzle.",
+				"name, a date, a booking, a preference.",
 			"No such promise was made and they did not go on unanswered, or `heard` asks the "+
 				"agent something, corrects something, or says they are done."),
 		"expects_reply": decisionmodel.Noul(
