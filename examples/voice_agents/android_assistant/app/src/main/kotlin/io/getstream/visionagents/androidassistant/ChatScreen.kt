@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,12 +45,13 @@ import io.getstream.chat.android.ai.compose.ui.component.AIToolApprover
 import io.getstream.chat.android.ai.compose.ui.component.AITypingIndicator
 import io.getstream.chat.android.ai.compose.ui.component.ChatAiComponentFactory
 import io.getstream.chat.android.ai.compose.ui.component.ChatComposer
-import io.getstream.chat.android.ai.compose.ui.component.ComposerLeadingContentParams
 import io.getstream.chat.android.ai.compose.ui.component.LocalChatAiComponentFactory
 import io.getstream.chat.android.ai.compose.ui.component.MessageData
 import java.util.Calendar
 
 private val starters = listOf(
+    "What's on my calendar today?",
+    "Remind me to call mum at 6pm",
     "Plan a weekend in Lisbon",
     "What should I cook tonight?",
 )
@@ -125,7 +125,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
                     ),
             ) {
                 if (isWelcoming) {
-                    AISuggestions(suggestions = starters, onSuggestionClick = viewModel::send)
+                    AISuggestions(suggestions = starters, onSuggestionClick = { viewModel.send(it) })
                 }
                 failure?.let {
                     Surface(
@@ -147,7 +147,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
                         draft = it
                         viewModel.draftChanged(it.text)
                     },
-                    onSendClick = { viewModel.send(it.text) },
+                    onSendClick = { viewModel.send(it.text, it.attachments) },
                     onStopClick = viewModel::stop,
                     isGenerating = answering,
                 )
@@ -190,7 +190,7 @@ private fun Welcome(modifier: Modifier = Modifier) {
         )
         Text(greeting(), style = MaterialTheme.typography.titleLarge)
         Text(
-            "Ask me anything.",
+            "Ask me anything, or show me a photo.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -205,15 +205,10 @@ private fun greeting(): String {
 }
 
 /**
- * Stream's views, with what the person can do under each finished reply (copy it, share it and
- * rate it) and the composer without its attachment button: a question goes to the agent as text,
- * and dictating one stays. Asking for a reply again needs the router to replace one, which it
- * does not yet.
+ * Stream's views, with what the person can do under each finished reply: copy it, share it and
+ * rate it. Asking for a reply again needs the router to replace one, which it does not yet.
  */
 private class AssistantViews(private val viewModel: ChatViewModel) : ChatAiComponentFactory {
-    @Composable
-    override fun RowScope.ComposerLeadingContent(params: ComposerLeadingContentParams) = Unit
-
     @Composable
     override fun AIConversationReplyActions(params: AIConversationReplyActionsParams) {
         // Read here, so the thumbs change as soon as the rating does.

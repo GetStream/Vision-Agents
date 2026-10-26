@@ -22,6 +22,7 @@ import io.getstream.result.Result
 import io.getstream.visionagents.android.core.AgentSession
 import io.getstream.visionagents.android.core.AgentsException
 import io.getstream.visionagents.android.core.Conversation
+import io.getstream.visionagents.android.core.ImageSource
 import io.getstream.visionagents.android.core.LiveReasoning
 import io.getstream.visionagents.android.core.chat
 import io.getstream.visionagents.android.core.read
@@ -121,12 +122,13 @@ class AgentChat private constructor(
         }
     }.stateIn(scope, SharingStarted.Eagerly, false)
 
-    fun ask(text: String) {
+    /** Asks, with the photos picked for it, each read and shrunk by [photos] first. */
+    fun ask(text: String, photos: suspend () -> List<ImageSource> = { emptyList() }) {
         asking.value = null
         askedAfter.value = list.value.lastOrNull()?.id.orEmpty()
         scope.launch {
             try {
-                session.responses.create(text)
+                session.responses.create(text, images = photos())
             } catch (e: AgentsException) {
                 asking.value = e.message
                 askedAfter.value = null

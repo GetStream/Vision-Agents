@@ -1,8 +1,10 @@
 package io.getstream.visionagents.androidassistant
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.getstream.chat.android.ai.compose.conversation.AIMessageAttachment
 import io.getstream.chat.android.ai.compose.conversation.AIMessageRating
 import io.getstream.chat.android.ai.compose.conversation.AIPendingMessage
 import io.getstream.visionagents.android.core.AgentsException
@@ -139,8 +141,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun send(text: String) {
-        val asking = Asked(AIPendingMessage(text = text), after = opened.value?.messages?.value?.count { !it.isAgentReply } ?: 0)
+    /** Asks, with the photos the composer holds, which show on the question at once. */
+    fun send(text: String, photos: Collection<Uri> = emptyList()) {
+        val asking = Asked(
+            AIPendingMessage(text = text, attachments = photos.map { AIMessageAttachment.image(it) }),
+            after = opened.value?.messages?.value?.count { !it.isAgentReply } ?: 0,
+        )
         asked.value = asking
         screenScope.launch {
             val chat = open()
@@ -149,7 +155,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             markUsed(chat)
-            chat.ask(text)
+            chat.ask(text) { Photos.sources(getApplication(), photos) }
             // Stream's copy of the question is the person's first message after the ones there
             // were when they asked. Once it is in, or asking failed, the question on its way goes.
             combine(chat.messages, chat.failure) { messages, failure ->

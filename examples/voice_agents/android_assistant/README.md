@@ -74,6 +74,11 @@ Stream Chat 7.16.0 is on `https://stream-io-repo.com` rather than Maven Central,
   answer streaming in. Older messages load as you scroll up. Under a finished reply you can
   copy, share and rate it; ratings stay on the phone, as the router takes none yet. The composer
   floats over the bottom of the conversation, which fades away under it.
+- **Photos** from the composer's button, which opens the system photo picker, go with the
+  question, shrunk to 1280 pixels across and inline as JPEG data URIs (`Photos.kt`). The question
+  shows them at once; the router uploads them to the conversation's channel and writes them on
+  the person's message, where the chat shows them, and the model sees them with that question's
+  reply. From Android 9 a photo is turned the way the camera held it; before, it goes as stored.
 - **Tools on the phone**, in `DeviceTools.kt`: `get_local_context` (date, time, timezone),
   `get_location` (asks first; the platform's `LocationManager` and `Geocoder`), `list_events`
   (the calendar, through `CalendarContract`), `add_reminder` (asks first) and `send_email` (asks
@@ -93,7 +98,6 @@ URLs, the customer id, the Stream key, the agent's name and the user.
 
 ## What is not here yet
 
-- Photos in the composer.
 - Voice mode, with its captions and the camera.
 - The connector sign-in: a Gmail or Linear call that waits for one shows its step, with no way
   to connect from the phone yet.
