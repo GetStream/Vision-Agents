@@ -11220,7 +11220,7 @@ pub struct SpendHardLimitWindow {
     pub spent_micros: i64,
     pub window_end: ::std::string::String,
 }
-///Whose spend is counted: the calling app's, or every app's of its organization. organization is server-side only.
+///Whose spend is counted, or whose usage events are listed: the calling app's, or every app's of its organization. organization is server-side only.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -12838,6 +12838,78 @@ pub struct UpdateSipTrunkRequest {
     pub transport: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub username: ::std::option::Option<::std::string::String>,
+}
+///One unit of work recorded for the organization: who it was for, what it was, how much of it there was and what it cost. What Stream pays for it is Stream's, and is not here.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct UsageEvent {
+    ///The agent the work was done for.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent_id: ::std::option::Option<::std::string::String>,
+    ///The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
+    pub api_key: ::std::string::String,
+    ///The app the work was for.
+    pub app_id: ::std::string::String,
+    ///What chose the price or explains the work, such as country or direction.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub attributes: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Whether cost_micros counts against the organization's credit and limits.
+    pub billable: bool,
+    ///The call the work was done in.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call_id: ::std::option::Option<::std::string::String>,
+    ///What the organization is charged for the work, in millionths of a dollar.
+    pub cost_micros: i64,
+    ///Why it failed, when it did.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_code: ::std::option::Option<::std::string::String>,
+    ///The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added.
+    pub meter: ::std::string::String,
+    ///The model that did it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
+    ///When the work happened.
+    pub occurred_at: ::std::string::String,
+    ///Who did the work, such as openai.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider: ::std::option::Option<::std::string::String>,
+    ///What within the request the work was for, such as subagent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub purpose: ::std::option::Option<::std::string::String>,
+    ///How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and the like.
+    pub quantities: ::std::collections::BTreeMap<::std::string::String, i64>,
+    ///The session the work was done in.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub session_id: ::std::option::Option<::std::string::String>,
+    ///Whether the work succeeded.
+    pub success: bool,
+    ///The cost labels the request carried.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///The team the user's token named, the name of the team:<name> category among usage_categories. Absent with none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub team: ::std::option::Option<::std::string::String>,
+    ///The usage categories the token named, its team among them as team:<name>.
+    pub usage_categories: ::std::vec::Vec<::std::string::String>,
+    ///The event's id: the unit of work is recorded once under it.
+    pub usage_id: ::std::string::String,
+    ///The end user the work was for, by the id the app's tokens name them with; only unique within the app. Absent when there was none, or the caller was anonymous.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub user_id: ::std::option::Option<::std::string::String>,
+}
+///One page of the organization's usage events, newest first: by occurred_at, then by usage_id.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct UsageEventPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<UsageEvent>,
+    ///Where the next page starts, for cursor; absent on the last page.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
 }
 ///A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]

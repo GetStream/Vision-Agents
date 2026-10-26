@@ -1056,12 +1056,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if directory != nil {
 		defer directory.Close()
 	}
-	sweeper, err := secretSweeper(settings.CodeSandbox, liveClient, directory, logger)
-	if err != nil {
+	if err := startSecretSweeper(ctx, settings.CodeSandbox, liveClient, directory, logger); err != nil {
 		return err
-	}
-	if sweeper != nil {
-		go sweeper.Run(ctx)
 	}
 
 	pluginAuth := &plugins.Auth{
