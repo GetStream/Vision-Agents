@@ -1001,6 +1001,68 @@ func (s *StoreSuite) TestAClaimInFlightCannotResumeADeletedConfigsTask() {
 	s.Equal(ScheduledTaskPaused, after.State)
 }
 
+// holdRun claims the due task one and locks its run's row in a transaction
+// left open, so a write of that run waits until release is called.
+func (s *StoreSuite) holdRun() (ClaimedScheduledTask, func()) {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	holder, err := s.store.db.BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	_, err = holder.ExecContext(s.ctx, "SELECT id FROM scheduled_task_runs WHERE id = ? FOR UPDATE", claimed[0].Run.ID)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = holder.Rollback() })
+	return claimed[0], func() { s.Require().NoError(holder.Rollback()) }
+}
+
+func (s *StoreSuite) TestAConfigDeleteWhileAWorkerFinishesTheRunStillPausesTheTask() {
+	claim, release := s.holdRun()
+	finished := make(chan error, 1)
+	go func() {
+		next := s.base.Add(24 * time.Hour)
+		_, err := s.store.FinishScheduledTaskRun(s.ctx, "acme", claim.Run.ID, claim.ClaimID, ScheduledTaskOutcome{
+			RunState: ScheduledTaskRunDelivered, DeliveredTo: ScheduledTaskDeliveredConversation,
+			NextRunAt: &next, State: ScheduledTaskActive,
+		})
+		finished <- err
+	}()
+	s.waitForLockWaiters(1, "the write of the held run waits")
+	paused := make(chan error, 1)
+	go func() { paused <- s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1") }()
+	s.waitForLockWaiters(2, "the pause waits too")
+	release()
+
+	s.Require().NoError(<-finished)
+	s.Require().NoError(<-paused, "the pause is not aborted as a deadlock with the finish")
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskPaused, task.State, "the deleted config's task is not left active")
+	s.Equal(ScheduledTaskRunDelivered, s.run(claim.Run.ID).State, "the finish recorded the delivery")
+}
+
+func (s *StoreSuite) TestAConfigDeleteWhileATaskIsPausedByHandStillPausesTheTask() {
+	claim, release := s.holdRun()
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	task.State = ScheduledTaskPaused
+	saved := make(chan error, 1)
+	go func() { saved <- s.store.SaveScheduledTask(s.ctx, &task) }()
+	s.waitForLockWaiters(1, "the write of the held run waits")
+	paused := make(chan error, 1)
+	go func() { paused <- s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1") }()
+	s.waitForLockWaiters(2, "the pause waits too")
+	release()
+
+	s.Require().NoError(<-saved)
+	s.Require().NoError(<-paused, "the pause is not aborted as a deadlock with the save")
+	after, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskPaused, after.State)
+	s.Equal(ScheduledTaskRunMissed, s.run(claim.Run.ID).State, "the pause by hand settled the occurrence")
+}
+
 func (s *StoreSuite) TestAnUnchangedUserTimezoneIsNotWrittenAgain() {
 	s.Require().NoError(s.store.SetUserTimezone(s.ctx, "acme", "sam", "authenticated", "Europe/Amsterdam"))
 	written := s.userRowVersion("sam")

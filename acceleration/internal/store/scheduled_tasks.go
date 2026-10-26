@@ -261,6 +261,29 @@ func refuseDeletedConfig(ctx context.Context, tx bun.Tx, customerID, configID st
 	return nil
 }
 
+// lockScheduledTask locks a task's row before its transaction writes the
+// task's runs. Every transaction that writes both a task and its runs takes
+// the task row first: the claim (FOR UPDATE SKIP LOCKED), a postpone and the
+// pause of a config's tasks (PauseScheduledTasksForConfig) write the task
+// before its runs, so one writing the runs first would wait for them while
+// holding what they wait for, and Postgres would abort one of the two as a
+// deadlock (SQLSTATE 40P01). FOR NO KEY UPDATE is what the task's own UPDATE
+// takes, so it does not hold back a run insert's foreign key check (table
+// 13.3, https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS).
+func lockScheduledTask(ctx context.Context, tx bun.Tx, customerID, id string) error {
+	var locked []string
+	err := tx.NewSelect().Model((*ScheduledTask)(nil)).
+		Column("id").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", id).
+		For("NO KEY UPDATE").
+		Scan(ctx, &locked)
+	if err != nil {
+		return fmt.Errorf("store: lock scheduled task: %w", err)
+	}
+	return nil
+}
+
 // ScheduledTask returns one of a customer's tasks by id.
 func (s *Store) ScheduledTask(ctx context.Context, customerID, id string) (ScheduledTask, error) {
 	if customerID == "" || id == "" {
@@ -341,6 +364,9 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 			if err := refuseDeletedConfig(ctx, tx, task.CustomerID, task.ConfigID); err != nil {
 				return err
 			}
+		}
+		if err := lockScheduledTask(ctx, tx, task.CustomerID, task.ID); err != nil {
+			return err
 		}
 		oneShot := task.RRule == "" && task.State == ScheduledTaskActive && task.NextRunAt != nil
 		// The run of a one-shot's occurrence a worker holds: its lease is live
@@ -742,6 +768,9 @@ func (s *Store) FinishScheduledTaskRun(ctx context.Context, customerID, runID, c
 		var run ScheduledTaskRun
 		if err := tx.NewSelect().Model(&run).Where("id = ?", runID).Limit(1).Scan(ctx); err != nil {
 			return fmt.Errorf("store: finish scheduled task run: %w", err)
+		}
+		if err := lockScheduledTask(ctx, tx, customerID, run.TaskID); err != nil {
+			return err
 		}
 		now := time.Now().UTC()
 		finished := now
