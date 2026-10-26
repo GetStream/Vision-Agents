@@ -660,8 +660,8 @@ func (s *SandboxGrantsSuite) TestACallerWithNoConnectionGetsALateGrantAndIsToldH
 	s.NotEmpty(api.value("CRM_TOKEN"))
 	s.NotContains(api.value("CRM_TOKEN"), "token-of-")
 	s.Contains(harness.SandboxTool(box).Description, " A 401 from api.crm.example, *.crm.example means the user has not "+
-		"connected crm yet: crm__list_tools shows them a button to connect it and waits. Once they have, run the code "+
-		"again; if it still gets 401, wait 20 seconds and run it once more.")
+		"connected crm yet: crm__list_tools shows them a button to connect it and waits; if you cannot call it, tell the "+
+		"user they must connect crm. Once they have, run the code again; if it still gets 401, wait 20 seconds and run it once more.")
 }
 
 // TestALoginFinishedInTheChatBindsTheGrantBeforeTheNextRun: the consent the model's
@@ -706,6 +706,62 @@ func (s *SandboxGrantsSuite) TestALoginOnARevisionWithoutTheBlockLeavesTheGrantU
 	s.True(finished)
 	s.NotEqual(tokenOf("primary"), api.value("CRM_TOKEN"))
 	s.Contains(s.logs.String(), "reconnect to use sandbox access")
+}
+
+// TestALoginOnARevisionWithOtherHostsLeavesTheGrantUnbound: revision 3 names other hosts
+// after alice's connection was saved on revision 2. The late grant reads revision 3, her
+// connection's revision decides what the sandbox may reach, so her token goes to neither.
+func (s *SandboxGrantsSuite) TestALoginOnARevisionWithOtherHostsLeavesTheGrantUnbound() {
+	for name, block := range map[string]string{
+		"hosts": "  env: CRM_TOKEN\n  hosts: [api.other.example]\n",
+		"env":   "  env: OTHER_TOKEN\n  hosts: [api.crm.example, \"*.crm.example\"]\n",
+	} {
+		s.Run(name, func() {
+			s.SetupTest()
+			api := s.daytonaAPI()
+			s.sandboxRevision()
+			mine := s.pending("alice", "primary")
+			manifest, err := core.ParseManifest([]byte(s.crmManifest(s.connectorID, 3) + "\nsandbox:\n" + block))
+			s.Require().NoError(err)
+			_, err = s.store.CreateConnectorDefinition(s.ctx, s.customerID, manifest)
+			s.Require().NoError(err)
+			box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+			_, err = s.call(d, "crm__list_tools", `{}`)
+			s.Require().NoError(err)
+
+			s.connect(mine, "primary")
+			_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+			_, err = box.Run(s.ctx, "print(1)", nil)
+
+			s.Require().NoError(err)
+			s.True(finished)
+			env := box.(sandbox.Granted).Grants()[0].Env
+			s.NotEqual(tokenOf("primary"), api.value(env))
+			s.Contains(s.logs.String(), "reconnect to use sandbox access")
+		})
+	}
+}
+
+// TestALoginBindsOnlyItsOwnBinding: alice's login on crm opens crm alone; the late grant of
+// crm2, a second binding of the same connector with the same env var and hosts, stays unbound.
+func (s *SandboxGrantsSuite) TestALoginBindsOnlyItsOwnBinding() {
+	s.daytonaAPI()
+	s.sandboxRevision()
+	mine := s.pending("alice", "primary")
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami")), sandboxed(s.chosen("crm2", "whoami"))), consent(mine))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+
+	s.connect(mine, "primary")
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	grants := box.(sandbox.Granted).Grants()
+	_, crm := d.boundLate(s.ctx, grants[0])
+	_, crm2 := d.boundLate(s.ctx, grants[1])
+
+	s.True(finished)
+	s.Equal([]string{"crm", "crm2"}, []string{grants[0].Binding, grants[1].Binding})
+	s.True(crm)
+	s.False(crm2)
 }
 
 // TestAnotherUsersConnectionNeverBindsTheGrant: a consent that came back on bob's connection,

@@ -70,7 +70,9 @@ func (m *Manager) lateGrant(ctx context.Context, spec Spec, binding store.Connec
 // boundLate is a late grant's connection once its login has opened the binding: the grant the
 // binding opened with there. A late grant is made only beside its login (lateGrant). Only this
 // session's own login is read, which opens on a consent this session began, for a connection
-// its caller owns (loginFinished, mayUse).
+// its caller owns (loginFinished, mayUse). A connection whose own revision names another env
+// var or other hosts than the late grant's stays unbound, as its revision decides what the
+// sandbox may reach (sandboxGrant): it needs a reconnect on the latest revision.
 func (d *dispatcher) boundLate(_ context.Context, grant sandbox.Grant) (sandbox.Grant, bool) {
 	l := d.logins.byAlias[grant.Binding]
 	l.mu.Lock()
@@ -78,7 +80,13 @@ func (d *dispatcher) boundLate(_ context.Context, grant sandbox.Grant) (sandbox.
 	if l.opened == nil || len(l.opened.grants) == 0 {
 		return sandbox.Grant{}, false
 	}
-	return l.opened.grants[0], true
+	opened := l.opened.grants[0]
+	if opened.Env != grant.Env || !slices.Equal(opened.Hosts, grant.Hosts) {
+		d.logger.Warn("a connector binding gives the sandbox no access: reconnect to use sandbox access", "connector", grant.Binding,
+			"connection", opened.Connection.ConnectionID)
+		return sandbox.Grant{}, false
+	}
+	return opened, true
 }
 
 // broker is the code_sandbox.broker setting's broker for the session's grants.
