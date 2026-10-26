@@ -1597,7 +1597,8 @@ func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (s
 	if err != nil || !slices.ContainsFunc(asked.Grants, func(grant sandbox.Grant) bool { return grant.Late }) {
 		return box, err
 	}
-	return &connecting{Sandbox: box, d: connectors, delayed: m.options.SandboxBroker != egress.BrokerName, opened: map[string]bool{}}, nil
+	return &connecting{Sandbox: box, d: connectors, delayed: m.options.SandboxBroker != egress.BrokerName, asks: spec.Text,
+		opened: map[string]bool{}}, nil
 }
 
 // reading reports whether this session has anything to look things up in, which is a

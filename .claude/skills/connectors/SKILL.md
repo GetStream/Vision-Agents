@@ -218,7 +218,9 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   grant: the env var is there from the start, built from the connector's latest `sandbox` block,
   and a request with it gets a 401 (the proxy's «gives no token», or the host's own under Daytona).
   `run_code`'s description tells the model to call `<alias>__list_tools`, which shows the consent
-  card and waits. Until the user has logged in, every `run_code` result adds a line that says so,
+  card and waits. In a chat the run itself shows the card too, holding nothing, one open consent per binding;
+  the session reads the connection every 3 s and carries on once it connects (AI-1982). Until the user
+  has logged in, every `run_code` result adds a line that says so,
   whatever the code did: if the code needed the binding (a 401 from the grant's hosts), call
   `<alias>__list_tools` (`Result.Unconnected`). Once the user consents, the next run
   binds the grant: at once behind the proxy, within 18 to 24 s as a Daytona secret, whose run that

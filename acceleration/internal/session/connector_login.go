@@ -102,7 +102,13 @@ type logins struct {
 	// implied is Manager.impliedSelection: the caller's one connected connection, which a login
 	// with none chosen opens on once the person has connected one outside the conversation.
 	implied func(ctx context.Context, spec Spec, binding store.ConnectorBinding) (string, error)
-	logger  *slog.Logger
+	// finished is Manager.ConnectorConsentFinished, which a consent shown by a run of code is
+	// handed back to once its connection connects (watchConsent), and watching is done once the
+	// session closes (closeLogins), which ends those watches.
+	finished     func(ctx context.Context, customerID, connectionID, authorizationID string)
+	watching     context.Context
+	stopWatching context.CancelFunc
+	logger       *slog.Logger
 }
 
 // login is one binding waiting for its person to log in, and once they have, the binding
@@ -170,8 +176,10 @@ func (m *Manager) offerLogin(spec Spec, binding store.ConnectorBinding, reason, 
 		return false
 	}
 	if d.logins == nil {
+		watching, stop := context.WithCancel(context.Background())
 		d.logins = &logins{byAlias: map[string]*login{}, consents: m.options.Connectors.Consents,
-			open: m.openBinding, implied: m.impliedSelection, logger: m.logger}
+			open: m.openBinding, implied: m.impliedSelection, finished: m.ConnectorConsentFinished,
+			watching: watching, stopWatching: stop, logger: m.logger}
 	}
 	d.logins.byAlias[binding.Name] = &login{binding: binding, connectionID: selection,
 		rejected: reason == unavailableCredentialRejected}
@@ -458,6 +466,61 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login, callID string) (c
 	return answer, ""
 }
 
+// offerConsent shows the caller the consent of a login on the reply being written, as
+// askToLogIn does, without holding anything: a run of code found the login's sandbox grant
+// unconnected (connecting.Run), and carries on. Once the person connects, the session is told
+// to carry on (ConnectorConsentFinished), and the next run binds the grant.
+//
+// It begins none while the login's newest consent is still open, wherever it is shown, so a
+// second run, or one in a later reply, shows nothing new; askToLogIn reuses the consent this
+// shows within the same reply. Nor does it begin one where askToLogIn would not: a binding
+// already opened, or whose connection the store says is usable now (openConnected), a token
+// the provider rejected, a conversation that is not the caller's own, or a config that no
+// longer binds it as the caller's.
+func (d *dispatcher) offerConsent(ctx context.Context, l *login) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.opened != nil || time.Now().Before(l.last.ExpiresAt) || d.openConnected(ctx, l) || l.rejected ||
+		d.logins.canAsk == nil || !d.logins.canAsk(d.spec.Caller.UserID) || !d.stillWaits(ctx, l.binding) {
+		return
+	}
+	if consent, ok := d.beginConsent(ctx, l); ok {
+		go d.watchConsent(l, consent)
+	}
+}
+
+// watchConsent reads the connection of a consent a run of code showed every loginPoll, until
+// the consent expires or the session closes. Once the consent connected it,
+// it hands the consent back as the router's callback does (ConnectorConsentFinished), which
+// opens the binding and tells the session to carry on: a consent finished on another router is
+// never handed to this one, and no call waits for it to read the store (waitForLogin). Of the
+// two, only the one that opens the login carries on (loginFinished).
+func (d *dispatcher) watchConsent(l *login, consent Consent) {
+	expiry := time.NewTimer(time.Until(consent.ExpiresAt))
+	defer expiry.Stop()
+	poll := time.NewTicker(loginPoll)
+	defer poll.Stop()
+	for {
+		select {
+		case <-d.logins.watching.Done():
+			return
+		case <-expiry.C:
+			return
+		case <-poll.C:
+			l.mu.Lock()
+			before := l.connectedBefore
+			l.mu.Unlock()
+			// Connected anew since the consent began, as openConnected reads it; loginFinished
+			// checks the rest, and does nothing for a login already open.
+			connection, err := d.store.ConnectorConnection(context.Background(), d.spec.CustomerID, consent.ConnectionID)
+			if err == nil && connectedSince(connection.ConnectedAt, before) {
+				d.logins.finished(context.Background(), d.spec.CustomerID, consent.ConnectionID, consent.AuthorizationID)
+				return
+			}
+		}
+	}
+}
+
 // beginConsent begins a consent for the caller's own connection and shows it on the reply
 // being written. It reports false when none could be begun or shown. l.mu is held.
 func (d *dispatcher) beginConsent(ctx context.Context, l *login) (Consent, bool) {
@@ -722,11 +785,12 @@ func (d *dispatcher) declineLogin(callID string) bool {
 	return false
 }
 
-// closeLogins ends the toolsets the logins opened.
+// closeLogins ends the toolsets the logins opened, and the watches of their consents.
 func (d *dispatcher) closeLogins() {
 	if d.logins == nil {
 		return
 	}
+	d.logins.stopWatching()
 	for _, l := range d.logins.byAlias {
 		l.mu.Lock()
 		if l.opened != nil {

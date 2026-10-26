@@ -42,7 +42,8 @@ import (
 // broker hands the sandbox provider.
 type SandboxGrantsSuite struct {
 	connectorFixture
-	logs *bytes.Buffer
+	logs       *bytes.Buffer
+	handedBack *lockedBuffer // the manager's log once a test holds a session (held)
 }
 
 func TestSandboxGrantsSuite(t *testing.T) {
@@ -52,7 +53,7 @@ func TestSandboxGrantsSuite(t *testing.T) {
 func (s *SandboxGrantsSuite) SetupTest() {
 	s.connectorFixture.SetupTest()
 	s.T().Setenv("DAYTONA_API_KEY", "key-1")
-	s.logs = &bytes.Buffer{}
+	s.logs, s.handedBack = &bytes.Buffer{}, nil
 	s.manager = s.managerWith(fixtureRequestTimeout)
 	s.manager.logger = slog.New(slog.NewTextHandler(s.logs, nil))
 	s.manager.options.Connectors.Resolver = s.resolver
@@ -826,6 +827,7 @@ func (s *SandboxGrantsSuite) TestALoginOnARevisionWithOtherHostsLeavesTheGrantUn
 
 // TestALoginBindsOnlyItsOwnBinding: alice's login on crm opens crm alone; the late grant of
 // crm2, a second binding of the same connector with the same env var and hosts, stays unbound.
+// The run after it opens crm2 on her one connected connection, as list_tools would (openConnected).
 func (s *SandboxGrantsSuite) TestALoginBindsOnlyItsOwnBinding() {
 	s.daytonaAPI()
 	s.sandboxRevision()
@@ -836,17 +838,22 @@ func (s *SandboxGrantsSuite) TestALoginBindsOnlyItsOwnBinding() {
 
 	s.connect(mine, "primary")
 	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
-	result, err := box.Run(s.ctx, "print(1)", nil)
-	s.Require().NoError(err)
-	s.Equal(sandbox.Result{Unconnected: box.(sandbox.Granted).Grants()[1:], Connected: []string{"crm"}}, result)
 	grants := box.(sandbox.Granted).Grants()
 	_, crm := d.boundLate(s.ctx, grants[0])
 	_, crm2 := d.boundLate(s.ctx, grants[1])
+	result, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Equal(sandbox.Result{Unconnected: box.(sandbox.Granted).Grants()[1:], Connected: []string{"crm"}}, result)
+	_, crm2Later := d.boundLate(s.ctx, grants[1])
+	opened := d.logins.byAlias["crm2"].opened
+	d.offerConsent(s.ctx, d.logins.byAlias["crm2"])
 
 	s.True(finished)
 	s.Equal([]string{"crm", "crm2"}, []string{grants[0].Binding, grants[1].Binding})
 	s.True(crm)
 	s.False(crm2)
+	s.True(crm2Later, "the run opened crm2 on her connection with no consent")
+	s.Same(opened, d.logins.byAlias["crm2"].opened, "and a later one opens it no second time")
 }
 
 // TestAnotherUsersConnectionNeverBindsTheGrant: a consent that came back on bob's connection,
