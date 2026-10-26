@@ -17,7 +17,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -222,14 +221,14 @@ func (r *runOutcome) see(event session.Event) bool {
 	return false
 }
 
-// runFailed is err as the caller is told it: a spent budget and a run out of time say so, and
-// anything else is otherwise. A spent budget is a 403, not a 429: waiting does not refill it
-// before it resets, so a caller that retries 429s must not retry it.
+// runFailed is err as the caller is told it: a refusal about money and a run out of time say
+// so, and anything else is otherwise. A spent budget is a 402, not a 429: waiting does not
+// refill it before it resets, so a caller that retries 429s must not retry it.
 func runFailed(ctx context.Context, err error, otherwise APIError) APIError {
-	switch {
-	case errors.Is(err, policy.ErrBudgetSpent):
-		return APIError{Type: ErrorTypePermission, Code: codeBudgetExceeded, Message: err.Error()}
-	case ctx.Err() != nil:
+	if answer, ok := moneyError(err); ok {
+		return answer
+	}
+	if ctx.Err() != nil {
 		return errRunTimedOut
 	}
 	return otherwise

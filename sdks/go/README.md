@@ -68,8 +68,71 @@ return tools.Output{Text: "the room, just now", Images: []tools.Image{{URL: "dat
 
 On a call the router hands them to the agent's `vision` skill. In a chat, which has no such
 worker, a model that sees images is shown them itself, with its next reply alone; one that reads
-only text is told the tool failed. A tool hosted on a dispatch worker answers in words only, and
-one that returns pictures is reported as failed.
+only text is told the tool failed. A tool hosted on a dispatch worker sends its pictures the same
+way.
+
+A function registered with `tools.Register` takes options for how its calls are run:
+
+```go
+tools.Register(agent.Tools(), "search_flights", "Search for flights", searchFlights,
+    tools.Interruptible(true),       // the caller talking over the agent cancels the call
+    tools.Timeout(10*time.Second),   // in place of the session's 30 seconds
+    tools.Concurrency(4))            // at most four at once; the registry allows 16
+```
+
+A function that changes something can ask a voice caller first:
+
+```go
+tools.Register(agent.Tools(), "book_flight", "Book a flight", bookFlight,
+    tools.NeedsApproval("Book flight {flight_id}?"))
+```
+
+The router asks the question, with each `{argument}` filled in from the call, and runs the
+function only once the caller says yes within 15 seconds of the question ending. The function
+sees `tools.CallFrom(ctx).Approved` set, and its timeout starts then. A no or silence declines
+the call, and it never runs. A speech-to-speech model asks in its own voice and may not say the
+question word for word. Registering a question that names an argument the function does not
+take is an error. Only voice calls ask: in writing, the question goes out as the tool's
+`approval` for the app to show, and the call runs as it comes.
+
+Its `ctx` is cancelled when the router cancels the call: its timeout passed, or, for an
+interruptible tool, the caller interrupted. `tools.CallFrom(ctx)` is the call being run, whose
+`ID` is the same when the router sends a call again, so a function that changes something can
+key on it. A call sent again while it is still running joins it, and one that finished is answered
+with what it returned, without running twice.
+
+A call that takes a while can say how it is going, and protect a write from the caller
+talking over the agent:
+
+```go
+func(ctx context.Context, args RebookFlight) (any, error) {
+    toolCallContext := tools.CallFrom(ctx)
+    toolCallContext.Update(ctx, "Checking seats on the new flight")
+
+    // Read only: the caller interrupting cancels ctx, and nothing has changed.
+    seat, err := airline.HoldSeat(ctx, args.NewFlightID)
+    if err != nil {
+        return nil, err
+    }
+
+    // From here on, the caller interrupting no longer cancels the toolCallContext.
+    ctx = toolCallContext.DisallowInterruptions(ctx)
+    toolCallContext.Say(ctx, "Got a seat, moving your booking now.")
+    return airline.Rebook(ctx, args.BookingID, seat, toolCallContext.ID)
+}
+```
+
+`toolCallContext.Update` hands the agent a status, which it tells a voice caller in its own
+words once nobody is talking, and which a conversation shows on the call's step.
+`toolCallContext.Say` has it say the words as written, or post them in text; a speech-to-speech
+model may paraphrase them. `DisallowInterruptions` returns a context only the call's timeout and
+the socket ending cancel. When the call was already stopped, that context comes back cancelled,
+so the write never starts. Outside a call, all three do nothing.
+
+Struct tags describe arguments beyond `schema`: `enum:"economy,business"`, `minimum:"1"`,
+`maximum:"9"`, `pattern`, `format` and `example`. A type that describes itself implements
+`JSONSchema() map[string]any`, and `tools.RegisterSchema` takes a schema as written and hands the
+function the raw arguments.
 
 ## Conversations somebody comes back to
 
@@ -103,6 +166,26 @@ if err := items.Err(); err != nil {
 finished, because a model takes seconds. `Items` is what the backend wrote down, so it reads
 the same during the conversation and a week after it ended; `session.Events()` is still the
 live view, and the two answer different questions.
+
+A text session's events survive the router restarting. When its socket drops, the SDK opens it
+again, waiting longer between attempts for up to five minutes, and the router sends what it
+missed. `Events()` stays open across it and carries a `resumed` event saying how it went:
+
+```go
+for event := range session.Events() {
+    if event.Kind == "resumed" && !event.Resumed.Complete {
+        // Some of what was said while the socket was away is gone: read it back from
+        // session.Responses.Items. A question the router stopped on its way down is
+        // interrupted and never answered, so ask it again.
+        if command := event.Resumed.Command; command != nil && command.State == "interrupted" {
+            session.Responses.Create(ctx, question)
+        }
+    }
+}
+```
+
+`Command` is the last question `Responses.Create` asked. A call's events are not reconnected:
+the call ends with the router holding it, and `Events()` closes as before.
 
 Old conversations are listed most recently updated first, or found by phrase, best match
 first:
@@ -374,6 +457,35 @@ the `Type` and `Code` to branch on, the `Message` and the `DocURL` explaining it
 `RequestID` to quote to support, since a 500 says only "something went wrong". New codes are
 added, so expect one this SDK does not know, and a failure that was not the router's own, such
 as a proxy's error page, has its body as the `Message` and no type or code.
+
+## What it cost, and when credit runs low
+
+Every successful answer to a backend says what the request cost and what the organization has
+left, and a refusal for money says what it has left.
+`client.New` takes two options for it, and every resource method's answers go through them:
+
+```go
+api, err := client.New(stream.Backend{},
+    client.WithUsage(func(usage client.Usage) {
+        log.Printf("%s cost %d micros", usage.Operation, usage.CostMicros)
+    }),
+    client.WithBalanceWarning(func(warning client.BalanceWarning) {
+        alert("credit is " + warning.Warning) // low, then exhausted
+    }),
+)
+```
+
+The balance warning fires once on going `low` and once more on going on to `exhausted`, and not
+again until an answer has said there is credit enough, so a balance hovering near the line does
+not fire on every answer. Both callbacks run on the goroutine that made the request: they must
+not block, and requests made at once call them at once. With neither option the client logs one
+WARN per crossing. A `stream.Router` built on `api.Backend()` is heard the same way, and its
+sockets carry `CostMicros` on a final `Transcript`, a finished `Audio` and a finished `Answer`,
+and a `Balance` when credit goes down into low or exhausted while the socket is open. That
+`Balance` comes as an item of its own on the socket's channel, so a loop over the channel
+should expect items whose only field set, beside the raw `Frame`, is `Balance`. An end user's
+client is told none of it. To be told by webhook instead, add an event destination for the
+connector `stream`, which is sent `account.balance_low` and `account.balance_exhausted`.
 
 ## Layout
 

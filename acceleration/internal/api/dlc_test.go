@@ -168,7 +168,7 @@ func (s *DLCSuite) dial(to string) (int, string) {
 
 func (s *DLCSuite) transfer(to string) (int, string) {
 	return s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer",
-		TransferCallRequest{From: "+15550000001", To: to, SessionId: "session-" + s.utils.uuid()})
+		TransferCallRequest{From: "+15550000001", To: to, SessionId: s.data.storedSession()})
 }
 
 func (s *DLCSuite) spend(field string, amount int) {
@@ -357,13 +357,54 @@ func (s *DLCSuite) TestThirtyMinutesOfCallsInADayRefuseTheNextDial() {
 	s.Equal(int64(30*60), sandbox.AudioSecondsToday)
 }
 
+// Registering costs a brand fee once, a review per campaign, and the campaign's first three
+// months at once; asking the vendor again, or the monthly job running in one of those months,
+// bills none of it again.
+func (s *DLCSuite) TestARegisteredBrandAndCampaignAreBilledOnce() {
+	sent := s.submitted()
+	status, reviewed := s.review(sent.Id, dlc.Approve, "")
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().NotNil(reviewed.VendorCampaignId)
+
+	fees := map[string][]store.Request{}
+	read := func() {
+		var rows []store.Request
+		s.Require().NoError(s.store.ShardDB().NewSelect().Model(&rows).
+			Where("customer_id = ?", s.customerID()).Where("modality = 'phone'").Scan(context.Background()))
+		fees = map[string][]store.Request{}
+		for _, row := range rows {
+			fees[row.Model] = append(fees[row.Model], row)
+		}
+	}
+	s.Require().Eventually(func() bool {
+		read()
+		return len(fees[dlc.ModelCampaignMonth]) == dlc.UpfrontMonths
+	}, settleFor, 50*time.Millisecond, "the campaign's first months were not billed")
+
+	s.registrar10DLC.Poll(context.Background())
+	billed, err := s.registrar10DLC.BillCampaigns(context.Background(), time.Now().AddDate(0, -2, 0))
+	s.Require().NoError(err)
+	s.Zero(billed, "the month the job finds is one already billed")
+	time.Sleep(500 * time.Millisecond)
+	read()
+	s.Require().Len(fees[dlc.ModelBrand], 1)
+	s.Equal(int64(4_500_000), fees[dlc.ModelBrand][0].CostMicros)
+	s.Equal(dlc.OriginFees, fees[dlc.ModelBrand][0].APIKey, "Stream's review is no request of the app's")
+	s.Require().Len(fees[dlc.ModelCampaign], 1)
+	s.Equal(int64(15_000_000), fees[dlc.ModelCampaign][0].CostMicros, "the carriers' review")
+	for _, month := range fees[dlc.ModelCampaignMonth] {
+		s.Equal(int64(10_000_000), month.CostMicros, "a customer care campaign's month")
+		s.True(month.Billable)
+	}
+}
+
 func (s *DLCSuite) TestTheThirtyFirstMessageOfADayIsRefused() {
 	ctx := context.Background()
 	s.Require().NoError(s.store.SetSandboxRecipients(ctx, s.customerID(), []string{"+15551110000"}))
 	s.spend("messages", 29)
 	s.NoError(s.gate.Allow(ctx, s.customerID(), dlc.SMS, "+15551110000"))
 
-	s.gate.Sent(ctx, s.customerID())
+	s.gate.Sent(ctx, s.customerID(), dlc.SMS, "+15551110000")
 
 	s.ErrorIs(s.gate.Allow(ctx, s.customerID(), dlc.SMS, "+15551110000"), dlc.ErrRefused)
 }

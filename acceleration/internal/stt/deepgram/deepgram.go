@@ -250,6 +250,10 @@ func (s *STT) Provider() string { return ProviderName }
 // Model implements stt.STT.
 func (s *STT) Model() string { return s.options.Model }
 
+// Metering is the router's count of the audio it streams: Deepgram bills every second of
+// audio sent, silence included, where a turn reports only its own window of it.
+func (s *STT) Metering() stt.Metering { return stt.MeteredByRouter }
+
 // Client exposes the underlying Deepgram client so callers can use Flux features this
 // abstraction deliberately does not cover, such as mid-session Configure.
 func (s *STT) Client() *listenv2.WSCallback { return s.client }

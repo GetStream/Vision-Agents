@@ -669,3 +669,119 @@ func (s *StoreSuite) TestAUserHasToSayWhichKindTheyAre() {
 	err := s.store.RecordUser(s.ctx, &User{ID: "jlahey", CustomerID: "app"})
 	s.Require().Error(err)
 }
+
+// toolItems records one turn that called a tool, its two items to be redacted at redactAt.
+func (s *StoreSuite) toolItems(sessionID, customerID, responseID string, redactAt *time.Time) {
+	s.Require().NoError(s.store.StartResponse(s.ctx, &AgentResponse{
+		ID: responseID, SessionID: sessionID, CustomerID: customerID, Said: "where is my order?", CreatedAt: s.base,
+	}))
+	s.Require().NoError(s.store.AppendResponseItems(s.ctx, []AgentResponseItem{
+		{ResponseID: responseID, Ordinal: 0, SessionID: sessionID, Kind: ItemSaid, Text: "where is my order?", At: s.base},
+		{ResponseID: responseID, Ordinal: 1, SessionID: sessionID, Kind: ItemToolCall, ToolName: "orders",
+			Payload: map[string]any{"call_id": "call-1", "product": "crm", "sdk": "go"}, At: s.base, RedactAt: redactAt},
+		{ResponseID: responseID, Ordinal: 2, SessionID: sessionID, Kind: ItemToolResult, ToolName: "orders",
+			Text: `{"email":"someone@example.com"}`, At: s.base.Add(time.Second), RedactAt: redactAt,
+			Payload: map[string]any{"call_id": "call-1", "arguments": `{"order":"A-1"}`, "error": "404 for someone@example.com"}},
+		{ResponseID: responseID, Ordinal: 3, SessionID: sessionID, Kind: ItemAnswer, Text: "It ships tomorrow.", At: s.base.Add(2 * time.Second)},
+	}))
+}
+
+func (s *StoreSuite) TestAToolItemPastItsTimeLosesItsOutputAndKeepsItsPlace() {
+	due := s.base.Add(time.Hour)
+	s.opened("one", "app", s.base, nil)
+	s.toolItems("one", "app", "first", &due)
+
+	redacted, err := s.store.RedactToolOutput(s.ctx, due, 100)
+	s.Require().NoError(err)
+	s.EqualValues(2, redacted)
+
+	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, nil)
+	s.Require().NoError(err)
+	s.Require().Len(items, 4, "a redacted item is still an item")
+	s.Equal("where is my order?", items[0].Text)
+	s.Equal(map[string]any{"call_id": "call-1", "product": "crm", "sdk": "go", "redacted": true}, items[1].Payload)
+	s.Empty(items[2].Text)
+	s.Equal("orders", items[2].ToolName)
+	s.Equal(map[string]any{"call_id": "call-1", "error": "redacted", "redacted": true}, items[2].Payload)
+	s.Nil(items[2].RedactAt, "a redacted item is not due again")
+	s.Equal("It ships tomorrow.", items[3].Text)
+}
+
+func (s *StoreSuite) TestAToolItemIsNotRedactedBeforeItsTime() {
+	due := s.base.Add(time.Hour)
+	s.opened("one", "app", s.base, nil)
+	s.toolItems("one", "app", "first", &due)
+
+	redacted, err := s.store.RedactToolOutput(s.ctx, due.Add(-time.Second), 100)
+	s.Require().NoError(err)
+	s.Zero(redacted)
+	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, nil)
+	s.Require().NoError(err)
+	s.Equal(`{"email":"someone@example.com"}`, items[2].Text)
+}
+
+func (s *StoreSuite) TestRedactingLeavesAnotherCustomersItemsWithoutARetentionAlone() {
+	due := s.base.Add(time.Hour)
+	s.opened("ours", "app", s.base, nil)
+	s.toolItems("ours", "app", "ours-first", &due)
+	s.opened("theirs", "other", s.base, nil)
+	s.toolItems("theirs", "other", "theirs-first", nil)
+
+	redacted, err := s.store.RedactToolOutput(s.ctx, due.Add(24*time.Hour), 100)
+	s.Require().NoError(err)
+	s.EqualValues(2, redacted)
+	theirs, err := s.store.SessionItems(s.ctx, "other", "theirs", "", 0, nil)
+	s.Require().NoError(err)
+	s.Equal(`{"email":"someone@example.com"}`, theirs[2].Text)
+	s.Contains(theirs[2].Payload, "arguments")
+}
+
+func (s *StoreSuite) TestRedactingStopsAtItsLimit() {
+	due := s.base.Add(time.Hour)
+	s.opened("one", "app", s.base, nil)
+	s.toolItems("one", "app", "first", &due)
+	s.toolItems("one", "app", "second", &due)
+
+	first, err := s.store.RedactToolOutput(s.ctx, due, 3)
+	s.Require().NoError(err)
+	s.EqualValues(3, first)
+	second, err := s.store.RedactToolOutput(s.ctx, due, 3)
+	s.Require().NoError(err)
+	s.EqualValues(1, second, "what the first run left is the next run's")
+}
+
+func (s *StoreSuite) TestRedactingARowIsRedactingTheItemBeforeItIsWritten() {
+	due := s.base.Add(time.Hour)
+	s.opened("one", "app", s.base, nil)
+	s.toolItems("one", "app", "first", &due)
+	written, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, nil)
+	s.Require().NoError(err)
+
+	_, err = s.store.RedactToolOutput(s.ctx, due, 100)
+	s.Require().NoError(err)
+	redacted, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, nil)
+	s.Require().NoError(err)
+	for _, ordinal := range []int{1, 2} {
+		inGo := written[ordinal]
+		inGo.Redact()
+		s.Equal(inGo.Text, redacted[ordinal].Text)
+		s.Equal(inGo.Payload, redacted[ordinal].Payload)
+	}
+}
+
+func (s *StoreSuite) TestARedactedToolCallStillCountsInToolUsage() {
+	due := s.base.Add(time.Hour)
+	s.opened("one", "app", s.base, nil)
+	s.toolItems("one", "app", "first", &due)
+	_, err := s.store.RedactToolOutput(s.ctx, due, 100)
+	s.Require().NoError(err)
+
+	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "app", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.EqualValues(1, overall.Calls)
+	s.EqualValues(1, overall.Failed)
+	s.Require().Len(tools, 1)
+	s.Equal("orders", tools[0].Tool)
+	s.Require().NotNil(tools[0].AvgMs, "the call's latency survives the redaction")
+	s.InDelta(1000, *tools[0].AvgMs, 1)
+}

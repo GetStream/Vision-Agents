@@ -39,3 +39,27 @@ func TestGeminiIntegrationSuite(t *testing.T) {
 		})
 	}
 }
+
+// TestGeminiNonBlockingIntegrationSuite holds the same call to the models whose tools are
+// declared NON_BLOCKING, which changes how every tool call behaves on them.
+func TestGeminiNonBlockingIntegrationSuite(t *testing.T) {
+	for model := range nonBlockingModels {
+		t.Run(model, func(t *testing.T) {
+			suite.Run(t, &GeminiIntegrationSuite{Suite: stssuite.Suite{
+				New: func(ask stssuite.Ask) sts.STS {
+					provider, err := New(Options{
+						Model:            model,
+						Instructions:     ask.Instructions,
+						Tools:            ask.Tools,
+						NonBlocking:      true,
+						InputTranscript:  true,
+						OutputTranscript: true,
+					})
+					require.NoError(t, err)
+					return provider
+				},
+				Requires: []string{apiKeyEnvVar},
+			}})
+		})
+	}
+}

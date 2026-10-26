@@ -30,7 +30,9 @@ type sipLeg struct {
 	reinviteHost string
 	username     string
 	password     string
-	log          *slog.Logger
+	// callID is sent as CallIDHeader on the INVITE. Only the Stream leg sets it.
+	callID string
+	log    *slog.Logger
 	// onDialog registers the leg's Call-ID, so requests the other side sends in this
 	// dialog find it. It runs before the answer arrives.
 	onDialog func(callID string)
@@ -48,7 +50,7 @@ type sipLeg struct {
 	lastSDP []byte
 }
 
-func (l *sipLeg) Invite(ctx context.Context, body []byte) ([]byte, error) {
+func (l *sipLeg) newInvite(body []byte) *sip.Request {
 	req := sip.NewRequest(sip.INVITE, l.target)
 	from := &sip.FromHeader{Address: l.from, Params: sip.NewParams()}
 	from.Params.Add("tag", sip.GenerateTagN(16))
@@ -57,11 +59,19 @@ func (l *sipLeg) Invite(ctx context.Context, body []byte) ([]byte, error) {
 	contact := &sip.ContactHeader{Address: sip.Uri{User: "sipbridge", UriParams: sip.NewParams()}}
 	contact.Address.UriParams.Add("transport", l.transport)
 	req.AppendHeader(contact)
+	if l.callID != "" {
+		req.AppendHeader(sip.NewHeader(CallIDHeader, l.callID))
+	}
 	if body != nil {
 		req.SetBody(body)
 		req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	}
 	req.SetTransport(strings.ToUpper(l.transport))
+	return req
+}
+
+func (l *sipLeg) Invite(ctx context.Context, body []byte) ([]byte, error) {
+	req := l.newInvite(body)
 
 	dlg, err := l.ua.WriteInvite(ctx, req)
 	if err != nil {

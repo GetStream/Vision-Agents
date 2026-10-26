@@ -421,9 +421,11 @@ func (s *Service) run(config store.AgentConfig, declared store.PluginEvent, sub 
 	spec.CallID = ""
 	spec.STSTarget = ""
 	spec.Greeting = ""
+	spec.Attribution = routing.Attribution{APIKey: routing.OriginHookPlugin}
 	if sub.UserID != "" {
-		spec.Caller = routing.Caller{UserID: sub.UserID}
+		spec.Caller = routing.Caller{UserID: sub.UserID, Verified: true}
 		spec.CallerKind = auth.KindAuthenticated
+		spec.Attribution.UserID, spec.Attribution.CallerKind = sub.UserID, routing.CallerUser
 	}
 	if declared.Instructions != "" {
 		spec.Instructions = strings.TrimSpace(spec.Instructions + "\n\n" + declared.Instructions)

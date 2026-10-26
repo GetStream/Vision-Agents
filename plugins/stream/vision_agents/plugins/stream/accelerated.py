@@ -44,8 +44,10 @@ from ._generated.models import (
 )
 from ._generated.types import UNSET, Unset
 from ._socket import Socket
+from ._tool_line import Holds, SocketLine, call_of, cancel, run_call
 from .config import ensure_agent
 from .knowledge import Knowledge
+from .sessions import _with_policy
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +171,7 @@ class Accelerated(OmniLLM):
         self._reader: Optional[asyncio.Task] = None
         self._running: set[asyncio.Task] = set()
         self._tool_tasks: dict[str, asyncio.Task] = {}
+        self._holds = Holds()
         self._events: asyncio.Queue[Optional[RemoteEvent]] = asyncio.Queue()
         self._pending_model_calls: dict[str, list[dict[str, Any]]] = {}
 
@@ -421,7 +424,9 @@ class Accelerated(OmniLLM):
             parameters = SessionToolParameters()
             parameters.additional_properties = dict(schema.get("parameters_schema", {}))
             tool.parameters = parameters
-            tools.append(tool)
+            tools.append(
+                _with_policy(tool, self.function_registry.policy(schema["name"]))
+            )
         return tools
 
     def _memory(self, memory_filter: dict[str, str]) -> SessionMemory:
@@ -490,12 +495,23 @@ class Accelerated(OmniLLM):
             return
 
         if kind == "tool_cancel":
-            running = self._tool_tasks.get(str(frame.get("id", "")))
-            if running is not None:
-                running.cancel()
+            call_id = str(frame.get("id", ""))
+            cancel(call_id, self._holds, self._tool_tasks.get(call_id))
+            return
+        if kind == "tool_held":
+            self._holds.answer(str(frame.get("id", "")), True)
             return
         if kind == "tool_call":
             call_id = str(frame.get("id", ""))
+            name = str(frame.get("name", ""))
+            # Every watcher is sent every call, and the router says which are to run it. One
+            # from before it said holds the same rule: answering a tool held elsewhere would
+            # beat whoever runs it, with an error.
+            if frame.get("run") is False or (
+                name != "get_video_frames"
+                and name not in self.function_registry.functions
+            ):
+                return
             if len(self._tool_tasks) >= 16:
                 await self._command(
                     {
@@ -543,7 +559,18 @@ class Accelerated(OmniLLM):
             if name == "get_video_frames":
                 result["output"] = await self._capture_video(arguments)
             else:
-                output = await self.call_function(name, arguments)
+                tool_call_context = call_of(
+                    frame,
+                    self.router_session_id or "",
+                    SocketLine(self._command, self._holds),
+                )
+                output = await run_call(
+                    self.function_registry,
+                    name,
+                    arguments,
+                    tool_call_context,
+                    self._holds,
+                )
                 result["output"] = _tool_output(output)
         except ValueError as exc:
             if name == "get_video_frames":

@@ -213,7 +213,7 @@ func (s *RecordingsSuite) speakingWith(
 // allowing is a policy that allows only its models.
 type allowing []string
 
-func (a allowing) Admit(context.Context, string) (routing.Admission, error) {
+func (a allowing) Admit(context.Context, routing.Owner) (routing.Admission, error) {
 	return routing.Admission{Models: a}, nil
 }
 
@@ -768,6 +768,7 @@ func (s *RecordingsSuite) TestARecordingOnTheQualityShortcutIsServedByElevenLabs
 
 func (s *RecordingsSuite) TestARecordingSaysItWasSpokenInTheDefaultVoiceWhenNoneWasAsked() {
 	// Probed on b1e563f98: the recorder was built for elevenlabs.DefaultVoiceID.
+	s.T().Setenv("ELEVENLABS_VOICE_ID", "")
 	recorded, _, err := s.newRecordings().Record(s.ctx, Recording{
 		CustomerID: "acme", Options: options.TTS{Target: "en-recorded"}, Text: "hello",
 	})

@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::responses::Responses;
 use crate::socket::{Frame, Incoming, SocketReceiver, SocketSender};
 use crate::stream::{Call, DEFAULT_CALL_TYPE};
+use crate::tool_call::{Holds, Line, ToolCall, to_run};
 use crate::tools::Tools;
 use crate::types;
 
@@ -84,6 +85,8 @@ struct Shared {
     events: Mutex<VecDeque<SessionEvent>>,
     arrived: Notify,
     running: Mutex<HashMap<String, AbortHandle>>,
+    holds: Holds,
+    session_id: String,
 }
 
 /// One conversation, held in the acceleration backend.
@@ -159,7 +162,10 @@ impl Session {
             }
         };
 
-        let shared = Arc::new(Shared::default());
+        let shared = Arc::new(Shared {
+            session_id: created.id.clone(),
+            ..Default::default()
+        });
         let cancel = CancellationToken::new();
         let (ended_tx, ended) = watch::channel(false);
         let watcher = tokio::spawn(watch_socket(
@@ -419,18 +425,25 @@ async fn watch_socket(
         };
 
         match frame.kind() {
+            // Every watcher is sent every call and the first answer wins: answering a tool
+            // held elsewhere would beat whoever runs it, with an error.
+            "tool_call" if !tools.has(frame.text("name")) || !to_run(&frame) => {}
             "tool_call" => run_tool(frame, &sender, &shared, &tools),
+            // A call held through interruptions is not cancelled by one: only its timeout
+            // and the end of the session stop it.
             "tool_cancel" => {
-                if let Some(running) = shared
-                    .running
-                    .lock()
-                    .expect("tools")
-                    .remove(frame.text("id"))
+                let id = frame.text("id");
+                shared.holds.answer(id, false);
+                if !shared.holds.held(id)
+                    && let Some(running) = shared.running.lock().expect("tools").remove(id)
                 {
                     running.abort();
                 }
             }
-            _ => {
+            kind => {
+                if kind == "tool_held" {
+                    shared.holds.answer(frame.text("id"), true);
+                }
                 let mut events = shared.events.lock().expect("events");
                 events.push_back(SessionEvent::of(frame));
                 if events.len() > BUFFERED_EVENTS {
@@ -471,17 +484,28 @@ fn run_tool(frame: Frame, sender: &SocketSender, shared: &Arc<Shared>, tools: &T
         return;
     }
 
+    let line = Line {
+        sender: sender.clone(),
+        holds: shared.holds.clone(),
+        key: id.clone(),
+    };
+    let tool_call_context = ToolCall::of(&frame, &shared.session_id, line);
     let (sender, shared_for_task, tools) = (sender.clone(), shared.clone(), tools.clone());
     let key = id.clone();
     let task = tokio::spawn(async move {
         match tools
-            .call(frame.text("name"), frame.text("arguments"))
+            .call_as(
+                frame.text("name"),
+                frame.text("arguments"),
+                tool_call_context,
+            )
             .await
         {
             Ok(output) => result["output"] = output,
             Err(error) => result["error"] = json!(error),
         }
         shared_for_task.running.lock().expect("tools").remove(&key);
+        shared_for_task.holds.forget(&key);
         if sender.open() {
             let _ = sender.send(&result).await;
         }

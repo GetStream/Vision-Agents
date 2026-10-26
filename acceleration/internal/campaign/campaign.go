@@ -11,13 +11,16 @@
 package campaign
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -95,6 +98,9 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 		return stack.Wrap(errors.New("campaign: a campaign needs one of your numbers to call from"))
 	}
 	if err := r.phone.Suspended(ctx, customerID); err != nil {
+		return err
+	}
+	if err := r.phone.Admit(ctx, customerID); err != nil {
 		return err
 	}
 	// The config is read once, here, rather than per call: a campaign is one agent
@@ -179,24 +185,41 @@ func (r *Runner) run(ctx context.Context, campaign store.Campaign, config store.
 		case slots <- struct{}{}:
 		}
 
+		// A loop that was cancelled writes no state: whoever cancelled it, a pause or a call
+		// that paused the campaign, has written it already, with why.
 		contact, found, err := r.store.ClaimContact(ctx, campaign.ID)
 		if err != nil {
 			<-slots
+			calls.Wait()
+			if ctx.Err() != nil {
+				return
+			}
 			r.logger.Error("could not take the next contact",
 				"campaign", campaign.ID, "error", err)
-			calls.Wait()
 			r.stop(campaign, store.Paused)
 			return
 		}
 		if !found {
 			<-slots
 			calls.Wait()
+			if ctx.Err() != nil {
+				return
+			}
 			// Another call may have been running when the queue emptied, so this is
 			// checked after waiting rather than before.
 			if remaining, err := r.pending(ctx, campaign.ID); err == nil && remaining {
 				continue
 			}
+			if ctx.Err() != nil {
+				return
+			}
 			r.stop(campaign, store.Finished)
+			return
+		}
+		if ctx.Err() != nil {
+			<-slots
+			r.unclaim(contact)
+			calls.Wait()
 			return
 		}
 
@@ -220,11 +243,17 @@ func (r *Runner) ring(
 	spec := session.FromConfig(config)
 
 	placed, err := r.phone.Call(ctx, placing(campaign, contact))
-	if errors.Is(err, phone.ErrSuspended) {
-		// Nobody was rung, so the contact stays to be rung once the campaign is started
+	if reason := pausing(err); reason != "" {
+		// Nobody was rung, so the contact goes back to be rung once the campaign is started
 		// again, and every router running this campaign stops at its next call.
-		r.logger.Info("paused a campaign of a suspended app", "campaign", campaign.ID)
-		r.stop(campaign, store.Paused)
+		r.logger.Info("paused a campaign that may not place calls", "campaign", campaign.ID, "reason", reason)
+		r.pause(campaign, reason)
+		r.unclaim(contact)
+		return
+	}
+	if err != nil && ctx.Err() != nil {
+		// Cancelled before the vendor took the call: nobody was rung either.
+		r.unclaim(contact)
 		return
 	}
 	if err != nil {
@@ -243,6 +272,7 @@ func (r *Runner) ring(
 	spec.Navigating = true
 	spec.Instructions = say(spec.Instructions, contact.Instructions)
 	spec.Tags = merge(spec.Tags, campaign.Tags)
+	spec.Attribution = scheduledBy(campaign)
 	spec.Phone = &session.PhoneSpec{
 		Number:       campaign.FromNumber,
 		To:           contact.ToNumber,
@@ -266,10 +296,17 @@ func (r *Runner) ring(
 // the session the phone service chooses, which is opened with that id.
 func placing(campaign store.Campaign, contact store.Contact) phone.CallRequest {
 	return phone.CallRequest{
-		Owner: routing.Owner{CustomerID: campaign.CustomerID, Tags: campaign.Tags},
+		Owner: routing.Owner{CustomerID: campaign.CustomerID, Attribution: scheduledBy(campaign), Tags: campaign.Tags},
 		From:  campaign.FromNumber,
 		To:    contact.ToNumber,
 	}
+}
+
+// scheduledBy owns a campaign's calls as whoever scheduled it: the key, the user and the usage
+// categories of the request that created it. One created before campaigns kept a key reads
+// back job:campaign (the migration); one that names none now is a gap the writer reports.
+func scheduledBy(campaign store.Campaign) routing.Attribution {
+	return routing.Attribution{APIKey: campaign.APIKey, UserID: campaign.UserID, UsageCategories: campaign.UsageCategories}
 }
 
 // meet opens the session under the id the call was placed for, so the agent is in the call
@@ -351,6 +388,45 @@ func (r *Runner) stop(campaign store.Campaign, state string) {
 
 	if err := r.store.SetCampaignState(ctx, campaign.CustomerID, campaign.ID, state); err != nil {
 		r.logger.Error("could not record how a campaign ended",
+			"campaign", campaign.ID, "error", err)
+	}
+}
+
+// pausing is why a refused call pauses the whole campaign rather than fails one contact: a
+// suspended app's telephony, or an organization that may not pay, refuses every call after it
+// too. It is the code the campaign records, or "" for a refusal of this contact alone.
+func pausing(err error) string {
+	switch {
+	case errors.Is(err, phone.ErrSuspended):
+		return "telephony_suspended"
+	case errors.Is(err, dlc.ErrUnpaid):
+		// The gate's refusal always wraps one of the policy's; a refusal it cannot name is
+		// still a refusal of money.
+		return cmp.Or(policy.Code(err), "insufficient_credits")
+	}
+	return ""
+}
+
+// unclaim gives back a contact this runner claimed and never rung.
+func (r *Runner) unclaim(contact store.Contact) {
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+
+	if err := r.store.UnclaimContact(ctx, contact.ID); err != nil {
+		r.logger.Error("could not give back a contact nobody rang",
+			"campaign", contact.CampaignID, "contact", contact.ID, "error", err)
+	}
+}
+
+// pause stops the campaign as stop does, recording why.
+func (r *Runner) pause(campaign store.Campaign, reason string) {
+	r.forget(campaign.ID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+
+	if err := r.store.PauseCampaign(ctx, campaign.CustomerID, campaign.ID, reason); err != nil {
+		r.logger.Error("could not record why a campaign paused",
 			"campaign", campaign.ID, "error", err)
 	}
 }

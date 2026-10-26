@@ -60,10 +60,10 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 		return nil, err
 	}
 	if err != nil {
-		// Everything that can go wrong here is the caller's spec or a provider that would
-		// not start, and both are worth reading rather than a 500 with the detail in a
-		// log the caller cannot see.
-		return nil, invalidRequest(err.Error())
+		// Everything that can go wrong here is the caller's spec, a provider that would not
+		// start, or a refusal about money, and each is worth reading rather than a 500 with
+		// the detail in a log the caller cannot see.
+		return nil, refusedRequest(err)
 	}
 	s.rememberTimezone(ctx, customerID, spec)
 	return &createSessionResponse{Body: sessionOf(ctx, created)}, nil
@@ -97,6 +97,9 @@ var errDeviceHistory = forbidden("history is sent server-side: an assistant mess
 // errDeviceInstructions refuses instructions sent by an end user's device.
 var errDeviceInstructions = forbidden("instructions are sent server-side: what the agent is " +
 	"told decides who it is, which a device may not")
+
+var errDeviceResumeHistory = forbidden("resume_history is sent server-side: how much of a " +
+	"conversation the model is sent is billed to the app, which a device may not decide")
 
 // refuseSessionRequest reports the failure a new session's request is refused with before
 // anything is made for it. createSession and the session socket both call it, so a request one
@@ -200,6 +203,9 @@ func refuseServerSideFields(ctx context.Context, request CreateSessionRequest) (
 	}
 	if request.Call != nil && !ServerSideFrom(ctx) {
 		return errDeviceCall, true
+	}
+	if request.ResumeHistory != nil && !ServerSideFrom(ctx) {
+		return errDeviceResumeHistory, true
 	}
 	return APIError{}, false
 }

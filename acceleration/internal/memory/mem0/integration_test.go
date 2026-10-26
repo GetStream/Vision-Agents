@@ -59,7 +59,7 @@ func (s *Mem0IntegrationSuite) TestWhatIsToldToMem0CanBeRecalledAfterwards() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	err := s.store.Remember(ctx, s.scope, []llm.Message{
+	err := s.remember(ctx, s.scope, []llm.Message{
 		{Role: llm.User, Content: "I am allergic to peanuts and I live in Amsterdam."},
 		{Role: llm.Assistant, Content: "Noted, no peanuts."},
 	})
@@ -69,7 +69,7 @@ func (s *Mem0IntegrationSuite) TestWhatIsToldToMem0CanBeRecalledAfterwards() {
 	deadline := time.Now().Add(extractionGrace)
 	var recalled []memory.Memory
 	for time.Now().Before(deadline) {
-		recalled, err = s.store.Recall(ctx, memory.Query{
+		recalled, err = s.recall(ctx, memory.Query{
 			Scope: s.scope,
 			Text:  "what should I not feed them",
 			Limit: 5,
@@ -90,13 +90,13 @@ func (s *Mem0IntegrationSuite) TestWhatIsToldToMem0CanBeRecalledAfterwards() {
 	// A later session is a different run and still knows what this one learned.
 	later := s.scope
 	later.RunID += "-later"
-	recalled, err = s.store.Recall(ctx, memory.Query{Scope: later, Text: "what should I not feed them"})
+	recalled, err = s.recall(ctx, memory.Query{Scope: later, Text: "what should I not feed them"})
 	s.Require().NoError(err)
 	s.NotEmpty(recalled, "memories are carried from one session into the next")
 
 	otherCompany := s.scope
 	otherCompany.Extra = map[string]string{"company_id": "99999"}
-	recalled, err = s.store.Recall(ctx, memory.Query{Scope: otherCompany, Text: "what should I not feed them"})
+	recalled, err = s.recall(ctx, memory.Query{Scope: otherCompany, Text: "what should I not feed them"})
 	s.Require().NoError(err)
 	s.Empty(recalled, "a label narrows recall to what was written under it")
 }
@@ -110,26 +110,46 @@ func (s *Mem0IntegrationSuite) TestForgettingASessionKeepsTheOthersAndTruncating
 	first, second := user, user
 	first.RunID += "-first"
 	second.RunID += "-second"
-	s.Require().NoError(s.store.Remember(ctx, first, []llm.Message{
+	s.Require().NoError(s.remember(ctx, first, []llm.Message{
 		{Role: llm.User, Content: "I am allergic to peanuts."}, {Role: llm.Assistant, Content: "Noted."},
 	}))
-	s.Require().NoError(s.store.Remember(ctx, second, []llm.Message{
+	s.Require().NoError(s.remember(ctx, second, []llm.Message{
 		{Role: llm.User, Content: "My dog is called Rex."}, {Role: llm.Assistant, Content: "Noted."},
 	}))
 	recalled := s.recallsAtLeast(ctx, user, 2)
 
-	s.Require().NoError(s.store.ForgetRun(ctx, user.AppID, first.RunID))
-	recalled, err := s.store.Recall(ctx, memory.Query{Scope: user, Text: "what do you know about me", Limit: 10})
+	_, err := s.store.ForgetRun(ctx, user.AppID, first.RunID)
+	s.Require().NoError(err)
+	recalled, err = s.recall(ctx, memory.Query{Scope: user, Text: "what do you know about me", Limit: 10})
 	s.Require().NoError(err)
 	s.Require().NotEmpty(recalled, "the other session's memories are kept")
 	for _, remembered := range recalled {
 		s.NotContains(remembered.Text, "peanut", "the forgotten session's memories are gone")
 	}
 
-	s.Require().NoError(s.store.Truncate(ctx, user.AppID, user.UserID))
-	recalled, err = s.store.Recall(ctx, memory.Query{Scope: user, Text: "what do you know about me", Limit: 10})
+	_, err = s.store.Truncate(ctx, user.AppID, user.UserID)
+	s.Require().NoError(err)
+	recalled, err = s.recall(ctx, memory.Query{Scope: user, Text: "what do you know about me", Limit: 10})
 	s.Require().NoError(err)
 	s.Empty(recalled, "nothing is left about a truncated user")
+}
+
+// recall is what mem0 recalls, checking the search was billed as one request.
+func (s *Mem0IntegrationSuite) recall(ctx context.Context, query memory.Query) ([]memory.Memory, error) {
+	recalled, err := s.store.Recall(ctx, query)
+	if err == nil {
+		s.Equal(memory.Billed{Requests: 1}, recalled.Billed)
+	}
+	return recalled.Memories, err
+}
+
+// remember hands a conversation to mem0, checking it was billed as one add request.
+func (s *Mem0IntegrationSuite) remember(ctx context.Context, scope memory.Scope, messages []llm.Message) error {
+	billed, err := s.store.Remember(ctx, scope, messages)
+	if err == nil {
+		s.Equal(memory.Billed{Requests: 1}, billed)
+	}
+	return err
 }
 
 // recallsAtLeast waits for mem0 to have extracted at least n memories about the scope.
@@ -138,7 +158,7 @@ func (s *Mem0IntegrationSuite) recallsAtLeast(ctx context.Context, scope memory.
 	var recalled []memory.Memory
 	for time.Now().Before(deadline) {
 		var err error
-		recalled, err = s.store.Recall(ctx, memory.Query{Scope: scope, Text: "what do you know about me", Limit: 10})
+		recalled, err = s.recall(ctx, memory.Query{Scope: scope, Text: "what do you know about me", Limit: 10})
 		s.Require().NoError(err)
 		if len(recalled) >= n {
 			return recalled
@@ -156,7 +176,7 @@ func (s *Mem0IntegrationSuite) TestAnotherUsersMemoriesAreNotRecalled() {
 	stranger := s.scope
 	stranger.UserID += "-stranger"
 
-	recalled, err := s.store.Recall(ctx, memory.Query{Scope: stranger, Text: "peanuts"})
+	recalled, err := s.recall(ctx, memory.Query{Scope: stranger, Text: "peanuts"})
 	s.Require().NoError(err)
 
 	s.Empty(recalled, "memories are personal")
@@ -166,7 +186,7 @@ func (s *Mem0IntegrationSuite) TestAScopeWithoutAUserIsRefusedBeforeTheNetwork()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := s.store.Recall(ctx, memory.Query{Scope: memory.Scope{AppID: "acceleration-test"}})
+	_, err := s.recall(ctx, memory.Query{Scope: memory.Scope{AppID: "acceleration-test"}})
 
 	s.ErrorContains(err, "user id is required")
 }

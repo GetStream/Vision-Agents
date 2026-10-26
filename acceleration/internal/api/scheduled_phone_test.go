@@ -69,6 +69,7 @@ func (s *ScheduledTasksSuite) placeCall(user *testClient) placedCall {
 		ConversationID: task.ConversationID, ConfigID: task.ConfigID, UserID: task.UserID,
 		CallerKind: task.CallerKind, Timezone: task.Timezone, CommandID: "st_" + run.ID,
 		Text: scheduledPrompt(store.ClaimedScheduledTask{Task: task, Run: run}, now), Due: now,
+		APIKey: task.APIKey, UsageCategories: task.UsageCategories,
 	}
 	config, err := s.store.AgentConfig(context.Background(), s.customerID(), configID)
 	s.Require().NoError(err)
@@ -248,7 +249,7 @@ func (s *ScheduledTasksSuite) phoneTask(user *testClient, channels []string, due
 	s.seedWriter(user, config, number, writer)
 	opened := user.createSession(CreateSessionRequest{ConfigId: &config})
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
 		Instructions: "Remind them to stretch.", StartLocal: due.UTC(), Timezone: "Europe/Amsterdam",
 		Channels: channels, NextRunAt: &due, State: store.ScheduledTaskActive, CreatedBy: "api",
@@ -430,6 +431,7 @@ func (s *ScheduledTasksSuite) TestAFailureOnTheNodeHoldingTheConversationKeepsIt
 		CustomerID: task.CustomerID, TaskID: task.ID, SessionID: task.SessionID, ConfigID: task.ConfigID,
 		UserID: task.UserID, CallerKind: task.CallerKind, CommandID: "st_" + store.NewID(),
 		Text: "<scheduled_task>Remind them to stretch.</scheduled_task>", Channels: task.Channels, Due: time.Now(),
+		APIKey: task.APIKey, UsageCategories: task.UsageCategories,
 	}
 
 	_, handed, err := s.router.handDeliveryToPeer(context.Background(), delivery)

@@ -1,5 +1,93 @@
 ![VisionAgents](assets/repo_image.png)
 
+
+Fast, Go based, backend for building voice, video and text agents. 
+Build AI/agentic apps like Muse, Decagon and Harvey in days.
+
+* Go: Python no longer makes sense now that we all write code in English with Claude
+* Build Quickly: The SDKs, routing, acceleration, connectors and other features make it fast to build complex agents.
+* Performance: Go, WARP and edge servers ensure excellent performance
+
+## SDKs
+
+The heavy lifting is done in Go. But you can use the agents in any environment:
+
+Client side SDKs with Chat/Video/Audio support: Swift, Kotlin, React, Flutter, React Native
+
+Backend SDKs: Python, Go, Node, Ruby, PHP, .NET, Rust
+
+## Quickstart
+
+See the quickstart docs
+
+
+
+## Agent Folders
+
+The fastest way to define an agent is using the folder structure
+
+You can quickly create a folder using the CLI
+
+```bash
+curl -fsSL https://getstream.io/cli/beta/install.sh | bash
+getstream agents init my-agent --template text
+```
+
+The structure looks something like this:
+
+```text
+agents/my-agent/
+  knowledge/       ← indexed markdown and URLs
+    faq.md
+    urls.yaml
+  skills/          ← skills loaded as needed
+    research.md
+  simulations/
+  agent.yaml       ← config for the agent
+  routing.yaml     ← routing
+  instructions.md  ← system prompt
+  guardrail.md     ← prevent abuse
+```
+
+After you create an agent you can quickly test it like this
+
+```bash
+getstream agents test my-agent
+```
+
+Note that you can also configure agents through the SDKs or dashboard.
+
+## Tool Calling
+
+You can set up tool calling with any language.
+
+```python
+
+```
+
+
+## Features included
+
+* Acceleration: Go + Edge servers means amazingly fast agents
+* Voice & Video
+* Routing
+* Connectors for Slack/WhatsApp/Linear etc
+* Cost controls
+* Memory & knowledge
+* Chat/agent persistence
+* Sandbox/VM
+* Search
+* Tools & MCP
+* Telephony
+
+## Compare to the alternatives
+
+This docs page explains how it compares against Livekit, Eve, OpenRouter, LiteLLM and others.
+
+## Examples
+
+
+
 # Open Vision Agents by Stream
 
 [![Listed on TakoAPI](https://img.shields.io/badge/Listed%20on-TakoAPI-7c3aed)](https://takoapi.com/agents/getstream-vision-agents)
@@ -115,29 +203,3 @@ Check out the full docs at [VisionAgents.ai](https://visionagents.ai/).
 | <br><h3>Custom Video Models (Roboflow, YOLO, and More)</h3>Train and run custom computer vision models for security monitoring, moderation, and other domain-specific workflows.<br><br>• Bring your own CV models<br>• Real-time moderation pipelines<br>• Security and detection use cases<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/old/11_moderation_example) | <img src="assets/demo_gifs/security_camera.gif" width="320" alt="Custom Video Models Demo">          |
 | <br><h3>Tools, MCP, and Phone Calling</h3>Connect external APIs and services so agents can validate data and take real-world actions during live conversations.<br><br>• MCP and function calling support<br>• Twilio and Telnyx phone workflows<br>• Real-time fraud response automation<br><br> [>Phone + RAG example](https://github.com/GetStream/Vision-Agents/tree/main/examples/old/03_phone_and_rag_example) · [>Telnyx phone examples](https://github.com/GetStream/Vision-Agents/tree/main/plugins/telnyx/examples) · [>Fraud workflow example](https://github.com/GetStream/Vision-Agents/tree/main/plugins/openai/examples/nemotron_example) | <img src="assets/demo_gifs/fraud_detection.gif" width="320" alt="Tools and Phone Demo"> |
 
-## Community Highlights
-
-More involved demos built by the community and the Stream team - full applications that go beyond the in-repo examples and show what's possible with Vision Agents in production.
-
-Got a demo you'd like featured? Open a PR or reach out on [Discord](https://discord.gg/RkhX9PxMS6).
-
-- [Sales Assistant Demo](https://github.com/GetStream/vision-agents-sales-assistant-demo) - a real-time AI meeting coach that lives on your desktop as a translucent macOS overlay. Built on Vision Agents and Flutter.
-- [Crashout Buddy](https://github.com/GetStream/crashout-buddy) - an emotionally aware voice agent demo built on Vision Agents and Stream Video.
-- [Cricket DRS AI](https://github.com/jaya6400/cricket-drs-ai) — AI-powered Decision Review System for 🏏 Women's Cricket using Gemini Live vision, YOLO pose detection, and real-time voice verdicts by [@jaya6400](https://github.com/jaya6400).
-
-## Development
-
-See [DEVELOPMENT.md](DEVELOPMENT.md)
-
-Want to add your platform or provider? See [Create Your Own Plugin](https://visionagents.ai/integrations/create-your-own-plugin) or reach out to **nash@getstream.io**.
-
-## Current Limitations
-
-- Video AI struggles with small text — models may hallucinate scores, signs, etc.
-- Context degrades on longer sessions (~30s+) for continuous video understanding
-- Most use cases need a mix of specialized models (YOLO, Roboflow) with larger LLMs
-- Real-time models require audio/text to trigger responses — video alone won't prompt output
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=GetStream/vision-agents&type=timeline&legend=top-left)](https://www.star-history.com/#GetStream/vision-agents&type=timeline&legend=top-left)

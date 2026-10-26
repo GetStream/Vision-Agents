@@ -232,6 +232,30 @@ func (s *TelnyxSuite) TestDiallingOutStartsATeXMLCallThatDialsTheTrunk() {
 	s.Equal("queued", placed.Status)
 }
 
+func (s *TelnyxSuite) TestCallsShareTheirNumbersTrunk() {
+	s.Equal(phone.StreamLegShared, phone.StreamLegOf(s.provider))
+}
+
+func (s *TelnyxSuite) TestTheTrunkLegCarriesTheCallID() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+	placing := s.outbound()
+	placing.CallID = "abc"
+
+	_, err := s.provider.Dial(s.ctx, placing)
+	s.Require().NoError(err)
+
+	s.Equal("sip:+15125550100@app.sip.example.com?x-stream-call-id=abc", s.texml().Dial.Sip.URI)
+}
+
+func (s *TelnyxSuite) TestAnOutboundWithoutACallIDDialsThePlainURI() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.Equal("sip:+15125550100@app.sip.example.com", s.texml().Dial.Sip.URI)
+}
+
 func (s *TelnyxSuite) TestCredentialsWithXMLSpecialCharactersAreEscaped() {
 	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
 
@@ -421,6 +445,13 @@ func (s *TelnyxSuite) TestHangingUpIsTeXMLThatEndsTheCall() {
 
 	s.Equal("application/xml", plan.ContentType)
 	s.Equal(`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+`<Response><Hangup/></Response>`, string(plan.Body))
+}
+
+func (s *TelnyxSuite) TestRejectingIsTeXMLWhoseFirstVerbLeavesTheCallUnanswered() {
+	plan := RenderReject()
+
+	s.Equal("application/xml", plan.ContentType)
+	s.Equal(`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+`<Response><Reject reason="rejected"/></Response>`, string(plan.Body))
 }
 
 func (s *TelnyxSuite) TestATrunkWithoutAnAddressIsNotDialled() {

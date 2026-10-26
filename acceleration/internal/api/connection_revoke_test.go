@@ -19,8 +19,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 )
 
-// revokeFailed is the line deleteConnection logs when the provider did not revoke (AI-1544).
-const revokeFailed = "could not revoke a deleted connection's grant at the provider"
+// revokeFailed is the line revokeAtProvider logs when the provider did not revoke (AI-1544).
+const revokeFailed = "could not revoke a grant at the provider"
 
 // optInRevoke is the manifest YAML that opts a connector into a revoke on delete.
 const optInRevoke = "revoke_on_delete: true\n"
@@ -192,15 +192,22 @@ func (s *AuthorizationsSuite) TestTheOptInIsReadFromTheConnectionsRevision() {
 // revokingConnection is a pending app-owned connection to connector's manifest with its
 // revoke endpoint at revoke; extra is more manifest YAML.
 func (s *AuthorizationsSuite) revokingConnection(revoke, extra string) string {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections",
+		appOwned(s.revokingConnector("operator", revoke, extra)), &created))
+	return created.ID
+}
+
+// revokingConnector is a connector of the test's app at the fake whose client is of
+// registration, with its revoke endpoint at revoke; extra is more manifest YAML.
+func (s *AuthorizationsSuite) revokingConnector(registration, revoke, extra string) string {
 	id := "custom_fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	manifest, err := core.ParseManifest([]byte(s.fakeManifest(id, 1, "operator", extra)))
+	manifest, err := core.ParseManifest([]byte(s.fakeManifest(id, 1, registration, extra)))
 	s.Require().NoError(err)
 	manifest.Endpoints["revoke"] = revoke
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
 	s.Require().NoError(err)
-	var created Connection
-	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(id), &created))
-	return created.ID
+	return id
 }
 
 // held is the stored credentials of connection id and its resolved manifest, read as the

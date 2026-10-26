@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -39,6 +40,24 @@ type schedulingScript struct {
 	rounds [][]llm.ToolCall
 	// failing is how many scheduled turns each model opened from now on fails.
 	failing int
+	// held, when set, keeps the scheduled turns of every model back until it is closed.
+	held chan struct{}
+	// silent has every model answer without a word, running only the tool calls queued.
+	silent bool
+}
+
+// saySilently has every model answer from now on without a word, as a turn whose only
+// answer is the file its code made.
+func (s *schedulingScript) saySilently() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.silent = true
+}
+
+func (s *schedulingScript) silently() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.silent
 }
 
 // failScheduled has every model opened from now on fail its next times a scheduled task comes
@@ -47,6 +66,23 @@ func (s *schedulingScript) failScheduled(times int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failing = times
+}
+
+// holdScheduled keeps every model's scheduled turns running, saying nothing, until release,
+// as schedulingModel.holdScheduled does, for models the test cannot reach before the delivery opens them.
+func (s *schedulingScript) holdScheduled() (release func()) {
+	held := make(chan struct{})
+	s.mu.Lock()
+	s.held = held
+	s.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(held) }) }
+}
+
+func (s *schedulingScript) holding() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.held
 }
 
 func (s *schedulingScript) failingTurns() int {
@@ -96,7 +132,7 @@ func (s *schedulingScript) next() []llm.ToolCall {
 func (s *schedulingScript) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.turns, s.rounds, s.failing = nil, nil, 0
+	s.turns, s.rounds, s.failing, s.held, s.silent = nil, nil, 0, nil, false
 }
 
 // schedulingModel is a model that asks for the tool calls its test queued and
@@ -139,6 +175,7 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		names = append(names, tool.Name)
 	}
 	scheduled := strings.Contains(startedBy(params), "<scheduled_task")
+	everyHeld := m.script.holding()
 	m.mu.Lock()
 	m.offered = append(m.offered, names)
 	m.asked = append(m.asked, params)
@@ -147,6 +184,9 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		m.failing--
 	}
 	held := m.held
+	if held == nil {
+		held = everyHeld
+	}
 	if !scheduled {
 		held = nil
 	}
@@ -181,7 +221,9 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		}()
 		return script.Stream(), nil
 	}
-	script.OutputText("Done.")
+	if !m.script.silently() {
+		script.OutputText("Done.")
+	}
 	if len(calls) > 0 {
 		script.ToolCalls(calls...)
 	}
@@ -303,7 +345,8 @@ func TestScheduledTasksSuite(t *testing.T) {
 }
 
 func (s *ScheduledTasksSuite) SetupSuite() {
-	s.sink = &channelSink{sent: map[string][]string{}}
+	s.sink = &channelSink{sent: map[string][]string{}, media: map[string][]string{}}
+	s.daytona = daytonatest.Start(s.T())
 	s.channelAPI = httptest.NewTLSServer(http.HandlerFunc(s.sink.serve))
 	s.T().Cleanup(s.channelAPI.Close)
 	// A worker claims every task due in its database, so the suite's workers and those of
@@ -598,7 +641,7 @@ func (s *ScheduledTasksSuite) TestTheAgentMovesATaskPastItsNextRunUnderAQuarterH
 
 func (s *ScheduledTasksSuite) seedListedTask(config string, user *testClient, state string) {
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
 		StartLocal: time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), Timezone: "Europe/Amsterdam", State: state,
 	}
@@ -687,7 +730,7 @@ func (s *ScheduledTasksSuite) TestTheAgentListsRunningTasksFirstAndSaysWhenThere
 	user := s.data.createUser()
 	seed := func(state string) string {
 		task := store.ScheduledTask{
-			CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+			CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 			CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
 			StartLocal: time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), Timezone: "Europe/Amsterdam", State: state,
 		}
@@ -958,7 +1001,7 @@ func (s *ScheduledTasksSuite) TestATaskWithNoSessionYetOpensOneAtItsFirstOccurre
 	now := time.Now()
 	next := now.Add(-time.Minute)
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
@@ -983,7 +1026,7 @@ func (s *ScheduledTasksSuite) TestATaskThatComesDueOnACallWaitsForTheCallToEnd()
 	now := time.Now()
 	next := now.Add(-time.Minute)
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
@@ -1012,7 +1055,7 @@ func (s *ScheduledTasksSuite) TestADueTaskIsHandedToTheNodeHoldingItsConversatio
 	now := time.Now()
 	next := now.Add(-time.Minute)
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
@@ -1074,7 +1117,7 @@ func (s *ScheduledTasksSuite) TestAConfigThatCannotBeReadIsNotReportedAsDeletedO
 	// being gone: that is a failure of the lookup, not an unknown config.
 	user := s.data.createUser()
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), UserID: user.userID,
+		CustomerID: s.customerID(), UserID: user.userID, APIKey: s.app.key,
 		CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
 		StartLocal: time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second), Timezone: "Europe/Amsterdam",
 		State: store.ScheduledTaskPaused,
@@ -1932,6 +1975,29 @@ func (s *ScheduledTasksSuite) TestRunningATaskByHandDeliversWithoutMovingTheSche
 	s.NotNil(read.LastRunAt)
 }
 
+func (s *ScheduledTasksSuite) TestATaskRunsAsTheKeyThatScheduledIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	scheduler := s.serverClient.actingFor(user)
+	scheduler.header.Set(auth.UsageCategoriesHeader, "project:reminders")
+	var created ScheduledTask
+	s.Require().Equal(http.StatusCreated, scheduler.do(http.MethodPost, "/v1/agents/scheduled-tasks", taskRequest(config), &created))
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/run", nil, nil))
+
+	var rows []store.Request
+	s.Require().Eventually(func() bool {
+		rows = nil
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(s.T().Context())
+		return err == nil && len(rows) > 0
+	}, 30*time.Second, 250*time.Millisecond, "the run recorded nothing")
+	for _, row := range rows {
+		s.Equal(s.app.key, row.APIKey, "%s %s", row.Modality, row.Purpose)
+		s.Equal(user.userID, row.UserID)
+		s.Equal([]string{"project:reminders"}, row.UsageCategories)
+	}
+}
+
 func (s *ScheduledTasksSuite) TestDeletingATaskDeletesItsRuns() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
@@ -1997,6 +2063,36 @@ func (s *ScheduledTasksSuite) TestACreateNamingASessionFollowsUpInIt() {
 	body.SessionId = &opened.Id
 	status, _ := s.taskFailure(s.serverClient.actingFor(other), http.MethodPost, "/v1/agents/scheduled-tasks", body)
 	s.Equal(http.StatusNotFound, status, "a session is only its own user's to schedule into")
+}
+
+// The row is written behind the conversation, so a session stopped while the writer is behind
+// has left the live set before its row exists; a create naming it waits for the row.
+func (s *ScheduledTasksSuite) TestACreateNamingASessionThatEndedBeforeItsRowWasWrittenFollowsUpInIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	release := s.stallTheRecordWriter()
+	opened := s.openScheduling(user, config, nil)
+	user.stopSession(opened.Id)
+
+	body := taskRequest(config)
+	body.ConfigId, body.SessionId = nil, &opened.Id
+	answered := make(chan int, 1)
+	go func() {
+		var created ScheduledTask
+		answered <- s.serverClient.actingFor(user).do(http.MethodPost, "/v1/agents/scheduled-tasks", body, &created)
+	}()
+	// Well under recordWriteTimeout (5s, internal/session/records.go), so only the create
+	// waiting for the writer keeps it unanswered this long.
+	s.Never(func() bool { return len(answered) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"the create answered before the writer had written the session's row")
+	release()
+
+	select {
+	case status := <-answered:
+		s.Equal(http.StatusCreated, status)
+	case <-time.After(10 * time.Second):
+		s.FailNow("the create never answered")
+	}
 }
 
 // An occurrence follows up by carrying the conversation on, so a create naming a session
@@ -2119,8 +2215,23 @@ func (s *ScheduledTasksSuite) TestACallersOwnScheduleTaskKeepsTheName() {
 type channelSink struct {
 	mu   sync.Mutex
 	sent map[string][]string
+	// media is the URLs of every file sent to a person on Telnyx, in order.
+	media map[string][]string
 	// failing is how many more sends to a person the provider refuses.
 	failing map[string]int
+	// refusingMedia is the people every file sent to is refused for, as Telnyx refuses an MMS
+	// to a number outside the US and Canada.
+	refusingMedia map[string]bool
+}
+
+// refuseMedia has the provider refuse every file sent to number, and take its words.
+func (c *channelSink) refuseMedia(number string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refusingMedia == nil {
+		c.refusingMedia = map[string]bool{}
+	}
+	c.refusingMedia[number] = true
 }
 
 // fail has the provider refuse the next times sends to number.
@@ -2135,8 +2246,9 @@ func (c *channelSink) fail(number string, times int) {
 
 func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		To   string          `json:"to"`
-		Text json.RawMessage `json:"text"`
+		To    string          `json:"to"`
+		Text  json.RawMessage `json:"text"`
+		Media []string        `json:"media_urls"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	text := ""
@@ -2155,7 +2267,16 @@ func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"the provider is down"}}`, http.StatusBadGateway)
 		return
 	}
-	c.sent[body.To] = append(c.sent[body.To], text)
+	if len(body.Media) > 0 && c.refusingMedia[body.To] {
+		c.mu.Unlock()
+		http.Error(w, `{"errors":[{"detail":"MMS is not supported for this destination"}]}`, http.StatusBadRequest)
+		return
+	}
+	if len(body.Media) > 0 {
+		c.media[body.To] = append(c.media[body.To], body.Media...)
+	} else {
+		c.sent[body.To] = append(c.sent[body.To], text)
+	}
 	c.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2167,6 +2288,13 @@ func (c *channelSink) to(number string) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.sent[number]...)
+}
+
+// mediaTo is the URL of every file the sink was sent for one person on Telnyx, in order.
+func (c *channelSink) mediaTo(number string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.media[number]...)
 }
 
 // connectWhatsApp hands the router a WhatsApp line's credentials.
@@ -2262,11 +2390,16 @@ func (s *ScheduledTasksSuite) seedSMSLine(number string) {
 	}))
 }
 
-func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
-	number, writer := s.lineNumber(), s.writerNumber()
+// smsTask is a task the backend schedules for a user who texts the agent's SMS line from
+// writer, delivered by SMS, on an agent config changed as change says.
+func (s *ScheduledTasksSuite) smsTask(writer string, change func(*AgentConfigRequest)) *testClient {
+	number := s.lineNumber()
 	s.seedSMSLine(number)
 	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
 		request.Channels = &AgentChannels{Sms: &ChannelLineRequest{Number: number}}
+		if change != nil {
+			change(request)
+		}
 	})
 	user := s.data.createUser()
 	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
@@ -2275,6 +2408,12 @@ func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
 	}))
 	opened := s.openScheduling(user, config, nil)
 	s.taskOn(user, config, opened.Id, []string{"sms"})
+	return user
+}
+
+func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
+	writer := s.writerNumber()
+	user := s.smsTask(writer, nil)
 	s.runWorker()
 	s.makeDue(s.tasksOf(user)[0])
 
@@ -2282,7 +2421,89 @@ func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
 	s.Equal("sms", run.DeliveredTo)
 	s.Require().Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
-	s.Equal("Done.", s.sink.to(writer)[0])
+	s.Never(func() bool { return len(s.sink.to(writer)) > 1 }, dropped, 20*time.Millisecond, "texted once")
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Empty(s.sink.mediaTo(writer), "a reply that made no file sends none")
+}
+
+// A file the task's code made is texted after the reply's words, as an MMS.
+func (s *ScheduledTasksSuite) TestATaskTextedBySMSCarriesTheFileItsCodeMade() {
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	report := s.codeHandsBackAReport()
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Require().Eventually(func() bool { return len(s.sink.mediaTo(writer)) > 0 },
+		10*time.Second, 50*time.Millisecond, "no file was texted to %s", writer)
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Equal([]string{report}, s.sink.mediaTo(writer))
+}
+
+// A reply of only the file the task's code made, with no words, is texted as the file.
+func (s *ScheduledTasksSuite) TestATaskWhoseReplyIsOnlyAFileTextsTheFile() {
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	report := s.codeHandsBackAReport()
+	s.schedulingScript.saySilently()
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal([]string{report}, s.sink.mediaTo(writer))
+	s.Empty(s.sink.to(writer), "there were no words to text")
+}
+
+// A reply whose words went out and whose file the line refused is delivered: another attempt
+// would text the words again.
+func (s *ScheduledTasksSuite) TestATaskWhoseFileTheLineRefusesTextsItsWordsOnce() {
+	s.retryAtOnce()
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	s.codeHandsBackAReport()
+	s.sink.refuseMedia(writer)
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Never(func() bool { return len(s.sink.to(writer)) > 1 }, dropped, 20*time.Millisecond, "texted once")
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Empty(s.sink.mediaTo(writer), "the file was refused")
+}
+
+// A file the task's code wrote twice is texted once, its latest, as the conversation keeps it.
+func (s *ScheduledTasksSuite) TestAFileTheTasksCodeWroteTwiceIsTextedOnce() {
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	report := s.codeHandsBackAReport(reportRun(), reportRun())
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal([]string{report}, s.sink.mediaTo(writer))
+}
+
+// A retry after the line refused the reply texts the file the first attempt's turn made,
+// without running the task again.
+func (s *ScheduledTasksSuite) TestARetriedSMSTaskTextsTheFileItsTurnAlreadyMade() {
+	s.retryAtOnce()
+	writer := s.writerNumber()
+	user := s.smsTask(writer, func(request *AgentConfigRequest) { request.Sandbox = pointerTo(Daytona) })
+	report := s.codeHandsBackAReport()
+	s.sink.fail(writer, 1)
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Len(s.sink.to(writer), 1, "the words went once")
+	s.Equal([]string{report}, s.sink.mediaTo(writer))
+	s.Equal(1, s.model().turnsOn("<scheduled_task"), "the retry ran no second turn")
 }
 
 func (s *ScheduledTasksSuite) TestAWhatsAppTaskOutsideItsWindowLandsInTheConversation() {

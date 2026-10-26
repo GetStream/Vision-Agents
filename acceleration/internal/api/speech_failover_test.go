@@ -27,7 +27,7 @@ type SpeechFailoverSuite struct {
 func TestSpeechFailoverSuite(t *testing.T) {
 	suite := &SpeechFailoverSuite{down: map[string]string{}}
 	suite.ttsConfig = routableConfig()
-	for _, shortcut := range []string{"inline", "job", "pinned"} {
+	for _, shortcut := range []string{"inline", "job", "pinned", "keyed-inline", "keyed-job"} {
 		model := uuid.NewString()
 		suite.down[shortcut] = "down/" + model
 		suite.ttsConfig.Providers = append(suite.ttsConfig.Providers, routing.ProviderConfig{
@@ -85,6 +85,26 @@ func (s *SpeechFailoverSuite) TestASpeechJobPinnedToAModelThatFailsStillFailsAsB
 	s.Equal("down: record: 503 Service Unavailable: overloaded", value(finished.Error))
 	s.Equal("down", value(finished.Provider))
 	s.Equal(s.down["pinned"][len("down/"):], value(finished.Model))
+}
+
+func (s *SpeechFailoverSuite) TestSpeechInlineAndAsAJobIsRecordedUnderTheCallersKey() {
+	// A job runs after the request has been answered, on a context of its own.
+	var spoken, accepted Speech
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"target": "keyed-inline"}}, &spoken))
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"text": "hello", "options": map[string]any{"target": "keyed-job"}}, &accepted))
+	s.Require().Equal(RecordingStatusCompleted, s.finished(accepted.Id).Status)
+
+	var rows []store.Request
+	s.Require().Eventually(func() bool {
+		rows = s.speechStats()
+		return len(rows) == 4
+	}, settleFor, 25*time.Millisecond, "a failed and a recorded row each, inline and as a job")
+	for _, row := range rows {
+		s.Equal(s.app.key, row.APIKey, "%s/%s %s", row.Provider, row.Model, row.ErrorCode)
+	}
+	s.Equal(2, len(slices.DeleteFunc(rows, func(row store.Request) bool { return row.ErrorCode != "record_failed" })))
 }
 
 // finished polls a speech job until it has ended.

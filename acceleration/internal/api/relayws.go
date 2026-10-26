@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // attachWait is how long a socket waits for whichever node holds the session to answer.
@@ -22,8 +25,9 @@ const attachWait = 2 * time.Second
 
 // remoteFrames is how many frames a relayed socket may fall behind by. It matches the
 // buffer a local watcher gets, for the same reason: a control channel whose reader has
-// stopped reading costs that reader some detail and nobody on the call anything.
-const remoteFrames = 256
+// stopped reading costs that reader some detail and nobody on the call anything. The other
+// half is room for what a resumable watcher is replayed when it attaches.
+const remoteFrames = 512
 
 // remoteCommands is how many commands one relayed socket may have waiting. A watcher
 // sends them one at a time and waits for what they do, so a queue this deep is already
@@ -60,6 +64,8 @@ type remoteSocket struct {
 	frames   chan json.RawMessage
 	closed   chan struct{}
 	once     sync.Once
+	// halted is set before closed when the holder's router stopped the session.
+	halted atomic.Bool
 }
 
 func (r *remoteSocket) close() { r.once.Do(func() { close(r.closed) }) }
@@ -69,8 +75,10 @@ type proxyWatcher struct {
 	detach func()
 	// owner is who the socket's caller was when it attached, and is what its commands are
 	// carried out as. It is kept rather than read off each command so that a node cannot
-	// change who it claims to be halfway through a conversation.
+	// change who it claims to be halfway through a conversation. seat is the same caller
+	// with the tools it said it runs.
 	owner session.Owner
+	seat  session.Seat
 	// commands are what that caller sent, carried out one at a time by a goroutine of
 	// this watcher's own. They cannot be run where they arrive: every node's requests
 	// come in on one subscription, and answering a question through the model takes as
@@ -112,6 +120,8 @@ func (s *Server) newRelayed(ctx context.Context, bus *relay.Bus) (*relayed, erro
 // trusted to have checked, so the caller is named on the bus and checked there.
 func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id string, owner session.Owner) bool {
 	state := s.relayed
+	seat := seatOf(r, owner)
+	asked := resumingOf(r)
 	watcher := uuid.NewString()
 	socket := &remoteSocket{
 		attached: make(chan string, 1),
@@ -139,7 +149,12 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 			UserID:     owner.UserID,
 			Kind:       string(owner.Kind),
 		},
-		ReplayPendingTools: r.URL.Query().Get("replay_pending_tools") == "true",
+		ReplayPendingTools: seat.ReplayPendingVoiceTools,
+		Tools:              seat.Tools,
+		DeclaresTools:      seat.Declares,
+		Resumable:          asked.resumable,
+		Cursor:             asked.cursor,
+		RequestID:          asked.requestID,
 	}); err != nil {
 		s.logger.Error("could not ask for a session held elsewhere", "session", id, "error", err)
 		writeError(w, unavailable("the session could not be reached"))
@@ -168,12 +183,11 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 	defer state.detach(context.WithoutCancel(r.Context()), watcher, id)
 	connection.SetReadLimit(maxSocketMessage)
 
-	gone := make(chan struct{})
+	gone := make(chan error, 1)
 	go func() {
-		defer close(gone)
-		s.readRelayedCommands(connection, state, watcher, id)
+		gone <- s.readRelayedCommands(connection, state, watcher, id)
 	}()
-	s.writeRelayedEvents(connection, state, socket, watcher, id, watching(r), gone)
+	s.writeRelayedEvents(connection, state, socket, watcher, id, watching(r), gone, endingOf(asked, socket.halted.Load))
 	return true
 }
 
@@ -189,18 +203,23 @@ func (s *Server) writeRelayedEvents(
 	socket *remoteSocket,
 	watcher, id string,
 	asked wanted,
-	gone <-chan struct{},
+	gone <-chan error,
+	ended ending,
 ) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 
 	for {
 		select {
-		case <-gone:
+		case stopped := <-gone:
+			if errors.Is(stopped, errUnreadableFrame) {
+				refuseUnreadable(connection)
+			}
 			return
 
 		case <-socket.closed:
-			closeBeforeReader(connection, websocket.CloseNormalClosure, "the session ended", gone)
+			code, reason := ended()
+			closeBeforeReader(connection, code, reason, gone)
 			return
 
 		case payload := <-socket.frames:
@@ -231,24 +250,29 @@ func (s *Server) writeRelayedEvents(
 //
 // The frame is passed on as it arrived rather than decoded and encoded again, so the
 // holder reads exactly what the client wrote and there is one place -- applyCommand --
-// that decides what a command means.
-func (s *Server) readRelayedCommands(connection *websocket.Conn, state *relayed, watcher, id string) {
+// that decides what a command means. It is decoded here all the same, so a frame that is not
+// a command ends this socket as it ends a local one; the holder would only report it.
+//
+// It returns errUnreadableFrame for a frame that is not a command, and the read's own error
+// when the connection ended.
+func (s *Server) readRelayedCommands(connection *websocket.Conn, state *relayed, watcher, id string) error {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	for {
-		kind, payload, err := connection.ReadMessage()
+		_, payload, err := connection.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				s.logger.Debug("relayed session socket read failed", "error", err)
 			}
-			return
+			return stack.Wrap(err)
 		}
 		connection.SetReadDeadline(time.Now().Add(pongWait))
-		if kind != websocket.TextMessage || !json.Valid(payload) {
-			continue
+		var command watcherCommand
+		if json.Unmarshal(payload, &command) != nil {
+			return errUnreadableFrame
 		}
 
 		if err := state.bus.Publish(context.Background(), state.bus.Commands(), relay.Request{
@@ -316,15 +340,25 @@ func (s *Server) attachProxy(ctx context.Context, state *relayed, request relay.
 	held := session.OwnerOf(spec)
 	key := relay.Owner{CustomerID: held.CustomerID, UserID: held.UserID}.Key()
 
-	watch := found.Watch
-	if request.ReplayPendingTools {
-		watch = found.WatchPendingVoiceTools
+	seat := session.Seat{
+		Owner: owner, Tools: request.Tools, Declares: request.DeclaresTools,
+		ReplayPendingVoiceTools: request.ReplayPendingTools,
 	}
-	events, detach := watch()
+	var events <-chan session.Event
+	var detach func()
+	if request.Resumable {
+		var err error
+		if events, detach, err = found.WatchFrom(seat, request.Cursor, request.RequestID); err != nil {
+			return
+		}
+	} else {
+		events, detach = found.WatchAs(seat)
+	}
 
 	proxy := &proxyWatcher{
 		detach:   detach,
 		owner:    owner,
+		seat:     seat,
 		commands: make(chan json.RawMessage, remoteCommands),
 		seen:     time.Now(),
 	}
@@ -349,7 +383,7 @@ func (s *Server) attachProxy(ctx context.Context, state *relayed, request relay.
 	}
 
 	go s.runRelayedCommands(found, proxy)
-	go s.publishSessionEvents(ctx, state, events, request.Watcher, request.Session, key)
+	go s.publishSessionEvents(ctx, state, events, request.Watcher, request.Session, key, found.Halted)
 }
 
 // publishSessionEvents puts one session's events on the bus for the socket watching it
@@ -359,6 +393,7 @@ func (s *Server) publishSessionEvents(
 	state *relayed,
 	events <-chan session.Event,
 	watcher, id, key string,
+	halted func() bool,
 ) {
 	// The events channel closing is either the session ending or the watcher being
 	// detached, and both end the watcher: dropping it here is what closes its command
@@ -391,6 +426,7 @@ func (s *Server) publishSessionEvents(
 		Node:    state.bus.Node(),
 		Owner:   key,
 		Watcher: watcher,
+		Halted:  halted(),
 	}); err != nil {
 		s.logger.Debug("could not relay the end of a session", "session", id, "error", err)
 	}
@@ -406,8 +442,9 @@ func (s *Server) runRelayedCommands(found *session.Session, proxy *proxyWatcher)
 			continue
 		}
 		// The other node holds the socket's address, so only its user is counted here.
-		sender := routing.Caller{UserID: proxy.owner.UserID, ServerSide: proxy.owner.Kind == auth.KindServer}
-		s.applyCommand(found, proxy.owner, sender, command)
+		sender := routing.Caller{UserID: proxy.owner.UserID, ServerSide: proxy.owner.Kind == auth.KindServer,
+			Verified: proxy.owner.UserID != "" && proxy.owner.Kind.Verified()}
+		s.applyCommand(found, proxy.seat, sender, command)
 	}
 }
 
@@ -460,6 +497,9 @@ func (r *relayed) deliver(payload []byte) {
 	}
 
 	if response.Type == relay.Closed {
+		if response.Halted {
+			socket.halted.Store(true)
+		}
 		socket.close()
 		return
 	}

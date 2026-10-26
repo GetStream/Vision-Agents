@@ -277,7 +277,7 @@ func (s *Scheme) Revoke(ctx context.Context, stored core.StoredCredentials, m co
 		outcome.Kind = core.OutcomeTransient
 	}
 	if err == nil {
-		err = &oauth2code.TokenError{Status: response.StatusCode, Code: errorCode(raw)}
+		err = &oauth2code.TokenError{Status: response.StatusCode, Code: oauth2code.ErrorCode(raw, current.AccessToken, current.ClientSecret)}
 	}
 	return &core.OutcomeError{Outcome: outcome, Err: stack.Wrap(fmt.Errorf("oauth2cc: revoke: %w", err))}
 }
@@ -334,9 +334,9 @@ func (s *Scheme) mint(ctx context.Context, m core.ResolvedManifest, client paylo
 	outcome := s.refusal(response, raw, err)
 	if err == nil {
 		// The provider's word for why and its description, for the resolver's log line, as
-		// oauth2code's refresh gives them. The description is redacted of the client secret
-		// the request carried, which a provider may echo.
-		refused := &oauth2code.TokenError{Status: response.StatusCode, Code: errorCode(raw),
+		// oauth2code's refresh gives them. Both are redacted of the client secret the request
+		// carried, which a provider may echo.
+		refused := &oauth2code.TokenError{Status: response.StatusCode, Code: oauth2code.ErrorCode(raw, client.ClientSecret),
 			Description: oauth2code.ErrorDescription(raw, client.ClientSecret)}
 		outcome.Code, outcome.Description, err = refused.Code, refused.Description, refused
 	}

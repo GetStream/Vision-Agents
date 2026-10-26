@@ -61,6 +61,24 @@ func (s *SessionEventsSuite) TestTheSocketAsksTheCallerToRunItsOwnToolAndUsesThe
 	s.Empty(ran["error"])
 }
 
+func (s *SessionEventsSuite) TestAToolCallSaysWhoAskedAndInWhichConversation() {
+	owner := s.data.createUser()
+	request := s.askingForATool()
+	request.Custom = &map[string]any{"plan": "gold"}
+	opened := s.inWriting(request)
+	watching := s.watch(opened.Id)
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.actingFor(owner).do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "where is my order"}, nil))
+
+	asked := s.await(watching, "tool_call")
+	s.Equal(opened.Id, asked["session_id"])
+	user, _ := asked["user"].(map[string]any)
+	s.Equal(owner.userID, user["id"], "the call names the person whose turn asked for it")
+	conversation, _ := asked["conversation"].(map[string]any)
+	s.Equal(map[string]any{"plan": "gold"}, conversation["custom"])
+}
+
 func (s *SessionEventsSuite) TestAToolTheCallerCouldNotRunIsToldToTheModelInWords() {
 	opened := s.withATool()
 	watching := s.watch(opened.Id)
@@ -162,14 +180,53 @@ func (s *SessionEventsSuite) TestAFrameThatIsNotJSONIsRefusedWithPolicyViolation
 	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
 	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("not json")))
 
-	read, ended := s.socketEnd(watching)
+	s.refusedAsUnreadable(watching)
+}
 
-	s.Require().Len(read, 1)
-	s.Equal(frame{
-		"type": "error", "error": errUnreadableFrame.Message,
-		"code": errUnreadableFrame.Code, "error_type": string(errUnreadableFrame.Type),
-	}, read[0])
-	s.Equal(errUnreadableFrame.Message, s.closedWith(ended, websocket.ClosePolicyViolation).Text)
+// JSON that is not an object is no command either, and is refused as a frame that is not
+// JSON is.
+func (s *SessionEventsSuite) TestJSONThatIsNotACommandIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("[1]")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+func (s *SessionEventsSuite) TestABinaryFrameThatIsNotJSONIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.BinaryMessage, []byte("not json")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+// The control: a command of a type the router does not know is reported and the socket
+// stays open, as on base 8705bbaf9.
+func (s *SessionEventsSuite) TestACommandOfAnUnknownTypeIsReportedAndTheSocketStaysOpen() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.TextMessage, `{"type":"nope"}`, `unknown command "nope"`)
+}
+
+// A command in a binary frame is read as one in a text frame.
+func (s *SessionEventsSuite) TestACommandInABinaryFrameIsReportedAndTheSocketStaysOpen() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.BinaryMessage, `{"type":"nope"}`, `unknown command "nope"`)
+}
+
+// An object with no type is a command of no type: reported, not refused.
+func (s *SessionEventsSuite) TestAnObjectWithNoTypeIsReportedAndTheSocketStaysOpen() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.TextMessage, `{}`, `unknown command ""`)
+}
+
+// An object whose type is not a string cannot be read as a command and is refused.
+func (s *SessionEventsSuite) TestACommandWhoseTypeIsNotAStringIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte(`{"type":1}`)))
+
+	s.refusedAsUnreadable(watching)
 }
 
 // The control: a caller that closes first is answered with its own close, as on base

@@ -347,6 +347,11 @@ func (s *STT) Provider() string { return ProviderName }
 // Model implements stt.STT.
 func (s *STT) Model() string { return s.options.Model }
 
+// Metering is the router's count of the audio it streams: Google bills the audio input by
+// its duration, and the Live API reports no usage for a transcription session, on a turn or
+// as it closes (probed 2026-10-23).
+func (s *STT) Metering() stt.Metering { return stt.MeteredByRouter }
+
 // Client exposes the underlying WebSocket so callers can use the Live API directly.
 func (s *STT) Client() *websocket.Conn { return s.conn }
 

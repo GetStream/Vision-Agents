@@ -20,17 +20,18 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -85,9 +86,9 @@ type ManagerOptions struct {
 	// Transcript is optional.
 	Transcript TranscriptFactory
 	// Memory is optional. Without it every session starts knowing nothing.
-	Memory memory.Store
+	Memory *metered.Memory
 	// Knowledge is optional, and is what a session with a namespace looks things up in.
-	Knowledge knowledge.Store
+	Knowledge *metered.Knowledge
 	// Search is optional, and is what every session finds out what is true now with.
 	Search *searchrouter.Router
 	// Classifier is optional, and is what a session with a guardrail asks whether a turn
@@ -113,11 +114,21 @@ type ManagerOptions struct {
 	Conversations *persistent.Service
 
 	Store *store.Store
+	// Policies is what each session's tool output retention is held to: the app's and the
+	// organization's, which its agent config can shorten and not lengthen. Nil holds it to
+	// the agent config alone.
+	Policies *policy.Enforcer
 	// Configs reads what a session is opened from -- the skills it names -- through
 	// whatever cache is in front of Postgres. Built over Store when it is not given, in
 	// which case every read is a query, which is what a deployment without Redis does.
 	Configs *appconfig.Store
 	Live    *live.Client
+	// Pricer and Writer are the process's price list and usage writer, for what a session
+	// records of its own rather than through a router or internal/metered, such as the time
+	// it runs; memory and knowledge record through the recorders they are built with. Nothing
+	// reads them yet. Nil prices nothing, and gives each such recorder a writer of its own.
+	Pricer pricing.Pricer
+	Writer *routing.Writer
 	// Directory is where this node says which sessions it is running, so the deployment's
 	// other nodes can forward what only this one can answer. Nil keeps a session
 	// reachable on this node alone.
@@ -129,8 +140,18 @@ type ManagerOptions struct {
 	// as on a deployment with connectors off, opens none: a required binding fails the
 	// session, and an optional one is reported unavailable.
 	Connectors Connectors
+	// Sandboxes makes each session's sandbox, billed from when it is made until it is deleted.
+	// Nil makes them unlabelled, on Daytona's default lifecycle, billed through a recorder of
+	// the manager's own on Writer, as runtime is.
+	Sandboxes *metered.Sandboxes
+	// SandboxLimits says what sandbox each session's organization may have, and bounds how many
+	// of them run at once. Nil bounds nothing.
+	SandboxLimits *policy.Enforcer
+	// ResumeHistories are the app and organization policies a session's resume_history
+	// falls back to where its own and its config's say nothing. Nil leaves those two alone.
+	ResumeHistories ResumeHistories
 	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
-	// code in a sandbox, daytona.BrokerName or egress.BrokerName.
+	// code in a sandbox, metered.SandboxSecretsBroker or egress.BrokerName.
 	SandboxBroker string
 	// SandboxProxy is the store, URL and CA certificate of egress.BrokerName's proxy; the
 	// session fills in the rest.
@@ -165,7 +186,7 @@ type Manager struct {
 	// records keeps sessions, turns and what each turn did, which is what an old
 	// conversation is read back from. Nil without a store, and never handed an incognito
 	// session.
-	records *sessionRecorder
+	records sessionRecords
 	// invocations logs each connector tool call. Nil without a store or with connectors off,
 	// where no session opens a connector.
 	invocations *invocationRecorder
@@ -180,6 +201,11 @@ type Manager struct {
 	hosts ToolHosts
 	// slots caps each connection's connector calls in flight, across every session here.
 	slots callSlots
+	// runtime records how long each session is open. Nil without a store or a writer, where
+	// nothing is recorded, though every session is still timed.
+	runtime *routing.Recorder
+	// sliceEvery is how long a slice of a session's runtime runs. Zero is routing.SliceEvery.
+	sliceEvery time.Duration
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -228,6 +254,8 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		sessions:      map[string]*Session{},
 		conversations: options.Conversations,
 	}
+	// written is the recorder behind records, which titles are written through too.
+	var written *sessionRecorder
 	if options.Store != nil {
 		if options.Configs == nil {
 			configs, err := appconfig.New(appconfig.Options{Store: options.Store, Logger: options.Logger})
@@ -238,15 +266,89 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
-		manager.records = newSessionRecorder(options.Store, options.Logger)
+		written = newSessionRecorder(options.Store, options.Logger)
+		manager.records = written
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 		if options.Connectors.Transports != nil {
 			manager.invocations = newInvocationRecorder(options.Store, options.Logger)
 		}
 	}
-	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
+	manager.titles = newTitler(options.LLM, written, options.Logger)
 	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
+	switch {
+	case options.Writer != nil:
+		manager.runtime = routing.NewRecorderOn(routing.Runtime, options.Writer, options.Pricer, options.Logger)
+	case options.Store != nil || options.Live != nil:
+		manager.runtime = routing.NewRecorder(routing.Runtime, options.Store, options.Live, options.Pricer, options.Logger)
+	}
+	if options.Sandboxes == nil {
+		// On runtime's writer, so Shutdown drains the sandboxes' last slices with runtime's.
+		var recorder *routing.Recorder
+		if manager.runtime != nil {
+			recorder = manager.runtime.For(routing.Sandbox)
+		}
+		manager.options.Sandboxes = metered.NewSandboxes(metered.SandboxesOptions{Recorder: recorder, Logger: options.Logger})
+	}
 	return manager, nil
+}
+
+// owner is who a session's own time is billed to: its runtime and its sandbox's.
+func owner(spec Spec) routing.Owner {
+	return routing.Owner{
+		CustomerID:  spec.CustomerID,
+		Attribution: spec.Attribution,
+		Caller:      spec.Caller,
+		AgentID:     spec.AgentID,
+		CallID:      spec.CallID,
+		Tags:        spec.Tags,
+	}
+}
+
+// runtimeProvider is who runtime rows are billed under: the deployment itself, which no
+// vendor prices.
+const runtimeProvider = "stream"
+
+// startRuntime starts timing a session about to open, billed as what holds it: text or voice.
+func (m *Manager) startRuntime(spec Spec) *routing.Slices {
+	mode := store.ModalityVoice
+	if spec.Text {
+		mode = store.ModalityText
+	}
+	return routing.StartSlices(routing.SliceOptions{
+		Recorder: m.runtime,
+		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode},
+		Owner:    owner(spec),
+		Kind:     string(routing.Runtime),
+		ID:       spec.ID,
+		Every:    m.sliceEvery,
+	})
+}
+
+// newSession is the session spec opens, timed from now by runtime, which every session is
+// given so that none is open unbilled.
+func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills harness.Skills, opening time.Time, runtime *routing.Slices) *Session {
+	created := &Session{
+		logs:      m.logs,
+		persisted: conv,
+		id:        spec.ID,
+		spec:      spec,
+		// Postgres keeps microseconds. The live session sorts by the same instant as its
+		// row, or a cursor taken from one would hand the other back on the next page.
+		created:       opening.Truncate(time.Microsecond),
+		logger:        m.logger,
+		watchers:      map[uint64]*watcher{},
+		detachedGrace: m.options.DetachedGrace,
+		state:         Live,
+		modality:      store.ModalityVoice,
+		runtime:       runtime,
+		runtimeMode:   store.ModalityVoice,
+		skills:        skills,
+	}
+	if spec.Text {
+		created.modality = store.ModalityText
+		created.runtimeMode = store.ModalityText
+	}
+	return created
 }
 
 // Create joins a call and returns the session running it.
@@ -258,6 +360,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if err := spec.Normalize(); err != nil {
 		return nil, stack.Wrap(err)
 	}
+	if spec.Attribution.APIKey == "" {
+		spec.Attribution = routing.AttributionFrom(ctx)
+	}
+	spec.Attribution.SessionID = spec.ID
 	// Refuse unsupported voice modes before opening a call or persistent resource.
 	if spec.Native() && m.options.STS == nil {
 		return nil, stack.Wrap(errors.New("session: this deployment routes no speech-to-speech model"))
@@ -303,6 +409,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}
 
+	if m.records != nil && !spec.Incognito {
+		floor, err := m.options.Policies.ToolOutputRetention(ctx, spec.CustomerID)
+		if err != nil {
+			m.logger.Warn("could not read the tool output retention, keeping none",
+				"customer", spec.CustomerID, "session", spec.ID, "error", err)
+		}
+		spec.ToolOutputRetention = floor.Shorter(spec.ToolOutputRetention)
+	}
+
 	// The Stream app the session acts in is settled once, before anything is done there,
 	// and the whole session keeps it: its call, its transcript and the rows it writes.
 	stream, err := m.stream(ctx, spec)
@@ -323,7 +438,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		spec.StreamApp = store.ForeignStreamApp
 	}
 
-	var remembering memory.Store
+	var remembering *metered.Memory
 	if spec.Memory.UserID != "" {
 		if m.options.Memory == nil {
 			return nil, stack.Wrap(ErrNoMemory)
@@ -343,6 +458,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	var conv *persistent.Conversation
 	var previous []llm.Message
+	if m.options.ResumeHistories != nil {
+		spec.ResumeHistory = spec.ResumeHistory.Over(m.options.ResumeHistories.ResumeHistory(ctx, spec.CustomerID))
+	}
+	reading := m.restoring(ctx, spec)
 	if spec.PersistConversation {
 		service, err := m.Conversations()
 		if err != nil {
@@ -360,7 +479,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if cid == "" {
 			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
 		}
-		conv, previous, truncated, err = open(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if errors.Is(err, streamapp.ErrReadOnly) {
 			return nil, ErrConversationReadOnly
 		}
@@ -402,7 +521,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// carries on from what was said while the transcripts stay separate. The parent's
 		// half goes first because it happened first.
 		if spec.Recall != nil && spec.Recall.Messages == nil {
-			recalled, cut, err := service.ContextForCaller(ctx, spec.CustomerID,
+			recalled, cut, err := service.ContextForCaller(reading, spec.CustomerID,
 				spec.Recall.AgentID, spec.Recall.ConversationID, spec.Caller.UserID)
 			if err != nil {
 				conv.Release()
@@ -429,7 +548,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			}
 		}
 		var truncated bool
-		previous, truncated, err = service.ContextForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
+		previous, truncated, err = service.ContextForCaller(reading, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
@@ -463,7 +582,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
-	box, err := m.box(spec, connectors)
+	box, err := m.box(ctx, spec, connectors)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -477,26 +596,21 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if !spec.Reopened.IsZero() {
 		opening = spec.Reopened.UTC()
 	}
-	created := &Session{
-		logs:      m.logs,
-		persisted: conv,
-		id:        spec.ID,
-		spec:      spec,
-		// Postgres keeps microseconds. The live session sorts by the same instant as its
-		// row, or a cursor taken from one would hand the other back on the next page.
-		created:       opening.Truncate(time.Microsecond),
-		logger:        m.logger,
-		watchers:      map[uint64]*watcher{},
-		detachedGrace: m.options.DetachedGrace,
-		state:         Live,
-		modality:      store.ModalityVoice,
-		skills:        skills,
-	}
-	if spec.Text {
-		created.modality = store.ModalityText
+	// A session that fails to open is not billed for the time it spent trying.
+	runtime := m.startRuntime(spec)
+	defer func() {
+		if !opened {
+			runtime.Cancel()
+		}
+	}()
+	created := m.newSession(spec, conv, skills, opening, runtime)
+	fail := func() {
+		runtime.Cancel()
+		created.Close()
 	}
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
+		spec.Tools,
 		created.askTool,
 	)
 
@@ -505,7 +619,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// drops whichever of them nothing on this call can carry out.
 	tools := append([]harness.Tool(nil), spec.Tools...)
 	var callers agent.ToolRunner = created.tools
-	tools, callers = m.hostedTools(spec, created.id, tools, callers)
+	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
 	tools, callers = moderationTools(spec, stream, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()
@@ -575,10 +689,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
 	}
 	// Only a connector binding's policy names a phrase or lets a call go on after an
-	// interruption; a session without one runs its tools as it always has.
+	// interruption, and only a caller's or a worker's tool that says so is cancelled by one;
+	// a session with neither runs its tools as it always has.
 	var toolPolicy func(string) agent.ToolPolicy
 	if connectors != nil {
 		toolPolicy = connectors.toolPolicy
+	}
+	if policy := interruptible(tools, toolPolicy); policy != nil {
+		toolPolicy = policy
 	}
 	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {
@@ -621,6 +739,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			Text:          spec.Text,
 			Instructions:  spec.prompt(),
 			CustomerID:    spec.CustomerID,
+			Attribution:   spec.Attribution,
 			Caller:        spec.Caller,
 			AgentID:       spec.AgentID,
 			ConfigID:      spec.ConfigID,
@@ -763,13 +882,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
 	// returned would hang up on the caller immediately.
 	if err := built.Join(context.WithoutCancel(ctx)); err != nil {
-		created.Close()
+		fail()
 		return nil, stack.Wrap(err)
 	}
 
 	if spec.Greeting != "" {
 		if err := built.Greet(ctx, spec.Greeting, spec.VaryGreeting); err != nil {
-			created.Close()
+			fail()
 			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
 		}
 	}
@@ -784,7 +903,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			// The review runs on a model rather than in this closer, so it is started
 			// here and lands on the row whenever it comes back.
 			if !spec.NoReview {
-				m.reviews.Review(row(created), spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
+				m.reviews.Review(row(created), spec.Attribution, spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
 			}
 		})
 		m.calls.Started(row(created))
@@ -804,12 +923,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		created.Close()
+		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
-		created.Close()
+		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
 	m.sessions[created.id] = created
@@ -846,7 +965,7 @@ func (m *Manager) supersede(spec Spec) {
 	m.mu.Lock()
 	var left []*Session
 	for id, found := range m.sessions {
-		if sameSeat(found.spec, spec) {
+		if sameSeat(found.Spec(), spec) {
 			left = append(left, found)
 			delete(m.sessions, id)
 		}
@@ -958,7 +1077,7 @@ func (m *Manager) Get(id string, owner Owner) (*Session, bool) {
 	defer m.mu.Unlock()
 
 	found, ok := m.sessions[id]
-	if !ok || !owner.Reaches(OwnerOf(found.spec)) {
+	if !ok || !owner.Reaches(OwnerOf(found.Spec())) {
 		return nil, false
 	}
 	return found, true
@@ -1003,7 +1122,7 @@ func (m *Manager) newest(matches func(Spec) bool, admits func(customer string, a
 
 	var newest *Session
 	for _, found := range m.sessions {
-		if !matches(found.spec) {
+		if !matches(found.Spec()) {
 			continue
 		}
 		if admits != nil && !admits(found.spec.CustomerID, found.spec.StreamApp) {
@@ -1025,7 +1144,7 @@ func (m *Manager) List(owner Owner) []*Session {
 
 	var theirs []*Session
 	for _, found := range m.sessions {
-		if !owner.Reaches(OwnerOf(found.spec)) {
+		if !owner.Reaches(OwnerOf(found.Spec())) {
 			continue
 		}
 		// An anonymous caller that named nobody is told about nothing. It reaches its
@@ -1340,6 +1459,15 @@ func (m *Manager) Len() int {
 	return len(m.sessions) + m.closing
 }
 
+// FlushRecords waits until every row queued so far is written, so a session that ended a
+// moment ago can be read back from the store.
+func (m *Manager) FlushRecords(ctx context.Context) error {
+	if m.records == nil {
+		return nil
+	}
+	return m.records.Flush(ctx)
+}
+
 // Delete stops a session if it is running and deletes it: its row, its turns, and what it
 // taught the memory store. Whoever asks has to have checked the session is the owner's, since
 // one that ended is no longer here to check against.
@@ -1356,7 +1484,7 @@ func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
 	}
 	// The memories go before the row, so a store that fails keeps the session to delete again.
 	if m.options.Memory != nil && m.mayRemember(ctx, owner.CustomerID, id) {
-		if err := m.options.Memory.ForgetRun(ctx, owner.CustomerID, id); err != nil {
+		if err := m.options.Memory.For(forgetting(ctx, owner.CustomerID)).ForgetRun(ctx, owner.CustomerID, id); err != nil {
 			return memoryFailed(ctx, err)
 		}
 	}
@@ -1388,7 +1516,7 @@ func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID strin
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
 	}
-	return memoryFailed(ctx, m.options.Memory.Truncate(ctx, customerID, userID))
+	return memoryFailed(ctx, m.options.Memory.For(forgetting(ctx, customerID)).Truncate(ctx, customerID, userID))
 }
 
 // ForgetSession deletes what one session learned. Whoever asks has to have checked the
@@ -1397,7 +1525,13 @@ func (m *Manager) ForgetSession(ctx context.Context, customerID, sessionID strin
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
 	}
-	return memoryFailed(ctx, m.options.Memory.ForgetRun(ctx, customerID, sessionID))
+	return memoryFailed(ctx, m.options.Memory.For(forgetting(ctx, customerID)).ForgetRun(ctx, customerID, sessionID))
+}
+
+// forgetting is who deleting a customer's memories is recorded for: the customer, and whoever
+// asked through the request.
+func forgetting(ctx context.Context, customerID string) routing.Owner {
+	return routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx)}
 }
 
 // Shutdown ends every session, which is what a router does on its way down rather than
@@ -1412,9 +1546,14 @@ func (m *Manager) Shutdown() error {
 	m.sessions = map[string]*Session{}
 	m.mu.Unlock()
 
+	// Each close may wait for the agent to finish speaking, so every session stops being
+	// billed before the first of them is closed.
+	for _, found := range running {
+		found.runtime.Stop()
+	}
 	var failures []error
 	for _, found := range running {
-		if err := found.Close(); err != nil {
+		if err := found.halt(); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -1425,6 +1564,10 @@ func (m *Manager) Shutdown() error {
 	// worth holding a shutdown open for a model to finish writing.
 	m.titles.Close()
 	m.cards.Close()
+	// A writer the manager shares is left open; its own is drained of the last slices.
+	if m.runtime != nil {
+		m.runtime.Close()
+	}
 	if m.calls != nil {
 		m.reviews.Close()
 		m.calls.Close()
@@ -1445,22 +1588,37 @@ func (m *Manager) Shutdown() error {
 // caller asked for a sandbox. Nothing is created here: the provider opens one the first
 // time code is actually run, so a session that never delegates never pays for it. Neither
 // is a credential handed to the broker before then.
-func (m *Manager) box(spec Spec, connectors *dispatcher) (sandbox.Sandbox, error) {
+//
+// A sandbox bigger or more open than the organization's sandbox limits allow is not made: the
+// session runs without one, as a session configured with none does.
+func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (sandbox.Sandbox, error) {
 	if spec.Sandbox == "" {
 		return nil, nil
 	}
 	if spec.Sandbox != daytonaProvider {
 		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox))
 	}
-	options := daytona.Options{Config: spec.SandboxOptions, Logger: m.logger}
-	if connectors != nil && len(connectors.grants) > 0 {
+	granted := connectors != nil && len(connectors.grants) > 0
+	slots, err := m.options.SandboxLimits.Sandbox(ctx, owner(spec), policy.SandboxAsk{Config: spec.SandboxOptions, Granted: granted})
+	if err != nil {
+		m.logger.Warn("the session runs without its sandbox, which its organization's sandbox limits do not allow",
+			"code", policy.SandboxLimitCode, "customer", spec.CustomerID, "session", spec.ID, "error", err)
+		return nil, nil
+	}
+	asked := metered.SandboxSpec{Config: spec.SandboxOptions, Slots: slots}
+	if granted {
 		broker, err := m.broker(spec, connectors)
 		if err != nil {
 			return nil, err
 		}
-		options.Grants, options.Broker = connectors.grants, broker
+		asked.Grants, asked.Broker = connectors.grants, broker
 	}
-	return daytona.New(options)
+	box, err := m.options.Sandboxes.Open(owner(spec), asked)
+	if err != nil || !slices.ContainsFunc(asked.Grants, func(grant sandbox.Grant) bool { return grant.Late }) {
+		return box, err
+	}
+	return &connecting{Sandbox: box, d: connectors, delayed: m.options.SandboxBroker != egress.BrokerName, asks: spec.Text,
+		opened: map[string]bool{}}, nil
 }
 
 // reading reports whether this session has anything to look things up in, which is a
@@ -1503,10 +1661,11 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Ide
 
 	return guardrail.New(ctx, policy, guardrail.Deps{
 		Owner: routing.Owner{
-			CustomerID: spec.CustomerID,
-			AgentID:    spec.AgentID,
-			CallID:     spec.CallID,
-			Tags:       spec.Tags,
+			CustomerID:  spec.CustomerID,
+			Attribution: spec.Attribution,
+			AgentID:     spec.AgentID,
+			CallID:      spec.CallID,
+			Tags:        spec.Tags,
 		},
 		Classifier: m.options.Classifier,
 		LLM:        m.options.LLM,
@@ -1714,7 +1873,7 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 	}
 
 	return m.options.Phone.Line(phone.LineOptions{
-		Owner:        routing.Owner{CustomerID: spec.CustomerID, Tags: spec.Tags},
+		Owner:        routing.Owner{CustomerID: spec.CustomerID, Attribution: spec.Attribution, Tags: spec.Tags},
 		From:         spec.Phone.Number,
 		CallID:       spec.CallID,
 		CallType:     spec.CallType,

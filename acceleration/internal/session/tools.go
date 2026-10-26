@@ -7,8 +7,35 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
+
+// interruptible is next with the caller's and the workers' tools that asked to be cancelled
+// by an interruption marked so. Nil when none asked, so a session that did not is left
+// with next as it was.
+func interruptible(tools []harness.Tool, next func(string) agent.ToolPolicy) func(string) agent.ToolPolicy {
+	cancels := map[string]bool{}
+	for _, tool := range tools {
+		if tool.Interruptible {
+			cancels[tool.Name] = true
+		}
+	}
+	if len(cancels) == 0 {
+		return nil
+	}
+	return func(name string) agent.ToolPolicy {
+		var policy agent.ToolPolicy
+		if next != nil {
+			policy = next(name)
+		}
+		if cancels[name] {
+			policy.Cancels, policy.Waits = true, false
+		}
+		return policy
+	}
+}
 
 // defaultToolTimeout bounds how long a conversation waits on a tool that is being run
 // somewhere else.
@@ -28,6 +55,8 @@ const defaultToolTimeout = 30 * time.Second
 // work, and the agent apologises for it the same way it would for a failed transfer.
 type bridge struct {
 	timeout time.Duration
+	// timeouts is the tools that name their own, in place of timeout.
+	timeouts map[string]time.Duration
 	// ask publishes the request and reports whether anyone was there to receive it.
 	ask func(ToolCall) error
 
@@ -40,6 +69,8 @@ type bridge struct {
 type pendingTool struct {
 	turnID   string
 	call     llm.ToolCall
+	user     *ToolUser
+	approved bool
 	ctx      context.Context
 	answer   chan toolResult
 	resolved bool
@@ -51,20 +82,31 @@ type toolResult struct {
 	failure string
 }
 
-func newBridge(timeout time.Duration, ask func(ToolCall) error) *bridge {
+func newBridge(timeout time.Duration, tools []harness.Tool, ask func(ToolCall) error) *bridge {
 	if timeout <= 0 {
 		timeout = defaultToolTimeout
 	}
+	timeouts := map[string]time.Duration{}
+	for _, tool := range tools {
+		if tool.Timeout > 0 {
+			timeouts[tool.Name] = tool.Timeout
+		}
+	}
 	return &bridge{
-		timeout: timeout,
-		ask:     ask,
-		pending: map[string]pendingTool{},
+		timeout:  timeout,
+		timeouts: timeouts,
+		ask:      ask,
+		pending:  map[string]pendingTool{},
 	}
 }
 
 // Run carries one tool call out to the caller and waits for the answer.
 func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
-	deadline, cancel := context.WithTimeout(ctx, b.timeout)
+	timeout := b.timeout
+	if own, named := b.timeouts[call.Name]; named {
+		timeout = own
+	}
+	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	answer := make(chan toolResult, 1)
 
@@ -77,7 +119,12 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		b.mu.Unlock()
 		return nil, fmt.Errorf("session: %s was already asked for", call.ID)
 	}
-	b.pending[call.ID] = pendingTool{turnID: call.TurnID, call: call, ctx: deadline, answer: answer}
+	var user *ToolUser
+	if requester, ok := agent.RequesterFrom(ctx); ok {
+		user = &ToolUser{ID: requester.UserID, Name: requester.Name}
+	}
+	approved := agent.Approved(ctx)
+	b.pending[call.ID] = pendingTool{turnID: call.TurnID, call: call, user: user, approved: approved, ctx: deadline, answer: answer}
 	b.mu.Unlock()
 
 	defer func() {
@@ -86,7 +133,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		b.mu.Unlock()
 	}()
 
-	if err := b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments}); err != nil {
+	if err := b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments, User: user, Approved: approved}); err != nil {
 		return nil, err
 	}
 
@@ -101,7 +148,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("session: %s stopped: %w", call.Name, err)
 		}
-		return nil, fmt.Errorf("session: %s did not answer within %s: %w", call.Name, b.timeout, deadline.Err())
+		return nil, fmt.Errorf("session: %s did not answer within %s: %w", call.Name, timeout, deadline.Err())
 	}
 }
 
@@ -119,9 +166,41 @@ func (b *bridge) Pending() []ToolCall {
 			continue
 		}
 		call := pending.call
-		calls = append(calls, ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments})
+		calls = append(calls, ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments, User: pending.user, Approved: pending.approved})
 	}
 	return calls
+}
+
+// nameOf is the tool the call id asked for, when it is still waiting.
+func (b *bridge) nameOf(id string) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, waiting := b.pending[id]
+	return pending.call.Name, waiting
+}
+
+// waitsOn reports whether the call id still waits for its result on the turn.
+func (b *bridge) waitsOn(id, turnID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, waiting := b.pending[id]
+	return waiting && !pending.resolved && pending.ctx.Err() == nil && pending.turnID == turnID
+}
+
+// turnOf is the turn the call id was made on, when it is still waiting.
+func (b *bridge) turnOf(id string) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, waiting := b.pending[id]
+	return pending.turnID, waiting
+}
+
+// Waiting reports whether the call is still waiting for its result.
+func (b *bridge) Waiting(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, ok := b.pending[id]
+	return ok && !b.closed && !pending.resolved && pending.ctx.Err() == nil
 }
 
 // Resolve hands an answer back to the call waiting for it, reporting whether one was.

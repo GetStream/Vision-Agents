@@ -7,6 +7,7 @@ import { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbo
 import { createResponse, type AgentResponse } from "./responses.js";
 import type { Session } from "./session.js";
 import { Socket, number as numberOf, text, type Frame } from "./socket.js";
+import { Holds, socketLine, toolCallOf } from "./tool_line.js";
 import type { Tools } from "./tools.js";
 
 /** How many calls a worker takes at once when it does not say. */
@@ -44,7 +45,7 @@ export type MessageHandler = (message: InboundMessage) => void | Promise<void>;
 export interface HostOptions {
   /**
    * How long the router waits for one tool call to be answered before telling the model it
-   * failed. Not how long the worker runs. Left out, the router's default of two minutes.
+   * failed. Not how long the worker runs. Left out, the router's default of 30 seconds.
    */
   toolTimeoutMs?: number;
 }
@@ -91,6 +92,9 @@ export class Dispatch {
 
   private readonly reportEveryMs: number;
   private readonly running = new Set<Promise<void>>();
+  /** The hosted calls running, by session and id, which is what `tool_cancel` names. */
+  private readonly hostedCalls = new Map<string, AbortController>();
+  private readonly holds = new Holds();
   /**
    * The calls and messages alone, which is what the router counts against this worker's
    * capacity. A hosted tool call is not one of them: the router tracks those by the answer
@@ -264,6 +268,17 @@ export class Dispatch {
           case "tool_call":
             this.runHosted(message, stopping);
             break;
+          case "tool_held":
+            this.holds.answer(text(message, "id"), true);
+            break;
+          case "tool_cancel": {
+            const id = text(message, "id");
+            this.holds.answer(id, false);
+            if (!this.holds.held(id)) {
+              this.hostedCalls.get(hostedKey(message))?.abort();
+            }
+            break;
+          }
           case "hosting":
             // The router took the offer. Nothing changes here: the calls simply start.
             break;
@@ -389,20 +404,36 @@ export class Dispatch {
     const offer = this.hosted.find((one) =>
       one.tools.declared().some((tool) => tool.name === name),
     );
+    // id is tool_call_id under the name a router from before it reads.
     if (!offer) {
-      this.tell({ type: "tool_result", id, error: `this worker does not run ${name}` });
+      this.tell({ type: "tool_result", tool_call_id: id, id, error: `this worker does not run ${name}` });
       return;
     }
 
+    const key = hostedKey(frame);
+    const cancel = new AbortController();
+    this.hostedCalls.set(key, cancel);
+    const toolCallContext = toolCallOf(frame, "", socketLine((sent) => this.tell(sent), this.holds), signal);
     this.track(
       (async () => {
-        const result: Record<string, unknown> = { type: "tool_result", id };
+        const result: Record<string, unknown> = { type: "tool_result", tool_call_id: id, id };
         try {
-          result["output"] = await offer.tools.call(name, text(frame, "arguments"), signal);
+          result["output"] = await offer.tools.call(
+            name,
+            text(frame, "arguments"),
+            AbortSignal.any([signal, cancel.signal]),
+            toolCallContext,
+          );
         } catch (cause) {
           result["error"] = cause instanceof Error ? cause.message : String(cause);
+        } finally {
+          this.hostedCalls.delete(key);
+          this.holds.forget(id);
         }
-        this.tell(result);
+        // A call the router cancelled has no answer to give: the router gave up on it.
+        if (!cancel.signal.aborted) {
+          this.tell(result);
+        }
       })(),
     );
   }
@@ -466,4 +497,9 @@ export class Dispatch {
   private async drain(): Promise<void> {
     await Promise.all([...this.running]);
   }
+}
+
+/** A hosted call's id within its session: two sessions' models can pick the same one. */
+function hostedKey(frame: Frame): string {
+  return `${text(frame, "session_id")}/${text(frame, "id")}`;
 }

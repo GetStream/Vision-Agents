@@ -57,6 +57,8 @@ final readonly class SyncAgentRequest
         // Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
+        // How a conversation is handed back to the model when a session carries it on. A setting left out keeps what...
+        public ?ResumeHistory $resumeHistory = null,
         public AgentRole|string|null $role = null,
         public Sandbox|string|null $sandbox = null,
         public ?SandboxOptions $sandboxOptions = null,
@@ -110,6 +112,7 @@ final readonly class SyncAgentRequest
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
+            resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
             role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             sandboxOptions: array_key_exists('sandbox_options', $data) && $data['sandbox_options'] !== null ? SandboxOptions::fromArray(Json::object($data, 'sandbox_options')) : null,
@@ -191,6 +194,9 @@ final readonly class SyncAgentRequest
         }
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
+        }
+        if ($this->resumeHistory !== null) {
+            $out['resume_history'] = $this->resumeHistory->toArray();
         }
         if ($this->role !== null) {
             $out['role'] = Json::enumValue($this->role);

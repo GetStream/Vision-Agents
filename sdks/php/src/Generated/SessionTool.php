@@ -23,9 +23,13 @@ final readonly class SessionTool
         public ?string $displayTitle = null,
         // Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awa...
         public ?string $executor = null,
+        // Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel f...
+        public ?bool $interruptible = null,
         // A JSON Schema object describing the arguments.
         /** @var array<string, mixed>|null */
         public ?array $parameters = null,
+        // How long one call may take before the model is told it failed and tool_cancel is sent, in place of the sess...
+        public ?int $timeoutMs = null,
     ) {
     }
 
@@ -40,7 +44,9 @@ final readonly class SessionTool
             approval: array_key_exists('approval', $data) && $data['approval'] !== null ? SessionToolApproval::fromArray(Json::object($data, 'approval')) : null,
             displayTitle: array_key_exists('display_title', $data) && $data['display_title'] !== null ? Json::string($data, 'display_title') : null,
             executor: array_key_exists('executor', $data) && $data['executor'] !== null ? Json::string($data, 'executor') : null,
+            interruptible: array_key_exists('interruptible', $data) && $data['interruptible'] !== null ? Json::bool($data, 'interruptible') : null,
             parameters: array_key_exists('parameters', $data) && $data['parameters'] !== null ? Json::object($data, 'parameters') : null,
+            timeoutMs: array_key_exists('timeout_ms', $data) && $data['timeout_ms'] !== null ? Json::int($data, 'timeout_ms') : null,
         );
     }
 
@@ -63,8 +69,14 @@ final readonly class SessionTool
         if ($this->executor !== null) {
             $out['executor'] = $this->executor;
         }
+        if ($this->interruptible !== null) {
+            $out['interruptible'] = $this->interruptible;
+        }
         if ($this->parameters !== null) {
             $out['parameters'] = Json::objectValue($this->parameters);
+        }
+        if ($this->timeoutMs !== null) {
+            $out['timeout_ms'] = $this->timeoutMs;
         }
         return $out;
     }

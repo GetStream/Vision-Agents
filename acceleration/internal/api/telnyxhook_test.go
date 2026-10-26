@@ -230,12 +230,31 @@ func (s *TelnyxHookSuite) TestASignedCallCarryingCredentialsRecordsNoUserAndJoin
 	s.Empty(under)
 }
 
-// call is the form Telnyx posts when someone rings a number, as seen live on 2026-10-13.
 func (s *TelnyxHookSuite) call(to string) url.Values {
+	return telnyxRinger{&s.RouterSuite, s.private}.call(to)
+}
+
+func (s *TelnyxHookSuite) deliver(form url.Values, signed bool) (int, string, string) {
+	return telnyxRinger{&s.RouterSuite, s.private}.deliver(form, signed)
+}
+
+func (s *TelnyxHookSuite) attach(e164, uri, username, password string) {
+	telnyxRinger{&s.RouterSuite, s.private}.attach(e164, uri, username, password)
+}
+
+// telnyxRinger is Telnyx calling the suite's router about a number on its TeXML application,
+// signing what it posts with private.
+type telnyxRinger struct {
+	suite   *RouterSuite
+	private ed25519.PrivateKey
+}
+
+// call is the form Telnyx posts when someone rings a number, as seen live on 2026-10-13.
+func (l telnyxRinger) call(to string) url.Values {
 	return url.Values{
 		"AccountSid":       {"00000000-0000-4000-8000-000000000001"},
-		"CallSid":          {"v3:call-" + s.utils.uuid()},
-		"CallSessionId":    {s.utils.uuid()},
+		"CallSid":          {"v3:call-" + l.suite.utils.uuid()},
+		"CallSessionId":    {l.suite.utils.uuid()},
 		"CallStatus":       {"in-progress"},
 		"CallerId":         {"+15550001111"},
 		"CallingPartyType": {"pstn"},
@@ -247,29 +266,30 @@ func (s *TelnyxHookSuite) call(to string) url.Values {
 }
 
 // deliver posts the form as Telnyx does, signed or not, and answers with what came back.
-func (s *TelnyxHookSuite) deliver(form url.Values, signed bool) (int, string, string) {
+func (l telnyxRinger) deliver(form url.Values, signed bool) (int, string, string) {
 	body := form.Encode()
-	request, err := http.NewRequest(http.MethodPost, s.server.URL+"/v1/phone/hooks/telnyx", strings.NewReader(body))
-	s.Require().NoError(err)
+	request, err := http.NewRequest(http.MethodPost, l.suite.server.URL+"/v1/phone/hooks/telnyx", strings.NewReader(body))
+	l.suite.Require().NoError(err)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if signed {
 		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-		signature := ed25519.Sign(s.private, []byte(timestamp+"|"+body))
+		signature := ed25519.Sign(l.private, []byte(timestamp+"|"+body))
 		request.Header.Set("Telnyx-Timestamp", timestamp)
 		request.Header.Set("Telnyx-Signature-Ed25519", base64.StdEncoding.EncodeToString(signature))
 	}
 	response, err := http.DefaultClient.Do(request)
-	s.Require().NoError(err)
+	l.suite.Require().NoError(err)
 	defer response.Body.Close()
 	answered, err := io.ReadAll(response.Body)
-	s.Require().NoError(err)
+	l.suite.Require().NoError(err)
 	return response.StatusCode, response.Header.Get("Content-Type"), string(answered)
 }
 
 // attach holds the number at Telnyx for the suite's app and attaches it as the phone
 // service does, its trunk password sealed under the service's key. An empty uri is a
 // number attached before trunks were kept.
-func (s *TelnyxHookSuite) attach(e164, uri, username, password string) {
+func (l telnyxRinger) attach(e164, uri, username, password string) {
+	s := l.suite
 	ctx := context.Background()
 	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
 		E164: e164, Vendor: "telnyx", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),

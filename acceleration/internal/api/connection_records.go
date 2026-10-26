@@ -211,8 +211,10 @@ func (s *Server) registerConnectionRecords(api huma.API) {
 		Description: "For offboarding and erasure requests: deletes every connection the user " +
 			"owns, live or deleted before, for good, with its credentials, its pending consents " +
 			"and its tool call log, so the user's id and their provider accounts' ids are gone. " +
-			"The next session for the user attaches none of them. The provider is not asked to " +
-			"revoke what it issued. The audit keeps one grant_revoked row for each connection " +
+			"The next session for the user attaches none of them. Where the connector's manifest " +
+			"says revoke_on_delete (Nessy), the provider is asked to revoke each grant once the " +
+			"connections are gone, and a refusal is logged; for every other connector it is not " +
+			"asked. The audit keeps one grant_revoked row for each connection " +
 			"that still held a grant, naming neither the user nor the account, and the audit " +
 			"rows of those connections lose their request, session and attempt ids. A user with " +
 			"no connections is not an error.\n\n" +
@@ -321,7 +323,8 @@ func auditCredential(c *store.ConnectorAuditCredential) *ConnectorAuditCredentia
 }
 
 // deleteUserConnections hard deletes every connection of one user of the caller's app, drops
-// their outbound clients and audits each grant it revoked.
+// their outbound clients, audits each grant it revoked and revokes at the provider those whose
+// manifest opts in.
 func (s *Server) deleteUserConnections(ctx context.Context, request *deleteUserConnectionsRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -330,6 +333,13 @@ func (s *Server) deleteUserConnections(ctx context.Context, request *deleteUserC
 	if s.store == nil {
 		return nil, errNoConnections
 	}
+	// The grants the delete drops are revoked after it, for a manifest that opts in; their
+	// tokens are read before it, since the delete removes them.
+	granted, err := s.store.GrantedConnectorConnectionsOfUser(ctx, customerID, request.UserID)
+	if err != nil {
+		return nil, err
+	}
+	held := s.revocableGrants(ctx, granted)
 	deleted, err := s.store.DeleteUserConnectorConnections(ctx, customerID, request.UserID)
 	if err != nil {
 		return nil, err
@@ -346,5 +356,6 @@ func (s *Server) deleteUserConnections(ctx context.Context, request *deleteUserC
 				store.AuditGrantRevoked, store.AuditReasonUserDeleted, 0, "", core.CredentialChange{})
 		}
 	}
+	s.revokeGrants(ctx, granted, held, "user_delete")
 	return nil, nil
 }

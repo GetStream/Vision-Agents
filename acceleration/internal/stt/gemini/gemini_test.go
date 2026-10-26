@@ -67,6 +67,10 @@ func transcripts(events []stt.Event) []stt.Transcript {
 	return found
 }
 
+func (s *GeminiSuite) TestTranscribeLiveIsBilledTheAudioItIsSent() {
+	s.Equal(stt.MeteredByRouter, stt.MeteringOf(s.newSTT()))
+}
+
 func (s *GeminiSuite) TestNewRequiresAPIKey() {
 	s.T().Setenv("GOOGLE_API_KEY", "")
 

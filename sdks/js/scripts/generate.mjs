@@ -14,6 +14,9 @@
  * WebSockets are not generated either, because OpenAPI stops at the upgrade. The session,
  * dispatch and modality sockets are hand-written in `src/socket.ts` and its callers.
  *
+ * Operations tagged Staff are left out (`scripts/redocly.yaml`): they are Stream's own, and
+ * no customer's app can call them.
+ *
  * The output is committed, so installing the package needs no code generation.
  *
  *     npm run types
@@ -28,6 +31,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pkg = join(here, "..");
 const spec = join(pkg, "..", "..", "acceleration", "api", "openapi.yaml");
 const output = join(pkg, "src", "generated", "api.ts");
+const redocly = join(here, "redocly.yaml");
 
 const header = `/**
  * Generated from acceleration/api/openapi.yaml. Do not edit.
@@ -45,6 +49,8 @@ const generated =
       "--no-install",
       "openapi-typescript",
       spec,
+      "--redocly",
+      redocly,
       "--export-type",
       "--immutable",
       "--alphabetize",
@@ -54,7 +60,8 @@ const generated =
       "--default-non-nullable",
       "false",
     ],
-    { cwd: pkg, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+    // The types outgrew execFileSync's 1 MiB default buffer.
+    { cwd: pkg, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 * 1024 * 1024 },
   );
 
 const shown = relative(join(pkg, "..", ".."), output);

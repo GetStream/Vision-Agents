@@ -163,7 +163,7 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 		return nil, err
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, refusedRequest(err)
 	}
 	return &forkSessionResponse{Body: sessionOf(ctx, created)}, nil
 }
@@ -424,8 +424,7 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 	if s.store == nil {
 		return session.Found{}, errUnknownSession
 	}
-
-	row, err := s.store.StoredSession(ctx, owner.CustomerID, id)
+	row, err := s.storedSession(ctx, owner.CustomerID, id)
 	if err != nil {
 		return session.Found{}, errUnknownSession
 	}
@@ -437,6 +436,21 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 		return session.Found{}, errUnknownSession
 	}
 	return session.Found{Stored: &row}, nil
+}
+
+// storedSession reads a session's row. The row is written behind the conversation, and stopping
+// takes a session out of the live set at once, so one stopped a moment ago may not have a row
+// yet: on a miss it waits for the writer and reads again. A row already there is answered at
+// once, so a stalled writer holds up only a read that missed.
+func (s *Server) storedSession(ctx context.Context, customerID, id string) (store.AgentSession, error) {
+	row, err := s.store.StoredSession(ctx, customerID, id)
+	if err == nil || s.sessions == nil {
+		return row, err
+	}
+	if flushErr := s.sessions.FlushRecords(ctx); flushErr != nil {
+		return store.AgentSession{}, flushErr
+	}
+	return s.store.StoredSession(ctx, customerID, id)
 }
 
 // reopenSettleGap is how long a reopened conversation's agent stays quiet, with nothing left
@@ -487,7 +501,7 @@ func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Sessi
 		return nil, nil, err
 	}
 	if err != nil {
-		return nil, nil, invalidRequest(err.Error())
+		return nil, nil, refusedRequest(err)
 	}
 	events, detach := reopened.Watch()
 	return reopened, func() { go holdUntilAnswered(reopened, events, detach) }, nil
@@ -521,12 +535,21 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	spec.Title, spec.Description, spec.Project = row.Title, row.Description, row.Project
 	spec.Custom = row.Custom
 	spec.ModelOverwrites = row.ModelOverwrites
+	if row.ResumeHistory != (store.ResumeHistory{}) {
+		spec.ResumeHistory = row.ResumeHistory
+	}
 	spec.ForkedFrom = row.ForkedFrom
 	// The caller's connections go on with the chat; the session checks each against the
 	// config as it is now and the caller asking, as it did when the chat opened.
 	spec.ConnectorSelections = selectionsOf(*row)
 	// And so do their consents, back to the page the chat was opened with.
 	spec.ReturnURL = row.ReturnURL
+	// Its usage stays under the key and categories it was opened with. The user is the one
+	// asking, who is the row's own; the organization and its tier are as they are now.
+	if row.APIKey != "" {
+		spec.Attribution = routing.AttributionFrom(ctx)
+		spec.Attribution.APIKey, spec.Attribution.UsageCategories = row.APIKey, row.UsageCategories
+	}
 	// The row keeps the call voice was last on, which voice goes back to once started.
 	return spec.Holding(session.Call{Type: row.CallType, ID: row.CallID}), nil
 }
@@ -625,6 +648,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if request.Custom != nil {
 		spec.Custom = *request.Custom
 	}
+	spec.ResumeHistory = resumeHistoryOr(spec.ResumeHistory, request.ResumeHistory)
 	if request.ModelOverwrites != nil {
 		spec.ModelOverwrites = modelOverwritesOf(*request.ModelOverwrites)
 	}
@@ -693,7 +717,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 	if request.Tools != nil {
 		for _, tool := range *request.Tools {
-			declared := harness.Tool{Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle)}
+			declared := harness.Tool{
+				Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle),
+				Interruptible: value(tool.Interruptible), Timeout: time.Duration(value(tool.TimeoutMs)) * time.Millisecond,
+			}
 			if tool.Parameters != nil {
 				declared.Parameters = *tool.Parameters
 			}

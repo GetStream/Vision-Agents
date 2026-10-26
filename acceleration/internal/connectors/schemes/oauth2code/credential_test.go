@@ -895,6 +895,58 @@ func (s *OAuth2CodeSuite) TestARefusedRevocationIsAnOutcomeError() {
 	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)), "nothing was revoked")
 }
 
+// TestARevokeRefusedWithTheTokenAsItsErrorQuotesNoSecret is AI-1649's Done when: a revoke
+// endpoint answering 400 {"error":"<refresh token> <client secret>"} leaves both out of the
+// error a caller logs, as the description is kept.
+func (s *OAuth2CodeSuite) TestARevokeRefusedWithTheTokenAsItsErrorQuotesNoSecret() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	resolved.Endpoints["revoke"] = srv.URL + fakeprovider.PathRevoke
+	scheme, stored := s.connected(srv, resolved, nil)
+	srv.Use(fakeprovider.EchoedErrorCode)
+
+	err := scheme.Revoke(s.ctx, stored, resolved)
+
+	s.Require().Error(err)
+	s.NotContains(err.Error(), s.refreshToken(stored))
+	s.NotContains(err.Error(), srv.ClientSecret)
+	s.Contains(err.Error(), "HTTP 400: [redacted] [redacted]")
+}
+
+// A refresh refused the same way names neither in its error nor in the outcome's code, which
+// the resolver logs.
+func (s *OAuth2CodeSuite) TestARefreshRefusedWithTheTokenAsItsErrorQuotesNoSecret() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	srv.Use(fakeprovider.EchoedErrorCode)
+
+	s.now = s.now.Add(fakeprovider.AccessTTL)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
+
+	s.Require().Error(err)
+	s.Equal("[redacted] [redacted]", s.outcome(err).Code)
+	s.NotContains(err.Error(), s.refreshToken(stored))
+	s.NotContains(err.Error(), srv.ClientSecret)
+}
+
+// A code exchange refused the same way names neither the code nor the client secret.
+func (s *OAuth2CodeSuite) TestAnExchangeRefusedWithTheCodeAsItsErrorQuotesNoSecret() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv), Now: s.clock})
+	out, callback := s.consent(srv, scheme, resolved)
+	srv.Use(fakeprovider.EchoedErrorCode)
+
+	_, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: callback})
+
+	s.Require().Error(err)
+	s.Require().NotEmpty(callback.Get("code"))
+	s.NotContains(err.Error(), callback.Get("code"))
+	s.NotContains(err.Error(), srv.ClientSecret)
+	s.Contains(err.Error(), "HTTP 400: [redacted] [redacted] [redacted]", "the code, the verifier and the secret")
+}
+
 // preregistered is the Slack fixture pointed at the fake, with the fake's preregistered
 // client as the operator's (client_secret_basic), space-separated scopes and no refresh
 // policy of its own, so each test sets the one field it is about.

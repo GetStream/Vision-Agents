@@ -8,7 +8,8 @@ namespace GetStream\VisionAgents\Generated;
 
 /**
  * Which client made it, from the X-Stream-Client header. api is a caller that named no client:
- * it reached the API directly, which is all that can be said about it.
+ * it reached the API directly, which is all that can be said about it. manage is the
+ * management API, called with the manage key, which no header can claim.
  */
 enum AuditSource: string
 {
@@ -16,4 +17,5 @@ enum AuditSource: string
     case Cli = 'cli';
     case Sdk = 'sdk';
     case Api = 'api';
+    case Manage = 'manage';
 }

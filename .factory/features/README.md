@@ -26,6 +26,7 @@ edits them.
 | [Direct and acceleration first](architectures.md) | sprints 8, 14     | Both shapes work; only Go can host tools |
 | [Transfer and IVR navigation](transfer.md)     | sprint 7             | Built on tool calling; DTMF at Telnyx only |
 | [Campaigns](campaigns.md)                      | sprint 9             | Built; no page in the dashboard         |
+| [Shared trunks](shared-trunks.md)              | after sprint 17      | Built for Twilio, Telnyx and SIP trunks; five vendors still dial a trunk per call |
 | [Scheduled tasks](scheduled-tasks.md)          | after sprint 17      | Built; delivered to the conversation, SMS, WhatsApp, iMessage or a phone call, with quiet hours |
 | [Simulate and test](simulations.md)            | sprint 16            | Built for text and audio; nothing schedules one |
 | [The harness](harness.md)                      | sprints 5, 6         | Built with cache-aware compaction        |
@@ -39,6 +40,7 @@ edits them.
 | [The app config store](app_store.md)           | after sprint 17      | Built; traced and measured, no exporter configured |
 | [The audit log](audit_log.md)                  | after sprint 17      | Built for every config resource; only agents write to it |
 | [Hosting](hosting.md)                          | sprints 9, 17        | Built in the chat repository; not deployed |
+| [Tool call improvements](tool_call_improvements.md) | after sprint 17 | Not started                            |
 
 Everything lives in [acceleration/](../../acceleration), a Go module beside the Python
 framework, apart from the two SDKs in [sdks/go/](../../sdks/go) and

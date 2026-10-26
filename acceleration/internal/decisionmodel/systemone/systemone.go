@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -201,7 +202,21 @@ type wireResponse struct {
 	Usage   struct {
 		InputTokens  int64 `json:"input_tokens"`
 		OutputTokens int64 `json:"output_tokens"`
+		// Cost is what OpenRouter charged for the request, in dollars. The other vendors send
+		// none. It is kept raw because it only checks the price list: a cost in a shape it
+		// cannot read must not lose the answers.
+		Cost json.RawMessage `json:"cost"`
 	} `json:"usage"`
+}
+
+// vendorCostMicros is a cost in dollars as millionths, rounded half up. A cost that is not a
+// number is none.
+func vendorCostMicros(raw json.RawMessage) int64 {
+	var dollars float64
+	if err := json.Unmarshal(raw, &dollars); err != nil || dollars <= 0 {
+		return 0
+	}
+	return int64(math.Floor(dollars*1e6 + 0.5))
 }
 
 // Classify puts every question to the model at once and hands back the answers.
@@ -263,8 +278,9 @@ func (c *Client) Classify(
 		Model:   decoded.Model,
 		Answers: make(map[string]decisionmodel.Answer, len(asked.Questions)),
 		Usage: decisionmodel.Usage{
-			InputTokens:  decoded.Usage.InputTokens,
-			OutputTokens: decoded.Usage.OutputTokens,
+			InputTokens:      decoded.Usage.InputTokens,
+			OutputTokens:     decoded.Usage.OutputTokens,
+			VendorCostMicros: vendorCostMicros(decoded.Usage.Cost),
 		},
 	}
 	for id := range asked.Questions {

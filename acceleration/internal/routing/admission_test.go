@@ -13,7 +13,7 @@ import (
 // admitting is a customer's policies, decided in advance.
 type admitting Admission
 
-func (a admitting) Admit(context.Context, string) (Admission, error) { return Admission(a), nil }
+func (a admitting) Admit(context.Context, Owner) (Admission, error) { return Admission(a), nil }
 
 // newRouterAdmitting returns a router whose customers are held to the admission. Every
 // provider starts unless failing names its model.
@@ -90,6 +90,82 @@ func (s *RoutingSuite) TestAnAllowlistDoesNotFailOverToAModelOffIt() {
 
 	s.ErrorContains(err, "quick/en: upstream is down")
 	s.NotContains(err.Error(), "lush/multi:")
+}
+
+// errNoMoney stands in for the policies' refusal of money: what routing does with one does not
+// depend on which.
+var errNoMoney = errors.New("no credit left")
+
+// withALocalModel is the suite's config with a model the deployment runs itself and has no
+// price for, which costs nothing.
+func (s *RoutingSuite) withALocalModel() ModalityConfig {
+	config := s.config()
+	config.Providers = append(config.Providers, ProviderConfig{
+		Provider: "quick", Model: "local-en", Languages: []string{"en"}, Realtime: true, Tier: LowLatency, Local: true,
+	})
+	return config
+}
+
+func (s *RoutingSuite) newRouterSpending(admission Admission, config ModalityConfig) *Router[*stubProvider] {
+	registry := NewRegistry[*stubProvider]()
+	for _, provider := range []string{"quick", "lush", "batchy"} {
+		registry.Register(provider, func(spec Spec) (*stubProvider, error) { return &stubProvider{model: spec.Model}, nil })
+	}
+	router, err := New(Options[*stubProvider]{
+		Modality: LLM, Config: config, Registry: registry, Gate: admitting(admission),
+		Logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
+func (s *RoutingSuite) TestASpendRefusalRoutesOnlyToFreeModels() {
+	router := s.newRouterSpending(Admission{Spend: errNoMoney}, s.withALocalModel())
+
+	for _, request := range []Request{
+		{Target: "en-low-latency"},
+		{Providers: []string{"quick/en", "quick/local-en"}},
+	} {
+		request.CustomerID = "acme"
+		_, config, err := router.Select(s.ctx, request)
+		s.Require().NoError(err)
+		s.Equal("quick/local-en", config.Name())
+	}
+}
+
+func (s *RoutingSuite) TestASpendRefusalWithNoFreeCandidateIsRefused() {
+	router := s.newRouterSpending(Admission{Spend: errNoMoney}, s.withALocalModel())
+
+	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/en"})
+
+	s.ErrorIs(err, errNoMoney, "the refusal is the policies' own, so it is answered as one")
+}
+
+func (s *RoutingSuite) TestNoSpendRefusalRoutesAsBefore() {
+	router := s.newRouterSpending(Admission{}, s.withALocalModel())
+
+	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "quick/local-en"}})
+
+	s.Require().NoError(err)
+	s.Equal("quick/en", config.Name(), "a model that costs money is first when the customer may spend it")
+}
+
+func (s *RoutingSuite) TestASpendRefusalIsToldOnlyWhenAPayingCustomerWouldBeServed() {
+	router := s.newRouterSpending(Admission{Spend: errNoMoney, Models: []string{"quick/en"}}, s.withALocalModel())
+
+	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/local-en"})
+
+	s.ErrorIs(err, ErrModelNotAllowed, "a model off the allowlist is refused for that, whatever it costs")
+	s.NotErrorIs(err, errNoMoney)
+}
+
+func (s *RoutingSuite) TestACustomersOwnModelCostsNothing() {
+	router := s.newRouterSpending(Admission{Spend: errNoMoney}, s.withALocalModel())
+
+	s.False(router.Recorder().Billable(ProviderConfig{Provider: CustomProvider, Model: "prod"}),
+		"the customer pays the host of its own model")
+	s.True(router.Recorder().Billable(ProviderConfig{Provider: "quick", Model: "en"}), "a model with no price is billable")
 }
 
 func (s *RoutingSuite) TestAProviderIsBuiltForThePolicyFloorAsWellAsTheRequestsOwnPolicy() {

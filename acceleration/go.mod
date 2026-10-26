@@ -26,6 +26,7 @@ require (
 	github.com/knadh/koanf/providers/rawbytes v1.0.1
 	github.com/knadh/koanf/v2 v2.3.7
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	github.com/nyaruka/phonenumbers v1.8.1
 	github.com/openai/openai-go/v3 v3.51.0
 	github.com/pion/rtp v1.10.5
 	github.com/pion/sdp/v3 v3.0.20

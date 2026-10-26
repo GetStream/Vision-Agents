@@ -131,9 +131,11 @@ func (s *CallRecordingSuite) TestEachCallIsCountedAndTimedUnderItsOperation() {
 
 	_, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "anything"})
 	s.Require().NoError(err)
-	s.Require().NoError(s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved"}}))
+	_, err = s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved"}})
+	s.Require().NoError(err)
 	s.platform.replies = []string{`{"results":[{"id":"m1"}]}`, `{"message":"ok"}`, `{"results":[]}`}
-	s.Require().NoError(s.store.ForgetRun(s.ctx, "router", "session-1"))
+	_, err = s.store.ForgetRun(s.ctx, "router", "session-1")
+	s.Require().NoError(err)
 
 	want := map[string]float64{opSearch: 1, opAdd: 1, opList: 2, opDelete: 1}
 	for op, calls := range want {
@@ -149,11 +151,13 @@ func (s *CallRecordingSuite) TestOnlyADeletionWithNothingToDeleteCountsAnEmptyLi
 	_, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "anything"})
 	s.Require().NoError(err)
 	s.platform.replies = []string{`{"results":[{"id":"m1"}]}`, `{"message":"ok"}`, `{"results":[]}`}
-	s.Require().NoError(s.store.ForgetRun(s.ctx, "router", "session-1"))
+	_, err = s.store.ForgetRun(s.ctx, "router", "session-1")
+	s.Require().NoError(err)
 	s.Equal(0.0, testutil.ToFloat64(emptyLists)-empty,
 		"a deletion that found m1 ends on an empty page without counting it; an empty search is not a list")
 
-	s.Require().NoError(s.store.Truncate(s.ctx, "router", "acme"))
+	_, err = s.store.Truncate(s.ctx, "router", "acme")
+	s.Require().NoError(err)
 	s.Equal(1.0, testutil.ToFloat64(emptyLists)-empty, "a deletion whose first list is empty is counted once")
 }
 
@@ -225,9 +229,12 @@ func (s *CallRecordingSuite) TestAnAnswerThatIsNotJSONIsCountedAsUndecodable() {
 }
 
 func (s *CallRecordingSuite) TestEachCallIsLoggedWithWhoseMemoriesItTouched() {
-	s.Require().NoError(s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved"}}))
-	s.Require().NoError(s.store.ForgetRun(s.ctx, "router", "session-2"))
-	s.Require().NoError(s.store.Truncate(s.ctx, "router", "acme"))
+	_, err := s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved"}})
+	s.Require().NoError(err)
+	_, err = s.store.ForgetRun(s.ctx, "router", "session-2")
+	s.Require().NoError(err)
+	_, err = s.store.Truncate(s.ctx, "router", "acme")
+	s.Require().NoError(err)
 
 	var lines []map[string]any
 	for _, line := range s.lines() {

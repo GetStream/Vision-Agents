@@ -15,6 +15,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
@@ -80,6 +82,7 @@ func (s *PluginMigrateSuite) TestADryRunListsEveryRowAndItsTargetAndWritesNothin
 	s.Contains(s.row(report, pluginmigrate.KindConnection, app).Target, pluginmigrate.MovedConnectionID(app))
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindConnection, mine).Action)
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, fixed+" plugins").Action)
+	s.Contains(s.row(report, pluginmigrate.KindBinding, fixed+" plugins").Note, "checked at apply")
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, personal+" plugins").Action)
 	s.Len(report.Rows, 5, "every row read is listed")
 	s.False(report.Applied)
@@ -463,6 +466,72 @@ func (s *PluginMigrateSuite) TestAMovedConfigStaysEditableWithItsPluginEntryKept
 	}
 }
 
+// TestABindingBesideNessyIsSkippedWithTheRulesMessage: a plugin entry beside nessy, stored
+// before the rule (no API save takes it now), is moved onto a binding that sends data out,
+// which the rule every save of a config checks (SensitiveBindingsComplaint) refuses: the row is
+// Skipped with the rule's message and the config keeps nessy alone. The base, 59153e02a, added
+// crm beside it. crm has no read-only endpoint, so its entry is not read-only.
+func (s *PluginMigrateSuite) TestABindingBesideNessyIsSkippedWithTheRulesMessage() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "migrate-" + s.utils.uuid(),
+		LLM: "connecting/connector-model", Plugins: []store.PluginEntry{{Name: movedPlugin}},
+		Connectors: []store.ConnectorBinding{{Name: "customers", ConnectorID: "nessy",
+			Connection: store.ConnectionBinding{Type: "session"}, Tools: []store.ToolGrant{{Name: "org_lookup"}}}}}
+	s.Require().NoError(s.configs.CreateAgentConfig(context.Background(), &config))
+	s.pluginClient(config.ID, s.provider.ClientID, s.provider.ClientSecret)
+	s.login(config.ID, "", s.provider.ClientID)
+
+	report := s.run(true)
+
+	row := s.row(report, pluginmigrate.KindBinding, config.ID+" plugins")
+	s.Equal(pluginmigrate.Skipped, row.Action)
+	s.Contains(row.Note, `connector binding "customers" binds "nessy"`)
+	s.Contains(row.Note, `connector binding "`+movedPlugin+`", plugin "`+movedPlugin+`" can send data out`)
+	stored := s.storedConfig(config.ID)
+	s.Require().Len(stored.Connectors, 1)
+	s.Equal("nessy", stored.Connectors[0].ConnectorID)
+}
+
+// TestABindingBesideNessyIsCheckedOnTheConnectionItsWriteHolds: the rule is asked under the
+// config's row lock and reads the definitions on that write's connection, so with one
+// connection in the pool while the binding is added, the run finishes and skips it. The base,
+// bb0ccea76, waited for a second connection until the run's deadline.
+func (s *PluginMigrateSuite) TestABindingBesideNessyIsCheckedOnTheConnectionItsWriteHolds() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "migrate-" + s.utils.uuid(),
+		LLM: "connecting/connector-model", Plugins: []store.PluginEntry{{Name: movedPlugin}},
+		Connectors: []store.ConnectorBinding{{Name: "customers", ConnectorID: "nessy",
+			Connection: store.ConnectionBinding{Type: "session"}, Tools: []store.ToolGrant{{Name: "org_lookup"}}}}}
+	s.Require().NoError(s.configs.CreateAgentConfig(context.Background(), &config))
+	s.pluginClient(config.ID, s.provider.ClientID, s.provider.ClientSecret)
+	s.login(config.ID, "", s.provider.ClientID)
+	opts := s.options(false)
+	opts.Configs = oneConnectionConfigs{s.configs, s.store.DB()}
+	// Thirty seconds is far more than a run over one app's rows takes on loopback, and ends a
+	// wait that never would.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	report, err := pluginmigrate.Run(ctx, opts, true)
+
+	s.Require().NoError(err)
+	row := s.row(report, pluginmigrate.KindBinding, config.ID+" plugins")
+	s.Equal(pluginmigrate.Skipped, row.Action)
+	s.Contains(row.Note, `connector binding "customers" binds "nessy"`)
+}
+
+// oneConnectionConfigs adds a binding through configs with one connection in db's pool.
+type oneConnectionConfigs struct {
+	configs pluginmigrate.Configs
+	db      *bun.DB
+}
+
+func (c oneConnectionConfigs) AddConnectorBinding(ctx context.Context, customerID, configID string, binding store.ConnectorBinding, allow store.ConfigCheck) (bool, error) {
+	c.db.SetMaxOpenConns(1)
+	defer c.db.SetMaxOpenConns(suiteConnections)
+	return c.configs.AddConnectorBinding(ctx, customerID, configID, binding, allow)
+}
+
 // TestAMovedGrantIsAuditedAndLoggedByItsTokens: the run records the grant it moved as the API
 // records one it created, a grant_created row saying plugin_migrate with the plugin row's
 // tokens by fingerprint, and logs the same line (AI-994 F43). A dry run and a second run add
@@ -657,6 +726,7 @@ func (s *PluginMigrateSuite) options(includeRotating bool) pluginmigrate.Options
 	s.Require().NoError(err)
 	return pluginmigrate.Options{
 		Customer: s.customerID(), IncludeRotating: includeRotating, Store: s.store, Configs: s.configs, Registry: s.connectors,
+		Complaint:   SensitiveBindingsComplaint,
 		Credentials: credentials, Transports: transports,
 		HTTP: s.provider.Client(), PublicEndpoint: loopbackOrPublic, Clients: s.clients,
 		PluginClients: session.PluginClients(s.store, s.sealer),

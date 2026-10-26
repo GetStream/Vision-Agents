@@ -143,6 +143,47 @@ The model asks for a tool over the session socket, this process runs it, and the
 goes back the same way. A tool that throws is reported to the model, because the model is
 mid-sentence waiting for it and can only say something useful if it is told.
 
+A tool can say how the backend treats its calls, and read the call it is running for:
+
+```ts
+agent.tools.register<{ flight_id: string }>({
+  name: "book_flight",
+  description: "Book a flight for the caller",
+  parameters: { type: "object", properties: { flight_id: { type: "string" } }, required: ["flight_id"] },
+  approval: { title: "Book flight {flight_id}?" },
+  timeoutMs: 20_000,
+  run: async ({ flight_id }, signal, toolCallContext) => {
+    toolCallContext.update("checking seats");
+    const writing = await toolCallContext.disallowInterruptions();
+    return bookings.book(flight_id, {
+      user: toolCallContext.user.id,
+      key: toolCallContext.id,
+      signal: writing,
+    });
+  },
+});
+```
+
+- `interruptible: true` lets the caller talking over the agent cancel a call in flight. By
+  default it keeps running and the model is told it is still going.
+- `timeoutMs` is how long one call may take, in place of the session's. A call that takes
+  longer is aborted and fails.
+- `approval` is asked before each call runs. In writing the call waits in `session.approvals`.
+  On a voice call the agent asks the caller out loud, with each `{name}` in the title filled in
+  from the call's arguments, and runs the call on a yes within 15 seconds, with
+  `toolCallContext.approved` set. A `{name}` that is not in `parameters` is refused when the
+  tool is registered.
+
+`toolCallContext` is the call being answered: its `id`, which a call sent again keeps, so it is
+the key to make a side effect happen once; `sessionId`, `turnId`, the `user` whose turn asked,
+and the `conversation`. `update(text)` says how the call is going: a voice agent tells the
+caller in its own words once nobody is talking. `say(text)` has it say `text` as written, which
+a speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call going from
+then on, for a write that must not stop halfway, and resolves with the signal to do it on, which
+only the timeout and the socket ending abort. When the call had already been stopped, that
+signal is already aborted with a `CallNotHeldError`. A call the router addresses to another
+watcher of the session (`run: false`) is left for whoever runs it.
+
 ## Agent dispatch
 
 A caller reached a Stream call over SIP, or somebody wrote in a channel, and the router
@@ -195,7 +236,9 @@ agent.tools.register({ name: "lookup", description: "Look up an order", run: loo
 dispatch.host(agent, { toolTimeoutMs: 60_000 });
 ```
 
-The router offers them to each session naming the agent and sends every call here. `run`
+The router offers them to each session naming the agent and sends every call here. A hosted
+tool takes the same `interruptible`, `timeoutMs` and `approval` (asked only on a voice
+call), is handed its `toolCallContext`, and is aborted when the router gives up on it. `run`
 works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
 refuses them.
 

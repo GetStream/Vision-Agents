@@ -3,9 +3,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // PhoneSuite covers the telephony surface of a deployment that declares every vendor and
@@ -101,6 +105,17 @@ func (s *PhoneSuite) TestACallCannotRingForLessThanNoTime() {
 	s.Contains(failure, "less than no time")
 }
 
+func (s *PhoneSuite) TestACallCannotNameTheNumberItRangUnder() {
+	// The call hook dispatches the agent of whoever holds the number a call names, so a
+	// customer naming somebody else's would hand their call to that customer's agent.
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "+15550001111", Custom: &map[string]string{"phone_number": "+15125550000"},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "phone_number")
+}
+
 func (s *PhoneSuite) TestACallToAShortCodeIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
 		From: "+15125551234", To: "911",
@@ -118,10 +133,63 @@ func (s *PhoneSuite) TestACallOrATransferToAPremiumRateNumberIsForbidden() {
 	s.Contains(failure, "premium-rate")
 
 	status, failure = s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
-		From: "+15125551234", To: "+19765550100", SessionId: "session-" + s.utils.uuid(),
+		From: "+15125551234", To: "+19765550100", SessionId: s.data.storedSession(),
 	})
 	s.Equal(http.StatusForbidden, status)
 	s.Contains(failure, "premium-rate")
+}
+
+// The session tests dial a premium-rate number, refused only once the session is let
+// through, so a 403 is a session that passed.
+
+func (s *PhoneSuite) TestACallMayBeRoutedIntoTheCallersOwnSession() {
+	own := s.serverClient.createSession(textSession(nil)).Id
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "+19005550100", SessionId: &own,
+	})
+
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "premium-rate")
+}
+
+func (s *PhoneSuite) TestACallMayNameTheSessionItIsAboutToStart() {
+	fresh := "session-" + s.utils.uuid()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "+19005550100", SessionId: &fresh,
+	})
+
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "premium-rate")
+}
+
+func (s *PhoneSuite) TestACallCannotBeRoutedIntoAnotherCustomersSession() {
+	theirs := s.data.backendOfAnotherApp().createSession(textSession(nil)).Id
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "+19005550100", SessionId: &theirs,
+	})
+
+	s.Equal(http.StatusConflict, status)
+}
+
+func (s *PhoneSuite) TestAHumanCannotBeTransferredIntoAnotherCustomersSession() {
+	theirs := s.data.backendOfAnotherApp().createSession(textSession(nil)).Id
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
+		From: "+15125551234", To: "+19765550100", SessionId: theirs,
+	})
+
+	s.Equal(http.StatusNotFound, status)
+}
+
+func (s *PhoneSuite) TestAHumanCannotBeTransferredIntoASessionThatNeverWas() {
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
+		From: "+15125551234", To: "+19765550100", SessionId: "session-" + s.utils.uuid(),
+	})
+
+	s.Equal(http.StatusNotFound, status)
 }
 
 func (s *PhoneSuite) TestTheAnswerPathIsReachedByAVendorThatHasNoCustomerToName() {
@@ -140,4 +208,23 @@ func (s *PhoneSuite) TestOnlyTheAppsOwnBackendMayBuyNumbers() {
 		status, _ := as.call(http.MethodGet, "/v1/phone/numbers", nil)
 		return status
 	})
+}
+
+func (s *PhoneSuite) TestANumberThatOnlyPlacedCallsIsNotListedAsAttached() {
+	s.useApp(s.data.createApp())
+	ctx := context.Background()
+	number := s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: number, Vendor: "telnyx", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	group := store.TrunkGroup{CustomerID: s.customerID(), Vendor: "telnyx"}
+	s.Require().NoError(s.store.InTrunkGroup(ctx, group, func(_ context.Context, tx *store.TrunkGroupTx) error {
+		return tx.SetLine(number, "trunk-"+s.utils.uuid(), "route-"+s.utils.uuid(), store.NumberBridge{})
+	}))
+
+	var numbers []PhoneNumber
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/phone/numbers", nil, &numbers))
+
+	s.Require().Len(numbers, 1)
+	s.Nil(numbers[0].StreamTrunkId, "its callers reach no agent")
 }

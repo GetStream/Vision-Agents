@@ -50,6 +50,7 @@ func DefaultRegistry() *Registry {
 			Voice:            spec.Voice,
 			Instructions:     spec.STS.Instructions,
 			Tools:            spec.Tools,
+			NonBlocking:      gemini.TakesNonBlocking(spec.Model),
 			SilenceMs:        spec.STS.SilenceMs,
 			PrefixPaddingMs:  spec.STS.PrefixPaddingMs,
 			StartSensitivity: settings.StartSensitivity,

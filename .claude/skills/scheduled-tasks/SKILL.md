@@ -51,8 +51,9 @@ The tools also need (`Manager.schedulingRunner`, `internal/session/schedule_tool
 A task made in an SMS or WhatsApp thread comes back in that thread: the router opens the
 thread's conversation, the agent answers the task there, and the reply is texted to the
 person from the line. Its run says `delivered_to` `sms` or `whatsapp` once the line took the
-reply; a reply the line refused is `delivery_failed`, and the retry sends the same reply
-without a second turn (`internal/api/scheduled_thread_delivery.go`). Such a task's
+reply; a reply the line refused is `delivery_failed`, and the retry sends the same reply,
+files included, without a second turn; a thread removed while the turn ran is `thread_gone`,
+final (`internal/api/scheduled_thread_delivery.go`). Such a task's
 `deliver_to` reads `sms` or `whatsapp` and cannot be changed.
 
 The REST create does not need `scheduling.enabled` (`internal/api/scheduled_tasks.go:752`).
@@ -187,7 +188,7 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `outside_window` | A WhatsApp thread task whose person last wrote over 24 h ago, with no template to send after the window | no |
 | `thread_gone` | A thread task's thread no longer exists, or is not its user's thread of its customer | no |
 | `connection_removed` | A thread task's line (its connection) was removed | no |
-| `no_reply` | The agent said nothing to carry | yes |
+| `no_reply` | The agent said nothing and made no file to carry | yes |
 | `reply_failed` | The reply was cancelled, interrupted or failed | yes |
 | `no_phone_number` | The user never texted this agent, so there is no number to ring | yes |
 | `no_agent_number` | The config has no SMS or WhatsApp line to ring from | yes |

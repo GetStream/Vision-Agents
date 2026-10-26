@@ -401,6 +401,11 @@ func sign(id string, at time.Time, body []byte, secrets ...string) (string, erro
 	return strings.Join(signatures, " "), nil
 }
 
+// Wake tells the worker that something outside Forward queued deliveries, such as the
+// policies' warning that an organization's credit is running out, so it sends them now rather
+// than at its next look.
+func (f *Forwarder) Wake() { f.wake() }
+
 // wake tells the worker there may be something to send, without waiting.
 func (f *Forwarder) wake() {
 	select {

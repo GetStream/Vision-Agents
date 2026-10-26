@@ -162,6 +162,20 @@ func (r Retention) Window() (time.Duration, bool) {
 	return window, true
 }
 
+// Shorter is whichever of two retentions keeps something for less time. Empty is no
+// opinion, and one that says nothing gives way to one that does.
+func (r Retention) Shorter(other Retention) Retention {
+	if other == "" {
+		return r
+	}
+	mine, ok := r.Window()
+	theirs, known := other.Window()
+	if !ok || (known && theirs < mine) {
+		return other
+	}
+	return r
+}
+
 // Valid reports whether this is a retention anything can be concluded from.
 func (r Retention) Valid() bool {
 	if r == "" || r == RetentionUnspecified || r == RetentionUnknown {
@@ -203,14 +217,7 @@ func (p DataPolicy) Stricter(other DataPolicy) DataPolicy {
 	if other.AllowTraining != nil && (merged.AllowTraining == nil || !*other.AllowTraining) {
 		merged.AllowTraining = other.AllowTraining
 	}
-	if other.Retention == "" {
-		return merged
-	}
-	mine, ok := merged.Retention.Window()
-	theirs, known := other.Retention.Window()
-	if !ok || (known && theirs < mine) {
-		merged.Retention = other.Retention
-	}
+	merged.Retention = merged.Retention.Shorter(other.Retention)
 	return merged
 }
 

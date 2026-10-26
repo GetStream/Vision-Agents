@@ -112,7 +112,7 @@ func (r *callRecorder) run() {
 
 // row is what a session looks like to somebody reading it back later.
 func row(created *Session) store.Call {
-	spec := created.spec
+	spec := created.Spec()
 	call := store.Call{
 		ID:          created.id,
 		CustomerID:  spec.CustomerID,

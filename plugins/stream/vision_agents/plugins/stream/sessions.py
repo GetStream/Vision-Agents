@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Optional, Union
 
-from vision_agents.core.llm.function_registry import FunctionRegistry
+from vision_agents.core.llm.function_registry import FunctionRegistry, ToolPolicy
 
 from ._backend import API_KEY_ENV, API_SECRET_ENV, Backend
 from ._generated.api.default import (
@@ -37,6 +37,7 @@ from ._generated.models import (
     SessionPhone,
     SessionQuery,
     SessionTool,
+    SessionToolApproval,
     SessionToolParameters,
     TextMatch,
     UpdateSessionRequest,
@@ -45,6 +46,7 @@ from ._generated.models import (
     UpdateSessionRequestVerbosity,
 )
 from ._socket import Socket
+from ._tool_line import Holds, SocketLine, call_of, cancel, run_call
 from .responses import Responses, _deleted, _unwrapped
 
 logger = logging.getLogger(__name__)
@@ -474,6 +476,7 @@ class Session:
         self._socket = socket
         self._events: asyncio.Queue[Optional[SessionEvent]] = asyncio.Queue()
         self._running: dict[str, asyncio.Task] = {}
+        self._holds = Holds()
         self._reader = asyncio.create_task(self._watch())
         self._ended = False
 
@@ -739,11 +742,19 @@ class Session:
         call_id = str(frame.get("id", ""))
 
         if kind == "tool_cancel":
-            running = self._running.get(call_id)
-            if running is not None:
-                running.cancel()
+            cancel(call_id, self._holds, self._running.get(call_id))
             return
+        if kind == "tool_held":
+            self._holds.answer(call_id, True)
         if kind == "tool_call":
+            # Every watcher is sent every call, and the router says which are to run it. One
+            # from before it said holds the same rule: answering a tool held elsewhere would
+            # beat whoever runs it, with an error.
+            if (
+                frame.get("run") is False
+                or str(frame.get("name", "")) not in self._functions.functions
+            ):
+                return
             if len(self._running) >= RUNNING_TOOLS:
                 await self._command(
                     {
@@ -776,9 +787,14 @@ class Session:
         for key in ("request_id", "turn_id"):
             if frame.get(key):
                 result[key] = frame[key]
+        tool_call_context = call_of(
+            frame, self.id, SocketLine(self._command, self._holds)
+        )
         try:
             arguments = json.loads(frame.get("arguments") or "{}")
-            output = await self._functions.call_function(name, arguments)
+            output = await run_call(
+                self._functions, name, arguments, tool_call_context, self._holds
+            )
             result["output"] = output if isinstance(output, str) else json.dumps(output)
         except asyncio.CancelledError:
             raise
@@ -800,8 +816,19 @@ def _tools(functions: FunctionRegistry) -> list[SessionTool]:
         parameters = SessionToolParameters()
         parameters.additional_properties = dict(schema.get("parameters_schema", {}))
         tool.parameters = parameters
-        declared.append(tool)
+        declared.append(_with_policy(tool, functions.policy(schema["name"])))
     return declared
+
+
+def _with_policy(tool: SessionTool, policy: ToolPolicy) -> SessionTool:
+    """Name on `tool` whatever its policy changes from the router's defaults."""
+    if policy.interruptible:
+        tool.interruptible = True
+    if policy.timeout:
+        tool.timeout_ms = max(1, int(policy.timeout * 1000))
+    if policy.approval:
+        tool.approval = SessionToolApproval(title=policy.approval)
+    return tool
 
 
 def _event_of(frame: dict[str, Any]) -> SessionEvent:

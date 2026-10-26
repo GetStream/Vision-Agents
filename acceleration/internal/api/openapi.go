@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,9 +24,9 @@ The default is that way round because the cost of forgetting is asymmetric. An o
 
 An end user comes at one of three levels — anonymous, guest or authenticated — and an app may turn the first two away, in which case their requests are refused with a 403 whatever they ask for.
 
-A session belongs to whoever opened it, and an end user reaches only their own. The session records the customer, the end user and which kind of caller that was, and one that does not match is told the session does not exist rather than that it may not have it. A caller presenting a verified token is a different owner from an anonymous one claiming the same name, so naming somebody else's user id gets an anonymous caller nowhere. The exception is a session a backend opened in a named user's name, which that user's own device reaches: a server-side caller may send X-Stream-User-Id to say who it is acting for, and is charged no daily limit for doing so.
+A session belongs to whoever opened it, and an end user reaches only their own. The session records the customer, the end user and which kind of caller that was, and one that does not match is told the session does not exist rather than that it may not have it. A caller presenting a verified token is a different owner from an anonymous one claiming the same name, so naming somebody else's user id gets an anonymous caller nowhere. The exception is a session a backend opened in a named user's name, which that user's own device reaches: a server-side caller may send X-Stream-User-Id to say who it is acting for, and is then held only to the daily quotas the customer set for that user, never to the router's default.
 
-An end user's device is capped at a number of model responses and a number of tokens per UTC day, counted against both the ` + "`user_id`" + ` its token names and the address it came from. A caller with nothing left is answered 429 with a ` + "`Retry-After`" + ` naming the seconds until the limit resets; on a socket the same refusal arrives as an ` + "`error`" + ` frame, because the socket was already open when the day ran out. A server-side caller is not capped: a process the customer runs is trusted with the spend it was given. The two allowances are ROUTER_RATE_LIMIT_MESSAGES_PER_DAY and ROUTER_RATE_LIMIT_TOKENS_PER_DAY, and a deployment with no Redis to count in caps nothing. In noauth mode the end user is named by ` + "`X-Stream-User-Id`" + `, or by a ` + "`user_id`" + ` query parameter on a socket.
+An end user's device is capped at a number of model responses and a number of tokens per UTC day, counted against both the ` + "`user_id`" + ` its token names and the address it came from. A caller with nothing left is answered 429 with a ` + "`Retry-After`" + ` naming the seconds until the limit resets; on a socket the same refusal arrives as an ` + "`error`" + ` frame, because the socket was already open when the day ran out. A server-side caller is held only to quotas the customer set: one naming a user counts toward that user's quota, and is refused only work that asks a model for something (a session, a turn, a run, a socket), never a read. The router's default allowances, which count devices only, are ROUTER_RATE_LIMIT_MESSAGES_PER_DAY and ROUTER_RATE_LIMIT_TOKENS_PER_DAY, and a deployment with no Redis to count in caps nothing. In noauth mode the end user is named by ` + "`X-Stream-User-Id`" + `, or by a ` + "`user_id`" + ` query parameter on a socket.
 `
 
 // Either the customer header, or an API key and the token signed with its secret. Which of
@@ -43,6 +44,14 @@ var securitySchemes = map[string]*huma.SecurityScheme{
 		Name: opsKeyHeader,
 		Description: "Stream staff's own key, for reviewing 10DLC use cases across apps. It is " +
 			"held by Stream's internal tools and never by an app or a browser.",
+	},
+	"ManageKey": {
+		Type: "apiKey",
+		In:   "header",
+		Name: manageKeyHeader,
+		Description: "Stream staff's billing key, for price lists. Held by Stream's proxy, which " +
+			"adds it to a staff member's call, or by a self-hosted router's operator, and never " +
+			"by an app or a browser. A deployment without one serves no management operation.",
 	},
 	"CustomerId": {
 		Type: "apiKey",
@@ -96,20 +105,80 @@ var securitySchemes = map[string]*huma.SecurityScheme{
 var sharedResponses = map[string]string{
 	"400": "BadRequest",
 	"401": "Unauthorized",
+	"402": "PaymentRequired",
 	"403": "Forbidden",
 	"404": "NotFound",
 	"500": "InternalError",
+	"503": "Unavailable",
 }
 
 var responseDescriptions = map[string]string{
 	"BadRequest":   "The request was malformed",
 	"Unauthorized": "The customer header is missing",
-	"Forbidden": "The caller is known and this operation is server-side only. It needs " +
-		"Stream-Auth-Type: server and a token carrying server: true, which means it cannot " +
-		"be reached from an end user's device.",
+	"PaymentRequired": "The organization may not spend money now, so work that costs money is " +
+		"refused: its credit is spent (insufficient_credits), its spend hard limit for the day " +
+		"or the month is reached whatever its credit (system_limit_reached), or a budget is " +
+		"spent (spend_limit_reached). The message says which, and for a limit when it resets. " +
+		"Work on a model that costs nothing is still served.",
+	"Forbidden": "The caller is known and may not do this. Usually the operation is " +
+		"server-side only: it needs Stream-Auth-Type: server and a token carrying server: true, " +
+		"which means it cannot be reached from an end user's device. With code " +
+		"account_suspended, the organization is suspended, and every request is refused until " +
+		"it is restored; the message says to contact support.",
 	"NotFound": "No such modality, provider or shortcut",
 	"InternalError": "Something went wrong that is not the caller's doing. The body says " +
 		"only that: quote the response's X-Request-Id to find out more.",
+	"Unavailable": "The request cannot be served now and may be retried. With code " +
+		"spend_check_unavailable, the router could not share what the organization is spending " +
+		"with the other routers for a while, so work that costs money is refused until it can; " +
+		"Retry-After says when to try again, and work on a model that costs nothing is still served.",
+}
+
+// answerHeaders are what an answer to a customer's backend says of money, declared once under
+// components/headers and referred to from every answer that can carry them.
+var answerHeaders = map[string]*huma.Header{
+	headerCostMicros: {
+		Description: "What the request cost, in millionths of a dollar: the sum of the usage it recorded. " +
+			"Sent on a success to a server-side caller when the request recorded any, and never to an end user's " +
+			"device. An operation that answers before its work runs, such as createResponse, sends none.",
+		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
+	},
+	headerCostEstimated: {
+		Description: "true when some of X-Stream-Cost-Micros is the router's own count, because the " +
+			"vendor never said what the work used. Absent otherwise.",
+		Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"true"}},
+	},
+	headerBalanceMicros: {
+		Description: "The organization's credit left, in millionths of a dollar, less what its work under " +
+			"way holds: the figure admission refuses at. Sent on a success and on a refusal for money to " +
+			"a server-side caller once the router has read the organization's account, and never to " +
+			"an end user's device. A router that " +
+			"bills nobody sends none.",
+		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
+	},
+	headerBalanceWarning: {
+		Description: "low when X-Stream-Balance-Micros is at or below the organization's warning " +
+			"threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below " +
+			"0. Absent while the balance is above the threshold.",
+		Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{balanceLow, balanceExhausted}},
+	},
+}
+
+// costHeaderNames are the headers an answer that recorded work carries, and balanceHeaderNames
+// the ones every answer to a backend carries, a refusal for money included.
+var (
+	costHeaderNames    = []string{headerCostMicros, headerCostEstimated}
+	balanceHeaderNames = []string{headerBalanceMicros, headerBalanceWarning}
+)
+
+// declareHeaders refers the response to the named headers of answerHeaders.
+func declareHeaders(response *huma.Response, names ...string) {
+	if response.Headers == nil {
+		response.Headers = map[string]*huma.Header{}
+	}
+	for _, name := range names {
+		response.Headers[name] = &huma.Header{Ref: "#/components/headers/" + name}
+	}
 }
 
 // There is one Huma API per process, so its error constructor is set once for all of it.
@@ -251,6 +320,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 			},
 		}
 	}
+	declareHeaders(responses["PaymentRequired"], balanceHeaderNames...)
 	config := huma.Config{
 		OpenAPI: &huma.OpenAPI{
 			OpenAPI: "3.1.0",
@@ -264,6 +334,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 			Components: &huma.Components{
 				Schemas:         huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer),
 				Responses:       responses,
+				Headers:         answerHeaders,
 				SecuritySchemes: securitySchemes,
 			},
 			OnAddOperation: []huma.AddOpFunc{shareErrorResponses},
@@ -276,10 +347,13 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	config.AllowAdditionalPropertiesByDefault = true
 
 	api := humachi.New(router, config)
-	api.UseMiddleware(s.requireOpsKey(api))
+	api.UseMiddleware(s.requireStaffKey(api))
 	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
 	s.registerPolicies(api)
+	s.registerUserPolicies(api)
+	s.registerLimitGrants(api)
+	s.registerLimits(api)
 	s.registerSettings(api)
 	s.registerSessionQuery(api)
 	s.registerSessionUpdate(api)
@@ -328,6 +402,8 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerChannels(api)
 	s.registerDLC(api)
 	s.registerSuspensions(api)
+	s.registerManage(api)
+	s.registerPriceLists(api)
 	return api
 }
 
@@ -336,7 +412,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 // An operation declaring no security at all is reached before there is a caller to ask for.
 func requireCustomer(api huma.API) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		// A staff operation is answered for no customer: requireOpsKey let it through.
+		// A staff operation is answered for no customer: requireStaffKey let it through.
 		public := ctx.Operation().Security != nil && len(ctx.Operation().Security) == 0 || staffOperation(ctx.Operation())
 		if _, known := CustomerFrom(ctx.Context()); !known && !public {
 			writeOperationError(ctx, errMissingCustomer)
@@ -358,6 +434,25 @@ func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 	// Any operation can fail in a way that is not the caller's.
 	if _, ok := operation.Responses["500"]; !ok {
 		operation.Responses["500"] = &huma.Response{}
+	}
+	// Any operation a customer calls can be refused for money. A socket is refused in a frame,
+	// after the upgrade.
+	_, socket := operation.Responses["101"]
+	public := operation.Security != nil && len(operation.Security) == 0
+	if _, ok := operation.Responses["402"]; !ok && !socket && !public && !staffOperation(operation) {
+		operation.Responses["402"] = &huma.Response{}
+	}
+	// Whatever can be refused for money can be refused while the spend check is unavailable, and
+	// can record work: its answers to a backend say what it cost and what credit is left.
+	if _, ok := operation.Responses["402"]; ok {
+		if _, declared := operation.Responses["503"]; !declared {
+			operation.Responses["503"] = &huma.Response{}
+		}
+		for code, response := range operation.Responses {
+			if strings.HasPrefix(code, "2") && response.Ref == "" {
+				declareHeaders(response, append(slices.Clone(costHeaderNames), balanceHeaderNames...)...)
+			}
+		}
 	}
 	for code, name := range sharedResponses {
 		// A failure the operation describes in words of its own keeps them.

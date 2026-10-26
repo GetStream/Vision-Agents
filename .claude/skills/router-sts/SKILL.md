@@ -110,11 +110,16 @@ voice, so a `custom:` name is refused up front rather than looked up at every ca
 
 One row per reply, settled by `ResponseComplete`. `AudioMs` is the caller's audio the
 session forwarded since the last reply, which is the unit a transcriber bills by and the
-one number every vendor lets us count ourselves. Tokens are what the vendor reported.
-`Price` has one token bucket and these models bill audio in, audio out and text at three
-rates, so the yaml applies the audio rates to every token and says so: an estimate, the
-`perplexity/sonar` treatment. The split into audio and text tokens arrives on the event
-already, for the day `Price` grows the fields.
+one number every vendor lets us count ourselves. Tokens are what the vendor reported: the
+totals in the row's columns, and the split by modality on `sts.Usage`, which the session
+writes into `meters` (each input modality net of its cached part). A split replaces the
+totals in the price, so OpenAI Realtime and Gemini Live are priced by the rates their
+`prices/vendor.json` entries give each modality, and a vendor that reports no split by its per-token rates
+on the totals. A provider that fills the split must put every billed token in it, since
+whatever it leaves out is not priced: Gemini bills its details, so what they leave out of
+the prompt is only shown, as `attributes.prompt_tokens_not_in_details`, and what they
+leave out of the response is billed as text. Thinking goes in `ReasoningTokens`, shown as
+`attributes.reasoning_tokens` and never priced on its own.
 
 ## Adding an option
 

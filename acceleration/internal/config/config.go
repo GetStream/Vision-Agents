@@ -32,6 +32,8 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 const (
@@ -72,6 +74,9 @@ type Config struct {
 	// ones embedded in the binary.
 	RoutingConfig string `koanf:"routing_config"`
 	PhoneConfig   string `koanf:"phone_config"`
+	// PricesFile is a price file of the deployment's own, laid over the embedded vendor.json
+	// when the router loads the price list into its database. Empty loads vendor.json alone.
+	PricesFile string `koanf:"prices_file"`
 	// VoicesBucketURL is where the recordings behind a customer's own voice are kept.
 	VoicesBucketURL string `koanf:"voices_bucket_url"`
 	// MockProviders builds the mock/* speech, voice and language models the load
@@ -107,6 +112,52 @@ type Config struct {
 	CodeSandbox CodeSandbox `koanf:"code_sandbox"`
 	Models      Models      `koanf:"models"`
 	Telnyx      Telnyx      `koanf:"telnyx"`
+	Usage       Usage       `koanf:"usage"`
+	Knowledge   Knowledge   `koanf:"knowledge"`
+	Limits      Limits      `koanf:"limits"`
+}
+
+// Knowledge is the knowledge store's settings.
+type Knowledge struct {
+	// StreamCost is what the knowledge provider charges the operator, by meter: bytes_queried
+	// and bytes_returned for a query, bytes_written for a write (its minimum is per request),
+	// byte_hours for storage. Each call's cost under it is kept beside its row as
+	// attributes.provider_cost_micros; what a customer pays is the price list's. It is here,
+	// not in code, so a change in the provider's prices is a change of config.
+	StreamCost map[string]pricing.Rate `koanf:"stream_cost"`
+}
+
+// LimitsMode is how much of credit, the spend hard limit and the customers' spend limits the
+// router enforces.
+type LimitsMode string
+
+const (
+	// LimitsEnforce refuses what they refuse.
+	LimitsEnforce LimitsMode = "enforce"
+	// LimitsShadow works every refusal out, logs it as would refuse, and admits the request.
+	LimitsShadow LimitsMode = "shadow"
+	// LimitsOff refuses nothing for money. Work is still priced, recorded and shipped.
+	LimitsOff LimitsMode = "off"
+)
+
+// Limits is what the router does about an organization's money before its work: a suspension,
+// its credit, the operator's spend hard limit and its budgets.
+type Limits struct {
+	// Mode is enforce, shadow or off. Empty is enforce.
+	Mode LimitsMode `koanf:"mode"`
+}
+
+// Usage is the usage service the router ships the rows it writes to. An empty URL is none:
+// rows are written, and never shipped.
+type Usage struct {
+	// URL is the service's base URL, such as http://usage:8070.
+	URL string `koanf:"url"`
+	// Token is the service's ingest token.
+	Token string `koanf:"token"`
+	// RedisURL is the Redis the service keeps every subject's spend in (its USAGE_REDIS_URL),
+	// which the customer's spend limits are read from every second. Empty: they are read from
+	// the service itself every few seconds.
+	RedisURL string `koanf:"redis_url"`
 }
 
 // Models are the language models a customer serves themselves, named custom/<name>.
@@ -191,6 +242,11 @@ type Auth struct {
 	// OpsKey is what Stream's own staff tools send as X-Ops-Key to review use cases. Empty
 	// turns those endpoints off. It is never handed to a browser.
 	OpsKey string `koanf:"ops_key"`
+	// ManageKey is what Stream's proxy adds as X-Manage-Key to a staff member's call, and
+	// what a self-hosted operator sends, to read and change price lists and set customers'
+	// limits. Empty turns those endpoints off. It decides what customers pay, so it is never
+	// the ops key.
+	ManageKey string `koanf:"manage_key"`
 }
 
 // RateLimit caps what one of a customer's end users may spend in a day, for a customer
@@ -350,7 +406,24 @@ type CodeSandbox struct {
 	// which the proxy broker needs, with ProxyCACert. With https the proxy serves TLS on
 	// ProxyAddr, with a certificate for that address the CA signs.
 	ProxyPublicURL string `koanf:"proxy_public_url"`
+	// IdleStop is how long a sandbox runs no code before Daytona stops it, after which only its
+	// disk is billed, and StoppedDelete how long a stopped one is kept before Daytona deletes
+	// it. The next run starts a stopped sandbox again, or makes a new one. Both are whole
+	// minutes, as Daytona takes them, and the sandbox meter keeps the same clock. The defaults
+	// are Daytona's own 15 idle minutes and an hour stopped: a conversation that comes back
+	// within the hour finds its files and installed packages where it left them.
+	IdleStop      time.Duration `koanf:"idle_stop"`
+	StoppedDelete time.Duration `koanf:"stopped_delete"`
+	// Deployment names this deployment on every sandbox its routers make, as the
+	// stream.deployment label, so deployments sharing a Daytona organization tell their
+	// sandboxes apart. The sandbox job (router usage sandboxes) refuses to run without it and
+	// touches only sandboxes carrying it. Empty labels nothing, and the job leaves the
+	// sandboxes alone.
+	Deployment string `koanf:"deployment"`
 }
+
+// sandboxDeployment is what code_sandbox.deployment may hold: a Daytona label value.
+var sandboxDeployment = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
 // secretPrefix is what code_sandbox.secret_prefix may hold. Secrets are named
 // va_<prefix>_<session>_..., so a prefix with an underscore in it would make one router's
@@ -386,6 +459,7 @@ var variables = map[string]string{
 	"trusted_proxies":    "ROUTER_TRUSTED_PROXIES",
 	"routing_config":     "ROUTER_CONFIG",
 	"phone_config":       "ROUTER_PHONE_CONFIG",
+	"prices_file":        "ROUTER_PRICES_FILE",
 	"voices_bucket_url":  "ROUTER_VOICES_BUCKET_URL",
 	"mock_providers":     "ROUTER_MOCK_PROVIDERS",
 	"pprof_addr":         "ROUTER_PPROF_ADDR",
@@ -409,6 +483,7 @@ var variables = map[string]string{
 	"auth.kek":             "ROUTER_AUTH_KEK",
 	"auth.kms_key":         "ROUTER_AUTH_KMS_KEY",
 	"auth.ops_key":         "ROUTER_AUTH_OPS_KEY",
+	"auth.manage_key":      "ROUTER_AUTH_MANAGE_KEY",
 	"data_move.retention":  "ROUTER_DATA_MOVE_RETENTION",
 	"stream.api_key":       "STREAM_API_KEY",
 	"stream.api_secret":    "STREAM_API_SECRET",
@@ -449,10 +524,19 @@ var variables = map[string]string{
 	"code_sandbox.proxy_ca_cert":    "ROUTER_CODE_SANDBOX_PROXY_CA_CERT",
 	"code_sandbox.proxy_ca_key":     "ROUTER_CODE_SANDBOX_PROXY_CA_KEY",
 	"code_sandbox.proxy_public_url": "ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL",
+	"code_sandbox.idle_stop":        "ROUTER_CODE_SANDBOX_IDLE_STOP",
+	"code_sandbox.stopped_delete":   "ROUTER_CODE_SANDBOX_STOPPED_DELETE",
+	"code_sandbox.deployment":       "ROUTER_CODE_SANDBOX_DEPLOYMENT",
 
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
 	"telnyx.public_key":    "TELNYX_PUBLIC_KEY",
+
+	"usage.url":       "ROUTER_USAGE_URL",
+	"usage.token":     "ROUTER_USAGE_TOKEN",
+	"usage.redis_url": "ROUTER_USAGE_REDIS_URL",
+
+	"limits.mode": "ROUTER_LIMITS_MODE",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -478,7 +562,7 @@ func Defaults() Config {
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes:    Episodes{IdleAfter: time.Hour},
 		Sandbox:     Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
-		CodeSandbox: CodeSandbox{Broker: CodeSandboxBrokerDaytona},
+		CodeSandbox: CodeSandbox{Broker: CodeSandboxBrokerDaytona, IdleStop: 15 * time.Minute, StoppedDelete: time.Hour},
 		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
 		// 2026-10-09): «we do recommend you design your apps with a limit of 1 request per
 		// second for any given API call». slack_bot and github are the built-ins with an
@@ -494,6 +578,17 @@ func Defaults() Config {
 		// A choice, not a measurement: room for a moderation worker's batch without letting
 		// one app's backlog take every model slot. # unverified
 		Runs: Runs{ConcurrentPerApp: 20},
+		// turbopuffer's list prices (turbopuffer.com/pricing, read 2026-10-23): $1 per PB
+		// queried, $0.05 per GB returned, $2 per GB written with every write billed at least
+		// 10 KB, $0.33 per GB-month stored, a month taken as 730 hours. Its batch discount on
+		// writes is a formula, not a rate, so it is the store's code.
+		Knowledge: Knowledge{StreamCost: map[string]pricing.Rate{
+			string(pricing.BytesQueried):  {USD: 1, Per: 1_000_000_000_000_000},
+			string(pricing.BytesReturned): {USD: 0.05, Per: 1_000_000_000},
+			string(pricing.BytesWritten):  {USD: 2, Per: 1_000_000_000, Minimum: 10_000},
+			string(pricing.ByteHours):     {USD: 0.33, Per: 730_000_000_000},
+		}},
+		Limits: Limits{Mode: LimitsEnforce},
 	}
 }
 
@@ -552,6 +647,9 @@ func Load(path string) (Config, string, error) {
 	config := Defaults()
 	if err := k.Unmarshal("", &config); err != nil {
 		return Config{}, "", fmt.Errorf("config: %s: %w", name, err)
+	}
+	if config.Limits.Mode == "" {
+		config.Limits.Mode = LimitsEnforce
 	}
 	if err := config.validate(); err != nil {
 		return Config{}, "", err
@@ -668,10 +766,61 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: code_sandbox.proxy_addr is set, so code_sandbox.proxy_ca_cert and proxy_ca_key " +
 			"(ROUTER_CODE_SANDBOX_PROXY_CA_CERT, ROUTER_CODE_SANDBOX_PROXY_CA_KEY) must hold the CA the proxy signs with")
 	}
+	// Daytona takes whole minutes, and the meter bills by the same clock: a fraction would
+	// have one stop the sandbox before the other.
+	for setting, interval := range map[string]time.Duration{
+		"code_sandbox.idle_stop (ROUTER_CODE_SANDBOX_IDLE_STOP)":           c.CodeSandbox.IdleStop,
+		"code_sandbox.stopped_delete (ROUTER_CODE_SANDBOX_STOPPED_DELETE)": c.CodeSandbox.StoppedDelete,
+	} {
+		if interval < time.Minute || interval%time.Minute != 0 {
+			return fmt.Errorf("config: %s is a whole number of minutes, at least one, got %s", setting, interval)
+		}
+	}
+	if c.CodeSandbox.Deployment != "" && !sandboxDeployment.MatchString(c.CodeSandbox.Deployment) {
+		return fmt.Errorf("config: code_sandbox.deployment (ROUTER_CODE_SANDBOX_DEPLOYMENT) is up to 63 lowercase letters, "+
+			"digits, '.', '_' and '-', starting with a letter or digit, got %q", c.CodeSandbox.Deployment)
+	}
 	if c.Agent.FlowHedge < 0 {
 		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)
 	}
+	if c.Auth.ManageKey != "" && c.Auth.ManageKey == c.Auth.OpsKey {
+		return errors.New("config: auth.manage_key (ROUTER_AUTH_MANAGE_KEY) is the same as auth.ops_key " +
+			"(ROUTER_AUTH_OPS_KEY): give the management API a key of its own")
+	}
+	if err := c.validateUsage(); err != nil {
+		return err
+	}
+	for meter, rate := range c.Knowledge.StreamCost {
+		if rate.Per <= 0 || rate.USD < 0 || rate.Minimum < 0 {
+			return fmt.Errorf("config: knowledge.stream_cost.%s is usd per a positive number of units, got %+v", meter, rate)
+		}
+	}
+	switch c.Limits.Mode {
+	case LimitsEnforce, LimitsShadow, LimitsOff:
+	default:
+		return fmt.Errorf("config: limits.mode (ROUTER_LIMITS_MODE) is %s, %s or %s, got %q",
+			LimitsEnforce, LimitsShadow, LimitsOff, c.Limits.Mode)
+	}
 	return c.validateShard()
+}
+
+// validateUsage refuses a usage service the router could not ship to. A token without a URL is
+// allowed, since unsetting the URL alone is how shipping is stopped; the router warns of it.
+func (c Config) validateUsage() error {
+	if c.Usage.URL == "" {
+		if c.Usage.RedisURL != "" {
+			return errors.New("config: usage.redis_url (ROUTER_USAGE_REDIS_URL) is the usage service's Redis, so it needs usage.url (ROUTER_USAGE_URL)")
+		}
+		return nil
+	}
+	if parsed, err := url.Parse(c.Usage.URL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return errors.New("config: usage.url (ROUTER_USAGE_URL) is the usage service's base URL, such as http://usage:8070")
+	}
+	if c.Usage.Token == "" {
+		return errors.New("config: usage.url (ROUTER_USAGE_URL) is set, so usage.token (ROUTER_USAGE_TOKEN) must hold " +
+			"the usage service's ingest token")
+	}
+	return nil
 }
 
 // ProxyURL parses raw as the proxy's public URL, http or https://<IPv4 address>:port, and says
@@ -761,6 +910,7 @@ func (c Config) export() error {
 		"trusted_proxies":               strings.Join(c.TrustedProxies, ","),
 		"routing_config":                c.RoutingConfig,
 		"phone_config":                  c.PhoneConfig,
+		"prices_file":                   c.PricesFile,
 		"voices_bucket_url":             c.VoicesBucketURL,
 		"mock_providers":                fmt.Sprint(c.MockProviders),
 		"pprof_addr":                    c.PprofAddr,
@@ -783,6 +933,7 @@ func (c Config) export() error {
 		"auth.kek":                      c.Auth.KEK,
 		"auth.kms_key":                  c.Auth.KMSKey,
 		"auth.ops_key":                  c.Auth.OpsKey,
+		"auth.manage_key":               c.Auth.ManageKey,
 		"auth.proxy_declares_kind":      fmt.Sprint(c.Auth.ProxyDeclaresKind),
 		"stream.api_key":                c.Stream.APIKey,
 		"stream.api_secret":             c.Stream.APISecret,
@@ -814,6 +965,9 @@ func (c Config) export() error {
 		"code_sandbox.proxy_ca_cert":    c.CodeSandbox.ProxyCACert,
 		"code_sandbox.proxy_ca_key":     c.CodeSandbox.ProxyCAKey,
 		"code_sandbox.proxy_public_url": c.CodeSandbox.ProxyPublicURL,
+		"code_sandbox.idle_stop":        c.CodeSandbox.IdleStop.String(),
+		"code_sandbox.stopped_delete":   c.CodeSandbox.StoppedDelete.String(),
+		"code_sandbox.deployment":       c.CodeSandbox.Deployment,
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),
@@ -821,6 +975,12 @@ func (c Config) export() error {
 		"telnyx.api_key":       c.Telnyx.APIKey,
 		"telnyx.connection_id": c.Telnyx.ConnectionID,
 		"telnyx.public_key":    c.Telnyx.PublicKey,
+
+		"usage.url":       c.Usage.URL,
+		"usage.token":     c.Usage.Token,
+		"usage.redis_url": c.Usage.RedisURL,
+
+		"limits.mode": string(c.Limits.Mode),
 	}
 	for key, value := range values {
 		if value == "" {

@@ -17,8 +17,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,8 +31,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -40,6 +44,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
@@ -59,6 +64,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -67,9 +73,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
@@ -81,6 +89,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 // suiteConnections caps each suite's pool, so ten suites at once stay well inside the
@@ -161,6 +172,9 @@ const (
 // suiteOpsKey is what Stream staff's review paths are reached with.
 const suiteOpsKey = "suite-ops-key"
 
+// suiteManageKey is what the management API, /v1/manage, is reached with.
+const suiteManageKey = "suite-manage-key"
+
 // RouterSuite runs the whole router against Postgres and Redis with real API key auth, for
 // suites to embed. A suite picks the app its clients call in its SetupTest:
 // s.useFixture("standard") for the app most tests share, or s.useApp(s.data.createApp())
@@ -186,6 +200,28 @@ type RouterSuite struct {
 	// appRefuses turns app mode's fallback off, so a customer with no app of its own is
 	// written nowhere.
 	appRefuses bool
+	// proxied authenticates as a router behind Stream's proxy does, believing the headers it
+	// writes, so a test names its caller with proxiedClient rather than a key.
+	proxied bool
+	// shipping ships the conversation model's rows to a usage service of the suite's own,
+	// usage, as cmd/router's writer does.
+	shipping bool
+	usage    *usagetest.Service
+	// limited reads every organization's money from that usage service, started with its
+	// management API before the policies, through usageFront, which a test can take down; and
+	// lets the rows the service acks go from what the policies hold. It ships, too.
+	limited    bool
+	usageFront *usageFront
+	enforcer   *policy.Enforcer
+	// holds is the Redis the suite's policies share holds through, as the routers of a
+	// deployment do; nil keeps them in the process.
+	holds rueidis.Client
+	// limitsMode is the suite's ROUTER_LIMITS_MODE, for a suite to set before it starts the
+	// harness. Empty is enforce.
+	limitsMode config.LimitsMode
+	// owned are the apps the suite made or used, whose rows must all name a key.
+	ownedMu sync.Mutex
+	owned   []string
 	// deploymentKnown has the suite's Stream say which app is the deployment's own, as a
 	// deployment-mode router that was given its app id does.
 	deploymentKnown bool
@@ -272,7 +308,10 @@ type RouterSuite struct {
 
 	// memoryStore is where sessions remember, for a suite about memory to set before it
 	// starts the harness. Nil keeps them in memories.
-	memoryStore memory.Store
+	memoryStore memory.Backend
+	// metering is what memory, knowledge and voice cloning record through, as the process
+	// writer is in cmd/router.
+	metering *routing.Recorder
 	// memoryOff gives the router no memory store, as a deployment with no memory provider
 	// has, for a control suite to set before it starts the harness.
 	memoryOff bool
@@ -375,6 +414,9 @@ type RouterSuite struct {
 	// inbound answers what arrives on the app's channels.
 	inbound *channels.Service
 
+	// daytona is where the sessions' sandboxes are made, for a suite whose agents run code to
+	// set before it starts the harness. Nil makes them on the Daytona the environment names.
+	daytona *daytonatest.Server
 	// sandbox is what an app with no approved use case may do, for a suite about the
 	// sandbox to set before it starts the harness. The zero value is off.
 	sandbox dlc.Sandbox
@@ -383,6 +425,23 @@ type RouterSuite struct {
 	registrar dlc.Registrar
 	// gate is what every text and call passes.
 	gate *dlc.Gate
+	// phoneRecorder is what texts, call minutes, numbers and 10DLC fees record through, priced
+	// from the vendor list as a router's first start prices them.
+	phoneRecorder *routing.Recorder
+	// phoneNow, set by a suite before it starts the harness, is the clock the phone service
+	// times call legs and months by. Nil is the wall clock.
+	phoneNow func() time.Time
+	// registrar10DLC is the router's 10DLC service, for a suite to poll and bill with.
+	registrar10DLC *dlc.Service
+	// manageOff builds the router with no manage key, as a deployment that never set
+	// ROUTER_AUTH_MANAGE_KEY has, for a suite about that to set before it starts the harness.
+	manageOff bool
+	// pricedFromDatabase seeds the price list from the embedded vendor list, as a router's
+	// first start does, and prices the LLM router's rows and the API from it, read every
+	// priceReload, for a suite about the price list to set before it starts the harness.
+	// prices is that list.
+	pricedFromDatabase bool
+	prices             *pricing.Active
 
 	utils testUtils
 	data  testData
@@ -445,6 +504,9 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(migrate(ctx, pgStore, options.DSN))
 	s.store = pgStore
 	s.T().Cleanup(func() { s.Require().NoError(pgStore.Close()) })
+	// Registered before everything that records, so it runs once all of it has closed and
+	// written what it held.
+	s.T().Cleanup(s.assertEveryRowNamesAKey)
 	if s.database != "" {
 		// Only a suite's own database is emptied, never the shared one. A run killed by
 		// -timeout skips its cleanups, and the database outlives it.
@@ -490,6 +552,10 @@ func (s *RouterSuite) SetupSuite() {
 	s.T().Cleanup(s.configs.Close)
 	s.relayPrefix = uuid.NewString()
 
+	if s.pricedFromDatabase {
+		s.prices = s.databasePrices(logger)
+	}
+	s.metering = s.meteringRecorder(logger)
 	policies := s.policies(logger)
 	s.limiter = s.quota(liveClient, policies, logger)
 	streams := s.routers(s.limiter, policies, logger)
@@ -508,11 +574,13 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.transports = transports
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
-		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, logger)
+		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, policies, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
-	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger)
+	// Every text, call and number asks the same admission as a model, as in cmd/router.
+	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies).Limiting(s.limitsMode)
+	s.phoneRecorder = s.telephonyRecorder(logger)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
@@ -572,8 +640,13 @@ func (s *RouterSuite) SetupSuite() {
 	if s.connectorsOff {
 		connectorSecrets, serverTransports, connectorLimiter = nil, nil, nil
 	}
+	manageKey := suiteManageKey
+	if s.manageOff {
+		manageKey = ""
+	}
 	server, err := NewServer(Options{
 		Routers:   s.modalities,
+		Prices:    s.prices,
 		Streams:   streams,
 		Relay:     s.relayBus(s.shard, logger),
 		Directory: directory,
@@ -593,6 +666,7 @@ func (s *RouterSuite) SetupSuite() {
 		DLC:               s.registrations(listener, logger),
 		Gate:              s.gate,
 		OpsKey:            suiteOpsKey,
+		ManageKey:         manageKey,
 		Secrets:           s.sealer,
 		Knowledge:         s.knowledgeWriter(),
 		KnowledgeURLs:     s.pages(redisAddr),
@@ -691,6 +765,7 @@ func (s *RouterSuite) channels(sessions *session.Manager, logger *slog.Logger) *
 		Secrets:   s.sealer,
 		Transport: redirected(s.channelAPI),
 		Gate:      s.gate,
+		Recorder:  s.phoneRecorder,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
@@ -702,10 +777,22 @@ func (s *RouterSuite) channels(sessions *session.Manager, logger *slog.Logger) *
 // reports back to the suite's own router.
 func (s *RouterSuite) registrations(listener *httptest.Server, logger *slog.Logger) *dlc.Service {
 	service, err := dlc.NewService(dlc.Options{
-		Store: s.store, Registrar: s.registrar, PublicURL: "http://" + listener.Listener.Addr().String(), Logger: logger,
+		Store: s.store, Registrar: s.registrar, PublicURL: "http://" + listener.Listener.Addr().String(),
+		Recorder: s.phoneRecorder, Logger: logger,
 	})
 	s.Require().NoError(err)
+	s.registrar10DLC = service
 	return service
+}
+
+// telephonyRecorder records telephony through a writer of its own, priced from the vendor
+// list, and writes what it holds when the suite ends.
+func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
+	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, logger)
+	s.Require().NoError(err)
+	recorder := routing.NewRecorder(routing.Phone, s.store, s.live, list, logger)
+	s.T().Cleanup(recorder.Close)
+	return recorder
 }
 
 // redirected dials one server whatever host is asked for, or nothing when there is none.
@@ -820,11 +907,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	// and two sessions sharing one stub would each consume the other's turns. The first
 	// open is the one a test reads back.
 	s.model = &scriptedLLM{reply: "Hello."}
-	var opened int
+	var opened atomic.Int64
 	reasoning := llmrouter.NewRegistry()
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
-		defer func() { opened++ }()
-		if opened == 0 {
+		if opened.Add(1) == 1 {
 			return s.model, nil
 		}
 		return &scriptedLLM{}, nil
@@ -873,6 +959,11 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("slow", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Here it is.", takes: time.Second}, nil
 	})
+	// A model that outlasts the moment a closing session gives its reply to finish, for a
+	// reply that is still being written when the router stops.
+	reasoning.Register("stuck", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Too late.", takes: time.Minute}, nil
+	})
 
 	// A model that reaches for the caller's own tool on its first turn. One of these per
 	// session rather than one for the suite, so a test reads back its own turn.
@@ -905,10 +996,16 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register(routing.CustomProvider, func(spec routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: spec.Endpoint.BaseURL + " " + spec.Endpoint.Model + " " + spec.Endpoint.APIKey}, nil
 	})
+	// Nil unless the suite prices from the database: a nil *pricing.Active is no nil Pricer.
+	var pricer pricing.Pricer
+	if s.prices != nil {
+		pricer = s.prices
+	}
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
-		Quota: limiter, Gate: gate, Logger: logger,
+		Quota: limiter, Gate: gate, Pricer: pricer, Logger: logger,
 		Models: llmrouter.NewCustomModels(s.configs, s.sealer, false),
+		Writer: s.shippingWriter(gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
@@ -937,6 +1034,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Transcribers: transcriberRegistry(),
 		Store:        s.store,
 		Live:         s.live,
+		Gate:         gate,
 		Logger:       logger,
 	})
 	s.Require().NoError(err)
@@ -948,13 +1046,14 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Store:     s.store,
 		Live:      s.live,
 		Voices:    s.ttsVoices,
+		Gate:      gate,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(recordings.Close)
 
 	finding, err := searchrouter.New(searchrouter.Options{
-		Config: routableConfig(), Registry: searchRegistry(), Store: s.store, Live: s.live, Gate: gate,
+		Config: searchConfig(), Registry: searchRegistry(), Store: s.store, Live: s.live, Gate: gate,
 		Logger: logger,
 	})
 	s.Require().NoError(err)
@@ -967,7 +1066,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.T().Cleanup(judging.Close)
 
 	imaging, err := imagerouter.New(imagerouter.Options{
-		Config: imageConfig(), Registry: painterRegistry(), Gate: gate, Logger: logger,
+		Config: imageConfig(), Registry: painterRegistry(), Store: s.store, Live: s.live, Gate: gate, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(imaging.Close)
@@ -989,6 +1088,25 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	}
 }
 
+// suitePriceReload is how often a suite pricing from the database reads its list again: a
+// tenth of a second rather than a router's 30, so a change made in a test prices within it.
+const suitePriceReload = 100 * time.Millisecond
+
+// databasePrices seeds the suite's price list from the embedded vendor list, as a router's
+// first start does (once: every later start finds it seeded and adds nothing it already has),
+// and reads it every suitePriceReload until the suite ends.
+func (s *RouterSuite) databasePrices(logger *slog.Logger) *pricing.Active {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.T().Cleanup(cancel)
+	_, _, _, err := s.store.SyncPrices(ctx, store.PriceLoad{Entries: prices.Vendor().Entries, Source: prices.VendorFile, Release: "suite"})
+	s.Require().NoError(err)
+	fallback, err := prices.Embedded(routing.LocalItems(routing.Config{routing.LLM: reasoningConfig()}), "suite", logger)
+	s.Require().NoError(err)
+	return pricing.NewActive(ctx, pricing.ActiveOptions{
+		Source: s.store.PriceSource(), Fallback: fallback, Interval: suitePriceReload, RequireEntries: true, Logger: logger,
+	})
+}
+
 // sessionManager runs conversations, writing them down in Stream Chat through a stand-in
 // for the chat backend: what a session records is under test, what Stream does with it is
 // not.
@@ -996,6 +1114,7 @@ func (s *RouterSuite) sessionManager(
 	streams *Streams,
 	directory *node.Directory,
 	connectors session.Connectors,
+	policies *policy.Enforcer,
 	logger *slog.Logger,
 ) *session.Manager {
 	conversations := conversation.NewForChats(conversation.StreamApps(s.stream))
@@ -1003,27 +1122,36 @@ func (s *RouterSuite) sessionManager(
 	s.conversations = conversations
 
 	s.memories = &keptMemories{}
-	var remembering memory.Store = s.memories
+	var remembering memory.Backend = s.memories
 	if s.memoryStore != nil {
 		remembering = s.memoryStore
 	}
-	if s.memoryOff {
-		remembering = nil
+	var metering *metered.Memory
+	if !s.memoryOff {
+		metering = metered.NewMemory(remembering, s.metering)
+	}
+	var sandboxes *metered.Sandboxes
+	if s.daytona != nil {
+		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(), Logger: logger})
 	}
 	sessions, err := session.NewManager(session.ManagerOptions{
+		Sandboxes:     sandboxes,
 		LLM:           streams.LLM,
 		STT:           streams.STT,
 		TTS:           streams.TTS,
-		Memory:        remembering,
+		Memory:        metering,
 		Transcript:    s.transcripts,
 		Conversations: conversations,
 		Stream:        s.stream,
 		Store:         s.store,
+		Policies:      policies,
 		Live:          s.live,
 		Configs:       s.configs,
 		Directory:     directory,
 		Connectors:    connectors,
 		Logger:        logger,
+		// The policies a session's resume_history falls back to, as cmd/router passes them.
+		ResumeHistories: policies,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
@@ -1034,9 +1162,65 @@ func (s *RouterSuite) sessionManager(
 	return sessions
 }
 
+// own notes an app the suite made or used.
+func (s *RouterSuite) own(appID string) {
+	s.ownedMu.Lock()
+	defer s.ownedMu.Unlock()
+	if !slices.Contains(s.owned, appID) {
+		s.owned = append(s.owned, appID)
+	}
+}
+
+// assertEveryRowNamesAKey fails the suite when anything it drove recorded usage with neither a
+// key nor an origin: the owner site that wrote it was missed.
+func (s *RouterSuite) assertEveryRowNamesAKey() {
+	s.ownedMu.Lock()
+	owned := slices.Clone(s.owned)
+	s.ownedMu.Unlock()
+	if len(owned) == 0 {
+		return
+	}
+	var rows []store.Request
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&rows).
+		Where("customer_id IN (?)", bun.In(owned)).Where("api_key = ?", routing.Unattributed).
+		Scan(context.Background()))
+	for _, row := range rows {
+		s.Failf("a usage row names no key", "customer %s, %s %s/%s, purpose %q, session %q, agent %q",
+			row.CustomerID, row.Modality, row.Provider, row.Model, row.Purpose, row.SessionID, row.AgentID)
+	}
+}
+
+// shippingWriter is the writer the conversation model records through when the suite ships,
+// and nil, a writer of the router's own, when it does not.
+func (s *RouterSuite) shippingWriter(gate routing.Gate, logger *slog.Logger) *routing.Writer {
+	if !s.shipping {
+		return nil
+	}
+	if s.usage == nil {
+		s.usage = usagetest.Start(s.T(), usagetest.Options{Logger: logger})
+	}
+	var shipped func([]routing.Acked)
+	if s.limited {
+		shipped = s.enforcer.Acked
+	}
+	writer := routing.NewWriter(routing.WriterOptions{
+		Store: s.store, Live: s.live, Logger: logger, Gate: gate, Usage: s.usage.Client, Source: "router/suite/" + s.utils.uuid(),
+		Shipped: shipped,
+	})
+	s.T().Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		writer.Close(ctx)
+	})
+	return writer
+}
+
 // authenticator resolves a key the way a deployment in api_key mode does: the row is read
 // from Postgres and its secret unsealed, so the credentials a test holds are real ones.
 func (s *RouterSuite) authenticator() auth.Authenticator {
+	if s.proxied {
+		return auth.NewProxy(auth.ProxyOptions{DeclaresKind: true})
+	}
 	authenticator, err := auth.New(auth.APIKey, s.configs.Lookup(s.sealer))
 	s.Require().NoError(err)
 	return authenticator
@@ -1075,7 +1259,8 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 	service, err := phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(config),
 		Store:     s.store,
-		Recorder:  routing.NewRecorder(routing.Phone, s.store, s.live, logger),
+		Recorder:  s.phoneRecorder,
+		Now:       s.phoneNow,
 		Gate:      s.gate,
 		Sealer:    sealer,
 		SIPTrunks: siptrunk.New(siptrunk.Options{Logger: logger}),
@@ -1104,9 +1289,21 @@ func (s *RouterSuite) simulations(sessions *session.Manager, streams *Streams, l
 	return runner
 }
 
-func (s *RouterSuite) knowledgeWriter() *knowledgeBase {
+// meteringRecorder is the recorder the suite's memory, knowledge and voice cloning record
+// through, priced as the suite's routers are, and drained when the suite ends.
+func (s *RouterSuite) meteringRecorder(logger *slog.Logger) *routing.Recorder {
+	var pricer pricing.Pricer
+	if s.prices != nil {
+		pricer = s.prices
+	}
+	recorder := routing.NewRecorder(routing.Knowledge, s.store, s.live, pricer, logger)
+	s.T().Cleanup(recorder.Close)
+	return recorder
+}
+
+func (s *RouterSuite) knowledgeWriter() *metered.Knowledge {
 	s.knowledge = newKnowledgeBase()
-	return s.knowledge
+	return metered.NewKnowledge(s.knowledge, s.metering)
 }
 
 // pages keeps the knowledge bases filled from pages published elsewhere. Its queue is in a
@@ -1117,7 +1314,7 @@ func (s *RouterSuite) pages(redisAddr string) *urls.Service {
 		Store:         s.store,
 		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(redisDB.Add(1))%15 + 1},
 		Reader:        pageReader{},
-		Writer:        newKnowledgeBase(),
+		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering),
 		CheckInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)
@@ -1147,7 +1344,7 @@ func (s *RouterSuite) voiceService() *voices.Service {
 	cloners := voices.NewRegistry()
 	cloners.Register("elevenlabs", cloner)
 
-	service, err := voices.NewService(voices.Options{Store: s.configs, Bucket: bucket, Cloners: cloners})
+	service, err := voices.NewService(voices.Options{Store: s.configs, Bucket: bucket, Cloners: cloners, Recorder: s.metering})
 	s.Require().NoError(err)
 	return service
 }
@@ -1179,13 +1376,20 @@ func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Se
 // what its peers' credentials are checked against, and logging to logger. Nil is a node
 // with no keyring.
 func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server) {
+	other, server, _ := s.otherNodeHolding(workers, keyring, logger)
+	return other, server
+}
+
+// otherNodeHolding is otherRouterSealedBy with the sessions it runs, for a test that stops
+// them the way a router going down does.
+func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
 		LLM:           s.streams.LLM,
 		STT:           s.streams.STT,
 		TTS:           s.streams.TTS,
-		Memory:        &keptMemories{},
+		Memory:        metered.NewMemory(&keptMemories{}, s.metering),
 		Conversations: s.conversations,
 		Stream:        s.stream,
 		Store:         s.store,
@@ -1222,13 +1426,16 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 		Stream:            s.stream,
 		HookSecret:        suiteStreamSecret,
 		Secrets:           keyring,
-		Logger:            logger,
+		// The node's phone service is the suite's: the call hook a peer hands over answers
+		// the same database.
+		Phone:  s.router.phone,
+		Logger: logger,
 	})
 	s.Require().NoError(err)
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)
-	return other, server
+	return other, server, sessions
 }
 
 // deploymentWorkers is one node's view of the dispatch workers across the deployment.
@@ -1276,10 +1483,69 @@ func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
 	return bus
 }
 
+// suiteFresh is how often a suite's policies read money and their decisions again: a tenth of
+// a second rather than a router's five, so a limit a test spends is measured within it.
+const suiteFresh = 100 * time.Millisecond
+
+// suiteFlushMaxLag is how long a suite sharing holds lets one wait unshared before billable
+// work is refused, rather than a router's ten seconds.
+const suiteFlushMaxLag = 300 * time.Millisecond
+
+// limitApp gives the suite's app a spend limit of its own, as the limits API writes one.
+func (s *RouterSuite) limitApp(interval usage.Interval, micros int64) store.Limit {
+	limit := store.Limit{
+		Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.app.organization.ID, AppID: s.customerID(),
+		Interval: interval, LimitMicros: micros, UpdatedBy: "test",
+	}
+	s.Require().NoError(s.store.CreateLimit(s.T().Context(), &limit, store.LimitAudit{CustomerID: s.customerID(), Source: store.AuditSourceAPI}))
+	return limit
+}
+
 func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
-	enforcer, err := policy.New(s.configs, logger)
+	settings := policy.Settings{Mode: s.limitsMode, Fresh: suiteFresh, SpendEvery: suiteFresh, SumEvery: suiteFresh}
+	if s.holds != nil {
+		settings.Holds = s.holds
+		settings.FlushEvery, settings.HoldRefresh, settings.FlushMaxLag = 10*time.Millisecond, 50*time.Millisecond, suiteFlushMaxLag
+	}
+	if s.limited {
+		s.shipping = true
+		// A database of the suite's own: suites run in parallel, and starting one empties it.
+		database := "usage_" + strings.ToLower(strings.TrimPrefix(s.T().Name(), "Test"))
+		s.usage = usagetest.Start(s.T(), usagetest.Options{
+			DSN: usagetest.Database(s.T(), database), ManageKey: "manage-" + s.utils.uuid(), Logger: logger,
+		})
+		s.usageFront = newUsageFront(s.T(), s.usage)
+		client, err := usage.NewClient(usage.ClientOptions{URL: s.usageFront.server.URL, Token: s.usage.Token})
+		s.Require().NoError(err)
+		settings.Usage, settings.MaxStale, settings.PendingTTL = client, time.Minute, time.Minute
+	}
+	enforcer, err := policy.New(s.configs, settings, logger)
 	s.Require().NoError(err)
+	s.T().Cleanup(enforcer.Close)
+	s.enforcer = enforcer
 	return enforcer
+}
+
+// usageFront is the usage service as the suite's policies reach it: the real one, through a
+// proxy a test can take down, as the service going away does.
+type usageFront struct {
+	server *httptest.Server
+	down   atomic.Bool
+}
+
+func newUsageFront(t *testing.T, service *usagetest.Service) *usageFront {
+	target, err := url.Parse(service.URL)
+	require.NoError(t, err)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	front := &usageFront{}
+	front.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if front.down.Load() {
+			panic(http.ErrAbortHandler)
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.server.Close)
+	return front
 }
 
 // quota caps what one end user may spend in a day, unless their app's policy says otherwise.
@@ -1306,6 +1572,7 @@ func (s *RouterSuite) useFixture(name string) {
 // useApp points the clients at an app, each as a new caller of its kind.
 func (s *RouterSuite) useApp(app testApp) {
 	s.app = app
+	s.own(app.app.ID)
 	s.unauthenticatedClient = &testClient{suite: s, header: http.Header{}, kind: noCredential}
 	s.anonymousClient = s.data.createAnonymous()
 	s.guestClient = s.data.createGuest()
@@ -1604,6 +1871,7 @@ func (d testData) createAppAdmitting(settings store.AppSettings) testApp {
 // are held.
 func (d testData) keyed(organization store.Organization, app store.App) testApp {
 	s, ctx := d.suite, context.Background()
+	s.own(app.ID)
 	key, secret, err := auth.NewCredential(auth.Test)
 	s.Require().NoError(err)
 	sealed, err := s.sealer.Seal(secret)
@@ -1643,6 +1911,15 @@ func (d testData) briefed(request CreateSessionRequest) (CreateSessionRequest, s
 	brief := "Be a customer whose order " + d.suite.utils.uuid() + " never came."
 	request.Instructions = &brief
 	return request, brief
+}
+
+// storedSession is the id of a session of the suite's app that is not running, its row put
+// straight into the store, for an endpoint that only asks whose a session is.
+func (d testData) storedSession() string {
+	id := "session-" + d.suite.utils.uuid()
+	d.suite.Require().NoError(d.suite.store.SaveSession(context.Background(),
+		&store.AgentSession{ID: id, CustomerID: d.suite.customerID()}))
+	return id
 }
 
 // createUser is a client signed in as a new end user of the suite's app.
@@ -1805,7 +2082,7 @@ func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {
 // authMode is the mode the suite's router says it runs in: proxy in app mode, which only a
 // gateway serves, though the suite's callers still sign with the app's key.
 func (s *RouterSuite) authMode() auth.Mode {
-	if s.appMode {
+	if s.appMode || s.proxied {
 		return auth.Proxy
 	}
 	return auth.APIKey

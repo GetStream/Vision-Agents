@@ -107,7 +107,9 @@ func (s *LLMRouterSuite) newSession() (*Session, *stubLLM) {
 
 func (s *LLMRouterSuite) sessionFor(config routing.ProviderConfig) (*Session, *stubLLM) {
 	provider := newStubLLM()
-	recorder := routing.NewRecorder(routing.LLM, nil, nil, slog.Default())
+	prices, err := routing.Prices(routing.Config{routing.LLM: {Providers: []routing.ProviderConfig{config}}}, slog.Default())
+	s.Require().NoError(err)
+	recorder := routing.NewRecorder(routing.LLM, nil, nil, prices, slog.Default())
 	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder, nil)
 
 	s.T().Cleanup(func() {
@@ -319,10 +321,27 @@ func (s *LLMRouterSuite) TestSessionIdentityComesFromTheRoutingConfig() {
 func (s *LLMRouterSuite) TestSessionExposesThePriceItWillBeBilledAt() {
 	session, _ := s.newSession()
 
-	s.EqualValues(3_000_000, session.Price().CostMicros(routing.Usage{
+	s.EqualValues(3_000_000, session.Quote(routing.Usage{
 		InputTokens:  1_000_000,
 		OutputTokens: 1_000_000,
-	}), "a million tokens each way at $1 in and $2 out is $3")
+	}).CostMicros, "a million tokens each way at $1 in and $2 out is $3")
+}
+
+func (s *LLMRouterSuite) TestAResponseIsQuotedWithItsCacheWritesAndTier() {
+	session, _ := s.sessionFor(routing.ProviderConfig{Provider: "openai", Model: "gpt", Price: routing.Price{
+		PerMillionInputTokens:           2,
+		PerMillionCacheWriteInputTokens: 2.5,
+		PerMillionOutputTokens:          12,
+		ServiceTiers:                    map[string]float64{"flex": 0.5},
+	}})
+
+	quote := session.QuoteResponse(llm.Response{ServiceTier: "flex", Usage: llm.Usage{
+		InputTokens:        2_389,
+		InputTokensDetails: llm.InputTokensDetails{CacheWriteTokens: 2_386},
+		OutputTokens:       22,
+	}})
+
+	s.EqualValues(3_118, quote.CostMicros, "3 fresh, 2,386 written and 22 generated tokens, at half price")
 }
 
 func (s *LLMRouterSuite) TestSessionReportsWhatTheModelAccepts() {
@@ -331,13 +350,6 @@ func (s *LLMRouterSuite) TestSessionReportsWhatTheModelAccepts() {
 
 	provider.capabilities = llm.Capabilities{ReasoningEfforts: []string{"low"}}
 	s.Equal([]string{"low"}, session.Capabilities().ReasoningEfforts)
-}
-
-func (s *LLMRouterSuite) TestSessionExposesTheUnderlyingProvider() {
-	session, provider := s.newSession()
-
-	s.Same(provider, session.LLM(),
-		"provider-specific features stay reachable through the session")
 }
 
 func (s *LLMRouterSuite) TestClosingTheSessionClosesTheProvider() {

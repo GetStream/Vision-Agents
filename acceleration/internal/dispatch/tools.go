@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
-// defaultHostedTimeout is how long a hosted tool is given when its worker did not say.
-const defaultHostedTimeout = 2 * time.Minute
+// defaultHostedTimeout is how long a hosted tool is given when its worker did not say, which
+// is what a session gives the tools its caller runs.
+const defaultHostedTimeout = 30 * time.Second
 
 // toolQueue is how many hosted calls may wait on one worker's socket. A call is a small
 // frame and the worker runs each on its own, so this only fills when the socket has stopped
@@ -27,6 +30,14 @@ type Tool struct {
 	Description string
 	// Parameters is a JSON Schema object describing the arguments.
 	Parameters map[string]any
+	// Interruptible says the caller interrupting cancels a call in flight.
+	Interruptible bool `json:",omitempty"`
+	// Timeout is how long one call may take, in place of what the worker gave all its
+	// tools. Zero takes that.
+	Timeout time.Duration `json:",omitempty"`
+	// Approval is the question a voice caller is asked before each call runs. Empty asks
+	// nothing.
+	Approval string `json:",omitempty"`
 }
 
 // ToolCall is one call a worker is asked to run.
@@ -35,14 +46,53 @@ type ToolCall struct {
 	ID string
 	// SessionID is the conversation the call was made in, for the worker's logs.
 	SessionID string
-	Name      string
+	// TurnID, User and Conversation say what the call is part of: the turn that asked for
+	// it, the person whose turn that was, and the conversation it is held in.
+	TurnID       string        `json:",omitempty"`
+	User         *User         `json:",omitempty"`
+	Conversation *Conversation `json:",omitempty"`
+	Name         string
 	// Arguments is the JSON object the model wrote.
 	Arguments string
+	// Approved says the caller already said yes to the call, on a voice call that asked
+	// them the tool's approval question.
+	Approved bool `json:",omitempty"`
+	// Progress is the conversation the call was made in, which the worker may hold the call
+	// on or tell how it is going while it runs. Nil when nobody is listening.
+	Progress Progress `json:"-"`
+	// Cancel says the call with this id is no longer wanted: its deadline passed or the
+	// session gave up on it. It travels on the same queue as the call, so it cannot
+	// overtake it.
+	Cancel bool `json:",omitempty"`
+}
+
+// Progress is what a running hosted call may tell the conversation it was made in, as a
+// session's own tool may over the session socket.
+type Progress interface {
+	// HoldTool keeps the call running when the caller talks over the agent, reporting
+	// whether it still was.
+	HoldTool(id string) bool
+	// ToolUpdate says how the call is going, or with verbatim, words to say as written.
+	ToolUpdate(id, text string, verbatim bool)
+}
+
+// User is who a hosted call was made for.
+type User struct {
+	ID   string
+	Name string `json:",omitempty"`
+}
+
+// Conversation is the conversation a hosted call was made in: its id, when it is kept, and
+// the session's custom.
+type Conversation struct {
+	CID    string         `json:",omitempty"`
+	Custom map[string]any `json:",omitempty"`
 }
 
 // ToolResult is what the worker said happened.
 type ToolResult struct {
-	Output string
+	// Output is text and pictures, as a session's own tools answer.
+	Output []llm.ContentPart
 	// Failure is why the tool did not work, in words for the model. Empty on success.
 	Failure string
 }
@@ -63,6 +113,16 @@ func (h *hosting) offers(name string) bool {
 	return false
 }
 
+// timeoutOf is how long a call to name is given on this host.
+func (h *hosting) timeoutOf(name string) time.Duration {
+	for _, tool := range h.tools {
+		if tool.Name == name && tool.Timeout > 0 {
+			return tool.Timeout
+		}
+	}
+	return h.timeout
+}
+
 // ToolCalls is the hosted calls the worker's connection has to deliver. It is closed with
 // the rest of the worker's queues.
 func (w *Worker) ToolCalls() <-chan ToolCall { return w.toolCalls }
@@ -75,12 +135,41 @@ func (w *Worker) Resolve(id string, result ToolResult) bool {
 	w.mu.Lock()
 	waiting, found := w.results[id]
 	delete(w.results, id)
+	delete(w.progress, id)
 	w.mu.Unlock()
 	if !found {
 		return false
 	}
 	waiting <- result
 	return true
+}
+
+// Hold keeps a hosted call the worker is running going when the caller talks over the
+// agent, reporting the session the call was made in and whether it was still running to be
+// held.
+func (w *Worker) Hold(id string) (string, bool) {
+	call := w.progressOf(id)
+	return call.sessionID, call.progress != nil && call.progress.HoldTool(id)
+}
+
+// Update tells the conversation a hosted call was made in how it is going. An update for
+// a call nobody is waiting on is dropped.
+func (w *Worker) Update(id, text string, verbatim bool) {
+	if call := w.progressOf(id); call.progress != nil {
+		call.progress.ToolUpdate(id, text, verbatim)
+	}
+}
+
+// listening is a running hosted call's conversation, and the session it is.
+type listening struct {
+	sessionID string
+	progress  Progress
+}
+
+func (w *Worker) progressOf(id string) listening {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.progress[id]
 }
 
 // Host records that a worker runs these tools for sessions under an agent id, replacing
@@ -95,6 +184,11 @@ func (p *Pool) Host(worker *Worker, agentID string, tools []Tool, timeout time.D
 	}
 	if timeout <= 0 {
 		timeout = defaultHostedTimeout
+	}
+	for _, tool := range tools {
+		if tool.Timeout < 0 {
+			return fmt.Errorf("dispatch: %s cannot have a negative timeout", tool.Name)
+		}
 	}
 
 	p.mu.Lock()
@@ -131,6 +225,7 @@ func (p *Pool) HostedTools(customerID, agentID string) ([]Tool, time.Duration) {
 	for _, offer := range p.hosted[customerID][agentID] {
 		longest = max(longest, offer.timeout)
 		for _, tool := range offer.tools {
+			longest = max(longest, tool.Timeout)
 			if !seen[tool.Name] {
 				seen[tool.Name] = true
 				offered = append(offered, tool)
@@ -162,9 +257,9 @@ func (p *Pool) AgentsHostedBy(worker *Worker) []string {
 //
 // It goes to whichever host has the least still to answer, and hosts that are equally busy
 // take turns. One whose queue is full is passed over.
-func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call ToolCall) (string, error) {
+func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call ToolCall) ([]llm.ContentPart, error) {
 	if call.ID == "" {
-		return "", errors.New("dispatch: a hosted call needs an id")
+		return nil, errors.New("dispatch: a hosted call needs an id")
 	}
 	answer := make(chan ToolResult, 1)
 
@@ -189,41 +284,61 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 	}
 	if chosen == nil {
 		p.mu.Unlock()
-		return "", fmt.Errorf("dispatch: no worker is running %s now", call.Name)
+		return nil, fmt.Errorf("dispatch: no worker is running %s now", call.Name)
 	}
 	chosen.worker.mu.Lock()
 	if _, duplicate := chosen.worker.results[call.ID]; duplicate {
 		chosen.worker.mu.Unlock()
 		p.mu.Unlock()
-		return "", fmt.Errorf("dispatch: %s was already asked for", call.ID)
+		return nil, fmt.Errorf("dispatch: %s was already asked for", call.ID)
 	}
 	chosen.worker.results[call.ID] = answer
+	if call.Progress != nil {
+		chosen.worker.progress[call.ID] = listening{sessionID: call.SessionID, progress: call.Progress}
+	}
 	chosen.worker.mu.Unlock()
 	// Cannot block: the queue was not full a moment ago and nothing else writes to it
 	// without this lock.
 	chosen.worker.toolCalls <- call
 	p.mu.Unlock()
 
-	deadline, cancel := context.WithTimeout(ctx, chosen.timeout)
+	timeout := chosen.timeoutOf(call.Name)
+	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	select {
 	case result := <-answer:
 		if result.Failure != "" {
-			return "", errors.New(result.Failure)
+			return nil, errors.New(result.Failure)
 		}
 		return result.Output, nil
 	case <-deadline.Done():
 		chosen.worker.forget(call.ID)
+		p.cancelHosted(chosen.worker, call)
 		if err := ctx.Err(); err != nil {
-			return "", fmt.Errorf("dispatch: %s stopped: %w", call.Name, err)
+			return nil, fmt.Errorf("dispatch: %s stopped: %w", call.Name, err)
 		}
-		return "", fmt.Errorf("dispatch: %s did not answer within %s", call.Name, chosen.timeout)
+		return nil, fmt.Errorf("dispatch: %s did not answer within %s", call.Name, timeout)
+	}
+}
+
+// cancelHosted tells the worker running a call to stop it. A worker that has gone has
+// nothing to stop, and one whose queue is full is not reading it, so neither is waited on.
+func (p *Pool) cancelHosted(worker *Worker, call ToolCall) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.registered(worker) {
+		return
+	}
+	select {
+	case worker.toolCalls <- ToolCall{ID: call.ID, SessionID: call.SessionID, Name: call.Name, Cancel: true}:
+	default:
 	}
 }
 
 func (w *Worker) forget(id string) {
 	w.mu.Lock()
 	delete(w.results, id)
+	delete(w.progress, id)
 	w.mu.Unlock()
 }
 
@@ -269,6 +384,7 @@ func (p *Pool) unhost(worker *Worker) {
 	worker.mu.Lock()
 	waiting := worker.results
 	worker.results = map[string]chan ToolResult{}
+	worker.progress = map[string]listening{}
 	worker.mu.Unlock()
 	for _, answer := range waiting {
 		answer <- ToolResult{Failure: "the worker running this tool disconnected"}

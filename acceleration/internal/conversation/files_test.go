@@ -139,7 +139,7 @@ func TestTheSameFileRenderedAgainReplacesTheEarlierOne(t *testing.T) {
 	second := sandbox.Attachment{Name: "render.png", URL: "https://cdn.fake/2"}
 	other := sandbox.Attachment{Name: "depth.png", URL: "https://cdn.fake/3"}
 
-	merged := mergeFiles([]sandbox.Attachment{first, other}, []sandbox.Attachment{second})
+	merged := MergeFiles([]sandbox.Attachment{first, other}, []sandbox.Attachment{second})
 
 	require.Equal(t, []sandbox.Attachment{other, second}, merged)
 }
@@ -257,4 +257,132 @@ func TestAReopenedConversationSaysAPhotoWasSentWithoutShowingItAgain(t *testing.
 		{Role: llm.User, Content: "Which is nicer?\n\n[sent with 2 photos, not shown again]"},
 		{Role: llm.Assistant, Content: "The first."},
 	}, history)
+}
+
+// A follow-up's reply is carried again as it finished, with its files, live and after the
+// conversation is read back from Stream, as a scheduled task's retry sends it (AI-1882).
+func TestAFollowUpsFilesAreReadBackLiveAndAcrossRestart(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginFollowUp("st_run", "the task is due")
+	require.NoError(t, err)
+	render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
+	c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "run-1", Tool: sandbox.ToolName, Result: "Attached.", Files: []sandbox.Attachment{render}})
+	c.Observe(agent.ResponseDelta{Text: "Here is your teapot."})
+	c.Observe(agent.Responded{})
+
+	finished := FinishedReply{Customer: "customer", CID: c.CID(), MessageID: current(c).ID, CommandID: "st_run",
+		Text: "Here is your teapot.", Files: []sandbox.Attachment{render}}
+	require.Equal(t, finished, c.FollowUpFinished("st_run"))
+	saved(t, c)
+	c.Release()
+	service.Close()
+
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	require.Equal(t, finished, c.FollowUpFinished("st_run"))
+	require.Equal(t, FinishedReply{Customer: "customer", CID: c.CID(), CommandID: "st_other"}, c.FollowUpFinished("st_other"))
+}
+
+// A follow-up delivered again after an abandoned turn is read back with the files of the reply
+// that answered it, not the abandoned turn's none.
+func TestARetriedFollowUpsFilesAreReadBackAcrossRestart(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginFollowUp("st_run", "the task is due")
+	require.NoError(t, err)
+	c.AbandonFollowUp("st_run")
+	_, err = c.BeginFollowUp("st_run", "the task is due")
+	require.NoError(t, err)
+	render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
+	c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "run-1", Tool: sandbox.ToolName, Result: "Attached.", Files: []sandbox.Attachment{render}})
+	c.Observe(agent.ResponseDelta{Text: "Here is your teapot."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	c.Release()
+	service.Close()
+
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	require.Equal(t, []sandbox.Attachment{render}, c.FollowUpFinished("st_run").Files)
+}
+
+// Only a scheduled task's follow-up (ReadBackPrefix) is ever read back, so a thread message's
+// or a login's keeps no copy of its reply or files, live or after the conversation is read
+// back from Stream (AI-1557). Its record still says how the reply stands.
+func TestAFollowUpNobodyReadsBackKeepsNoCopyOfItsReply(t *testing.T) {
+	for _, id := range []string{"thread_message", "login_slack", "stx_run", "x_st_run"} {
+		t.Run(id, func(t *testing.T) {
+			_, client := newChat(t)
+			service := NewForChat(client)
+			c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+			require.NoError(t, err)
+			_, err = c.BeginFollowUp(id, "carry on")
+			require.NoError(t, err)
+			render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
+			c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
+			c.Observe(agent.ToolRan{ID: "run-1", Tool: sandbox.ToolName, Result: "Attached.", Files: []sandbox.Attachment{render}})
+			c.Observe(agent.ResponseDelta{Text: "Here is your teapot."})
+			c.Observe(agent.Responded{})
+			require.Equal(t, "Here is your teapot.", current(c).Text, "the reply itself is written as ever")
+
+			uncopied := FinishedReply{Customer: "customer", CID: c.CID(), MessageID: current(c).ID, CommandID: id}
+			require.Equal(t, uncopied, c.FollowUpFinished(id))
+			state, text, known := c.FollowUpReply(id)
+			require.Equal(t, []any{"completed", "", true}, []any{state, text, known})
+			saved(t, c)
+			c.Release()
+			service.Close()
+
+			recovered := NewForChat(client)
+			t.Cleanup(recovered.Close)
+			c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+			require.NoError(t, err)
+			require.Equal(t, uncopied, c.FollowUpFinished(id))
+			state, text, known = c.FollowUpReply(id)
+			require.Equal(t, []any{"completed", "", true}, []any{state, text, known})
+		})
+	}
+}
+
+// A retried follow-up nobody reads back (a thread message's, after an abandoned turn) keeps no
+// copy of its reply or files across a restart either: the record read back from Stream follows
+// the same rule as the live one, though two assistant messages share its id.
+func TestARetriedFollowUpNobodyReadsBackKeepsNoCopyAcrossRestart(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginFollowUp("thread_message", "carry on")
+	require.NoError(t, err)
+	c.AbandonFollowUp("thread_message")
+	_, err = c.BeginFollowUp("thread_message", "carry on")
+	require.NoError(t, err)
+	render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
+	c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "run-1", Tool: sandbox.ToolName, Result: "Attached.", Files: []sandbox.Attachment{render}})
+	c.Observe(agent.ResponseDelta{Text: "Here is your teapot."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	c.Release()
+	service.Close()
+
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	finished := c.FollowUpFinished("thread_message")
+	require.Equal(t, []any{"", 0}, []any{finished.Text, len(finished.Files)})
+	_, text, known := c.FollowUpReply("thread_message")
+	require.Equal(t, []any{"", true}, []any{text, known})
 }

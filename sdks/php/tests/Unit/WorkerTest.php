@@ -260,10 +260,10 @@ final class WorkerTest extends TestCase
         foreach ($server->sent('tool_result') as $result) {
             $results[Json::string($result, 'id')] = $result;
         }
-        self::assertSame(['type' => 'tool_result', 'id' => 't2', 'output' => '{"location":"Boulder, Colorado","sky":"sunny"}'], $results['t2']);
-        self::assertSame(['type' => 'tool_result', 'id' => 't3', 'error' => 'the weather service is down'], $results['t3']);
-        self::assertSame(['type' => 'tool_result', 'id' => 't4', 'error' => 'this worker does not run read_source'], $results['t4']);
-        self::assertSame(['type' => 'tool_result', 'id' => 't1', 'output' => 'done'], $results['t1']);
+        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't2', 'id' => 't2', 'output' => '{"location":"Boulder, Colorado","sky":"sunny"}'], $results['t2']);
+        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't3', 'id' => 't3', 'error' => 'the weather service is down'], $results['t3']);
+        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't4', 'id' => 't4', 'error' => 'this worker does not run read_source'], $results['t4']);
+        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't1', 'id' => 't1', 'output' => 'done'], $results['t1']);
         self::assertSame('t1', array_key_last($results), 'a slow tool held up the calls behind it');
         self::assertSame(0, $dispatch->active());
     }
@@ -316,6 +316,9 @@ final class WorkerTest extends TestCase
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
             LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'weather in Paris?']);
+            // Every watcher is sent every call and the first answer wins, so a call for a tool
+            // held elsewhere is left for whoever holds it.
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't0', 'name' => 'book_flight', 'arguments' => '{}']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't1', 'name' => 'get_weather', 'arguments' => '{"city":"Paris"}', 'request_id' => 'req1', 'turn_id' => 'turn1']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't2', 'name' => 'broken', 'arguments' => '{}']);
             while (count($server->sent('tool_result')) < 2 && $server->next($socket) !== null) {
@@ -340,6 +343,7 @@ final class WorkerTest extends TestCase
         foreach ($server->sent('tool_result') as $result) {
             $results[Json::string($result, 'tool_call_id')] = $result;
         }
+        self::assertArrayNotHasKey('t0', $results);
         self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't1', 'request_id' => 'req1', 'turn_id' => 'turn1', 'output' => '{"city":"Paris","sky":"clear"}'], $results['t1']);
         self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't2', 'error' => 'the weather service is down'], $results['t2']);
     }

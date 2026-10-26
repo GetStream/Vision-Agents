@@ -9,7 +9,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
 // memoryQueueSize bounds how many exchanges may wait to be remembered before they are
@@ -20,18 +19,14 @@ const memoryQueueSize = 64
 // memoryTimeout bounds one call to the memory store.
 const memoryTimeout = 10 * time.Second
 
-// memoryProvider names the model row a memory call is recorded as, so what memory costs
-// is reported next to what the models cost.
-const memoryModel = "v3"
-
-// memoryWriter hands finished exchanges to the memory store off the conversation's path.
+// memoryWriter hands finished exchanges to the memory store off the conversation's path. The
+// store is the agent's owner's, so every call is recorded under the same customer and labels
+// as the models the conversation used.
 type memoryWriter struct {
 	store memory.Store
 	scope memory.Scope
 	// incognito recalls but never writes, so nothing said in the session is kept.
 	incognito bool
-	owner     routing.Owner
-	recorder  *routing.Recorder
 	logger    *slog.Logger
 
 	queue chan []llm.Message
@@ -41,20 +36,11 @@ type memoryWriter struct {
 	dropped   atomic.Int64
 }
 
-func newMemoryWriter(
-	store memory.Store,
-	scope memory.Scope,
-	incognito bool,
-	owner routing.Owner,
-	recorder *routing.Recorder,
-	logger *slog.Logger,
-) *memoryWriter {
+func newMemoryWriter(store memory.Store, scope memory.Scope, incognito bool, logger *slog.Logger) *memoryWriter {
 	w := &memoryWriter{
 		store:     store,
 		scope:     scope,
 		incognito: incognito,
-		owner:     owner,
-		recorder:  recorder,
 		logger:    logger,
 		queue:     make(chan []llm.Message, memoryQueueSize),
 		done:      make(chan struct{}),
@@ -80,9 +66,7 @@ func (w *memoryWriter) Remember(messages []llm.Message) {
 // agent that has forgotten is worse than one that never knew, but neither is a broken
 // call, so this reports the problem and carries on with nothing.
 func (w *memoryWriter) Recall(ctx context.Context, limit int) []memory.Memory {
-	started := time.Now()
 	recalled, err := w.store.Recall(ctx, memory.Query{Scope: w.scope, Limit: limit})
-	w.record(started, err)
 	if err != nil {
 		w.logger.Error("could not recall what is known about this participant", "error", err)
 		return nil
@@ -95,9 +79,6 @@ func (w *memoryWriter) Close() {
 	w.closeOnce.Do(func() {
 		close(w.queue)
 		<-w.done
-		if w.recorder != nil {
-			w.recorder.Close()
-		}
 		if dropped := w.dropped.Load(); dropped > 0 {
 			w.logger.Warn("dropped exchanges the memory writer could not keep up with", "count", dropped)
 		}
@@ -109,34 +90,9 @@ func (w *memoryWriter) run() {
 
 	for messages := range w.queue {
 		ctx, cancel := context.WithTimeout(context.Background(), memoryTimeout)
-		started := time.Now()
-		err := w.store.Remember(ctx, w.scope, messages)
-		w.record(started, err)
-		if err != nil {
+		if err := w.store.Remember(ctx, w.scope, messages); err != nil {
 			w.logger.Error("could not remember an exchange", "error", err)
 		}
 		cancel()
 	}
-}
-
-// record files the call as a request row, so memory appears in cost reporting under the
-// same customer and labels as the models the conversation used.
-func (w *memoryWriter) record(started time.Time, err error) {
-	if w.recorder == nil {
-		return
-	}
-
-	stat := routing.Stat{
-		Owner:     w.owner,
-		StartedAt: started.UTC(),
-		LatencyMs: routing.MsSince(started),
-		Success:   err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = "memory_failed"
-	}
-	w.recorder.Record(routing.ProviderConfig{
-		Provider: w.store.Provider(),
-		Model:    memoryModel,
-	}, stat)
 }

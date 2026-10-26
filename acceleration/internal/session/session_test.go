@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -288,30 +289,33 @@ type stubMemory struct {
 	forgot []string
 }
 
-func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Memory, error) {
+func (m *stubMemory) Recall(_ context.Context, query memory.Query) (memory.Recalled, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.scope = query.Scope
-	return nil, nil
+	return memory.Recalled{Billed: memory.Billed{Requests: 1}}, nil
 }
 
-func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) error {
+func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) (memory.Billed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.learned = append(m.learned, messages)
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
-func (m *stubMemory) Truncate(context.Context, string, string) error { return nil }
-func (m *stubMemory) Provider() string                               { return "stub" }
-func (m *stubMemory) Close() error                                   { return nil }
+func (m *stubMemory) Truncate(context.Context, string, string) (memory.Billed, error) {
+	return memory.Billed{Requests: 1}, nil
+}
 
-func (m *stubMemory) ForgetRun(_ context.Context, _, runID string) error {
+func (m *stubMemory) ForgetRun(_ context.Context, _, runID string) (memory.Billed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.forgot = append(m.forgot, runID)
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
+
+func (m *stubMemory) Provider() string { return "stub" }
+func (m *stubMemory) Close() error     { return nil }
 
 func (m *stubMemory) forgotten() []string {
 	m.mu.Lock()
@@ -506,11 +510,9 @@ func (s *SessionSuite) manages() {
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
-	// A typed nil would make the interface non-nil, which is not the same as having no
-	// memory at all.
-	var remembering memory.Store
+	var remembering *metered.Memory
 	if s.remembers != nil {
-		remembering = s.remembers
+		remembering = metered.NewMemory(s.remembers, nil)
 	}
 
 	var storing TranscriptFactory
@@ -1071,6 +1073,12 @@ func (s *SessionSuite) TestAnLLMOnlyManagerAnswersTextAndRefusesVoice() {
 	s.Empty(s.edges, "unsupported voice must not open a call")
 }
 
+func (s *SessionSuite) TestAManagerWithNoStoreHasNoRowsToWaitFor() {
+	s.manages()
+
+	s.NoError(s.manager.FlushRecords(s.ctx))
+}
+
 func (s *SessionSuite) TestVoiceWithoutATTSRouterIsRefusedBeforeOpeningACall() {
 	s.manages()
 	manager, err := NewManager(ManagerOptions{LLM: s.manager.options.LLM, STT: s.manager.options.STT, Edge: s.manager.options.Edge})
@@ -1118,8 +1126,8 @@ func (r *recordedTurns) RewindResponses(_ context.Context, _, _, kept string, _ 
 
 func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
 	s.manages()
+	s.manager.records = &heldRecorder{}
 	created := s.writes(Spec{})
-	created.records = &heldRecorder{}
 	recorded := &recordedTurns{exchanges: []store.Exchange{
 		{ResponseID: "first", Said: "Is Stream better than Sendbird?", Answer: "Yes."},
 		{ResponseID: "second", Said: "And cheaper?", Answer: "Also yes."},
@@ -1149,8 +1157,8 @@ func (s *SessionSuite) TestARenamedSessionKeepsWhatItWasNotAskedToChange() {
 
 func (s *SessionSuite) TestRewindingToAResponseTheSessionNeverHadIsUnknown() {
 	s.manages()
+	s.manager.records = &heldRecorder{}
 	created := s.writes(Spec{})
-	created.records = &heldRecorder{}
 
 	err := created.Rewind(s.ctx, &recordedTurns{}, "somebody-elses")
 
@@ -1362,11 +1370,28 @@ func (s *SessionSuite) TestAToolNobodyAnswersGivesUpRatherThanHangingTheTurn() {
 	s.Require().NotNil(awaitToolCall(events), "the caller was never asked in the first place")
 }
 
+func (s *SessionSuite) TestAToolsOwnTimeoutReplacesTheSessions() {
+	s.manages()
+	created := s.joins(Spec{
+		ToolTimeoutMs: 60_000,
+		Tools:         []harness.Tool{{Name: "search_flights", Description: "Search for flights", Timeout: 50 * time.Millisecond}},
+	})
+	events, detach := created.Watch()
+	defer detach()
+
+	started := time.Now()
+	_, err := created.tools.Run(s.ctx, llm.ToolCall{ID: "call-1", Name: "search_flights"})
+
+	s.Require().ErrorIs(err, context.DeadlineExceeded)
+	s.Less(time.Since(started), 5*time.Second, "the call waited out the session's timeout")
+	s.Require().NotNil(awaitToolCall(events), "the caller was never asked in the first place")
+}
+
 func (s *SessionSuite) TestToolCancellationRetainsTheInterruptedTurn() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	events := make(chan ToolCall, 2)
-	tools := newBridge(time.Second, func(call ToolCall) error { events <- call; return nil })
+	tools := newBridge(time.Second, nil, func(call ToolCall) error { events <- call; return nil })
 	finished := make(chan error, 1)
 	go func() {
 		_, err := tools.Run(ctx, llm.ToolCall{ID: "call-one", TurnID: "turn-one", Name: "lookup_order", Arguments: "{}"})
@@ -1441,7 +1466,7 @@ func (s *SessionSuite) TestCancelledAndExpiredToolsAreNotPending() {
 		if expired {
 			timeout = 10 * time.Millisecond
 		}
-		tools := newBridge(timeout, func(call ToolCall) error { asked <- call; return nil })
+		tools := newBridge(timeout, nil, func(call ToolCall) error { asked <- call; return nil })
 		finished := make(chan error, 1)
 		go func() {
 			_, err := tools.Run(ctx, llm.ToolCall{ID: "pending", TurnID: "turn", Name: "lookup_order"})
@@ -1995,4 +2020,23 @@ func (s *SessionSuite) TestTextSessionWithoutSkillsOfItsOwnLoadsNone() {
 	created := s.writes(Spec{})
 
 	s.NotContains(created.Tools(), harness.LoadSkillTool)
+}
+
+func (s *SessionSuite) TestACallTheCallerAllowedIsAskedForAsApprovedAndReplayedSo() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan ToolCall, 2)
+	tools := newBridge(time.Second, nil, func(call ToolCall) error { events <- call; return nil })
+	go func() {
+		_, _ = tools.Run(agent.WithApproval(ctx), llm.ToolCall{ID: "call-one", TurnID: "turn-one", Name: "book_flight", Arguments: "{}"})
+	}()
+	select {
+	case requested := <-events:
+		s.True(requested.Approved)
+	case <-time.After(time.Second):
+		s.FailNow("tool request was not emitted")
+	}
+	pending := tools.Pending()
+	s.Require().Len(pending, 1)
+	s.True(pending[0].Approved, "a call replayed to a watcher that attached is still approved")
 }

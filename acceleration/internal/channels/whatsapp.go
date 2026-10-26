@@ -134,7 +134,7 @@ func (p *whatsAppProvider) Parse(body []byte) ([]Message, error) {
 
 // Send writes the reply back, one request per part: the text, then each file, then the
 // button for a login. Meta takes one thing per message.
-func (p *whatsAppProvider) Send(ctx context.Context, account Account, thread string, reply Reply) error {
+func (p *whatsAppProvider) Send(ctx context.Context, account Account, thread string, reply Reply) (Sent, error) {
 	var bodies []map[string]any
 	if reply.Text != "" {
 		bodies = append(bodies, map[string]any{
@@ -166,16 +166,19 @@ func (p *whatsAppProvider) Send(ctx context.Context, account Account, thread str
 		})
 	}
 
+	// Meta bills each message, the file and the button beside the words included.
+	var sent Sent
 	for _, body := range bodies {
 		body["messaging_product"] = "whatsapp"
 		body["recipient_type"] = "individual"
 		body["to"] = thread
 		url := fmt.Sprintf("%s/%s/messages", p.host(), account.AccountID)
 		if err := post(ctx, p.client, url, account.Token, body); err != nil {
-			return err
+			return sent, err
 		}
+		sent.Messages++
 	}
-	return nil
+	return sent, nil
 }
 
 func (p *whatsAppProvider) host() string {

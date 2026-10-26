@@ -1,127 +1,378 @@
 // Package policy enforces what an organization and its apps have decided about spend, data
 // handling, prompt injection, which models may be used, how usage is labelled and what one
-// end user may spend in a day.
+// end user may spend in a day, and what the operator has decided about an organization's
+// money: whether it is suspended, its credit, and its spend hard limit.
 //
-// An organization's policy is a floor its apps can tighten and cannot loosen: both budgets
-// apply, a data policy is the stricter of the two, prompt injection is screened if either
-// turns it on, only a model both allow may be routed to, and the organization's tags win
-// over the app's. That is the only reading under which an organization's setting means
-// anything, since an app that could switch it off would make it a suggestion. A daily limit
-// per end user is the app's alone, so it has no organization's to meet.
+// An organization's policy is a floor its apps can tighten and cannot loosen: a data policy
+// is the stricter of the two, prompt injection is screened if either turns it on, only a
+// model both allow may be routed to, and the organization's tags win over the app's. That is
+// the only reading under which an organization's setting means anything, since an app that
+// could switch it off would make it a suggestion. A daily quota per end user is the other way
+// round: each number is the most specific set of a named user's own, the app's and the
+// organization's, so an app may raise its organization's default and a user their app's.
 //
-// Decisions are cached per customer for a few seconds, because Admit is asked before every
-// routed session and every LLM response, and a budget is a sum over the request rows. The
-// price is that a budget can be overshot by what a customer spends inside that window.
+// The customer's spend limits are rows of their own (store.Limit), one per subject, level and
+// interval: on the organization, an app, a key, an end user, a usage category or a team. Work
+// is refused once any subject it counts for has no room left under its limit, the most
+// specific level's, so the organization's limit still refuses an app whose own has room.
+//
+// Admit is asked before every routed session and every LLM response, an in-process agent's
+// speech included, so it answers from memory. What an app's policies say is its decision,
+// read through appconfig and refreshed in the background once older than Settings.Fresh.
+// What its organization may do with money is its account, read by two loops per Enforcer, for
+// every organization in use at once: its standing from the usage service every Fresh, and its
+// limits every Fresh with what their subjects spent, from the usage service's counters every
+// SpendEvery (or summed from Postgres with no usage service). Work recorded since those reads
+// is held against it by usage id until a read that counts it has landed. The price is that an
+// organization can overshoot by what it starts before its last unit of work is recorded.
 package policy
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/redis/rueidis"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 var tracer = tracing.Tracer("policy")
 
-// ErrBudgetSpent is what a customer whose app or organization has spent its budget is
-// refused with. The message names which budget and when it resets.
-var ErrBudgetSpent = errors.New("policy: the budget is spent")
-
-// decisionTTL is how long a customer's decision is reused before the policies and the
-// spend are read again.
-const decisionTTL = 10 * time.Second
-
-// joinTimeout bounds recording which organization an app belongs to.
+// joinTimeout bounds recording which organization an app belongs to, and every read of an
+// app's policies: in the background, and the one a request with no decision yet waits on.
 const joinTimeout = 2 * time.Second
 
-// Enforcer answers what a customer's policies allow. A nil Enforcer allows everything.
+// tierTTL is how long an organization's tier is believed without a request naming it before
+// organization_tiers is read again, so a tier another router was sent reaches this one's work,
+// a running session's included, within it.
+const tierTTL = 10 * time.Second
+
+// Settings are how an Enforcer reads money. Production passes Mode and Usage; the rest have
+// defaults, which tests shorten.
+type Settings struct {
+	// Mode is how much of credit, the spend hard limit and spend limits is enforced; empty is
+	// enforce.
+	Mode config.LimitsMode
+	// Usage is the usage service. Nil: money is read from Postgres, with no credit, no tier and
+	// no spend hard limit, as a deployment that bills nobody runs.
+	Usage *usage.Client
+	// Counters is the Redis the usage service keeps every subject's spend in, which the
+	// customer's limits are read from. Nil: with a usage service, its spend is read from the
+	// service itself every Fresh.
+	Counters rueidis.Client
+	// Fresh is how often the standings and the customer's limits are read, and how old a
+	// decision gets before it is read again in the background; 5 s.
+	Fresh time.Duration
+	// SpendEvery is how often the limited subjects' spend is read from Counters; 1 s.
+	SpendEvery time.Duration
+	// SumEvery is how often the limited subjects' spend is summed from Postgres with no usage
+	// service, and the shard asked which held rows it shipped; 10 s. What this router spends is
+	// held against them at once, so this is how soon another router's is counted.
+	SumEvery time.Duration
+	// MaxStale is how long an account answers after its last read before its tier's fail
+	// mode decides, for its balance and for its limits alike; 60 s.
+	MaxStale time.Duration
+	// FirstRead is how long an admission waits for the first read of an account's limits, or of
+	// what a limited subject spent, before its tier's fail mode decides; 250 ms.
+	FirstRead time.Duration
+	// Idle is how long an unused decision or account is kept; 10 minutes.
+	Idle time.Duration
+	// PendingTTL is how long a hold waits for its row to reach the ledger before it is
+	// dropped; 10 minutes.
+	PendingTTL time.Duration
+	// Holds is the Redis every router shares its holds through, so one organization spending
+	// on several routers is counted on each. Nil: holds stay in this process.
+	Holds rueidis.Client
+	// FlushEvery is how often new and changed holds are written to Holds; 50 ms.
+	FlushEvery time.Duration
+	// HoldRefresh is how often the other routers' holds are read for subjects this process has
+	// nothing to write for; 1 s.
+	HoldRefresh time.Duration
+	// FlushMaxLag is how long a change to a hold may wait to be written to Holds before
+	// billable work is refused (ErrSpendCheckUnavailable); 10 s.
+	FlushMaxLag time.Duration
+	// Now says which UTC day and month the spend hard limit and budgets are counted in;
+	// time.Now.
+	Now func() time.Time
+	// Notified is called once a warning that an organization's credit is running out has been
+	// queued for its stream destinations, so whatever sends them looks at once. Nil leaves them
+	// to its next look.
+	Notified func()
+}
+
+// Defaults of Settings.
+const (
+	defaultFresh       = 5 * time.Second
+	defaultSpendEvery  = time.Second
+	defaultSumEvery    = 10 * time.Second
+	defaultMaxStale    = time.Minute
+	defaultFirstRead   = 250 * time.Millisecond
+	defaultIdle        = 10 * time.Minute
+	defaultPendingTTL  = 10 * time.Minute
+	defaultFlushEvery  = 50 * time.Millisecond
+	defaultHoldRefresh = time.Second
+	defaultFlushMaxLag = 10 * time.Second
+)
+
+func (s Settings) withDefaults() Settings {
+	if s.Mode == "" {
+		s.Mode = config.LimitsEnforce
+	}
+	if s.Fresh <= 0 {
+		s.Fresh = defaultFresh
+	}
+	if s.SpendEvery <= 0 {
+		s.SpendEvery = min(defaultSpendEvery, s.Fresh)
+	}
+	if s.SumEvery <= 0 {
+		s.SumEvery = defaultSumEvery
+	}
+	if s.MaxStale <= 0 {
+		s.MaxStale = defaultMaxStale
+	}
+	if s.FirstRead <= 0 {
+		s.FirstRead = defaultFirstRead
+	}
+	if s.Idle <= 0 {
+		s.Idle = defaultIdle
+	}
+	if s.PendingTTL <= 0 {
+		s.PendingTTL = defaultPendingTTL
+	}
+	if s.FlushEvery <= 0 {
+		s.FlushEvery = defaultFlushEvery
+	}
+	if s.HoldRefresh <= 0 {
+		s.HoldRefresh = defaultHoldRefresh
+	}
+	if s.FlushMaxLag <= 0 {
+		s.FlushMaxLag = defaultFlushMaxLag
+	}
+	if s.Now == nil {
+		s.Now = time.Now
+	}
+	return s
+}
+
+// Enforcer answers what a customer's policies and its organization's money allow. A nil
+// Enforcer allows everything.
 //
-// Every read fails open, as the daily quota does: a database blip should not become an
-// outage of everything the policies were protecting.
+// Every read of the policies fails open, as the daily quota does: a database blip should not
+// become an outage of everything the policies were protecting. Money fails as the
+// organization's tier says, once its account has gone unread for MaxStale.
 type Enforcer struct {
-	config *appconfig.Store
-	logger *slog.Logger
+	config   *appconfig.Store
+	logger   *slog.Logger
+	settings Settings
 
 	mu        sync.Mutex
 	decisions map[string]decision
+	// generation numbers each decision as it is made, so a background read that finishes after
+	// the decision was dropped or replaced does not put back what it read. forgotten counts the
+	// times Save dropped decisions, so a read under way when a policy was saved keeps nothing.
+	generation uint64
+	forgotten  uint64
+	// warming is the apps whose decision is being read in the background on their behalf.
+	warming sync.Map
 	// members is which organization each app has already been recorded under by this
 	// process, so a membership is written once rather than on every request.
 	members sync.Map
+	// tiers is each organization's tier as this process last knew it, from a request or from
+	// organization_tiers, and what it last wrote there.
+	tiersMu sync.Mutex
+	tiers   map[string]tierSeen
+	// now is the clock the tiers are kept by.
+	now func() time.Time
+	// userQuotaLogs throttles the line a user's own quota that cannot be read logs, per app.
+	userQuotaLogs throttle
+
+	money money
 }
 
-// decision is what one customer's policies came to.
+// tierSeen is an organization's tier, empty when none is known, and when it was last known to
+// be so; and the tier this process last wrote to organization_tiers, and when.
+type tierSeen struct {
+	tier      string
+	at        time.Time
+	written   string
+	writtenAt time.Time
+}
+
+// decision is what an app's policies say. Read through appconfig, so from process memory once
+// read, and refreshed in the background once older than Fresh.
 type decision struct {
-	refusal error
-	floor   options.DataPolicy
-	models  []string
-	tags    routing.Tags
-	screen  bool
+	floor  options.DataPolicy
+	models []string
+	tags   routing.Tags
+	screen bool
 	// ownApp is a customer that must act in a Stream app of its own.
 	ownApp bool
-	// messages and tokens are the daily limits per end user the app's policy sets, nil
+	// toolOutput is the longest a session keeps what its tools were given and gave back.
+	toolOutput options.Retention
+	// resumeHistory is how the app's sessions are handed back a conversation they carry on.
+	resumeHistory store.ResumeHistory
+	// organization is the one the app is in, empty while it is not known.
+	organization string
+	// balanceWarning is the balance its organization's policy warns at, over its tier's; nil
 	// where it sets none.
-	messages *int64
-	tokens   *int64
+	balanceWarning *int64
+	// appQuota and organizationQuota are the daily limits per end user the app's and the
+	// organization's policies set, nil where they set none. users is an app some of whose
+	// users have a policy of their own, so a user of an app with none costs no lookup.
+	appQuota          *store.Quota
+	organizationQuota *store.Quota
+	users             bool
 	// unread is a decision made without the policies, which could not be read.
-	unread  error
-	expires time.Time
+	unread error
+	// read is when the policies were read, used when Admit last answered with it, and
+	// refreshing whether a read of it is under way.
+	read       time.Time
+	used       time.Time
+	refreshing bool
+	generation uint64
 }
 
-// New returns an Enforcer reading policies from the configuration store.
-func New(config *appconfig.Store, logger *slog.Logger) (*Enforcer, error) {
+// New returns an Enforcer reading policies from the configuration store and money as the
+// settings say, and starts its money loop, which Close stops. With Mode off no money is read.
+func New(config *appconfig.Store, settings Settings, logger *slog.Logger) (*Enforcer, error) {
 	if config == nil {
 		return nil, errors.New("policy: a configuration store is required")
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Enforcer{config: config, logger: logger, decisions: map[string]decision{}}, nil
+	e := &Enforcer{
+		config: config, logger: logger, settings: settings.withDefaults(),
+		decisions: map[string]decision{}, tiers: map[string]tierSeen{}, now: time.Now,
+	}
+	e.money.start(e)
+	return e, nil
 }
 
-// Admit refuses a customer whose app or organization has spent its budget, and says what
-// every one of their requests is held to. The admission is returned with a refusal too.
-func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admission, error) {
+// Close stops the money loop and waits for it. Admit keeps answering from what it last read.
+func (e *Enforcer) Close() {
+	if e == nil {
+		return
+	}
+	e.money.stop()
+}
+
+// Admit refuses an owner whose organization is suspended, says in Admission.Spend why the
+// owner's work may spend no money when it may not, and says what every one of the customer's
+// requests is held to. The owner's key, user and categories are the subjects the customer's
+// limits are checked for, beside its organization and app. It answers from memory: a customer
+// it has no decision for has its policies read now, through appconfig, and its money left to
+// the loops, which admit until they land.
+func (e *Enforcer) Admit(ctx context.Context, owner routing.Owner) (routing.Admission, error) {
+	customerID := owner.CustomerID
 	if e == nil || customerID == "" {
 		return routing.Admission{}, nil
 	}
 	ctx, span := tracer.Start(ctx, "policy.admit")
 	defer span.End()
 	decided := e.decide(ctx, customerID)
-	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, stack.Wrap(decided.refusal)
+	refusal, spend, grants := e.spendable(ctx, owner, decided)
+	limits, tier := e.money.inForce(decided.organization)
+	return routing.Admission{
+		DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags, OrganizationID: decided.organization,
+		Spend: spend, Grants: grants, Limits: limits, LimitsTier: tier,
+	}, stack.Wrap(refusal)
 }
 
-// Limits returns what one of a customer's end users may spend in a day: the number the
-// app's policy sets, or defaults where it sets none. A limit of zero is no cap. A policy
-// that could not be read leaves defaults in place; a spend that could not be read leaves
-// the limits the policy sets.
-func (e *Enforcer) Limits(ctx context.Context, customerID string, defaults quota.Limits) quota.Limits {
+// Attribute says who a customer's work is billed to, that organization's tier now and the tags
+// their policies lay over it, for a row written after the work. It reads no money, and keeps
+// no decision: a lookup that fails is the caller's to try again, where Admit would keep
+// allowing every request on the decision a failed read made.
+func (e *Enforcer) Attribute(ctx context.Context, customerID string) (routing.Admission, error) {
 	if e == nil || customerID == "" {
-		return defaults
+		return routing.Admission{}, nil
+	}
+	e.mu.Lock()
+	cached, ok := e.decisions[customerID]
+	e.mu.Unlock()
+	if ok && cached.unread == nil && time.Since(cached.read) < 2*e.settings.Fresh {
+		return routing.Admission{Tags: cached.tags, OrganizationID: cached.organization, OrganizationTier: e.tier(ctx, cached.organization)}, nil
+	}
+	app, organization, organizationID, err := e.policies(ctx, customerID)
+	if err != nil {
+		return routing.Admission{}, stack.Wrap(err)
+	}
+	return routing.Admission{Tags: labelled(organization, app), OrganizationID: organizationID, OrganizationTier: e.tier(ctx, organizationID)}, nil
+}
+
+// Quota returns what one of a customer's end users may spend in a day, each number the first
+// set of the user's own policy, the app's, the organization's and defaults. A limit of zero
+// is no cap. A policy that could not be read leaves the level below it in place.
+//
+// It answers from the app's decision in memory. Only a user of an app some of whose users
+// have a policy of their own is looked up, through appconfig.
+func (e *Enforcer) Quota(ctx context.Context, customerID, userID string, defaults quota.Limits) quota.Quota {
+	held := quota.Default(defaults)
+	if e == nil || customerID == "" {
+		return held
 	}
 	decided := e.decide(ctx, customerID)
-	return quota.Limits{
-		MessagesPerDay: orDefault(decided.messages, defaults.MessagesPerDay),
-		TokensPerDay:   orDefault(decided.tokens, defaults.TokensPerDay),
+	held = layered(held, decided.organizationQuota, quota.Setter{Level: quota.LevelOrganization, ID: decided.organization})
+	held = layered(held, decided.appQuota, quota.Setter{Level: quota.LevelApp, ID: customerID})
+	if !decided.users || userID == "" {
+		return held
 	}
+	reading, cancel := context.WithTimeout(ctx, joinTimeout)
+	defer cancel()
+	own, err := e.config.Policy(reading, store.ScopeUser, store.UserScopeID(customerID, userID))
+	if err != nil {
+		if e.userQuotaLogs.due(customerID, time.Minute) {
+			e.logger.Error("could not read a user's own quota, holding them to their app's",
+				"customer", customerID, "error", err)
+		}
+		return held
+	}
+	return layered(held, own.Quota, quota.Setter{Level: quota.LevelUser, ID: userID})
+}
+
+// layered is held with the numbers set lays over it, each one by.
+func layered(held quota.Quota, set *store.Quota, by quota.Setter) quota.Quota {
+	if set == nil {
+		return held
+	}
+	if set.MessagesPerUserPerDay != nil {
+		held.Messages = quota.Limit{PerDay: *set.MessagesPerUserPerDay, By: by}
+	}
+	if set.TokensPerUserPerDay != nil {
+		held.Tokens = quota.Limit{PerDay: *set.TokensPerUserPerDay, By: by}
+	}
+	return held
 }
 
 // Join records that an app was seen under an organization, which is what an organization's
-// budget and policy are applied through. It returns at once and writes in the background.
-func (e *Enforcer) Join(appID, organizationID string) {
-	if e == nil || appID == "" || organizationID == "" {
+// budget and policy are applied through, and the organization's tier as the request named it,
+// which work no request carries is recorded under. It also starts reading the app's decision
+// and its organization's account if this process has neither, so by the time the caller's
+// work is admitted both are in memory. It returns at once and does all of it in the
+// background.
+func (e *Enforcer) Join(appID, organizationID, tier string) {
+	if e == nil || appID == "" {
 		return
 	}
+	e.warm(appID)
+	if organizationID == "" {
+		return
+	}
+	e.money.want(organizationID)
+	e.seeTier(organizationID, tier)
 	if known, ok := e.members.Load(appID); ok && known == organizationID {
 		return
 	}
@@ -135,8 +386,134 @@ func (e *Enforcer) Join(appID, organizationID string) {
 				"app", appID, "organization", organizationID, "error", err)
 			return
 		}
-		e.forget(appID)
+		e.refresh(appID)
 	}()
+}
+
+// warm starts reading an app's decision in the background when this process has none.
+func (e *Enforcer) warm(appID string) {
+	e.mu.Lock()
+	_, known := e.decisions[appID]
+	e.mu.Unlock()
+	if known {
+		return
+	}
+	if _, already := e.warming.LoadOrStore(appID, struct{}{}); already {
+		return
+	}
+	go func() {
+		defer e.warming.Delete(appID)
+		e.mu.Lock()
+		forgotten := e.forgotten
+		e.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), joinTimeout)
+		defer cancel()
+		decided, err := e.configuration(ctx, appID)
+		if err != nil {
+			// The request that comes next reads them itself, and says so if it cannot.
+			return
+		}
+		now := time.Now()
+		decided.read, decided.used = now, now
+		e.mu.Lock()
+		if _, raced := e.decisions[appID]; !raced && e.forgotten == forgotten {
+			e.generation++
+			decided.generation = e.generation
+			e.decisions[appID] = decided
+		}
+		e.mu.Unlock()
+		e.money.want(decided.organization)
+	}()
+}
+
+// seeTier keeps the tier a request named for an organization, and records it in the background
+// when it is not the one this process last wrote. It writes at most once per organization per
+// tierTTL, so requests from proxies that disagree for a moment, as one whose cache has not
+// caught up does, are no stream of writes; a tier left unwritten is written by the first
+// request naming it after that, or by tier once tierTTL has passed. Empty names none.
+func (e *Enforcer) seeTier(organizationID, tier string) {
+	if tier == "" {
+		return
+	}
+	now := e.now()
+	e.tiersMu.Lock()
+	seen := e.tiers[organizationID]
+	seen.tier, seen.at = tier, now
+	due := seen.written != tier && now.Sub(seen.writtenAt) >= tierTTL
+	if due {
+		seen.written, seen.writtenAt = tier, now
+	}
+	e.tiers[organizationID] = seen
+	e.tiersMu.Unlock()
+	if due {
+		e.writeTier(organizationID, tier, now, now)
+	}
+}
+
+// writeTier records in the background that a request named the tier at seenAt, the write
+// marked as made at writtenAt. A write that fails is forgotten, so it is made again.
+func (e *Enforcer) writeTier(organizationID, tier string, seenAt, writtenAt time.Time) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), joinTimeout)
+		defer cancel()
+		if err := e.config.DB().SetOrganizationTier(ctx, organizationID, tier, seenAt); err != nil {
+			e.tiersMu.Lock()
+			if current := e.tiers[organizationID]; current.written == tier && current.writtenAt.Equal(writtenAt) {
+				current.written, current.writtenAt = "", time.Time{}
+				e.tiers[organizationID] = current
+			}
+			e.tiersMu.Unlock()
+			e.logger.Error("could not record an organization's tier", "organization", organizationID, "tier", tier, "error", err)
+		}
+	}()
+}
+
+// tier is an organization's tier: the one a request last named here, else the one recorded in
+// organization_tiers, read again once tierTTL has passed without a request. Empty when neither
+// is known, or the organization is not, and the row keeps the tier it was opened with. What a
+// read found, nothing included, and a read that failed, are each believed for tierTTL, so an
+// organization no request names costs one read per tierTTL rather than one per row. A tier a
+// request named that was never written, as one named within tierTTL of the last write before
+// the organization went quiet, is written then rather than read over.
+func (e *Enforcer) tier(ctx context.Context, organizationID string) string {
+	if organizationID == "" {
+		return ""
+	}
+	now := e.now()
+	e.tiersMu.Lock()
+	seen, known := e.tiers[organizationID]
+	fresh := known && now.Sub(seen.at) < tierTTL
+	unwritten := known && !fresh && seen.tier != "" && seen.tier != seen.written
+	if unwritten {
+		current := seen
+		current.at, current.written, current.writtenAt = now, seen.tier, now
+		e.tiers[organizationID] = current
+	}
+	e.tiersMu.Unlock()
+	if fresh {
+		return seen.tier
+	}
+	if unwritten {
+		// Named at seen.at, so a newer tier another router wrote meanwhile is kept.
+		e.writeTier(organizationID, seen.tier, seen.at, now)
+		return seen.tier
+	}
+	recorded, err := e.config.DB().TierOf(ctx, organizationID)
+	e.tiersMu.Lock()
+	defer e.tiersMu.Unlock()
+	current := e.tiers[organizationID]
+	if current.at.After(seen.at) {
+		// A request named a tier while it was read, which is the newer.
+		return current.tier
+	}
+	// A read that failed, or found none, keeps the tier last known: the tier is a label on the
+	// row, and a Postgres blip is no reason to relabel it.
+	if err == nil && recorded != "" {
+		current.tier, current.written = recorded, recorded
+	}
+	current.at = e.now()
+	e.tiers[organizationID] = current
+	return current.tier
 }
 
 // RequiresOwnStreamApp reports whether a customer must act in a Stream app of its own. It is
@@ -154,65 +531,169 @@ func (e *Enforcer) RequiresOwnStreamApp(ctx context.Context, customerID string) 
 	return decided.ownApp, nil
 }
 
-// Save replaces a scope's policy and drops the decisions it may have changed.
+// ToolOutputRetention is the longest a customer's sessions may keep what their tools were
+// given and gave back: the shorter of the app's and the organization's, empty when neither
+// says. It fails closed, as RequiresOwnStreamApp does: a policy that could not be read keeps
+// nothing, since the other answer stores what a customer may have said must not be.
+func (e *Enforcer) ToolOutputRetention(ctx context.Context, customerID string) (options.Retention, error) {
+	if e == nil || customerID == "" {
+		return "", nil
+	}
+	decided := e.decide(ctx, customerID)
+	if decided.unread != nil {
+		return options.RetentionNone, decided.unread
+	}
+	return decided.toolOutput, nil
+}
+
+// ResumeHistory is how a customer's sessions are handed back a conversation they carry on,
+// as its app's and organization's policies set it; an agent config and a session may say
+// otherwise. A policy that could not be read is the router's default: this changes what a
+// model is sent, never what is kept or who may see it, so failing open withholds nothing.
+func (e *Enforcer) ResumeHistory(ctx context.Context, customerID string) store.ResumeHistory {
+	if e == nil || customerID == "" {
+		return store.ResumeHistory{}
+	}
+	return e.decide(ctx, customerID).resumeHistory
+}
+
+func resumeHistoryOf(document store.PolicyDocument) store.ResumeHistory {
+	if document.ResumeHistory == nil {
+		return store.ResumeHistory{}
+	}
+	return *document.ResumeHistory
+}
+
+// Save replaces a scope's policy and drops the decisions it may have changed, so the next
+// request of this process reads them again.
 func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string, document store.PolicyDocument) error {
 	if err := e.config.SavePolicy(ctx, scope, id, document); err != nil {
 		return err
 	}
-	if scope == store.ScopeApp {
-		e.forget(id)
-		return nil
-	}
-	e.mu.Lock()
-	clear(e.decisions)
-	e.mu.Unlock()
+	e.changed(scope, id)
 	return nil
 }
 
-// Spent returns what a scope has spent in the budget's current interval, and when that
-// interval ends.
-func (e *Enforcer) Spent(ctx context.Context, scope store.PolicyScope, id string, budget store.Budget) (int64, time.Time, error) {
-	start, end := budget.Interval.Window(time.Now())
-	if scope == store.ScopeOrganization {
-		spent, err := e.config.DB().OrganizationSpendSince(ctx, id, start)
-		return spent, end, err
+// Delete removes a scope's policy, drops the decisions it may have changed, and reports
+// whether there was one.
+func (e *Enforcer) Delete(ctx context.Context, scope store.PolicyScope, id string) (bool, error) {
+	deleted, err := e.config.DeletePolicy(ctx, scope, id)
+	if err != nil {
+		return false, err
 	}
-	spent, err := e.config.DB().SpendSince(ctx, id, start)
-	return spent, end, err
+	e.changed(scope, id)
+	return deleted, nil
 }
 
-// decide returns the customer's cached decision, working it out again once it has expired.
+// changed drops the decisions a write of one scope's policy may have changed: the app's, for
+// the app or one of its users, and every one for an organization.
+func (e *Enforcer) changed(scope store.PolicyScope, id string) {
+	switch scope {
+	case store.ScopeApp:
+		e.forget(id)
+		return
+	case store.ScopeUser:
+		if appID, _, ok := store.SplitUserScopeID(id); ok {
+			e.forget(appID)
+			return
+		}
+	}
+	e.mu.Lock()
+	clear(e.decisions)
+	e.forgotten++
+	e.mu.Unlock()
+}
+
+// decide answers from the customer's decision whatever its age and starts a background
+// refresh when it is older than Fresh. With no decision at all, the policies are read now,
+// through appconfig, so a data policy or a model allow-list is never skipped; the money is
+// left to the loop, which admits until it lands.
 func (e *Enforcer) decide(ctx context.Context, customerID string) decision {
 	now := time.Now()
 	e.mu.Lock()
 	cached, ok := e.decisions[customerID]
-	e.mu.Unlock()
-	if ok && now.Before(cached.expires) {
+	if ok {
+		cached.used = now
+		due := !cached.refreshing && now.Sub(cached.read) >= e.settings.Fresh
+		if due {
+			cached.refreshing = true
+		}
+		e.decisions[customerID] = cached
+		e.mu.Unlock()
+		if due {
+			go e.refresh(customerID)
+		}
 		return cached
 	}
+	forgotten := e.forgotten
+	e.mu.Unlock()
 
-	decided, err := e.work(ctx, customerID)
+	// The request waits on this read, so it is bounded on its own as the background ones are.
+	reading, cancel := context.WithTimeout(ctx, joinTimeout)
+	decided, err := e.configuration(reading, customerID)
+	cancel()
 	if err != nil {
+		// This request is admitted, which is what a budget the customer set for itself can
+		// afford; its money is read apart. Nothing is kept, so the next request reads again,
+		// and a read in the background keeps the decision when it lands.
 		e.logger.Error("could not read a customer's policies, allowing the request",
 			"customer", customerID, "error", err)
 		decided.unread = err
+		e.warm(customerID)
+		return decided
 	}
-	decided.expires = now.Add(decisionTTL)
+	decided.read, decided.used = now, now
 	e.mu.Lock()
-	e.decisions[customerID] = decided
+	// A policy saved while this was read answers this request, and the next reads it again.
+	if e.forgotten == forgotten {
+		e.generation++
+		decided.generation = e.generation
+		e.decisions[customerID] = decided
+	}
 	e.mu.Unlock()
+	e.money.want(decided.organization)
 	return decided
 }
 
-// work reads the app's and the organization's policies and what each has spent.
-func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
-	app, err := e.config.Policy(ctx, store.ScopeApp, appID)
-	if err != nil {
-		return decision{}, err
+// refresh reads a customer's decision again in the background and replaces the one in memory
+// with it. A read that fails keeps the decision there, and tries again after Fresh.
+func (e *Enforcer) refresh(customerID string) {
+	e.mu.Lock()
+	generation := e.decisions[customerID].generation
+	e.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), joinTimeout)
+	defer cancel()
+	decided, err := e.configuration(ctx, customerID)
+	now := time.Now()
+	e.mu.Lock()
+	current, ok := e.decisions[customerID]
+	if !ok || current.generation != generation {
+		// Dropped or replaced while it was read: what was read may be older than what is there.
+		e.mu.Unlock()
+		return
 	}
-	organizationID, err := e.config.OrganizationOf(ctx, appID)
 	if err != nil {
-		return decision{}, err
+		current.read, current.refreshing = now, false
+		e.decisions[customerID] = current
+		e.mu.Unlock()
+		e.money.failedRead("could not read a customer's policies again, answering with the last ones read", err, "customer", customerID)
+		return
+	}
+	decided.read, decided.used = now, current.used
+	e.generation++
+	decided.generation = e.generation
+	e.decisions[customerID] = decided
+	e.mu.Unlock()
+	e.money.want(decided.organization)
+}
+
+// policies reads the app's policy, the organization it is in and the organization's policy.
+func (e *Enforcer) policies(ctx context.Context, appID string) (app, organization store.PolicyDocument, organizationID string, err error) {
+	if app, err = e.config.Policy(ctx, store.ScopeApp, appID); err != nil {
+		return app, organization, "", err
+	}
+	if organizationID, err = e.config.OrganizationOf(ctx, appID); err != nil {
+		return app, organization, "", err
 	}
 	// An app seen for the first time is recorded under its organization in the background.
 	// Until that lands, the organization it came in under is the one whose floor applies:
@@ -220,69 +701,85 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 	if pending, ok := e.members.Load(appID); ok && organizationID == "" {
 		organizationID, _ = pending.(string)
 	}
-	var organization store.PolicyDocument
 	if organizationID != "" {
 		if organization, err = e.config.Policy(ctx, store.ScopeOrganization, organizationID); err != nil {
-			return decision{}, err
+			return app, organization, "", err
 		}
+	}
+	return app, organization, organizationID, nil
+}
+
+// labelled is the tags both policies lay over a request: the organization's over the app's, as
+// both are over the request's.
+func labelled(organization, app store.PolicyDocument) routing.Tags {
+	return routing.Admission{Tags: organization.Tags}.Labelled(app.Tags)
+}
+
+// configuration reads what the app's and the organization's policies say. Spend limits are not
+// policies: the limits loop reads them, with what their subjects spent.
+func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, error) {
+	app, organization, organizationID, err := e.policies(ctx, appID)
+	if err != nil {
+		return decision{}, err
 	}
 
 	decided := decision{
 		floor:  organization.DataPolicy.Stricter(app.DataPolicy),
 		models: allowedByBoth(organization.AllowedModels, app.AllowedModels),
-		// The organization's tags are laid over the app's, as both are over the request's.
-		tags:   routing.Admission{Tags: organization.Tags}.Labelled(app.Tags),
+		tags:   labelled(organization, app),
 		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
-		ownApp: enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
+		ownApp:         enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
+		resumeHistory:  resumeHistoryOf(app).Over(resumeHistoryOf(organization)),
+		organization:   organizationID,
+		balanceWarning: organization.BalanceWarningMicros,
+		toolOutput:     organization.ToolOutputRetention.Shorter(app.ToolOutputRetention),
 	}
-	if app.Quota != nil {
-		decided.messages = app.Quota.MessagesPerUserPerDay
-		decided.tokens = app.Quota.TokensPerUserPerDay
+	decided.appQuota, decided.organizationQuota = app.Quota, organization.Quota
+	// An app whose users cannot be told apart is taken to have some with a policy, so each is
+	// looked up, and one that fails holds them to the app's quota. The decision itself stands:
+	// it is what RequiresOwnStreamApp fails closed on.
+	users, err := e.config.HasUserPolicies(ctx, appID)
+	if err != nil {
+		users = true
 	}
-	if organization.Budget != nil {
-		if decided.refusal, err = e.over(ctx, store.ScopeOrganization, organizationID, *organization.Budget); err != nil {
-			return decided, err
-		}
-	}
-	if decided.refusal == nil && app.Budget != nil {
-		if decided.refusal, err = e.over(ctx, store.ScopeApp, appID, *app.Budget); err != nil {
-			return decided, err
-		}
-	}
+	decided.users = users
 	return decided, nil
 }
 
-// over returns the refusal for a budget that is spent, or nil for one that is not. The
-// second error is a spend that could not be read.
-func (e *Enforcer) over(ctx context.Context, scope store.PolicyScope, id string, budget store.Budget) (refusal, err error) {
-	spent, resets, err := e.Spent(ctx, scope, id, budget)
-	if err != nil {
-		return nil, err
-	}
-	if spent < budget.LimitMicros {
-		return nil, nil
-	}
-	return stack.Wrap(fmt.Errorf("%w: the %s's %s budget of $%.2f is spent; it resets at %s",
-		ErrBudgetSpent, scope, budget.Interval, float64(budget.LimitMicros)/1e6,
-		resets.Format(time.RFC3339))), nil
-}
-
-// forget drops one customer's decision so the next request reads it again.
+// forget drops one customer's decision so the next request reads it again, and keeps whatever
+// read of it is under way from putting back what it read.
 func (e *Enforcer) forget(customerID string) {
 	e.mu.Lock()
 	delete(e.decisions, customerID)
+	e.forgotten++
 	e.mu.Unlock()
 }
 
-func enabled(flag *bool) bool { return flag != nil && *flag }
-
-func orDefault(limit *int64, fallback int64) int64 {
-	if limit == nil {
-		return fallback
+// inUse is the decisions used within Idle, by app, dropping the rest.
+func (e *Enforcer) inUse(now time.Time) map[string]decision {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	used := make(map[string]decision, len(e.decisions))
+	for app, decided := range e.decisions {
+		if now.Sub(decided.used) > e.settings.Idle {
+			delete(e.decisions, app)
+			continue
+		}
+		used[app] = decided
 	}
-	return *limit
+	return used
 }
+
+// decided is the decision this process holds for an app, if any.
+func (e *Enforcer) decided(appID string) (decision, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	decided, ok := e.decisions[appID]
+	return decided, ok
+}
+
+func enabled(flag *bool) bool { return flag != nil && *flag }
 
 // allowedByBoth is the models both scopes allow: nil where neither has a list, the one
 // list where only one has, and what is on both where both have.
@@ -302,4 +799,36 @@ func allowedByBoth(organization, app *[]string) []string {
 		}
 	}
 	return both
+}
+
+// throttle says whether a line keyed by key is due, at most once every every.
+type throttle struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (t *throttle) due(key string, every time.Duration) bool {
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if last, ok := t.last[key]; ok && now.Sub(last) < every {
+		return false
+	}
+	if t.last == nil {
+		t.last = map[string]time.Time{}
+	}
+	t.last[key] = now
+	return true
+}
+
+// once is a throttle of one line, in Unix nanoseconds.
+type once struct{ last atomic.Int64 }
+
+func (o *once) due(every time.Duration) bool {
+	now := time.Now().UnixNano()
+	previous := o.last.Load()
+	if previous != 0 && now-previous < every.Nanoseconds() {
+		return false
+	}
+	return o.last.CompareAndSwap(previous, now)
 }

@@ -59,6 +59,8 @@ func NewRecordings(options Options) (*Recordings, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -98,6 +100,8 @@ func (r *Recordings) Transcribe(
 	}
 	request := routing.Request{
 		CustomerID:    recording.CustomerID,
+		Attribution:   routing.AttributionFrom(ctx),
+		Spent:         routing.SpentFrom(ctx),
 		Tags:          recording.Tags,
 		Target:        target,
 		Providers:     recording.Options.Providers,

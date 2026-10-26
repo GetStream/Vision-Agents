@@ -7,6 +7,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -32,7 +33,7 @@ func newClassifier(ctx context.Context, policy Policy, deps Deps) (Guardrail, er
 			"guardrail: this deployment routes no decision model, so it cannot judge a turn against a policy"))
 	}
 
-	session, err := deps.Classifier.Start(ctx, decisionrouter.Request{
+	session, err := deps.Classifier.Start(routing.WithAttribution(ctx, deps.Owner.Attribution), decisionrouter.Request{
 		CustomerID: deps.Owner.CustomerID,
 		AgentID:    deps.Owner.AgentID,
 		CallID:     deps.Owner.CallID,

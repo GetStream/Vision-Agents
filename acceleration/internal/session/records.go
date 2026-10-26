@@ -87,6 +87,15 @@ type recorder interface {
 	Flush(ctx context.Context) error
 }
 
+// sessionRecords is a recorder for every session a manager opens, which also hears each
+// session open and close.
+type sessionRecords interface {
+	recorder
+	Opened(row store.AgentSession, tools []store.ToolDefinition)
+	Closed(id string, at time.Time)
+	Close()
+}
+
 // sessionRecorder writes sessions, turns and items to Postgres off the conversation's path.
 //
 // Same trade as the call recorder and for the same reason: a caller must never wait on a
@@ -332,7 +341,7 @@ func (r *sessionRecorder) writeItems(items []store.AgentResponseItem) {
 // review a finished call gets, none of which a text conversation has. This one carries what
 // the caller said about the conversation, which is what they will look for it by.
 func sessionRow(created *Session) store.AgentSession {
-	spec := created.spec
+	spec := created.Spec()
 	row := store.AgentSession{
 		ID:              created.id,
 		CustomerID:      spec.CustomerID,
@@ -348,6 +357,7 @@ func sessionRow(created *Session) store.AgentSession {
 		Project:         spec.Project,
 		Custom:          spec.Custom,
 		ModelOverwrites: spec.ModelOverwrites,
+		ResumeHistory:   spec.ResumeHistory,
 		ForkedFrom:      spec.ForkedFrom,
 		ReturnURL:       spec.ReturnURL,
 		State:           store.SessionRunning,
@@ -359,6 +369,7 @@ func sessionRow(created *Session) store.AgentSession {
 	// would make every session look like it belonged to the agent.
 	row.UserID = spec.Caller.UserID
 	row.CallerKind = string(spec.CallerKind)
+	row.APIKey, row.UsageCategories = spec.Attribution.APIKey, spec.Attribution.UsageCategories
 	// What opens the session's memory (Manager.Create), so a delete knows whether there is
 	// anything in the memory store to forget.
 	row.Remembers = new(spec.Memory.UserID != "")

@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -98,6 +99,7 @@ const (
 const (
 	eventSessionStarted    = "session.started"
 	eventSessionClosed     = "session.closed"
+	eventUsageUpdated      = "session.usage.updated"
 	eventAudioDelta        = "session.output_audio.delta"
 	eventInputTranscript   = "session.input_transcript.delta"
 	eventOutputTranscript  = "session.output_transcript.delta"
@@ -108,13 +110,21 @@ const (
 
 // Nested Responses event types, inside a response.event envelope.
 const (
+	nestedCreated        = "response.created"
 	nestedOutputItemDone = "response.output_item.done"
+	nestedCompleted      = "response.completed"
+	nestedIncomplete     = "response.incomplete"
 	nestedFailed         = "response.failed"
 	nestedError          = "error"
 )
 
 // closedByConnectionLoss is the one session.closed reason that is not somebody's decision.
 const closedByConnectionLoss = "connection_lost"
+
+// closeGrace is how long Close waits for session.closed, which carries the session's final
+// billed seconds, before dropping the socket. It arrived 775 ms after session.close when
+// measured.
+const closeGrace = 2 * time.Second
 
 // Options configures the provider. APIKey falls back to OPENAI_API_KEY.
 type Options struct {
@@ -227,12 +237,44 @@ type serverEvent struct {
 	DelegationID string          `json:"delegation_id"`
 	Event        json.RawMessage `json:"event"`
 	Error        *apiError       `json:"error"`
+	// Usage is the seconds the session has been open, on session.usage.updated and, finally,
+	// session.closed. It is what the voice is billed by.
+	Usage *sessionUsage `json:"usage"`
+}
+
+// sessionUsage is sent as a number with a fraction, such as 2.0, so it is read as one: a
+// frame that failed to decode over it would be dropped whole, session.closed included.
+type sessionUsage struct {
+	Seconds float64 `json:"seconds"`
 }
 
 // nestedEvent is the Responses event inside a response.event envelope.
 type nestedEvent struct {
-	Type string      `json:"type"`
-	Item *outputItem `json:"item"`
+	Type     string           `json:"type"`
+	Item     *outputItem      `json:"item"`
+	Response *backendResponse `json:"response"`
+}
+
+// backendResponse is a settled response of the backend, which is billed on top of the voice.
+type backendResponse struct {
+	ID          string         `json:"id"`
+	Model       string         `json:"model"`
+	ServiceTier string         `json:"service_tier"`
+	Usage       *backendTokens `json:"usage"`
+}
+
+// backendTokens is a Responses usage block.
+type backendTokens struct {
+	InputTokens        int64 `json:"input_tokens"`
+	InputTokensDetails struct {
+		CachedTokens     int64 `json:"cached_tokens"`
+		CacheWriteTokens int64 `json:"cache_write_tokens"`
+	} `json:"input_tokens_details"`
+	OutputTokens        int64 `json:"output_tokens"`
+	OutputTokensDetails struct {
+		ReasoningTokens int64 `json:"reasoning_tokens"`
+	} `json:"output_tokens_details"`
+	TotalTokens int64 `json:"total_tokens"`
 }
 
 type outputItem struct {
@@ -287,14 +329,27 @@ type STS struct {
 	// muted drops the rest of a reply the caller cut off from this side, since the API
 	// has no way to tell the model to stop.
 	muted bool
+	// owed is a tool's answer whose reply waits for the one in flight to end, since the
+	// server ignores a response.create while the model is speaking, with no error. A reply
+	// asked for and not begun by the backend is unconfirmed, and asked for once more when
+	// the next reply ends: the model can start speaking just after it was asked.
+	owed        bool
+	unconfirmed bool
 	// carrying is whether silence is going up to move the session clock along, which only
 	// happens while waiting for something appended to be spoken.
 	carrying bool
 	started  bool
 	closed   bool
+	// closing is set while Close waits for session.closed, so the connection ending in
+	// that time is not reported as a failure.
+	closing bool
 	// ended is set once the server reported the session closed, so the transport closing
 	// after it is not reported a second time.
 	ended bool
+	// finished is closed once session.closed has been read or the connection has ended,
+	// which is what Close waits for.
+	finished     chan struct{}
+	finishedOnce sync.Once
 }
 
 // New validates the options and returns an unstarted provider.
@@ -331,11 +386,12 @@ func New(settings Options) (*STS, error) {
 	}
 
 	return &STS{
-		options: settings,
-		keys:    keys,
-		logger:  logger.With("provider", ProviderName, "model", settings.Model),
-		emitter: sts.NewEmitter(sts.EmitterBuffer),
-		tools:   settings.Tools,
+		options:  settings,
+		keys:     keys,
+		logger:   logger.With("provider", ProviderName, "model", settings.Model),
+		emitter:  sts.NewEmitter(sts.EmitterBuffer),
+		tools:    settings.Tools,
+		finished: make(chan struct{}),
 	}, nil
 }
 
@@ -348,8 +404,8 @@ func Serves(model string) bool { return strings.HasPrefix(model, modelPrefix) }
 // It hears no images and has no turn detector to tune: listening and speaking are the
 // model's own business, so neither endpointing nor semantic_turns is anything this package
 // could send. Its instructions are fixed at startup; the backend's tools are not. Usage is
-// session seconds rather than tokens per reply, so it is not reported here, and OpenAI has
-// published no session limit.
+// session seconds rather than tokens per reply, reported as SessionUsage, with each backend
+// response as BackendUsage; OpenAI has published no session limit.
 func CapabilitiesFor(string) sts.Capabilities {
 	return sts.Capabilities{
 		Text:             true,
@@ -358,6 +414,7 @@ func CapabilitiesFor(string) sts.Capabilities {
 		InputTranscript:  true,
 		OutputTranscript: true,
 		ToolsMidSession:  true,
+		SessionBilled:    true,
 	}
 }
 
@@ -509,8 +566,21 @@ func (s *STS) Answer(callID string, output string, err error) error {
 	}}); sendErr != nil {
 		return sendErr
 	}
-	if sendErr := s.send(clientEvent{Type: eventResponseCreate}); sendErr != nil {
-		return sendErr
+	s.mu.Lock()
+	speaking := s.turn != nil
+	s.owed = speaking
+	s.unconfirmed = !speaking
+	s.mu.Unlock()
+	if speaking {
+		return nil
+	}
+	return s.carryOn()
+}
+
+// carryOn asks the model for the reply a tool's answer is owed.
+func (s *STS) carryOn() error {
+	if err := s.send(clientEvent{Type: eventResponseCreate}); err != nil {
+		return err
 	}
 	s.carryTheClock()
 	return nil
@@ -552,20 +622,23 @@ func (s *STS) Interrupt(int) error {
 func (s *STS) Events() <-chan sts.Event { return s.emitter.Events() }
 
 // Close ends the session, asking the server to finish it first so the seconds it bills
-// stop there. A reply still in flight is settled as interrupted, so it is billed once like
-// every other.
+// stop there, and waiting up to closeGrace for session.closed so they are read. A reply
+// still in flight is settled as interrupted, so it is billed once like every other.
 func (s *STS) Close() error {
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.closing {
 		s.mu.Unlock()
 		return nil
 	}
+	s.closing = true
 	conn := s.conn
 	s.mu.Unlock()
 
 	if conn != nil {
 		if err := s.send(clientEvent{Type: eventSessionClose}); err != nil {
 			s.logger.Debug("could not close the session gracefully", "error", err)
+		} else {
+			s.awaitSessionClosed()
 		}
 	}
 
@@ -580,6 +653,23 @@ func (s *STS) Close() error {
 	}
 	s.emitter.Close()
 	return nil
+}
+
+// awaitSessionClosed waits for the server to report the session closed, or the connection
+// to end, for at most closeGrace.
+func (s *STS) awaitSessionClosed() {
+	timer := time.NewTimer(closeGrace)
+	defer timer.Stop()
+	select {
+	case <-s.finished:
+	case <-timer.C:
+		s.logger.Debug("the session did not report closing in time", "waited", closeGrace)
+	}
+}
+
+// finish releases Close from waiting for session.closed.
+func (s *STS) finish() {
+	s.finishedOnce.Do(func() { close(s.finished) })
 }
 
 // Provider implements sts.STS.
@@ -699,6 +789,7 @@ func (s *STS) send(frame any) error {
 // readLoop translates server frames into events until the connection ends.
 func (s *STS) readLoop(conn *websocket.Conn) {
 	defer s.Close()
+	defer s.finish()
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -720,9 +811,9 @@ func (s *STS) readLoop(conn *websocket.Conn) {
 // is not coming.
 func (s *STS) handleReadError(err error) {
 	s.mu.Lock()
-	closed, ended := s.closed, s.ended
+	closed, closing, ended := s.closed, s.closing, s.ended
 	s.mu.Unlock()
-	if closed || ended {
+	if closed || closing || ended {
 		return
 	}
 
@@ -761,11 +852,14 @@ func (s *STS) handleMessage(event serverEvent) {
 		s.delegated(event)
 	case eventDelegationCreated:
 		s.logger.Debug("the model delegated work")
+	case eventUsageUpdated:
+		s.billed(event.Usage)
 	case eventSessionClosed:
 		s.mu.Lock()
 		s.ended = true
 		s.mu.Unlock()
 		s.settleTurn(true)
+		s.billed(event.Usage)
 		s.emitter.Send(sts.Disconnected{
 			Provider: ProviderName,
 			Model:    s.options.Model,
@@ -773,6 +867,7 @@ func (s *STS) handleMessage(event serverEvent) {
 			Clean:    event.Reason != closedByConnectionLoss,
 			At:       time.Now(),
 		})
+		s.finish()
 		_ = s.Close()
 	case eventError:
 		failure := errors.New("openailive: unknown error")
@@ -793,6 +888,12 @@ func (s *STS) delegated(envelope serverEvent) {
 	}
 
 	switch nested.Type {
+	case nestedCreated:
+		s.mu.Lock()
+		s.unconfirmed = false
+		s.mu.Unlock()
+	case nestedCompleted, nestedIncomplete:
+		s.backendBilled(nested.Response)
 	case nestedOutputItemDone:
 		if nested.Item == nil || nested.Item.Type != "function_call" {
 			return
@@ -816,6 +917,40 @@ func (s *STS) delegated(envelope serverEvent) {
 			Context:  "delegation",
 		})
 	}
+}
+
+// billed reports the seconds the session has been open, which the voice is billed by. The
+// running total is rounded, so the rows its growth bills add up to the last one rounded.
+func (s *STS) billed(usage *sessionUsage) {
+	if usage == nil {
+		return
+	}
+	s.emitter.Send(sts.SessionUsage{Seconds: int64(math.Round(usage.Seconds))})
+}
+
+// backendBilled reports a settled backend response, billed on top of the voice at the rates
+// of the model the session delegated to, which is the name it is reported under rather than the
+// one the response carries, since that is the name the price list knows.
+func (s *STS) backendBilled(response *backendResponse) {
+	if response == nil || response.Usage == nil || response.ID == "" {
+		return
+	}
+	used := response.Usage
+	s.emitter.Send(sts.BackendUsage{
+		ResponseID:  response.ID,
+		Model:       s.options.Backend,
+		ServiceTier: response.ServiceTier,
+		Usage: llm.Usage{
+			InputTokens: used.InputTokens,
+			InputTokensDetails: llm.InputTokensDetails{
+				CachedTokens:     used.InputTokensDetails.CachedTokens,
+				CacheWriteTokens: used.InputTokensDetails.CacheWriteTokens,
+			},
+			OutputTokens:        used.OutputTokens,
+			OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: used.OutputTokensDetails.ReasoningTokens},
+			TotalTokens:         used.TotalTokens,
+		},
+	})
 }
 
 // heard is a piece of what the caller is saying. The first piece since the model last
@@ -959,9 +1094,18 @@ func (s *STS) settleTurn(interrupted bool) {
 	s.mu.Lock()
 	turn := s.turn
 	s.turn = nil
+	owed := (s.owed || s.unconfirmed) && !s.closed && !s.ended && !interrupted
+	s.unconfirmed = s.owed && owed
+	s.owed = false
 	s.mu.Unlock()
 	if turn == nil {
 		return
 	}
 	s.emitter.Send(turn.Complete(ProviderName, s.options.Model, interrupted, sts.Usage{}))
+	// A caller who cut in is answered with the tool's answer already in hand.
+	if owed {
+		if err := s.carryOn(); err != nil {
+			s.emitter.Send(sts.Error{Provider: ProviderName, Model: s.options.Model, Err: err, Context: "response"})
+		}
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -103,7 +104,8 @@ func (s *SessionVoiceSuite) TestVoiceOnAPhoneSessionTakesNoCall() {
 	s.inOwnApp()
 	// The suite has no telephony to place a call with, so the session is opened as the phone
 	// service opens one, by the manager.
-	opened, err := s.manager.Create(context.Background(), session.Spec{CustomerID: s.customerID(), Phone: &session.PhoneSpec{}})
+	opened, err := s.manager.Create(context.Background(), session.Spec{CustomerID: s.customerID(), Phone: &session.PhoneSpec{},
+		Attribution: routing.Attribution{APIKey: "key-phone"}})
 	s.Require().NoError(err)
 	call := s.namedCall()
 

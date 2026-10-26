@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -111,6 +112,9 @@ type Answer struct {
 type Usage struct {
 	InputTokens  int64
 	OutputTokens int64
+	// VendorCostMicros is what the vendor said the request cost it, in millionths of a
+	// dollar, for a vendor that says. Zero for one that does not.
+	VendorCostMicros int64
 }
 
 // Request is a piece of state and everything worth asking about it.
@@ -157,6 +161,14 @@ type Result struct {
 	Answers map[string]Answer
 	Usage   Usage
 }
+
+// Used is the tokens the request read and wrote.
+func (r Result) Used() pricing.Quantities {
+	return pricing.Quantities{pricing.InputTokens: r.Usage.InputTokens, pricing.OutputTokens: r.Usage.OutputTokens}
+}
+
+// VendorCostMicros is what the vendor said the request cost it.
+func (r Result) VendorCostMicros() int64 { return r.Usage.VendorCostMicros }
 
 // Provider is one classifier this service can ask.
 type Provider interface {

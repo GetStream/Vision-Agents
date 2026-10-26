@@ -1327,6 +1327,24 @@ func (s *ConfigsSuite) TestAGrantIsJudgedByTheMCPSourceAlone() {
 	s.True(ok, complaint)
 }
 
+// TestAGrantOfAToolWhoseScopeAnAskedScopeCoversIsStored: scopes.list asks for agent:sql:all,
+// which the manifest says covers the agent:sql:run execute_sql needs, so a consent grants it.
+func (s *ConfigsSuite) TestAGrantOfAToolWhoseScopeAnAskedScopeCoversIsStored() {
+	manifest := core.Manifest{
+		Scopes:  core.ScopePolicy{List: []string{"agent:sql:all"}, CoveredBy: map[string][]string{"agent:sql:run": {"agent:sql:all"}}},
+		Sources: []core.SourceRule{{Kind: core.SourceKindMCP, Tools: []core.ToolRule{{Name: "execute_sql", NeedsScopes: []string{"agent:sql:run"}}}}},
+	}
+	binding := AgentConnectorBinding{Name: "metabase", ConnectorId: "metabase", Tools: []ConnectorToolGrant{{Name: "execute_sql"}}}
+
+	complaint, ok := leftOutGrant(binding, manifest)
+	s.True(ok, complaint)
+
+	manifest.Scopes.CoveredBy = nil
+	complaint, ok = leftOutGrant(binding, manifest)
+	s.False(ok)
+	s.Contains(complaint, "it needs agent:sql:run, which the connector never asks for")
+}
+
 // TestAGrantOnAConnectorWithNoMCPSourceIsStored: linq, slack_bot, whatsapp and telnyx have
 // no mcp source, so no filter leaves a tool out and the grant is not refused.
 func (s *ConfigsSuite) TestAGrantOnAConnectorWithNoMCPSourceIsStored() {
@@ -2165,10 +2183,29 @@ func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfDriveDocsAndBigQuery
 			"get_file_permissions", "list_recent_files", "read_file_content", "search_files"),
 		sessionGranting("google_docs", "docs", "read_doc"),
 		sessionGranting("bigquery", "warehouse", "list_dataset_ids", "get_dataset_info", "list_table_ids",
-			"get_table_info", "execute_sql_readonly", "get_query_results", "get_job"),
+			"get_table_info", "get_query_results", "get_job"),
 	}})
 
 	s.Len(value(created.Connectors), 4)
+}
+
+// bigquery.yaml revision 3 takes execute_sql_readonly out of read_only_tools: a SELECT can
+// call a remote function, whose code may send the rows anywhere. So it is refused beside
+// nessy, and accepted once the binding's require_approval holds it. The base, 8e132bd37,
+// answered 201 to the refused request (ai1538-followups/pr2/author-1.md, «Control probe»).
+func (s *ConfigsSuite) TestNessyBesideBigQuerysExecuteSQLReadonlyNeedsItsApproval() {
+	s.useInternalApp()
+	warehouse := sessionGranting("bigquery", "warehouse", "get_table_info", "execute_sql_readonly")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{sessionNessy("customers"), warehouse}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "warehouse" can send data out with no person's approval`)
+	s.Contains(failure, `"warehouse" execute_sql_readonly`)
+	warehouse["require_approval"] = []string{"execute_sql_readonly"}
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{sessionNessy("customers"), warehouse}})
+	s.Len(value(created.Connectors), 2)
 }
 
 // A tool the source leaves out of read_only_tools may write, so a binding granting one beside
@@ -2291,12 +2328,13 @@ func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsItsOutboundTool
 
 // TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfDriveDocsAndBigQuery is the
 // control: the base, 29091a594, answered 201 to the same request (ai-1844/author-1.md,
-// «Control probe»).
+// «Control probe»), and 8e132bd37 with execute_sql_readonly granted too
+// (ai1538-followups/pr2/author-1.md, «Control probe»).
 func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfDriveDocsAndBigQuery() {
 	created := s.createConfig(map[string]any{"name": "builder", "connectors": []map[string]any{
 		sessionGranting("google_drive", "files", "create_file", "copy_file"),
 		sessionGranting("google_docs", "docs", "update_doc"),
-		sessionGranting("bigquery", "warehouse", "execute_sql", "cancel_job"),
+		sessionGranting("bigquery", "warehouse", "execute_sql", "cancel_job", "execute_sql_readonly"),
 	}})
 
 	s.Len(value(created.Connectors), 3)
@@ -2323,4 +2361,47 @@ func (s *ConfigsSuite) TestAnUpdateKeepingABindingToAForceDeletedConnectorIsAcce
 	status, _ := s.serverClient.call(http.MethodPut, "/v1/agents/configs/"+created.Id, map[string]any{"name": "builder"})
 
 	s.Equal(http.StatusOK, status)
+}
+
+// Tool output is kept as long as the session unless a config says otherwise, an update
+// that leaves the setting out keeps it, and an empty one removes it.
+func (s *ConfigsSuite) TestAConfigKeepsToolOutputForAsLongAsItSays() {
+	unnamed := s.createConfig(map[string]any{"name": "support"})
+	s.Nil(unnamed.Tools.OutputRetention)
+
+	created := s.createConfig(map[string]any{"name": "billing", "tools": map[string]any{"output_retention": "7d"}})
+	s.Equal("7d", value(created.Tools.OutputRetention))
+
+	var saved AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
+		"/v1/agents/configs/"+created.Id, map[string]any{"name": "billing", "tools": map[string]any{"progressive": true}}, &saved))
+	s.Equal("7d", value(saved.Tools.OutputRetention), "a setting left out on an update stays")
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+created.Id, map[string]any{"tools": map[string]any{"output_retention": "none"}}, &patched))
+	s.Equal("none", value(patched.Tools.OutputRetention))
+
+	var cleared AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+created.Id, map[string]any{"tools": map[string]any{"output_retention": ""}}, &cleared))
+	s.Nil(cleared.Tools.OutputRetention)
+}
+
+func (s *ConfigsSuite) TestAToolOutputRetentionOutsideItsBoundsIsRefusedOnEveryWrite() {
+	created := s.createConfig(map[string]any{"name": "support"})
+	tooLong := map[string]any{"output_retention": "3651d"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "billing", "tools": tooLong})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "tools.output_retention")
+	status, failure = s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "tools": tooLong})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "tools.output_retention")
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"tools": tooLong})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "tools.output_retention")
 }

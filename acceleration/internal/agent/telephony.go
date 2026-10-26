@@ -7,12 +7,9 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -183,11 +180,12 @@ const didNotWork = "That did not work: "
 // answeredSinceCaller returns the result of an identical call, the same tool with the same
 // arguments, already answered since the caller last spoke. After a result Gemma often asks
 // for the same call again, and run twice a dispatch or a booking is made twice. A call that
-// failed may be tried again, since what failed may not fail twice.
+// failed may be tried again, since what failed may not fail twice, and so may one whose result
+// says nothing was done (undoneResult).
 //
 // A call that changes something is matched across the whole call: Nemotron booked a table,
-// heard "Yes, please go ahead" and booked it again, and a forced chase made Qwen book the same
-// table again after the caller thanked it; each second booking failed against the first.
+// heard "Yes, please go ahead" and booked it again, and the second booking failed against the
+// first.
 func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool) {
 	same := func(other llm.ToolCall) bool {
 		return other.Name == call.Name && fillsIn(other.Arguments, call.Arguments)
@@ -195,7 +193,7 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 	changes := !readsOnly(call.Name)
 	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
-			strings.Contains(history[i].Content, notRun) {
+			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) {
 			continue
 		}
 		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
@@ -207,6 +205,38 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 		}
 	}
 	return "", false
+}
+
+// routerStatuses are the statuses only the router answers a connector call it held back with
+// (internal/session: connector_login.go, step_up.go, connector_tools.go; internal/plugins:
+// user.go) until the person signs in or grants a scope. A tool does not use them for its own
+// results, so they count on the status alone.
+var routerStatuses = []string{"authorization_required", "scope_required", "credential_rejected"}
+
+// sharedStatuses are statuses the router also answers with when a sign-in or an approval ended
+// without the person acting (internal/session: connector_login.go, connector_approval.go;
+// internal/plugins/user.go; internal/conversation/parts.go) but a third-party tool uses too:
+// {"status":"stopped","recording_id":"r1"} is a write that was done. They count only in the
+// router's own shape, exactly {status, message}.
+var sharedStatuses = []string{"declined", "expired", "failed", "stopped", "unavailable"}
+
+// undoneResult reports whether a tool result is one the router held back (routerStatuses,
+// sharedStatuses): nothing was done. Once the person has acted, the same call must run: the
+// step-up's own result tells the model to call it again.
+func undoneResult(content string) bool {
+	var body map[string]json.RawMessage
+	if json.Unmarshal([]byte(content), &body) != nil {
+		return false
+	}
+	var status string
+	if json.Unmarshal(body["status"], &status) != nil {
+		return false
+	}
+	if slices.Contains(routerStatuses, status) {
+		return true
+	}
+	_, hasMessage := body["message"]
+	return slices.Contains(sharedStatuses, status) && hasMessage && len(body) == 2
 }
 
 // refusedBefore returns the answer of an identical call the tool already refused on this
@@ -308,159 +338,31 @@ func blankRequired(tool harness.Tool, arguments string) []string {
 	return blank
 }
 
-// runFirst is what a call made before the step its tool needs is answered with.
-const runFirst = "%s" + notRun + "error, %s has not succeeded yet in this call. Call %s first, " +
-	"with what the caller has already given."
-
-// needsIdentity is how a tool's description says it may run only for a verified caller.
-var needsIdentity = regexp.MustCompile(`(?i)identity required|after identity|verified (patient|caller|customer|account)`)
-
-// runsBefore is how a tool's description names the tool it must run before.
-var runsBefore = regexp.MustCompile(`(?i)must run before (\w+)`)
-
-// unmetPrerequisite names the tool that has to succeed in this call before tool may run,
-// read from the tools' descriptions, or "" when nothing is missing. Qwen opened a ticket
-// for "123 Main St" before verifying the caller, and the bench counts the order however
-// the call recovers.
-func unmetPrerequisite(tool harness.Tool, tools []harness.Tool, history []llm.Message) string {
-	if strings.HasPrefix(tool.Name, "verify") {
-		return ""
-	}
-	for _, other := range tools {
-		if other.Name == tool.Name {
-			continue
-		}
-		identity := strings.HasPrefix(other.Name, "verify") && needsIdentity.MatchString(tool.Description)
-		before := false
-		if match := runsBefore.FindStringSubmatch(other.Description); match != nil {
-			before = match[1] == tool.Name
-		}
-		if identity && !succeeded(history, other.Name, true) || before && !succeeded(history, other.Name, false) {
-			return other.Name
-		}
-	}
-	return ""
-}
-
-// succeeded reports whether a call to the named tool has come back, and if passed is set,
-// come back without an error and without "ok": false. walk_reboot coming back "ok": false
-// is the failed reboot dispatch_tech needs.
-func succeeded(history []llm.Message, name string, passed bool) bool {
-	for i, message := range history {
-		if message.Role != llm.ToolResult {
-			continue
-		}
-		content := strings.ReplaceAll(message.Content, " ", "")
-		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) ||
-			passed && (strings.Contains(content, `"error"`) || strings.Contains(content, `"ok":false`)) {
-			continue
-		}
-		for j := i - 1; j >= 0; j-- {
-			if slices.ContainsFunc(history[j].ToolCalls, func(call llm.ToolCall) bool {
-				return call.ID == message.ToolCallID && call.Name == name
-			}) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// digitWords are the digits as a caller reads them out, in order.
-var digitWords = []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}
-
-// digitWordRun is two or more digits read out as words, as in "four four seven one".
-var digitWordRun = regexp.MustCompile(`(?i)\b(?:zero|one|two|three|four|five|six|seven|eight|nine)(?:[ -]+(?:zero|one|two|three|four|five|six|seven|eight|nine))+\b`)
-
-// spokenNumbers are the numbers from ten to ninety read out as one word, as the house
-// number in "fourteen Cedar Lane" that failed verify_account.
-var spokenNumbers = map[string]string{
-	"ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
-	"fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19",
-	"twenty": "20", "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60",
-	"seventy": "70", "eighty": "80", "ninety": "90",
-}
-
-// spokenNumber is a number from ten to ninety-nine read out in words.
-var spokenNumber = regexp.MustCompile(`(?i)\b(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[ -](one|two|three|four|five|six|seven|eight|nine))?\b`)
-
-// spelledAfterName is a word followed by its letters, as in "Patel P A T E L".
-var spelledAfterName = regexp.MustCompile(`\b([A-Za-z]{2,})((?:[ ,.-]+[A-Za-z]\b){2,})`)
-
-// unspelled drops the letters a caller spelled a name out with from a call's string
-// arguments, which a model copies in after the name, and writes digits read out as words
-// as digits: verify_account went out with the address "one four Cedar Lane" and failed.
-func unspelled(arguments string) string {
-	var values map[string]any
-	if json.Unmarshal([]byte(arguments), &values) != nil {
-		return arguments
-	}
-	changed := false
-	for key, value := range values {
-		text, ok := value.(string)
-		if !ok {
-			continue
-		}
-		cleaned := digitWordRun.ReplaceAllStringFunc(text, func(match string) string {
-			var digits strings.Builder
-			for word := range strings.FieldsFuncSeq(strings.ToLower(match), func(r rune) bool { return r == ' ' || r == '-' }) {
-				digits.WriteByte(byte('0' + slices.Index(digitWords, word)))
-			}
-			return digits.String()
-		})
-		cleaned = spokenNumber.ReplaceAllStringFunc(cleaned, func(match string) string {
-			parts := spokenNumber.FindStringSubmatch(strings.ToLower(match))
-			number := spokenNumbers[parts[1]]
-			if parts[2] != "" && strings.HasSuffix(number, "0") {
-				return number[:1] + strconv.Itoa(slices.Index(digitWords, parts[2]))
-			}
-			if parts[2] != "" {
-				return number + " " + parts[2]
-			}
-			return number
-		})
-		cleaned = spelledAfterName.ReplaceAllStringFunc(cleaned, func(match string) string {
-			parts := spelledAfterName.FindStringSubmatch(match)
-			letters := strings.Map(func(r rune) rune {
-				if unicode.IsLetter(r) {
-					return r
-				}
-				return -1
-			}, parts[2])
-			if !strings.EqualFold(letters, parts[1]) {
-				return match
-			}
-			return parts[1]
-		})
-		if cleaned != text {
-			values[key] = cleaned
-			changed = true
-		}
-	}
-	if !changed {
-		return arguments
-	}
-	rendered, err := json.Marshal(values)
-	if err != nil {
-		return arguments
-	}
-	return string(rendered)
-}
-
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
 	cancels := telephonyTool(requested.Call.Name) ||
-		a.options.ToolPolicy != nil && a.options.ToolPolicy(requested.Call.Name).Cancels
+		a.options.ToolPolicy != nil && a.options.ToolPolicy(a.approvedName(requested.Call)).Cancels
 	a.mu.Lock()
 	parent := a.ctx
 	if parent == nil {
 		parent = context.Background()
+	}
+	if requester := a.requesterLocked(); requester != (Requester{}) {
+		parent = WithRequester(parent, requester)
 	}
 	ctx, cancel := context.WithCancel(parent)
 	if a.toolCancels == nil {
 		a.toolCancels = map[string]context.CancelFunc{}
 	}
 	a.toolCancels[requested.Call.ID] = cancel
+	if a.toolContexts == nil {
+		a.toolContexts = map[string]context.Context{}
+	}
+	a.toolContexts[requested.Call.ID] = ctx
+	if a.toolTurns == nil {
+		a.toolTurns = map[string]string{}
+	}
+	a.toolTurns[requested.Call.ID] = requested.TurnID
 	if a.toolsRunning == nil {
 		a.toolsRunning = map[string]string{}
 	}
@@ -485,11 +387,12 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		cancel()
 		a.mu.Lock()
 		delete(a.toolCancels, requested.Call.ID)
+		delete(a.toolContexts, requested.Call.ID)
+		delete(a.toolTurns, requested.Call.ID)
 		delete(a.toolHolds, requested.Call.ID)
 		a.mu.Unlock()
 	}()
 	began := time.Now()
-	requested.Call.Arguments = unspelled(requested.Call.Arguments)
 	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, Arguments: requested.Call.Arguments, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
 	started.PreSpeech = a.preSpeech([]llm.ToolCall{requested.Call})
@@ -510,12 +413,13 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	// history the model reads: compaction summarises that, and a value it summarised away
 	// was still said or returned.
 	record := a.record()
-	if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
+	if requested.Call.Name == confirmTool && a.offersConfirm() {
+		ran = true
+		parts, err = a.confirm(ctx, requested.Call)
+	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
-	} else if first := unmetPrerequisite(tool, a.availableTools().Tools, record); first != "" {
-		parts = llm.TextParts(fmt.Sprintf(runFirst, requested.Call.Name, first, first))
 	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools())); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
 	} else if key, known, missing := missingID(record, requested.Call, a.availableTools()); missing {
@@ -524,8 +428,6 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
 	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
 		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
-	} else if key, value, misshapen := misshapenLastFour(requested.Call); misshapen {
-		parts = llm.TextParts(misshapenResult(key, value, record))
 	} else if key, value, heard, unheard := unheardNumber(record, requested.Call); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
 	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
@@ -537,12 +439,15 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		ran = true
 		said, files, err = a.runCode(ctx, requested.Call)
 		parts = llm.TextParts(said)
+	} else if question := a.approvalQuestion(tool); question != "" {
+		parts = a.askApproval(requested.Call, question)
 	} else {
 		ran = true
 		parts, left, err = a.callTool(ctx, requested.Call)
 	}
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
+	delete(a.toolUpdates, requested.Call.ID)
 	a.mu.Unlock()
 	// Visual tool results go to the vision worker in both native and cascade calls. The
 	// call is still open in the history it is handed, which a provider refuses to replay.
@@ -559,6 +464,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	}
 	result := llm.TextOf(parts)
 	a.mu.Lock()
+	if hold == nil {
+		hold = a.toolHolds[requested.Call.ID]
+	}
 	a.resolveToolLocked(requested.Call, parts, hold, ctx.Err() != nil)
 	if !left && !a.native() && ctx.Err() == nil && a.followsTool(requested) {
 		a.toolReply = true
@@ -587,7 +495,10 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 			a.mu.Lock()
 			a.nativeAwaiting = true
 			a.mu.Unlock()
-			if err := model.Answer(requested.Call.ID, result, nil); err != nil {
+			err := model.Answer(requested.Call.ID, result, nil)
+			if err == nil {
+				a.askedApproval(requested.Call.ID)
+			} else {
 				a.mu.Lock()
 				a.nativeAwaiting = false
 				a.mu.Unlock()
@@ -742,6 +653,9 @@ func (a *Agent) availableTools() harness.Tools {
 			available.Tools = append(available.Tools, tool)
 		}
 	}
+	if a.offersConfirm() {
+		available.Tools = append(available.Tools, confirmToolDefinition())
+	}
 	if a.loadsSkills() {
 		available.Tools = append(available.Tools, a.options.Skills.LoadTool())
 	}
@@ -836,9 +750,25 @@ func (a *Agent) runCode(ctx context.Context, call llm.ToolCall) (string, []sandb
 }
 
 // writeSkillFiles puts the files of each skill loaded so far that brought scripts into the
-// sandbox under skills/<name>/, unless they are already there as they now are.
+// sandbox under skills/<name>/, unless they are already there as they now are. A sandbox made
+// again, after its provider deleted it, gets all of them again.
 func (a *Agent) writeSkillFiles(ctx context.Context) error {
 	a.mu.Lock()
+	scripted := slices.ContainsFunc(slices.Collect(maps.Values(a.skillFiles)), func(files map[string]string) bool {
+		return len(harness.Scripts(slices.Collect(maps.Keys(files)))) > 0
+	})
+	a.mu.Unlock()
+	if !scripted {
+		return nil
+	}
+	generation, err := a.options.Sandbox.Ready(ctx)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	if generation != a.sandboxGeneration {
+		a.writtenFiles, a.sandboxGeneration = nil, generation
+	}
 	stale := map[string]map[string]string{}
 	for name, files := range a.skillFiles {
 		if len(harness.Scripts(slices.Collect(maps.Keys(files)))) > 0 && !maps.Equal(a.writtenFiles[name], files) {
@@ -1117,6 +1047,26 @@ func (a *Agent) stopTools() {
 		cancel()
 	}
 	a.toolReply = false
+}
+
+// HoldTool makes a running call that an interruption would cancel outlive one from now on,
+// as a call to a tool that never asked to be cancelled does: answered stillRunning, and its
+// result told when it comes. It reports false when the call is not running, which for a
+// call that was is an interruption that came first.
+func (a *Agent) HoldTool(id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	id = a.runningAsLocked(id)
+	if ctx, running := a.toolContexts[id]; !running || ctx.Err() != nil {
+		return false
+	}
+	if a.toolHolds == nil {
+		a.toolHolds = map[string]*toolHold{}
+	}
+	if a.toolHolds[id] == nil {
+		a.toolHolds[id] = &toolHold{}
+	}
+	return true
 }
 
 // dropTool cancels the calls to a tool still running, because the caller no longer wants

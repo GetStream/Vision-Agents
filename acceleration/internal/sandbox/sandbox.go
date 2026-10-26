@@ -41,6 +41,11 @@ type Result struct {
 	// Missing are the files it was asked to hand back and did not write, or that were
 	// too large to.
 	Missing []string
+	// Unconnected are the late grants whose user has not connected them yet, so the run had
+	// no token for them. Connected are the bindings of those whose user connected them since
+	// the last run, whose token reaches code some seconds after the run began.
+	Unconnected []Grant
+	Connected   []string
 }
 
 // File is something the code wrote that is wanted outside the sandbox.
@@ -104,6 +109,29 @@ func (c Config) Timeout() time.Duration {
 	return min(time.Duration(c.TimeoutMs)*time.Millisecond, MaxTimeout)
 }
 
+// Lifecycle is when a provider stops a sandbox nothing runs in, and deletes one that has
+// stopped. A provider bills a sandbox by what it holds in each of those states, so whoever
+// meters it keeps the same clock.
+type Lifecycle struct {
+	// IdleStop is how long a sandbox runs nothing before it is stopped. Zero is the
+	// provider's own default.
+	IdleStop time.Duration
+	// StoppedDelete is how long a stopped sandbox is kept before it is deleted. Zero keeps
+	// it for as long as the provider does on its own.
+	StoppedDelete time.Duration
+}
+
+// Slots bound how many sandboxes may run at once. A sandbox takes a slot before it is made or
+// started again, and gives it back once it stops running, for idling or because it is gone.
+type Slots interface {
+	// Take holds a slot for a sandbox about to run, or refuses it with why; release gives it
+	// back, and is safe to call twice. running is a sandbox the provider runs already, which
+	// refusing would not stop, so it is given a slot whatever the count. A nil release with no
+	// error is a sandbox that may run though no slot could be held for it; it is asked for
+	// one again the next time it is to run.
+	Take(ctx context.Context, running bool) (release func(), err error)
+}
+
 // Sandbox runs code somewhere isolated from everything that matters.
 type Sandbox interface {
 	// Run executes a piece of Python and returns what it printed, and the files named in
@@ -113,6 +141,11 @@ type Sandbox interface {
 	// Write puts a file into the sandbox at a path relative to where code runs, making the
 	// directories it sits in.
 	Write(ctx context.Context, path string, data []byte) error
+	// Ready makes sure the sandbox is there to run code in, creating it, starting it again
+	// after it stopped, or making a new one after it was deleted, and says which one it is:
+	// the number goes up each time a new one is made, which holds nothing written into the
+	// one before.
+	Ready(ctx context.Context) (generation int, err error)
 	// Close releases whatever was held open to run code. Safe to call twice.
 	Close() error
 }
@@ -140,6 +173,14 @@ func Tool(box Sandbox) llm.Tool {
 					"the value is a placeholder that works only for %s, only in a request header.", strings.Join(bearer, ", "), grant.Env, grant.Env, hosts)
 			} else {
 				description += fmt.Sprintf(" $%s is a placeholder that works only for %s, only in a request header.", grant.Env, hosts)
+			}
+			if grant.Late {
+				// Its token reaches code from the next run after the user connects, at once
+				// through the egress proxy, and within 18 to 24 seconds as a Daytona secret
+				// (probe against Daytona's API, 2026-10-25).
+				description += fmt.Sprintf(" A 401 from %s means the user has not connected %s yet: %s__list_tools shows them "+
+					"a button to connect it and waits; if you cannot call it, tell the user they must connect %s. Once they have, "+
+					"run the code again; if it still gets 401, wait 20 seconds and run it once more.", hosts, grant.Binding, grant.Binding, grant.Binding)
 			}
 			if !slices.Contains(grant.Hosts, gitHost) {
 				continue

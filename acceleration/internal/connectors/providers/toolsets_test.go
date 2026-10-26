@@ -115,6 +115,34 @@ func (s *ToolsetSuite) TestMetabaseOffersOnlyTheToolsItsScopesReach() {
 		"glossary", "learn", "run_saved_question", "search"}, names)
 }
 
+// TestAGrantOfDriveMeetsWhatGoogleWriteToolsNeed: Google's tool pages take drive for each write
+// tool (google_drive.yaml, google_docs.yaml), so a grant holding drive, such as one moved from a
+// plugin that asked for it, needs nothing more; one holding only the read scopes does.
+func (s *ToolsetSuite) TestAGrantOfDriveMeetsWhatGoogleWriteToolsNeed() {
+	const drive = "https://www.googleapis.com/auth/drive"
+	for _, c := range []struct {
+		id, needed string
+		read       []string
+		narrower   string
+	}{
+		{"google_drive", "https://www.googleapis.com/auth/drive.file", []string{"https://www.googleapis.com/auth/drive.readonly"},
+			"https://www.googleapis.com/auth/drive.appdata"},
+		{"google_docs", "https://www.googleapis.com/auth/documents",
+			[]string{"https://www.googleapis.com/auth/documents.readonly", "https://www.googleapis.com/auth/drive.readonly"},
+			"https://www.googleapis.com/auth/drive.file"},
+	} {
+		s.Run(c.id, func() {
+			resolved, err := s.manifest(c.id).Resolve(oauth2code.Name, nil, nil)
+			s.Require().NoError(err)
+
+			s.True(resolved.Scopes.Meets([]string{drive}, c.needed))
+			s.False(resolved.Scopes.Meets(c.read, c.needed))
+			s.False(resolved.Scopes.Meets([]string{c.narrower}, c.needed), "a narrower scope than drive does not cover it")
+			s.NotContains(resolved.Scopes.List, drive, "the consent still asks for the narrower scope")
+		})
+	}
+}
+
 // TestGoogleDriveAndDocsOfferTheirWriteTools (AI-1933): against a server listing the tools
 // Google's tool lists name (google_drive.yaml, google_docs.yaml), each write tool is offered
 // to a session granting it and says the scope it needs, which the consent asks for. A

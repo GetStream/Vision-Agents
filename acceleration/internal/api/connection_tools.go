@@ -459,7 +459,7 @@ func (s *Server) checkConnection(ctx context.Context, connection store.Connector
 	if body != nil {
 		checked = body.Tools
 	}
-	missing, err := missingScopes(specs, checked, connection.GrantedScopes)
+	missing, err := missingScopes(specs, checked, connection.GrantedScopes, manifest.Scopes)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
@@ -532,10 +532,12 @@ func changedTools(specs []core.ToolSpec, pins map[string]string) []string {
 	return changed
 }
 
-// missingScopes is the scopes the checked tools need that granted lacks, sorted (architecture
-// doc, «Add» item 11: «granted_scopes against the union of needs_scopes of the granted
-// tools»). No names checks every tool; a name the connection does not offer is an error.
-func missingScopes(specs []core.ToolSpec, names, granted []string) ([]string, error) {
+// missingScopes is the scopes the checked tools need that granted does not meet, sorted
+// (architecture doc, «Add» item 11: «granted_scopes against the union of needs_scopes of the
+// granted tools»): a scope is met when granted holds it or one of the manifest's scopes that
+// covers it (core.ScopePolicy.Meets). No names checks every tool; a name the connection does
+// not offer is an error.
+func missingScopes(specs []core.ToolSpec, names, granted []string, policy core.ScopePolicy) ([]string, error) {
 	needs := map[string][]string{}
 	for _, spec := range specs {
 		needs[spec.Name] = spec.NeedsScopes
@@ -550,7 +552,7 @@ func missingScopes(specs []core.ToolSpec, names, granted []string) ([]string, er
 			return nil, fmt.Errorf("tools: the connection offers no tool named %q", name)
 		}
 		for _, scope := range scopes {
-			if !slices.Contains(granted, scope) && !slices.Contains(missing, scope) {
+			if !policy.Meets(granted, scope) && !slices.Contains(missing, scope) {
 				missing = append(missing, scope)
 			}
 		}

@@ -17,6 +17,8 @@ final readonly class ClassifyUsage
     public function __construct(
         public int $inputTokens,
         public int $outputTokens,
+        // What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says: absent when it recorded not...
+        public ?int $costMicros = null,
     ) {
     }
 
@@ -28,6 +30,7 @@ final readonly class ClassifyUsage
         return new self(
             inputTokens: Json::int($data, 'input_tokens'),
             outputTokens: Json::int($data, 'output_tokens'),
+            costMicros: array_key_exists('cost_micros', $data) && $data['cost_micros'] !== null ? Json::int($data, 'cost_micros') : null,
         );
     }
 
@@ -41,6 +44,9 @@ final readonly class ClassifyUsage
         $out = [];
         $out['input_tokens'] = $this->inputTokens;
         $out['output_tokens'] = $this->outputTokens;
+        if ($this->costMicros !== null) {
+            $out['cost_micros'] = $this->costMicros;
+        }
         return $out;
     }
 }

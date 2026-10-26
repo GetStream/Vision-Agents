@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 type RunsSuite struct {
@@ -160,19 +161,26 @@ func (s *RunsSuite) TestAModelThatFailsIsAModelFailure() {
 	s.Equal(codeModelFailed, failure.Code)
 }
 
-func (s *RunsSuite) TestASpentBudgetIsBudgetExceeded() {
+func (s *RunsSuite) TestASpentLimitIsAPaymentRequired() {
 	s.useApp(s.data.createApp())
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/app",
-		map[string]any{"budget": map[string]any{"limit_micros": 1_000, "interval": "daily"}}, nil))
+	s.limitApp(usage.Daily, 1_000)
 	s.Require().NoError(s.store.RecordRequest(s.T().Context(), &store.Request{
 		Modality: "llm", CustomerID: s.customerID(), Provider: "echo", Model: "echo-model",
-		StartedAt: time.Now().UTC(), CostMicros: 5_000, Success: true,
+		StartedAt: time.Now().UTC(), CostMicros: 5_000, Billable: true, Success: true,
 	}))
+	config := s.config("echo/echo-model")
 
-	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "hello"})
+	// The limit is measured in the background, so the run that warms the app may pass.
+	s.Require().Eventually(func() bool {
+		status, _ := s.serverClient.call(http.MethodPost, "/v1/agents/runs", CreateRunRequest{ConfigId: config, Input: "hello"})
+		return status != http.StatusOK
+	}, 5*time.Second, 50*time.Millisecond)
+	status, failure := s.runFails(CreateRunRequest{ConfigId: config, Input: "hello"})
 
-	s.Equal(http.StatusForbidden, status, "waiting does not refill a budget, so it is no 429 to retry")
-	s.Equal(codeBudgetExceeded, failure.Code)
+	s.Equal(http.StatusPaymentRequired, status, "waiting does not refill a limit, so it is no 429 to retry")
+	s.Equal(ErrorTypePaymentRequired, failure.Type)
+	s.Equal(codeSpendLimitReached, failure.Code)
+	s.Contains(failure.Message, "the daily limit of $0.00 on app "+s.customerID())
 }
 
 func (s *RunsSuite) TestARunOverTheAppsLimitIsToldWhenToRetry() {

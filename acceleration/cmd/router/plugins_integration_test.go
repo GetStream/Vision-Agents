@@ -133,6 +133,30 @@ func (s *PluginsMigrateSuite) TestADatabaseNewerThanThisBinaryIsRefusedAndLeftAs
 	s.Equal(before, s.schema())
 }
 
+// TestTheComplaintRuleIsTheAPIs: the rule the command hands the move refuses a config with
+// nessy beside a sandbox binding, which sends data out, and accepts the sandbox binding alone.
+func (s *PluginsMigrateSuite) TestTheComplaintRuleIsTheAPIs() {
+	raw, err := fs.ReadFile(providers.FS, "nessy.yaml")
+	s.Require().NoError(err)
+	s.Require().NoError(s.db.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"nessy.yaml": &fstest.MapFile{Data: raw}}))
+	// Nessy is internal: only an app that admits internal connectors sees its definition.
+	organization := store.Organization{Name: "organization-" + store.NewID()}
+	s.Require().NoError(s.db.CreateOrganization(s.ctx, &organization))
+	app := store.App{OrganizationID: organization.ID, Name: "app-" + store.NewID(), Settings: store.AppSettings{InternalConnectors: new(true)}}
+	s.Require().NoError(s.db.CreateApp(s.ctx, &app))
+	nessy := store.ConnectorBinding{Name: "customers", ConnectorID: "nessy", Connection: store.ConnectionBinding{Type: "session"}}
+	slack := store.ConnectorBinding{Name: "chat", ConnectorID: "slack", Connection: store.ConnectionBinding{Type: "session"}, Sandbox: true}
+
+	message, ok, err := api.SensitiveBindingsComplaint(s.ctx, s.db, app.ID, store.AgentConfig{Connectors: []store.ConnectorBinding{nessy, slack}})
+	s.Require().NoError(err)
+	s.False(ok)
+	s.Contains(message, `connector binding "customers" binds "nessy"`)
+
+	message, ok, err = api.SensitiveBindingsComplaint(s.ctx, s.db, app.ID, store.AgentConfig{Connectors: []store.ConnectorBinding{slack}})
+	s.Require().NoError(err)
+	s.True(ok, message)
+}
+
 // schema is the goose versions applied and every built-in connector revision, as text.
 func (s *PluginsMigrateSuite) schema() string {
 	var out string

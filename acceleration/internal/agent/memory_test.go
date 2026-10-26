@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -39,7 +40,7 @@ func (s *MemoryWriterSuite) SetupTest() {
 	store, err := mem0.New(mem0.Options{APIKey: "test-key", BaseURL: quota.URL, Logger: logger})
 	s.Require().NoError(err)
 	scope := memory.Scope{AppID: "router", UserID: "acme", AgentID: "support", RunID: "session-1"}
-	s.writer = newMemoryWriter(store, scope, false, routing.Owner{}, nil, logger)
+	s.writer = newMemoryWriter(metered.NewMemory(store, nil).For(routing.Owner{}), scope, false, logger)
 	s.T().Cleanup(s.writer.Close)
 }
 

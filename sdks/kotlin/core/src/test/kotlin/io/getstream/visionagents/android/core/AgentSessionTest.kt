@@ -9,6 +9,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -184,6 +187,59 @@ class AgentSessionTest {
 
         assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
         chat.close()
+    }
+
+    @Test
+    fun `a request for frames with no camera on is left for the video worker that owns it`() = runBlocking {
+        val voice = agents.chat()
+
+        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"get_video_frames","arguments":"{}"}"""))
+        voice.say("still there?")
+
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        voice.close()
+    }
+
+    @Test
+    fun `a camera on a call answers the request to look with what it showed lately`() = runBlocking {
+        val voice = agents.chat()
+        val shown = Clock.System.now()
+        voice.cameraFrames = CameraFrames().apply { record(byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte()), shown) }
+
+        router.script.send(
+            Script.Send("""{"type":"tool_call","id":"c1","name":"get_video_frames","arguments":"{\"limit\":2}","request_id":"r1","turn_id":"t1"}"""),
+        )
+
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertEquals(JsonPrimitive("c1"), answer["tool_call_id"])
+        assertEquals(JsonPrimitive("r1"), answer["request_id"])
+        assertEquals(JsonPrimitive(""), answer["error"])
+        val parts = answer["output"]!!.jsonArray
+        assertEquals(2, parts.size, "what the frame is, then the frame")
+        assertEquals(
+            Json.parseToJsonElement(
+                """{"clock":"device_unix_ms","frames":[{"captured_at_ms":${shown.toEpochMilliseconds()},"frame_id":"camera-1"}],"source":"camera"}""",
+            ),
+            Json.parseToJsonElement(parts[0].jsonObject["text"]!!.jsonPrimitive.content),
+        )
+        assertEquals(
+            JsonPrimitive("data:image/jpeg;base64,/9j/"),
+            parts[1].jsonObject["image_url"]!!.jsonObject["url"],
+        )
+        voice.close()
+    }
+
+    @Test
+    fun `a camera that showed nothing lately says so as the answer, not as a failure`() = runBlocking {
+        val voice = agents.chat()
+        voice.cameraFrames = CameraFrames().apply { record(byteArrayOf(1), Clock.System.now() - 60.seconds) }
+
+        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"get_video_frames","arguments":"{}"}"""))
+
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertTrue(answer["output"]!!.jsonPrimitive.content.contains("point it at what they mean again"))
+        assertEquals(JsonPrimitive(""), answer["error"])
+        voice.close()
     }
 
     @Test

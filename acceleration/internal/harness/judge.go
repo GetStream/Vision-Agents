@@ -78,8 +78,7 @@ func judgeQuestions() map[string]decisionmodel.Question {
 		"addressed_to_agent": decisionmodel.Noul(
 			"Is any part of `heard` meant for the agent described in `agent_was_told`?",
 			"Some or all of it is spoken to the agent, whether or not it is finished, even if "+
-				"the speaker also turned aside to somebody else, as in \"yes honey, one sec. "+
-				"Sorry, the name is Okafor\".",
+				"the speaker also turned aside to somebody else in the same words.",
 			"All of it is spoken to somebody else in the room, to a pet or a child, read off a "+
 				"television, or otherwise not meant for the agent."),
 		"finished": decisionmodel.Noul(
@@ -99,15 +98,9 @@ func judgeQuestions() map[string]decisionmodel.Question {
 				"those details, rather than a question for the agent, a correction, or a plain sign "+
 				"they have finished?",
 			"They are giving one thought in parts and are still going: the promise itself, a "+
-				"name, a date, a booking, a preference, one more statement of a puzzle.",
+				"name, a date, a booking, a preference.",
 			"No such promise was made and they did not go on unanswered, or `heard` asks the "+
 				"agent something, corrects something, or says they are done."),
-		"expects_reply": decisionmodel.Noul(
-			"Does `heard` ask the agent something, ask it to do something, or answer what the "+
-				"agent last asked in `conversation`?",
-			"A question, a request, or the answer the agent asked for.",
-			"Something the speaker volunteers unasked, such as why they are calling or one "+
-				"more detail, which leaves room for them to go on."),
 		"greeting_only": decisionmodel.Noul(
 			"Is `heard` only a greeting, such as \"hi\" or \"hello there\", with nothing asked "+
 				"or said yet?",
@@ -141,12 +134,12 @@ func judgeQuestions() map[string]decisionmodel.Question {
 		"adds_to_request": decisionmodel.Noul(
 			"Does `heard` add to what the speaker asked for, without contradicting what the "+
 				"agent is saying in `agent_has_said`?",
-			"An addition such as \"and Saturday as well\" or \"and put us on the patio\".",
+			"An addition such as \"and the other one too\" or \"also send it by email\".",
 			"It corrects the agent, asks something unrelated, or adds nothing."),
 		"objects": decisionmodel.Noul(
 			"Does `heard` correct the agent, tell it to stop or wait, or ask it something new, "+
 				"while it is saying `agent_has_said`?",
-			"A correction such as \"no, make it six\", \"that's the wrong date\", \"wait\", "+
+			"A correction such as \"no, the other one\", \"that's not what I said\", \"wait\", "+
 				"or a new question.",
 			"It agrees, acknowledges, repeats the agent, or is not for the agent at all."),
 	}
@@ -175,10 +168,6 @@ func judged(turn FlowTurn, answers map[string]decisionmodel.Answer) (flowAnswer,
 			// The cadence asks after 350ms of silence and Flux marks the end of a turn about
 			// 570ms after the last word, so answering on the silence alone answered callers
 			// in the middle of what they were asking.
-			return flowAnswer{Disposition: Wait, Floor: Continue}, nil
-		case !turn.Waited && !yes("expects_reply"):
-			// A caller volunteering details goes on after a breath, and answering each one
-			// talked over Voicebench's monologues. One more pause is what they are given.
 			return flowAnswer{Disposition: Wait, Floor: Continue}, nil
 		case answers["ambiguous"].Yes >= judgeAmbiguous:
 			return flowAnswer{Disposition: Clarify, Floor: Continue}, nil

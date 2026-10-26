@@ -3,6 +3,7 @@ package phone
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -10,6 +11,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
 type PhoneSuite struct {
@@ -32,6 +36,26 @@ func (s *PhoneSuite) TestTheBuiltInVendorListDeclaresEveryVendorProperly() {
 	}
 }
 
+func (s *PhoneSuite) TestAHookPointedBeforeTheParticipantEventsIsMissingThem() {
+	ours := "https://router.example" + CallHookPath
+	hooks := []CallHook{
+		{URL: "https://other.example/hook", EventTypes: []string{"message.new"}, Enabled: true, HookType: "webhook"},
+		{URL: ours + "/42", EventTypes: []string{"call.session_started", "call.session_ended"}, Enabled: true, HookType: "webhook"},
+	}
+
+	missing, found := MissingCallHookEvents(hooks, ours)
+
+	s.True(found)
+	s.Equal([]string{"call.session_participant_joined", "call.session_participant_left"}, missing)
+	missing, found = MissingCallHookEvents([]CallHook{{URL: ours, Enabled: true}}, ours)
+	s.True(found)
+	s.Empty(missing, "a hook asking for nothing is sent everything")
+	_, found = MissingCallHookEvents(hooks[:1], ours)
+	s.False(found)
+	_, found = MissingCallHookEvents([]CallHook{{URL: ours, EventTypes: []string{"call.session_started"}}}, ours)
+	s.False(found, "a disabled hook delivers nothing")
+}
+
 func (s *PhoneSuite) TestEightOfElevenVendorsAreImplemented() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
@@ -46,6 +70,17 @@ func (s *PhoneSuite) TestEightOfElevenVendorsAreImplemented() {
 	s.ElementsMatch([]string{
 		"twilio", "telnyx", "sinch", "bandwidth", "vonage", "bird", "didww", "plivo",
 	}, implemented)
+}
+
+func (s *PhoneSuite) TestAProviderWithoutAStreamLegIsPerCall() {
+	s.Equal(StreamLegPerCall, StreamLegOf(&stub{vendor: "twilio"}))
+}
+
+func (s *PhoneSuite) TestTheCallIDRidesOnTheBridgeURIAsAQueryParameter() {
+	bridge := Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"}
+
+	s.Equal("sip:+15125551234@sip.stream-io-api.com?x-stream-call-id=a+b", bridge.WithCallID("a b").URI)
+	s.Equal(bridge, bridge.WithCallID(""))
 }
 
 func (s *PhoneSuite) TestEveryImplementedVendorButDidwwCanPlaceACall() {
@@ -555,11 +590,17 @@ type stub struct {
 	// inbound is the last number this vendor was told to send to a bridge, so a test can see
 	// the address the service passed on.
 	inbound Inbound
+	// monthly is what a number bought here costs a month.
+	monthly int64
 	// ordered counts the numbers this vendor was asked to sell, and released the numbers it
 	// was told to take back.
 	ordered  int
 	released []string
+	// leg is how this vendor's leg reaches Stream: per call unless a test says otherwise.
+	leg StreamLeg
 }
+
+func (s *stub) StreamLeg() StreamLeg { return s.leg }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
 	s.searched++
@@ -569,9 +610,12 @@ func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
 	return s.offers, nil
 }
 
-func (s *stub) BuyNumber(context.Context, Order) (Number, error) {
+func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
 	s.ordered++
-	return Number{Vendor: s.vendor}, s.err
+	if s.err != nil {
+		return Number{}, s.err
+	}
+	return Number{E164: order.E164, Vendor: s.vendor, Country: "US", MonthlyCostMicros: s.monthly}, nil
 }
 
 func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {
@@ -640,6 +684,25 @@ func (s *PhoneSuite) TestAVendorErrorSaysEverythingTheLogNeeds() {
 	unreached := &VendorError{Vendor: "twilio", Path: "/x.json", Message: "no answer", Cause: cause}
 	s.Equal("twilio: /x.json: no answer: connection refused", unreached.Error())
 	s.ErrorIs(unreached, cause)
+}
+
+// A number's month is priced by the vendor's quote, not by the list: with none, it is billable
+// work with no price. Only a number on the customer's own trunk costs nothing.
+func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
+	config := s.config()
+	prices, err := pricing.NewList("config", PriceEntries(config), 0, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+
+	own := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: SIPTrunkVendor, Model: ModelNumber}, nil)
+	s.False(own.Billable)
+	s.False(own.Unpriced)
+	for _, vendor := range config.Vendors {
+		quote := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, nil)
+		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
+		resold := prices.Quoted(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, 1_000_000)
+		s.Equal(int64(1_000_000), resold.CostMicros, vendor.Vendor)
+		s.True(resold.Billable, vendor.Vendor)
+	}
 }
 
 func (s *PhoneSuite) config() Config {

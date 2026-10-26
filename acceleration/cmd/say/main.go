@@ -103,7 +103,7 @@ func run(options options, logger *slog.Logger) error {
 	// file is finalised or playback is allowed to finish.
 	defer audioSink.Close()
 
-	session, err := router.Start(ctx, ttsrouter.Request{
+	session, err := router.Start(routing.WithAttribution(ctx, routing.Attribution{APIKey: routing.CLIOrigin("say")}), ttsrouter.Request{
 		CustomerID:    options.customerID,
 		Tags:          options.tags,
 		Target:        options.target,
@@ -216,7 +216,6 @@ func buildRouter(ctx context.Context, logger *slog.Logger) (*ttsrouter.Router, f
 type speaker struct {
 	session *ttsrouter.Session
 	sink    sink
-	price   routing.Price
 
 	// settled carries the summary of each finished utterance.
 	settled chan tts.SynthesisComplete
@@ -226,7 +225,6 @@ func newSpeaker(session *ttsrouter.Session, audioSink sink) *speaker {
 	return &speaker{
 		session: session,
 		sink:    audioSink,
-		price:   session.Price(),
 		settled: make(chan tts.SynthesisComplete, 4),
 	}
 }
@@ -284,10 +282,10 @@ func (s *speaker) consume() {
 // summarise is the line printed after each utterance: what said it, how long the listener
 // waited, how much speech came back and what it cost.
 func (s *speaker) summarise(complete tts.SynthesisComplete) string {
-	costMicros := s.price.CostMicros(routing.Usage{
+	costMicros := s.session.Quote(routing.Usage{
 		Characters: complete.Characters,
 		AudioMs:    int64(complete.AudioDurationMs),
-	})
+	}).CostMicros
 
 	summary := fmt.Sprintf("%s/%s  first audio %.0fms  audio %.1fs  %d chars  $%.6f",
 		complete.Provider, complete.Model,

@@ -120,6 +120,7 @@ func (s *Server) registerSuspensions(api huma.API) {
 		Path:        path,
 		Summary:     "Get why an app's telephony is suspended",
 		Description: "The suspension an app is under, or 404 when it is not suspended.\n\nStream staff only: it needs the ops key.",
+		Tags:        []string{staffTag},
 		Security:    opsSecurity,
 		Responses:   map[string]*huma.Response{"200": {Description: "The suspension"}},
 		Errors:      staffErrors,
@@ -134,6 +135,7 @@ func (s *Server) registerSuspensions(api huma.API) {
 			"campaign, and its running campaigns pause at their next call. Calls already in " +
 			"progress are left alone. Suspending an app already suspended replaces the reason.\n\n" +
 			"Stream staff only: it needs the ops key.",
+		Tags:      []string{staffTag},
 		Security:  opsSecurity,
 		Responses: map[string]*huma.Response{"200": {Description: "The suspension"}},
 		Errors:    staffErrors,
@@ -146,6 +148,7 @@ func (s *Server) registerSuspensions(api huma.API) {
 		DefaultStatus: http.StatusNoContent,
 		Description: "Lets the app use the phone again. Its paused campaigns stay paused until the " +
 			"app starts them.\n\nStream staff only: it needs the ops key.",
+		Tags:      []string{staffTag},
 		Security:  opsSecurity,
 		Responses: map[string]*huma.Response{"204": {Description: "The suspension is lifted"}},
 		Errors:    staffErrors,

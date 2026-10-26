@@ -54,8 +54,12 @@ func NewElevenLabs(options ElevenLabsOptions) (*ElevenLabs, error) {
 	return &ElevenLabs{options: options, client: client(options.Timeout)}, nil
 }
 
-// Prepare uploads the recordings and returns the voice id sessions ask for.
-func (e *ElevenLabs) Prepare(ctx context.Context, request Request) (string, error) {
+// Prepare uploads the recordings and returns the voice id sessions ask for: one clone.
+func (e *ElevenLabs) Prepare(ctx context.Context, request Request) (Prepared, error) {
+	return cloned(e.clone(ctx, request))
+}
+
+func (e *ElevenLabs) clone(ctx context.Context, request Request) (string, error) {
 	if err := request.Validate(); err != nil {
 		return "", stack.Wrap(err)
 	}
@@ -108,6 +112,9 @@ func (e *ElevenLabs) Prepare(ctx context.Context, request Request) (string, erro
 	}
 	return created.VoiceID, nil
 }
+
+// SpeechModel is the model Speak says a line with.
+func (e *ElevenLabs) SpeechModel() string { return elevenlabs.DefaultModel }
 
 // Speak says a line in the voice with the model a call would use.
 func (e *ElevenLabs) Speak(ctx context.Context, externalID, text string) (Speech, error) {

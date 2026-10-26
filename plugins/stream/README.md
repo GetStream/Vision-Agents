@@ -45,6 +45,46 @@ async def weather(city: str) -> str:
 `register_function` works as it does with any other LLM. The model asks for the function
 over the session's socket, this plugin runs it here and sends back what it returned.
 
+A function can say how the backend treats its calls, and read the call it is running for:
+
+```python
+from vision_agents.core.llm import current_call
+
+
+@agent.llm.register_function(
+    description="Book a flight for the caller",
+    timeout=20,
+    needs_approval="Book flight {flight_id}?",
+)
+async def book_flight(flight_id: str) -> str:
+    tool_call_context = current_call()
+    await tool_call_context.update("checking seats")
+    await tool_call_context.disallow_interruptions()
+    return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
+```
+
+- `interruptible=True` lets the caller talking over the agent cancel a call in flight. By
+  default it keeps running and the model is told it is still going.
+- `timeout` is how long one call may take, in seconds, in place of the session's
+  `tool_timeout`. A call that takes longer fails with a `TimeoutError`.
+- `needs_approval` is a question the caller answers before each call runs, where each
+  `{name}` is one of the function's arguments. On a voice call the agent asks it out loud
+  and waits 15 seconds for a yes; `current_call().approved` is then true. In writing the
+  question goes to the app, which asks. A `{name}` the function does not take is refused
+  when it is registered.
+
+`current_call()` is the call being answered: its `id`, which a call sent again keeps, so it
+is the key to make a side effect happen once; `session_id`, `turn_id`, the `user` whose turn
+asked, and the `conversation`. `update(text)` says how the call is going: a voice agent
+tells the caller in its own words once nobody is talking. `say(text)` has it say `text` as
+written, which a speech-to-speech model may paraphrase. `disallow_interruptions()` keeps the
+call going from then on, for a write that must not stop halfway, and raises `CallNotHeld`
+when the call had already been stopped. Outside a call, as in a unit test of the function,
+it is an empty call whose methods do nothing; `calling(ToolCall(...))` sets one.
+
+A call the router addresses to another watcher of the session (`run: false`), or for a
+function this process does not hold, is left for whoever runs it.
+
 The session is held by the call's id with voice on, so the backend's agent joins the same
 `agent:<call id>` call. What the agent is told to be is agent config, synced from its
 directory or `define_agent`, never set per session.
@@ -106,6 +146,9 @@ nobody knows is refused rather than dropped: a misspelled `llm` that went quietl
 leave the agent running on a model the file does not name.
 `plugins` and `plugin_events` are refused too: connectors replaced them, so name each
 under `connectors` instead.
+A connector entry is its id alone, or a mapping with `name` and any of `connector`, `tools`,
+`connection`, `required`, `sandbox: true` (code in the sandbox may call the connector's API)
+and `require_approval` (tools whose every call waits for the user to allow it).
 
 A page in `knowledge/urls.yaml` written as a mapping may say `refresh_hours: 24` to be read
 again on a schedule. `simulations/*.yaml` each list simulations (`name`, `scenario`,
@@ -241,8 +284,10 @@ dispatch.host(agent, tool_timeout=60)
 await dispatch.run()
 ```
 
-`timeout` is how long the router gives one call, in seconds; zero takes its default. The
-worker declares its tools again whenever it reconnects, and `run` raises `RouterError` if the
+`tool_timeout` is how long the router gives one call, in seconds; zero takes its default
+of 30. A hosted function takes the same `interruptible`, `timeout` and `needs_approval` as
+`register_function`, reads its call with `current_call()`, and is cancelled when the router
+gives up on it. The worker declares its tools again whenever it reconnects, and `run` raises `RouterError` if the
 router refuses them.
 
 ## Calling somebody

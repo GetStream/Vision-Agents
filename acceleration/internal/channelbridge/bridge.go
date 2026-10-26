@@ -337,8 +337,10 @@ func (b *Bridge) Reply(reply conversation.FinishedReply) {
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
-		// A reply nobody may be sent (refusesReply) is no failure to log.
-		if err := b.reply(reply); err != nil && !errors.Is(err, ErrOptedOut) && !errors.Is(err, ErrHeldBack) {
+		// A reply nobody may be sent (refusesReply), or one whose thread is gone, is no
+		// failure to log.
+		if err := b.reply(reply); err != nil && !errors.Is(err, ErrOptedOut) && !errors.Is(err, ErrHeldBack) &&
+			!errors.Is(err, store.ErrNoChannelThread) {
 			b.logger.Error("could not send a reply to its external thread", "conversation", reply.CID, "error", err)
 		}
 	}()
@@ -362,8 +364,8 @@ func (b *Bridge) Hold(commandID string) (replies <-chan conversation.FinishedRep
 }
 
 // Send sends a reply as Reply does, on the caller, and answers why it did not go out:
-// ErrOptedOut or ErrHeldBack, the provider refusing it, or the store failing. A reply sent
-// already is nil.
+// ErrOptedOut or ErrHeldBack, store.ErrNoChannelThread for a thread no longer linked, the
+// provider refusing it, or the store failing. A reply sent already is nil.
 func (b *Bridge) Send(reply conversation.FinishedReply) error {
 	return b.reply(reply)
 }
@@ -374,9 +376,6 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 	thread, err := b.store.ChannelThread(ctx, strings.TrimPrefix(reply.CID, chatlog.ChannelType+":"))
-	if errors.Is(err, store.ErrNoChannelThread) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}

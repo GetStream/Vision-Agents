@@ -9,6 +9,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -21,77 +22,58 @@ var (
 		Message: "this request names no organization: it needs X-Stream-Organization-Id, " +
 			"or an API key belonging to one",
 	}
+
+	// errBudgetMoved answers a policy that still sends a budget.
+	errBudgetMoved = APIError{
+		Type: ErrorTypeInvalidRequest, Code: codeBudgetMoved,
+		Message: "spend limits moved to /v1/spend/limits: a policy has no budget",
+	}
 )
 
-// Policy is what an organization or an app decided about spend, data handling, prompt
-// injection, which models may be used and how usage is labelled.
+// Policy is what an organization or an app decided about data handling, prompt injection,
+// which models may be used and how usage is labelled.
 type Policy struct {
-	Budget              *Budget           `json:"budget,omitempty"`
-	Quota               *Quota            `json:"quota,omitempty"`
-	DataPolicy          *DataPolicy       `json:"data_policy,omitempty"`
-	PromptInjection     *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
-	AllowedModels       *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
-	Tags                map[string]string `json:"tags,omitempty" example:"{\"application\":\"support\"}" doc:"Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags."`
-	RequireOwnStreamApp *bool             `json:"require_own_stream_app,omitempty" doc:"Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused."`
+	Budget               map[string]any    `json:"budget,omitempty" deprecated:"true" doc:"Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400 budget_moved, and none is read back."`
+	Quota                *Quota            `json:"quota,omitempty"`
+	DataPolicy           *DataPolicy       `json:"data_policy,omitempty"`
+	PromptInjection      *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
+	AllowedModels        *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
+	Tags                 map[string]string `json:"tags,omitempty" example:"{\"application\":\"support\"}" doc:"Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags."`
+	RequireOwnStreamApp  *bool             `json:"require_own_stream_app,omitempty" doc:"Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused."`
+	ResumeHistory        *ResumeHistory    `json:"resume_history,omitempty" doc:"How the scope's sessions are handed back a conversation they carry on. The most specific level wins, field by field: a server-side session request, then its agent config, then the app's policy, then the organization's, then the router's default (text only, 100 turns, 60000 characters)."`
+	BalanceWarningMicros *int64            `json:"balance_warning_micros,omitempty" minimum:"0" example:"20000000" doc:"The organization's own warning threshold, in millionths of a dollar: at or below it, every answer to a backend says X-Stream-Balance-Warning: low, and the organization's stream event destinations get one account.balance_low. It wins over the tier's. Left out, the tier's applies. Only an organization's policy has one: an app's that sets it is refused."`
+	ToolOutputRetention  *string           `json:"tool_output_retention,omitempty" pattern:"^(|none|[1-9][0-9]*[hd])$" patternDescription:"none, a number of hours such as 12h, or a number of days such as 30d" example:"30d" doc:"How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once."`
 }
 
 func (*Policy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "What an organization or an app decided about spend, data handling, " +
+	schema.Description = "What an organization or an app decided about data handling, " +
 		"prompt injection, which models may be used and how usage is labelled. Every field " +
-		"is optional, and a field left out is no opinion rather than off."
+		"is optional, and a field left out is no opinion rather than off. Spend limits are " +
+		"not here: they are /v1/spend/limits."
 	return schema
 }
 
-// Budget caps spend across every modality, reset on a UTC boundary each interval.
-type Budget struct {
-	LimitMicros int64          `json:"limit_micros" minimum:"1" example:"100000000" doc:"The cap, in millionths of a dollar."`
-	Interval    BudgetInterval `json:"interval"`
-	SpentMicros *int64         `json:"spent_micros,omitempty" readOnly:"true" doc:"What has been spent in the current interval."`
-	ResetsAt    *time.Time     `json:"resets_at,omitempty" readOnly:"true" doc:"When the current interval ends."`
-}
-
-func (*Budget) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "A cap on spend across every modality, reset on a UTC boundary each " +
-		"interval. Once it is spent every new session and every LLM response is refused until " +
-		"the next interval. Checks are cached for a few seconds, so a busy app can overshoot " +
-		"by what it spends in that time."
-	return schema
-}
-
-// Quota is what one end user of the app may spend in a UTC day. The app sets it, and an
-// organization has none.
+// Quota is what one end user may spend in a UTC day: on an organization's policy the default
+// for every user of its apps, on an app's the default for its users, and on a user's their own.
 type Quota struct {
 	// The maximums only catch a typo: a person who asked for a response every ten seconds
 	// round the clock would still be under 10,000 a day, so 10,000,000 is a thousand of
 	// them, and 10^12 tokens is a thousand times 10,000,000 responses of 100,000 tokens.
-	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty" minimum:"0" maximum:"10000000" example:"20000" doc:"How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies."`
-	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty" minimum:"0" maximum:"1000000000000" example:"50000000" doc:"How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies."`
+	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty" minimum:"0" maximum:"10000000" example:"20000" doc:"How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level's applies: the app's, then the organization's, then the router's default."`
+	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty" minimum:"0" maximum:"1000000000000" example:"50000000" doc:"How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the next level's applies, as for messages."`
 }
 
 func (*Quota) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "What one end user of the app may spend in a UTC day, counted per " +
-		"user and per address. Only an app's policy has one: an organization's that sets it " +
-		"is refused. A turn is counted on the day of the user who sent it, and a backend's " +
-		"own are never counted. A request over the limit is a 429 rate_limited with " +
-		"Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining " +
-		"and X-Quota-Reset."
+	schema.Description = "What one end user may spend in a UTC day. Each number is the first set of " +
+		"the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the " +
+		"router's default. A quota set here counts everything recorded with the user: what their " +
+		"devices ask for and what the app's backend asks for in their name. (An app's quota counted " +
+		"devices only before; the router's default still does.) A device is counted by its address " +
+		"as well. A turn is counted on the day of the user who sent it. A request over the limit is a " +
+		"429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app " +
+		"<id>, every user of organization <id>), and a counted request carries X-Quota-Limit, " +
+		"X-Quota-Remaining and X-Quota-Reset."
 	return schema
-}
-
-// BudgetInterval is how often a budget resets.
-type BudgetInterval string
-
-const (
-	BudgetIntervalHourly  BudgetInterval = "hourly"
-	BudgetIntervalDaily   BudgetInterval = "daily"
-	BudgetIntervalWeekly  BudgetInterval = "weekly"
-	BudgetIntervalMonthly BudgetInterval = "monthly"
-)
-
-func (BudgetInterval) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "BudgetInterval", "How often a budget resets. A week starts on Monday.",
-		string(BudgetIntervalHourly), string(BudgetIntervalDaily),
-		string(BudgetIntervalWeekly), string(BudgetIntervalMonthly))
 }
 
 type policyRequest struct {
@@ -110,12 +92,11 @@ func (s *Server) registerPolicies(api huma.API) {
 		Path:        "/v1/policies/app",
 		Summary:     "The calling app's policy",
 		Description: "What the app itself decided. Its organization's policy applies as well, " +
-			"as a floor the app can tighten and cannot loosen: both budgets are enforced, the " +
-			"stricter data policy wins, prompt injection is screened if either turns it on, " +
-			"only a model both allow may be routed to, and the organization's tags win over " +
-			"the app's.",
+			"as a floor the app can tighten and cannot loosen: the stricter data policy wins, " +
+			"prompt injection is screened if either turns it on, only a model both allow may be " +
+			"routed to, and the organization's tags win over the app's.",
 		Responses: map[string]*huma.Response{
-			"200": {Description: "The app's policy, with what its budget has spent so far"},
+			"200": {Description: "The app's policy"},
 		},
 		Errors: errs,
 	}, s.getAppPolicy)
@@ -138,7 +119,7 @@ func (s *Server) registerPolicies(api huma.API) {
 		Description: "Applies to every app the router has seen the organization name. A " +
 			"request that names no organization is a 400.",
 		Responses: map[string]*huma.Response{
-			"200": {Description: "The organization's policy, with what its budget has spent so far"},
+			"200": {Description: "The organization's policy"},
 		},
 		Errors: errs,
 	}, s.getOrganizationPolicy)
@@ -179,7 +160,10 @@ func (s *Server) updateAppPolicy(ctx context.Context, request *policyRequest) (*
 	if s.policies == nil {
 		return nil, errNoPolicies
 	}
-	policy, err := s.savePolicy(ctx, store.ScopeApp, customerID, request.Body)
+	if request.Body.Budget != nil {
+		return nil, errBudgetMoved
+	}
+	policy, err := s.savePolicy(ctx, store.ScopeApp, customerID, request.Body, customerID)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
@@ -207,7 +191,8 @@ func (s *Server) getOrganizationPolicy(ctx context.Context, _ *struct{}) (*polic
 
 // updateOrganizationPolicy replaces what the calling app's organization decided.
 func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRequest) (*policyResponse, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
 		return nil, errMissingCustomer
 	}
 	if s.policies == nil {
@@ -217,26 +202,36 @@ func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRe
 	if organizationID == "" {
 		return nil, errNoOrganization
 	}
-	policy, err := s.savePolicy(ctx, store.ScopeOrganization, organizationID, request.Body)
+	if request.Body.Budget != nil {
+		return nil, errBudgetMoved
+	}
+	policy, err := s.savePolicy(ctx, store.ScopeOrganization, organizationID, request.Body, customerID)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
 	return &policyResponse{Body: policy}, nil
 }
 
-// savePolicy validates and stores a policy, and returns it as it now reads.
-func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id string, sent Policy) (Policy, error) {
+// savePolicy validates and stores a policy, audits it under auditedAs, and returns it as it
+// now reads.
+func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id string, sent Policy, auditedAs string) (Policy, error) {
 	document := store.PolicyDocument{
-		Quota:               quotaOf(sent.Quota),
-		DataPolicy:          dataPolicyOf(sent.DataPolicy),
-		PromptInjection:     sent.PromptInjection,
-		AllowedModels:       sent.AllowedModels,
-		Tags:                sent.Tags,
-		RequireOwnStreamApp: sent.RequireOwnStreamApp,
+		Quota:                quotaOf(sent.Quota),
+		DataPolicy:           dataPolicyOf(sent.DataPolicy),
+		PromptInjection:      sent.PromptInjection,
+		AllowedModels:        sent.AllowedModels,
+		Tags:                 sent.Tags,
+		RequireOwnStreamApp:  sent.RequireOwnStreamApp,
+		BalanceWarningMicros: sent.BalanceWarningMicros,
+		ToolOutputRetention:  options.Retention(value(sent.ToolOutputRetention)),
 	}
-	// A daily limit is what one end user of an app may spend, so it is set on each app.
-	if scope == store.ScopeOrganization && sent.Quota != nil {
-		return Policy{}, errors.New("an organization has no daily limit per end user: set quota on each app")
+	if sent.ResumeHistory != nil {
+		resume := resumeHistoryOr(store.ResumeHistory{}, sent.ResumeHistory)
+		document.ResumeHistory = &resume
+	}
+	// Credit is the organization's, so the balance it is warned at is too.
+	if scope == store.ScopeApp && sent.BalanceWarningMicros != nil {
+		return Policy{}, errors.New("an app has no balance warning of its own: set balance_warning_micros on the organization's policy")
 	}
 	// Any app's backend can write its organization's policy, so the one setting that keeps
 	// every app of an organization out of the shared Stream app is the operator's alone. It
@@ -254,19 +249,12 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 		}
 		document.RequireOwnStreamApp = nil
 	}
+	if message, ok := toolOutputRetentionComplaint("tool_output_retention", document.ToolOutputRetention); !ok {
+		return Policy{}, stack.Wrap(errors.New(message))
+	}
 	if !document.DataPolicy.Valid() {
 		return Policy{}, stack.Wrap(fmt.Errorf("retention is none or a duration such as 30d, not %q",
 			document.DataPolicy.Retention))
-	}
-	if sent.Budget != nil {
-		budget := store.Budget{LimitMicros: sent.Budget.LimitMicros, Interval: store.BudgetInterval(sent.Budget.Interval)}
-		if budget.LimitMicros < 1 {
-			return Policy{}, stack.Wrap(fmt.Errorf("a budget's limit_micros must be at least 1, not %d", budget.LimitMicros))
-		}
-		if !budget.Interval.Valid() {
-			return Policy{}, stack.Wrap(fmt.Errorf("a budget resets hourly, daily, weekly or monthly, not %q", budget.Interval))
-		}
-		document.Budget = &budget
 	}
 	if err := routing.Tags(sent.Tags).Validate(); err != nil {
 		return Policy{}, err
@@ -276,9 +264,7 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 			return Policy{}, stack.Wrap(fmt.Errorf("allowed_models names %q, which is not a provider/model this deployment routes", model))
 		}
 	}
-	// Read before the write, so the entry can say what the setting was. The stored document
-	// is what is diffed rather than the policy as it reads out, because that one carries
-	// what the budget has spent, and a spend moving is not somebody changing a policy.
+	// Read before the write, so the entry can say what the setting was.
 	before, err := s.configs.Policy(ctx, scope, id)
 	if err != nil {
 		return Policy{}, err
@@ -286,40 +272,51 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 	if err := s.policies.Save(ctx, scope, id, document); err != nil {
 		return Policy{}, err
 	}
-	s.audit(ctx, auditRecord{
+	s.auditAs(ctx, auditedAs, auditRecord{
 		ResourceType: store.AuditPolicy, ResourceID: id, ResourceName: string(scope),
 		Action: store.AuditUpdated, Changes: auditDiff(before, document),
 	})
 	return s.policyOf(ctx, scope, id)
 }
 
-// policyOf reads a scope's policy, with what its budget has spent in the current interval.
+// policyOf reads a scope's policy.
 func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id string) (Policy, error) {
 	document, err := s.configs.Policy(ctx, scope, id)
 	if err != nil {
 		return Policy{}, err
 	}
-	policy := Policy{
-		Quota:               quotaFor(document.Quota),
-		DataPolicy:          dataPolicyFor(document.DataPolicy),
-		PromptInjection:     document.PromptInjection,
-		AllowedModels:       document.AllowedModels,
-		Tags:                document.Tags,
-		RequireOwnStreamApp: document.RequireOwnStreamApp,
+	return Policy{
+		Quota:                quotaFor(document.Quota),
+		DataPolicy:           dataPolicyFor(document.DataPolicy),
+		PromptInjection:      document.PromptInjection,
+		AllowedModels:        document.AllowedModels,
+		Tags:                 document.Tags,
+		RequireOwnStreamApp:  document.RequireOwnStreamApp,
+		ResumeHistory:        renderedResumeHistory(value(document.ResumeHistory)),
+		BalanceWarningMicros: document.BalanceWarningMicros,
+		ToolOutputRetention:  optional(string(document.ToolOutputRetention)),
+	}, nil
+}
+
+// The shortest and longest tool output retention a setting may name. Less than an hour is
+// within reach of how often redaction runs, so it would promise more than is done; ten
+// years only catches a typo, since leaving it out keeps it for as long as the session.
+const (
+	minToolOutputRetention = time.Hour
+	maxToolOutputRetention = 3650 * 24 * time.Hour
+)
+
+// toolOutputRetentionComplaint refuses a tool output retention that is not none, empty, or
+// a duration between the bounds.
+func toolOutputRetentionComplaint(field string, retention options.Retention) (string, bool) {
+	if retention == "" || retention == options.RetentionNone {
+		return "", true
 	}
-	if document.Budget != nil {
-		spent, resets, err := s.policies.Spent(ctx, scope, id, *document.Budget)
-		if err != nil {
-			return Policy{}, err
-		}
-		policy.Budget = &Budget{
-			LimitMicros: document.Budget.LimitMicros,
-			Interval:    BudgetInterval(document.Budget.Interval),
-			SpentMicros: &spent,
-			ResetsAt:    &resets,
-		}
+	window, ok := retention.Window()
+	if !ok || window < minToolOutputRetention || window > maxToolOutputRetention {
+		return fmt.Sprintf("%s is none, or a duration from 1h to 3650d such as 30d, not %q", field, retention), false
 	}
-	return policy, nil
+	return "", true
 }
 
 // quotaOf is a sent quota as it is stored. One that sets neither number is no opinion.

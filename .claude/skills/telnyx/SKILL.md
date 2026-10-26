@@ -49,7 +49,7 @@ Staging has a permanent SMS line since 2026-10-23.
 | Stream app | 1257545, keys `ATHENA_STREAM_API_KEY` / `ATHENA_STREAM_API_SECRET` (not `STREAM_API_KEY`, which is app 1728173) |
 | Provider app | `4001a107-bb22-4c6a-b01c-941d9024d596`, signing secret `TELNYX_PUBLIC_KEY` |
 | Connection | `81112518ea0565808d658c1464ed801b`, app-owned, token `TELNYX_API_KEY` |
-| Config | `d6187808c0b169a2d2adf279d4aae97e` "staging-sms-line": text, `llm-fast`, `scheduling.enabled`, `default_timezone` America/Toronto, binding `sms` |
+| Config | `d6187808c0b169a2d2adf279d4aae97e` "staging-sms-line": text, `llm-smart`, `scheduling.enabled` with no `default_timezone`, binding `sms` |
 
 **A US phone got no reply.** The number has no approved 10DLC campaign. The one US phone
 tested, on T-Mobile, got no reply: Telnyx error 40010, «Not 10DLC registered» (see the
@@ -133,9 +133,9 @@ before you go to the next step.
    Turn on `scheduling` only if you want reminders.
    ```bash
    curl -s -X POST "$R/v1/agents/configs?$K" "${A[@]}" -d "$(jq -n --arg c "$CONN" '{
-     name: "staging-sms-line", mode: "text", llm: "llm-fast",
+     name: "staging-sms-line", mode: "text", llm: "llm-smart",
      instructions: "Answer briefly. When asked for a reminder, schedule it with schedule_task, then confirm briefly.",
-     scheduling: {enabled: true, default_timezone: "America/Toronto"},
+     scheduling: {enabled: true},
      connectors: [{name: "sms", connector_id: "telnyx", connection: {type: "fixed", connection_id: $c}, tools: []}]}')" | jq .id
    ```
 5. **Point the profile at the router**, and check that the route reaches it. An unsigned
@@ -174,8 +174,14 @@ later one has no numbers. So ask a human to text the line, and give them the exa
    ```
    Pass: `deliver_to` is `["sms"]`, `user_id` is `telnyx-…` (the thread's person), the run is
    `delivered` with `delivered_to` `sms` after 1 attempt, and exactly one reminder arrives.
-   The time is in the config's `default_timezone`: a texting person has no zone of their own
-   (AI-1910).
+   A text carries no time zone, so the line has no `default_timezone`. On a person's first
+   reminder the tool answers `timezone_unknown` and the agent asks their city. The zone they
+   name is saved for them (`users.timezone`), so the next reminder does not ask (AI-1910,
+   tested 2026-10-25). A `default_timezone` would be used for everyone instead.
+
+   Keep `llm-smart`. On 2026-10-24, with `llm-fast`, the agent never called `schedule_task`:
+   it said "I've set a reminder" and no task existed. Tool calls are the session's
+   `tool_call` items (`GET /v1/agents/sessions/{id}/responses/items`).
 3. **A control.** Something that must behave as before, for example an app user's task run by
    hand delivers to `conversation` (`scheduled-tasks` skill).
 4. **Clean up.** Delete the test tasks. Leave the staging line as the table above says.
@@ -218,7 +224,8 @@ ticket comments (AI-1842, AI-1843).
 | 200, but no reply, and the binding is right | The sandbox gate holds the text back, or the person has an opt-out | See «What the bridge does to a text» |
 | No reply to STOP, START or HELP | Telnyx answered it, not the agent | Expected. Read `autoresponse_type` in the webhook |
 | No reply after an earlier STOP | The person has an opt-out | Text START, or remove the opt-out |
-| The agent answers, but the time is wrong | The config's `default_timezone` | Set it, or name the zone in the text (AI-1910) |
+| The agent answers, but the time is wrong | A `default_timezone` on the config, or a wrong zone saved for the person | Clear `default_timezone`; the person names their city in a text, which replaces the saved zone (AI-1910) |
+| The agent says a reminder is set, but no task exists | The model skipped the tool call (seen with `llm-fast`) | Use `llm-smart`; check the session's `tool_call` items |
 | A reminder never comes | Read the run's `error` | The reasons table in the `scheduled-tasks` skill |
 
 To see what Telnyx did with each text and reply today, with the error code of a failed one:

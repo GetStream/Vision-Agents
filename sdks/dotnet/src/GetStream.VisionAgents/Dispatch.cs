@@ -58,6 +58,8 @@ public sealed class Dispatch
     private readonly TimeSpan _reportEvery;
     private readonly List<(string AgentId, Tools Tools, TimeSpan Timeout)> _hosted = [];
     private readonly ConcurrentDictionary<long, Task> _running = new();
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _hostedCalls = new();
+    private readonly Holds _holds = new();
     // A channel is one conversation, so the agent that answered the last message on it is
     // the one that knows what has been said and should answer the next.
     private readonly Dictionary<string, Agent> _agents = [];
@@ -150,7 +152,7 @@ public sealed class Dispatch
     /// <param name="agent">The agent, usually <see cref="VisionAgentsClient.Agent"/>, whose tools are hosted.</param>
     /// <param name="toolTimeout">
     /// How long the router waits for one tool call to be answered before telling the model it
-    /// failed, not how long the worker runs; null takes the router's default of two minutes.
+    /// failed, not how long the worker runs; null takes the router's default of 30 seconds.
     /// </param>
     public Dispatch Host(Agent agent, TimeSpan? toolTimeout = null)
     {
@@ -381,8 +383,20 @@ public sealed class Dispatch
                         ("timeout_ms", (long)timeout.TotalMilliseconds))).ConfigureAwait(false);
                 }
                 break;
-            case "tool_call":
+            case "tool_call" when ToolCall.ToRun(frame):
                 await RunHostedAsync(frame, cancellationToken).ConfigureAwait(false);
+                break;
+            case "tool_held":
+                _holds.Answer(HostedKey(frame), true);
+                break;
+            // A call held through interruptions is not cancelled by one.
+            case "tool_cancel":
+                var key = HostedKey(frame);
+                if (!_holds.Held(key) && _hostedCalls.TryRemove(key, out var cancelled))
+                {
+                    await cancelled.CancelAsync().ConfigureAwait(false);
+                }
+                _holds.Answer(key, false);
                 break;
             case "hosting":
                 Trace.TraceInformation("the router sends tools for agent {0} to this worker", frame.Text("agent_id"));
@@ -429,25 +443,43 @@ public sealed class Dispatch
         var name = frame.Text("name");
         if (_hosted.Select(offer => offer.Tools).FirstOrDefault(tools => tools.Runs(name)) is not { } tools)
         {
-            await TellAsync(Frames.Of("tool_result", ("id", id), ("error", $"this worker does not run {name}"))).ConfigureAwait(false);
+            await TellAsync(Frames.Of("tool_result", ("tool_call_id", id), ("id", id), ("error", $"this worker does not run {name}"))).ConfigureAwait(false);
             return;
         }
+        var key = HostedKey(frame);
+        var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // Tracked before the call starts, so a tool_cancel read next finds it.
+        _hostedCalls[key] = cancel;
+        var toolCallContext = ToolCall.Of(frame, "", new ToolLine((sent, _) => TellAsync(sent), _holds, key));
         Track(async () =>
         {
             JsonObject result;
             try
             {
-                result = Frames.Of("tool_result", ("id", id),
-                    ("output", await tools.CallAsync(name, frame.Text("arguments"), cancellationToken).ConfigureAwait(false)));
+                result = Frames.Of("tool_result", ("tool_call_id", id), ("id", id),
+                    ("output", await tools.CallAsync(name, frame.Text("arguments"), cancel.Token, toolCallContext).ConfigureAwait(false)));
             }
             catch (Exception failure)
             {
                 // Whatever a tool throws is the model's to hear about, not this loop's.
-                result = Frames.Of("tool_result", ("id", id), ("error", failure.Message));
+                result = Frames.Of("tool_result", ("tool_call_id", id), ("id", id), ("error", failure.Message));
             }
-            await TellAsync(result).ConfigureAwait(false);
+            _holds.Forget(key);
+            // Gone from the table means cancelled: the model has moved on without it, and
+            // whoever took it out is the one cancelling it.
+            if (_hostedCalls.TryRemove(key, out _))
+            {
+                cancel.Dispose();
+                await TellAsync(result).ConfigureAwait(false);
+            }
         });
     }
+
+    /// <summary>
+    /// What <c>tool_cancel</c> and <c>tool_held</c> name a hosted call by: ids are only unique
+    /// within a session, and one worker runs calls for many.
+    /// </summary>
+    private static string HostedKey(Frame frame) => $"{frame.Text("session_id")}/{frame.Text("id")}";
 
     /// <summary>
     /// Runs the handler for one call or message and tells the router it is done. Whatever it

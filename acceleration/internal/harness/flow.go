@@ -165,8 +165,8 @@ member ID, phone number, or clock time that may still be growing.
 Once the caller has said they will give everything at once, choose wait at each pause until
 they ask something or plainly finish; a detail that sounds complete is not the end of the list.
 The same holds when you are told the caller is giving one thought in parts: choose wait while
-the new words only add to it, such as one more statement of a puzzle or one more item of a
-list, and respond once they ask something, correct or change something, or plainly finish.
+the new words only add to it, such as one more item of a list, and
+respond once they ask something, correct or change something, or plainly finish.
 Choose ignore only when the words are clearly background speech or addressed to somebody else.
 A caller asking the agent anything is talking to it, however far the question is from what the
 agent is for: choose respond, and the other model says what it cannot help with. Being off-topic
@@ -174,10 +174,9 @@ is never a reason to ignore.
 Words in a different voice come from somebody else at the caller's microphone, who is
 usually talking to the room rather than to the agent, so lean towards ignore unless they
 plainly address it.
-Words that open by calling somebody "Mom", "Dad", "honey" or "sweetie", such as "Mom, can I have
-the nuggets?", are addressed to them, not the agent: choose ignore, and continue if the agent
-is speaking. But if the caller turns back to the agent in the same words, such as "Yes honey,
-now shush. Sorry about that, the name is Okafor.", the part for the agent counts: respond.
+Words that open by calling somebody else in the room by a kinship term or a nickname are
+addressed to them, not the agent: choose ignore, and continue if the agent is speaking. But if
+the caller turns back to the agent in the same words, the part for the agent counts: respond.
 Choose clarify when the caller addressed the agent but their request is ambiguous.
 Choose respond for a complete thought addressed to the agent.
 A recorded menu reading out its options is one thought and not several, however long the
@@ -299,7 +298,7 @@ func (f *flow) run(asked *candidate) {
 
 	stopExpiry := context.AfterFunc(asked.ctx, func() { _ = stream.Close() })
 	defer stopExpiry()
-	f.consume(asked, stream, model.LLM())
+	f.consume(asked, stream, model)
 }
 
 // advance starts the newest waiting turn, or marks the controller idle.
@@ -463,7 +462,7 @@ func (f *flow) setModel(model *llmrouter.Session) {
 }
 
 // consume waits for one decision and reports it.
-func (f *flow) consume(asked *candidate, stream *llm.Stream, primary llm.LLM) {
+func (f *flow) consume(asked *candidate, stream *llm.Stream, primary *llmrouter.Session) {
 	candidateID := asked.turn.ID
 	response, err := llm.Collect(stream)
 	if f.forget(candidateID) == nil {
@@ -511,7 +510,7 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream, primary llm.LLM) {
 		// A stream is stamped by the provider that wrote it, and a hedge or a failover is
 		// another provider or model behind the same session.
 		ruler = Primary
-		if response.Provider != primary.Provider() || response.Model != primary.Model() {
+		if !primary.Wrote(response) {
 			ruler = Fallback
 		}
 	}

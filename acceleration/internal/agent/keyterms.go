@@ -7,6 +7,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 )
 
 // learnTerms tells the transcriber to expect the names the caller has said and the agent has
@@ -37,22 +38,18 @@ func (a *Agent) learnTerms(said string, history []llm.Message) {
 	if len(terms) > stt.MaxKeyterms {
 		terms = terms[:stt.MaxKeyterms]
 	}
-	listeners := make([]stt.STT, 0, len(a.listeners))
+	listeners := make([]*sttrouter.Session, 0, len(a.listeners))
 	for _, session := range a.listeners {
-		listeners = append(listeners, session.STT())
+		listeners = append(listeners, session)
 	}
 	a.mu.Unlock()
 
 	for _, listener := range listeners {
-		retuner, ok := listener.(stt.Retuner)
-		if !ok {
-			continue
-		}
-		if err := retuner.SetKeyterms(terms); err != nil {
+		if err := listener.SetKeyterms(terms); err != nil {
 			a.logger.Warn("could not tell the transcriber which names to expect", "error", err)
 			continue
 		}
-		a.logger.Debug("the transcriber now expects the names said back", "terms", terms)
+		a.logger.Debug("the transcriber was told the names said back, if it takes them mid-session", "terms", terms)
 	}
 }
 

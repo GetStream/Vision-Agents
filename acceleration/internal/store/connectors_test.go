@@ -146,6 +146,25 @@ func (s *StoreSuite) TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBefor
 	s.False(broken)
 }
 
+// TestGoogleDriveRevisionSixSeedsOverTheRevisionFourTheBuildBeforeStored: revision 6 takes a
+// grant of drive in place of drive.file (AI-1935). testdata/google_drive-revision-4.yaml is the
+// file a database already holds.
+func (s *StoreSuite) TestGoogleDriveRevisionSixSeedsOverTheRevisionFourTheBuildBeforeStored() {
+	four, err := os.ReadFile("testdata/google_drive-revision-4.yaml")
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"google_drive.yaml": &fstest.MapFile{Data: four}}))
+	was, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, "google_drive")
+	s.Require().NoError(err)
+	s.Require().Equal(4, was.Revision)
+
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+
+	now, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, "google_drive")
+	s.Require().NoError(err)
+	s.Equal(6, now.Revision)
+	s.NotEmpty(now.Manifest.Scopes.CoveredBy)
+}
+
 // AI-816: slack.yaml at revision 5 reads the user from $.user_id. A router that ships it,
 // starting on a database the build before it seeded with revision 4, stores 5 as the latest,
 // keeps 4 for the connections pinned to it, and moves no other built-in.
@@ -361,6 +380,136 @@ func (s *StoreSuite) TestAConnectionsDefinitionIsCurrentOutdatedOrBroken() {
 		two.ID:   {Status: DefinitionBroken, Reason: "the first reason"},
 		three.ID: {Status: DefinitionCurrent},
 	}, statuses)
+}
+
+// acmeReadOnly is acmeManifest at revision 2 with its source listing a tool that only reads.
+var acmeReadOnly = strings.Replace(acmeManifest, "revision: 1", "revision: 2", 1) + "    read_only_tools: [search]\n"
+
+// pinnedTo is a connection to connector pinned to revision, as the statuses read takes it.
+func pinnedTo(id, connector string, revision int) ConnectorConnection {
+	return ConnectorConnection{ID: id, CustomerID: "acme-app", ConnectorID: connector, DefinitionRevision: revision}
+}
+
+// A later revision that changes only which tools only read changes nothing a connection
+// reads, so the connection pinned before it is current; one that asks for other scopes makes
+// every connection before it outdated.
+func (s *StoreSuite) TestOnlyARevisionChangingWhatAConnectionReadsMakesItOutdated() {
+	s.seed(acmeManifest)
+	s.seed(acmeReadOnly)
+
+	statuses, err := s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", []ConnectorConnection{pinnedTo("one", "acme", 1)})
+	s.Require().NoError(err)
+	s.Equal(map[string]DefinitionStatus{"one": {Status: DefinitionCurrent}}, statuses)
+
+	s.seed(strings.Replace(strings.Replace(acmeReadOnly, "revision: 2", "revision: 3", 1), "list: [read, write]", "list: [read]", 1))
+	statuses, err = s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app",
+		[]ConnectorConnection{pinnedTo("one", "acme", 1), pinnedTo("two", "acme", 2), pinnedTo("three", "acme", 3)})
+	s.Require().NoError(err)
+	s.Equal(map[string]DefinitionStatus{
+		"one": {Status: DefinitionOutdated}, "two": {Status: DefinitionOutdated}, "three": {Status: DefinitionCurrent},
+	}, statuses)
+}
+
+// Each connection is compared with its own connector's latest revision, from the revision it
+// pins: a revert makes the revision it reverts to current again, and the one between outdated.
+func (s *StoreSuite) TestEachConnectionIsComparedFromItsOwnRevisionWithItsOwnConnectorsLatest() {
+	s.seed(acmeManifest)
+	s.seed(acmeChanged)
+	s.seed(acmeReverted)
+	for _, raw := range []string{acmeManifest, acmeChanged} {
+		other := strings.Replace(raw, "id: acme", "id: other", 1)
+		s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"other.yaml": {Data: []byte(other)}}))
+	}
+
+	statuses, err := s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", []ConnectorConnection{
+		pinnedTo("acme 1", "acme", 1), pinnedTo("acme 2", "acme", 2), pinnedTo("acme 3", "acme", 3),
+		pinnedTo("other 1", "other", 1), pinnedTo("other 2", "other", 2),
+	})
+
+	s.Require().NoError(err)
+	s.Equal(map[string]DefinitionStatus{
+		"acme 1": {Status: DefinitionCurrent}, "acme 2": {Status: DefinitionOutdated}, "acme 3": {Status: DefinitionCurrent},
+		"other 1": {Status: DefinitionOutdated}, "other 2": {Status: DefinitionCurrent},
+	}, statuses)
+}
+
+// A connection pinned to a revision the customer cannot read is outdated, as it was before a
+// revision's content was compared: here revision 2 was never stored.
+func (s *StoreSuite) TestAConnectionOnARevisionNotStoredIsOutdated() {
+	s.seed(acmeManifest)
+	s.seed(strings.Replace(acmeManifest, "revision: 1", "revision: 3", 1))
+
+	statuses, err := s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", []ConnectorConnection{pinnedTo("two", "acme", 2)})
+
+	s.Require().NoError(err)
+	s.Equal(map[string]DefinitionStatus{"two": {Status: DefinitionOutdated}}, statuses)
+}
+
+// Custom ids are each customer's own, so another customer's custom_crm at the same revision,
+// which asks for another scope, is not what the customer's connection reads.
+func (s *StoreSuite) TestAConnectionIsComparedWithItsOwnCustomersRevisionsOnly() {
+	s.crm("acme-app")
+	_, err := s.store.CreateConnectorDefinition(s.ctx, "acme-app", parsed(s.T(), customCRM+"    read_only_tools: [search]\n"))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(s.ctx, "other-app", parsed(s.T(), customCRM+"scopes:\n  list: [admin]\n"))
+	s.Require().NoError(err)
+
+	statuses, err := s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", []ConnectorConnection{pinnedTo("one", "custom_crm", 1)})
+
+	s.Require().NoError(err)
+	s.Equal(map[string]DefinitionStatus{"one": {Status: DefinitionCurrent}}, statuses)
+}
+
+// bigquery.yaml revision 3 takes execute_sql_readonly out of read_only_tools, which only the
+// sensitive-connector check reads, from the latest revision. A router that ships it, on a
+// database the build before it seeded with revision 2, stores 3 as the latest, keeps 2
+// unmarked, moves no other built-in, and leaves a connection pinned to 2 current.
+// testdata/bigquery-revision-2.yaml is the file the base, 8e132bd37, shipped.
+func (s *StoreSuite) TestBigQueryRevisionThreeLeavesAConnectionOnRevisionTwoCurrent() {
+	two, err := os.ReadFile("testdata/bigquery-revision-2.yaml")
+	s.Require().NoError(err)
+	before := fstest.MapFS{}
+	files, err := fs.ReadDir(providers.FS, ".")
+	s.Require().NoError(err)
+	for _, file := range files {
+		raw, err := fs.ReadFile(providers.FS, file.Name())
+		s.Require().NoError(err)
+		before[file.Name()] = &fstest.MapFile{Data: raw}
+	}
+	before["bigquery.yaml"] = &fstest.MapFile{Data: two}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
+	latest := func() map[string]int {
+		revisions := map[string]int{}
+		for name := range before {
+			definition, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, strings.TrimSuffix(name, ".yaml"))
+			s.Require().NoError(err)
+			revisions[definition.ID] = definition.Revision
+		}
+		return revisions
+	}
+	was := latest()
+	s.Require().Equal(2, was["bigquery"])
+	pinned := []ConnectorConnection{pinnedTo("bigquery 2", "bigquery", 2)}
+	statuses, err := s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", pinned)
+	s.Require().NoError(err)
+	s.Require().Equal(DefinitionCurrent, statuses["bigquery 2"].Status)
+
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+
+	now := latest()
+	s.Equal(3, now["bigquery"])
+	delete(was, "bigquery")
+	delete(now, "bigquery")
+	s.Equal(was, now)
+	third, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, "bigquery")
+	s.Require().NoError(err)
+	s.NotContains(third.Manifest.Sources[0].ReadOnlyTools, "execute_sql_readonly")
+	_, broken, err := s.store.BrokenConnectorRevision(s.ctx, "bigquery", 2)
+	s.Require().NoError(err)
+	s.False(broken)
+	statuses, err = s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", pinned)
+	s.Require().NoError(err)
+	s.Equal(map[string]DefinitionStatus{"bigquery 2": {Status: DefinitionCurrent}}, statuses)
 }
 
 func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisionItNames() {
@@ -1079,8 +1228,8 @@ func (s *StoreSuite) appWith(settings AppSettings) string {
 }
 
 // acmeSeenBy is, for each read that hands an app a definition, whether it finds acme for the
-// customer. Revision 2 is stored first, so a connection pinned to revision 1 is outdated
-// exactly when the statuses read sees acme.
+// customer. Revision 2 changes what a connection reads, so a connection pinned to revision 1
+// is outdated exactly when the statuses read sees acme.
 func (s *StoreSuite) acmeSeenBy(customerID string) map[string]bool {
 	seen := map[string]bool{}
 
@@ -1153,6 +1302,74 @@ func (s *StoreSuite) TestOneAppsFlagDoesNotShowAnInternalBuiltInToAnother() {
 	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{})))
 }
 
+// seedAcmeRevisions stores internalAcme at revisions 1 and 2, each internal or not as given,
+// revision 2 under another name, which a connection reads.
+func (s *StoreSuite) seedAcmeRevisions(firstInternal, secondInternal bool) {
+	revision := func(n string, internal bool) string {
+		raw := strings.Replace(internalAcme, "revision: 1", "revision: "+n, 1)
+		if n == "2" {
+			raw = strings.Replace(raw, "name: Acme", "name: Acme Two", 1)
+		}
+		if !internal {
+			raw = strings.Replace(raw, "internal: true\n", "", 1)
+		}
+		return raw
+	}
+	s.seed(revision("1", firstInternal))
+	s.seed(revision("2", secondInternal))
+}
+
+func (s *StoreSuite) TestABuiltInMadeInternalLaterIsHiddenAtEveryRevision() {
+	s.seedAcmeRevisions(false, true)
+	on := true
+
+	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{})), "revision 1 is public, but the latest says internal")
+	s.Equal(acmeNowhere, s.acmeSeenBy("no-app-row"))
+	flagged := s.appWith(AppSettings{InternalConnectors: &on})
+	s.Equal(acmeEverywhere, s.acmeSeenBy(flagged))
+	latest, err := s.store.LatestConnectorDefinition(s.ctx, flagged, "acme")
+	s.Require().NoError(err)
+	s.Equal(2, latest.Revision)
+}
+
+func (s *StoreSuite) TestABuiltInMadePublicLaterIsSeenAtEveryRevision() {
+	s.seedAcmeRevisions(true, false)
+
+	s.Equal(acmeEverywhere, s.acmeSeenBy(s.appWith(AppSettings{})), "revision 1 is internal, but the latest says public")
+}
+
+// The expected value is what 2c083b25 answers, before internal was read from the latest
+// revision.
+func (s *StoreSuite) TestAPublicBuiltInIsSeenByEveryApp() {
+	s.seedAcmeRevisions(false, false)
+
+	s.Equal(acmeEverywhere, s.acmeSeenBy(s.appWith(AppSettings{})))
+	s.Equal(acmeEverywhere, s.acmeSeenBy("no-app-row"))
+}
+
+// A custom definition is internal revision by revision, as on 2c083b25, where this test's
+// expected values were read: only built-ins take internal from their latest revision.
+func (s *StoreSuite) TestACustomDefinitionIsInternalRevisionByRevision() {
+	app := s.appWith(AppSettings{})
+	public := strings.Replace(acmeManifest, "id: acme", "id: custom_crm", 1)
+	_, err := s.store.CreateConnectorDefinition(s.ctx, app, parsed(s.T(), public))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(s.ctx, app, parsed(s.T(), strings.Replace(public, "name: Acme", "name: Acme Two\ninternal: true", 1)))
+	s.Require().NoError(err)
+
+	list, err := s.store.ListConnectorDefinitions(s.ctx, app, ConnectorDefinitionFilter{})
+	s.Require().NoError(err)
+	s.Equal([]string{"custom_crm"}, definitionIDs(list))
+	s.Equal(1, list[0].Revision, "the list shows the public revision")
+	latest, err := s.store.LatestConnectorDefinition(s.ctx, app, "custom_crm")
+	s.Require().NoError(err)
+	s.Equal(1, latest.Revision)
+	_, err = s.store.ConnectorDefinition(s.ctx, app, "custom_crm", 1)
+	s.True(s.found(err), "revision 1 is public")
+	_, err = s.store.ConnectorDefinition(s.ctx, app, "custom_crm", 2)
+	s.False(s.found(err), "revision 2 is internal")
+}
+
 // An app without the flag, or a customer with no app row, sees the catalog it saw before the flag
 // existed: every embedded built-in that is not internal, each found by LatestConnectorDefinition
 // and ConnectorDefinition at its latest revision. An app with the flag sees the internal ones too.
@@ -1189,4 +1406,36 @@ func (s *StoreSuite) TestWithoutTheFlagEveryAppSeesTheCatalogItSawBefore() {
 			s.Require().NoError(err)
 		}
 	}
+}
+
+// TestAClientsGrantedConnectionsAreTheLiveOnesItIssuedAGrantTo: what removing the app's client
+// revokes is the connector's live connections with a grant from that client, not one from an
+// earlier client or another registration, another connector's, another customer's, a pending
+// one or a deleted one.
+func (s *StoreSuite) TestAClientsGrantedConnectionsAreTheLiveOnesItIssuedAGrantTo() {
+	issued := func(connection ConnectorConnection, registration core.ClientRegistrationMethod, clientID string, grant bool) {
+		s.Require().NoError(s.store.PutConnectorConnectionClient(s.ctx, &ConnectorConnectionClient{
+			ConnectionID: connection.ID, Registration: registration, ClientID: clientID,
+		}))
+		if grant {
+			s.granted(connection)
+		}
+	}
+	first := s.connection("acme-app", nil)
+	issued(first, core.ClientCustomer, "client-1", true)
+	second := s.connection("acme-app", nil)
+	issued(second, core.ClientCustomer, "client-1", true)
+	issued(s.connection("acme-app", nil), core.ClientCustomer, "client-1", false)
+	gone := s.connection("acme-app", nil)
+	issued(gone, core.ClientCustomer, "client-1", true)
+	s.deletedKeepingCredentials(gone)
+	issued(s.connection("acme-app", nil), core.ClientCustomer, "client-0", true)
+	issued(s.connection("acme-app", nil), core.ClientOperator, "client-1", true)
+	issued(s.connection("other-app", nil), core.ClientCustomer, "client-1", true)
+	issued(s.lineConnection("acme-app", lineManifest), core.ClientCustomer, "client-1", true)
+
+	found, err := s.store.GrantedConnectorConnectionsOfClient(s.ctx, "acme-app", "acme", core.ClientCustomer, "client-1")
+
+	s.Require().NoError(err)
+	s.Equal([]string{first.ID, second.ID}, connectionIDs(found))
 }

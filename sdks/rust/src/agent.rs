@@ -784,6 +784,7 @@ async fn connector_bindings(
             connection,
             events: None,
             policy: None,
+            require_approval: None,
             sandbox: None,
             timeout_ms: None,
         });

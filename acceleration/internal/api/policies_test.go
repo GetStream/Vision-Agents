@@ -25,48 +25,45 @@ func (s *PoliciesSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 }
 
-func (s *PoliciesSuite) TestAnAppPolicyIsStoredAndReadBackWithWhatItsBudgetSpent() {
-	stored := s.put(map[string]any{
-		"budget":           map[string]any{"limit_micros": 5_000_000, "interval": "daily"},
-		"prompt_injection": true,
-	})
-	s.Require().NotNil(stored.Budget)
-	s.Equal(int64(5_000_000), stored.Budget.LimitMicros)
-	s.Equal(BudgetIntervalDaily, stored.Budget.Interval)
+func (s *PoliciesSuite) TestAnAppPolicyIsStoredAndReadBack() {
+	stored := s.put(map[string]any{"prompt_injection": true})
+	s.Require().NotNil(stored.PromptInjection)
 
 	var read Policy
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
-	s.Require().NotNil(read.Budget)
-	s.Require().NotNil(read.Budget.SpentMicros)
-	s.Zero(*read.Budget.SpentMicros)
-	s.NotNil(read.Budget.ResetsAt)
 	s.Require().NotNil(read.PromptInjection)
 	s.True(*read.PromptInjection)
+	s.Nil(read.Budget, "a policy reads back no budget")
 }
 
-func (s *PoliciesSuite) TestABudgetOfNothingIsRefusedNamingTheFieldThatIsWrong() {
-	status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/app",
-		map[string]any{"budget": map[string]any{"limit_micros": 0, "interval": "daily"}})
+func (s *PoliciesSuite) TestAPolicyBudgetIsRefused() {
+	for _, path := range []string{"/v1/policies/app", "/v1/policies/organization"} {
+		status, body := s.serverClient.call(http.MethodPut, path,
+			map[string]any{"budget": map[string]any{"limit_micros": 1_000, "interval": "daily"}, "prompt_injection": true})
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "limit_micros")
+		s.Equal(http.StatusBadRequest, status, path)
+		s.Contains(string(body), `"code":"`+codeBudgetMoved+`"`, path)
+		s.Contains(string(body), "/v1/spend/limits", path)
+	}
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Nil(read.PromptInjection, "nothing of a refused policy is written")
 }
 
 func (s *PoliciesSuite) TestOnlyTheAppsOwnBackendMaySetItsPolicy() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
-		return as.do(http.MethodPut, "/v1/policies/app",
-			map[string]any{"budget": map[string]any{"limit_micros": 1_000, "interval": "daily"}}, nil)
+		return as.do(http.MethodPut, "/v1/policies/app", map[string]any{"prompt_injection": true}, nil)
 	})
 }
 
 func (s *PoliciesSuite) TestAnAppsPolicyIsNotAnotherAppsPolicy() {
-	s.put(map[string]any{"budget": map[string]any{"limit_micros": 7_000, "interval": "daily"}})
+	s.put(map[string]any{"prompt_injection": true})
 
 	stranger := s.data.backendOfAnotherApp()
 	var read Policy
 	s.Require().Equal(http.StatusOK, stranger.do(http.MethodGet, "/v1/policies/app", nil, &read))
-	s.Nil(read.Budget, "the other app has a policy of its own, and it is empty")
+	s.Nil(read.PromptInjection, "the other app has a policy of its own, and it is empty")
 }
 
 func (s *PoliciesSuite) TestAllowedModelsAndTagsAreStoredAndReadBack() {
@@ -145,7 +142,7 @@ func (s *PoliciesSuite) TestAnAppsDailyLimitIsStoredAndReadBack() {
 }
 
 func (s *PoliciesSuite) TestAPolicyThatLeavesTheDailyLimitOutClearsIt() {
-	// A PUT replaces the whole policy, the daily limit as much as the budget.
+	// A PUT replaces the whole policy, the daily limit as much as the rest.
 	s.put(map[string]any{"quota": map[string]any{"messages_per_user_per_day": 3}})
 
 	written := s.put(map[string]any{"prompt_injection": true})
@@ -153,17 +150,6 @@ func (s *PoliciesSuite) TestAPolicyThatLeavesTheDailyLimitOutClearsIt() {
 
 	var read Policy
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
-	s.Nil(read.Quota)
-}
-
-func (s *PoliciesSuite) TestAnOrganizationHasNoDailyLimitToSet() {
-	status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/organization",
-		map[string]any{"quota": map[string]any{"messages_per_user_per_day": 5_000}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "an organization has no daily limit per end user")
-	var read Policy
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &read))
 	s.Nil(read.Quota)
 }
 
@@ -226,20 +212,20 @@ func (s *PoliciesSuite) TestAnOrganizationPolicyReadAndWrittenBackKeepsTheOperat
 	s.Require().NoError(s.store.SavePolicy(context.Background(), store.ScopeOrganization,
 		s.app.organization.ID, store.PolicyDocument{RequireOwnStreamApp: &required}))
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/organization",
-		map[string]any{"budget": map[string]any{"limit_micros": 1_000, "interval": "daily"}}, nil))
+		map[string]any{"tags": map[string]string{"team": "a"}}, nil))
 
 	var read Policy
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &read))
-	read.Budget.LimitMicros = 2_000
+	read.Tags["team"] = "b"
 	status := s.serverClient.do(http.MethodPut, "/v1/policies/organization", read, nil)
 
-	s.Require().Equal(http.StatusOK, status, "a backend writes back what it read with only its budget changed")
+	s.Require().Equal(http.StatusOK, status, "a backend writes back what it read with only its tags changed")
 	// A replica's cached policy is dropped when Redis says so, a moment after the write.
 	var written Policy
 	s.Require().Eventually(func() bool {
 		written = Policy{}
 		return s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &written) == http.StatusOK &&
-			written.Budget != nil && written.Budget.LimitMicros == 2_000
+			written.Tags["team"] == "b"
 	}, settleFor, 10*time.Millisecond)
 	s.Require().NotNil(written.RequireOwnStreamApp)
 	s.True(*written.RequireOwnStreamApp)
@@ -266,4 +252,31 @@ func (s *PoliciesSuite) TestAnAppMayRequireItsOwnStreamApp() {
 
 	s.Require().NotNil(stored.RequireOwnStreamApp)
 	s.True(*stored.RequireOwnStreamApp)
+}
+
+func (s *PoliciesSuite) TestAToolOutputRetentionIsStoredAndReadBack() {
+	stored := s.put(map[string]any{"tool_output_retention": "30d"})
+	s.Equal("30d", value(stored.ToolOutputRetention))
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Equal("30d", value(read.ToolOutputRetention))
+
+	cleared := s.put(map[string]any{})
+	s.Nil(cleared.ToolOutputRetention, "a policy left out keeps tool output as long as the session again")
+}
+
+func (s *PoliciesSuite) TestAToolOutputRetentionOutsideItsBoundsIsRefused() {
+	for _, retention := range []string{"3651d", "87601h"} {
+		status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/app",
+			map[string]any{"tool_output_retention": retention})
+		s.Equal(http.StatusBadRequest, status, retention)
+		s.Contains(failure, "tool_output_retention", retention)
+	}
+	for _, retention := range []string{"0d", "30m", "forever", "1w"} {
+		status, body := s.serverClient.call(http.MethodPut, "/v1/policies/app",
+			map[string]any{"tool_output_retention": retention})
+		s.Equal(http.StatusBadRequest, status, retention)
+		s.Contains(string(body), `"code":"validation_failed"`, retention)
+	}
 }

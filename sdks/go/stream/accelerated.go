@@ -5,8 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/tools"
@@ -19,6 +25,11 @@ const events = 64
 // hangupWithin bounds how long Leave waits for the backend to end the session it was told to
 // close. The backend closes the socket once the session has ended, well inside this.
 const hangupWithin = 5 * time.Second
+
+// resumeFor is how long a dropped text session's socket is reconnected for. It is how long
+// the router keeps a text session nobody watches, after which a reconnect still reopens the
+// conversation but has nothing left to send again.
+const resumeFor = 5 * time.Minute
 
 // ErrNotOnCall is returned by an action on a pipeline that has not joined anything, or has
 // already left.
@@ -161,7 +172,22 @@ type Event struct {
 	// Files are what a task_settled's code handed back, uploaded where the person can see
 	// them.
 	Files []Attachment
-	Frame Frame
+	// Resumed is set on a resumed event, which a text session's socket is sent after it
+	// dropped and reconnected.
+	Resumed *Resumption
+	Frame   Frame
+}
+
+// Resumption is what a socket that reconnected was told.
+//
+// Complete is false when some of what the session said while the socket was away is gone:
+// the router restarted, or it was away too long. What was said is still in the
+// conversation, to read back. Command is the receipt of the last question asked through
+// Responses, when the router knows it: an interrupted one was stopped by the router going
+// away and is never answered, so ask it again.
+type Resumption struct {
+	Complete bool
+	Command  *acceleration.CommandReceipt
 }
 
 // Attachment is something the agent's code made, at a URL the person can reach.
@@ -191,6 +217,12 @@ type Pipeline struct {
 	stop    context.CancelFunc
 	running sync.WaitGroup
 	watcher sync.WaitGroup
+	holds   holds
+
+	// awaiting is the request id of the last question asked, which a reconnect asks after.
+	awaiting atomic.Value
+	// firstRetry is the first wait before reconnecting a dropped text session.
+	firstRetry time.Duration
 }
 
 // Accelerated configures a pipeline to run remotely.
@@ -206,12 +238,17 @@ func Accelerated(config Config) *Pipeline {
 		functions = tools.NewRegistry()
 	}
 	return &Pipeline{
-		config:    config,
-		backend:   config.Backend,
-		logger:    logger,
-		functions: functions,
+		config:     config,
+		backend:    config.Backend,
+		logger:     logger,
+		functions:  functions,
+		firstRetry: firstRetry,
 	}
 }
+
+// Awaiting names the question a text session is waiting on the answer to, by the request
+// id it was asked with, so a socket that reconnects is told how that question ended.
+func (p *Pipeline) Awaiting(requestID string) { p.awaiting.Store(requestID) }
 
 // Functions are the caller's own, which the model is offered and this process runs.
 func (p *Pipeline) Functions() *tools.Registry {
@@ -228,6 +265,14 @@ func (p *Pipeline) Session() *acceleration.Session {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.session
+}
+
+// sessionID is the id of the session the pipeline is holding, or empty.
+func (p *Pipeline) sessionID() string {
+	if session := p.Session(); session != nil {
+		return session.Id
+	}
+	return ""
 }
 
 // Join creates the session and starts watching it.
@@ -297,12 +342,14 @@ func (p *Pipeline) Watch(ctx context.Context, session *acceleration.Session) err
 		return err
 	}
 
-	socket := NewSocket(
-		backend.SocketURL("/v1/agents/sessions/"+session.Id+"/events"),
-		credentials,
-		backend.HTTPClient,
-		p.logger,
-	)
+	// A text session outlives its socket, so its socket is resumable and is reconnected
+	// when it drops. A call's is not: the call is the router's, and ends with it.
+	resumable := session.CallId == ""
+	asked := p.runs()
+	if resumable {
+		asked.Set("resumable", "true")
+	}
+	socket := p.socketFor(backend, credentials, session.Id, asked)
 	if err := socket.Open(ctx); err != nil {
 		// The session is live in the backend even though nothing here can watch it, so it
 		// is closed rather than left holding a call nobody is listening to.
@@ -327,8 +374,16 @@ func (p *Pipeline) Watch(ctx context.Context, session *acceleration.Session) err
 	p.mu.Unlock()
 
 	p.watcher.Add(1)
-	go p.watch(watching, socket, watched)
+	go p.watch(watching, socket, watched, resumable)
 	return nil
+}
+
+func (p *Pipeline) socketFor(backend Backend, credentials http.Header, id string, asked url.Values) *Socket {
+	address := backend.SocketURL("/v1/agents/sessions/" + id + "/events")
+	if len(asked) > 0 {
+		address += "?" + asked.Encode()
+	}
+	return NewSocket(address, credentials, backend.HTTPClient, p.logger)
 }
 
 // ready refuses a pipeline that is already holding a conversation, and returns the client
@@ -502,6 +557,16 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	return request
 }
 
+// runs is the socket's query saying which of the session's tools this process runs: the
+// functions registered here, and none when there are none.
+func (p *Pipeline) runs() url.Values {
+	var names []string
+	for _, function := range p.functions.List() {
+		names = append(names, function.Name)
+	}
+	return url.Values{"tools": {strings.Join(names, ",")}}
+}
+
 // tools are the functions registered here, as the model will be offered them.
 func (p *Pipeline) tools() []acceleration.SessionTool {
 	registered := p.functions.List()
@@ -511,6 +576,17 @@ func (p *Pipeline) tools() []acceleration.SessionTool {
 		if function.Parameters != nil {
 			parameters := function.Parameters
 			tool.Parameters = &parameters
+		}
+		if function.Interruptible {
+			interruptible := true
+			tool.Interruptible = &interruptible
+		}
+		if function.Timeout > 0 {
+			timeout := function.Timeout.Milliseconds()
+			tool.TimeoutMs = &timeout
+		}
+		if function.Approval != "" {
+			tool.Approval = &acceleration.SessionToolApproval{Title: function.Approval}
 		}
 		declared = append(declared, tool)
 	}
@@ -532,38 +608,164 @@ func (p *Pipeline) command(frame Frame) error {
 // watch reads the session's socket until it ends, translating as it goes.
 //
 // The socket and the channel are handed in rather than read back off the pipeline, because
-// leaving clears both and a call can be left before this has run at all.
-func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event) {
+// leaving clears both and a call can be left before this has run at all. A resumable
+// socket that drops without the session ending is opened again after the last frame read,
+// and the channel stays open across it.
+func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event, resumable bool) {
 	defer p.watcher.Done()
 	defer close(out)
 
-	for {
-		frame, _, err := socket.Read()
-		if err != nil {
-			if ctx.Err() == nil && !errors.Is(err, ErrSocketClosed) {
+	cursor := ""
+	for reconnected := false; ; reconnected = true {
+		err := p.read(ctx, socket, out, &cursor, reconnected)
+		if !resumable || !dropped(err) || ctx.Err() != nil || p.Session() == nil {
+			if err != nil && ctx.Err() == nil && !errors.Is(err, ErrSocketClosed) {
 				p.logger.Debug("the session socket ended", "error", err)
 			}
 			return
 		}
+		p.logger.Info("lost the session socket, reconnecting", "error", err)
+		_ = socket.Close()
+		if socket = p.reconnect(ctx, cursor); socket == nil {
+			return
+		}
+	}
+}
+
+// read reads one socket until it ends, keeping cursor at the last frame read. A reconnected
+// socket's resumed frame is handed on, where a first one only says where the stream starts.
+func (p *Pipeline) read(ctx context.Context, socket *Socket, out chan<- Event, cursor *string, reconnected bool) error {
+	// A read blocks in the socket rather than on a channel, so a pipeline told to stop
+	// reaches it by closing the connection underneath it.
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = socket.Close()
+		case <-stopped:
+		}
+	}()
+
+	for {
+		frame, _, err := socket.Read()
+		if err != nil {
+			return err
+		}
 		if frame == nil {
 			continue
 		}
+		if at := frame.String("cursor"); at != "" {
+			*cursor = at
+		}
 
-		if frame.Type() == "tool_call" {
+		switch frame.Type() {
+		case "tool_call":
+			// Every watcher is sent every call, and the router says which are to run it.
+			// One from before it said holds the same rule: answering a tool held elsewhere
+			// would beat the process that runs it. A call sent again after a reconnect is
+			// fenced by the registry, which runs it once.
+			if frame["run"] == false || !p.functions.Holds(frame.String("name")) {
+				p.logger.Debug("leaving a call for a tool held elsewhere", "tool", frame.String("name"))
+				continue
+			}
 			p.running.Add(1)
 			go func() {
 				defer p.running.Done()
 				p.runTool(ctx, frame)
 			}()
 			continue
+		case "tool_cancel":
+			p.holds.answer(frame.String("id"), false)
+			p.functions.Cancel(p.sessionID(), frame.String("id"))
+		case "tool_held":
+			p.holds.answer(frame.String("id"), true)
+		case "resumed":
+			if !reconnected {
+				continue
+			}
 		}
 
 		select {
 		case out <- eventOf(frame):
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		}
 	}
+}
+
+// dropped says whether a socket ended without the session ending: anything but the router
+// closing it normally, which is how it says the session is over, or this side closing it.
+func dropped(err error) bool {
+	return err != nil && !errors.Is(err, ErrSocketClosed) && !websocket.IsCloseError(err, websocket.CloseNormalClosure)
+}
+
+// reconnect opens the session's socket again after cursor, waiting longer between each
+// attempt, until it opens, the pipeline stops, the router refuses it for good, or resumeFor
+// runs out. It returns nil when it gave up.
+func (p *Pipeline) reconnect(ctx context.Context, cursor string) *Socket {
+	session := p.Session()
+	if session == nil {
+		return nil
+	}
+	asked := p.runs()
+	asked.Set("resumable", "true")
+	if cursor != "" {
+		asked.Set("cursor", cursor)
+	}
+	if id, _ := p.awaiting.Load().(string); id != "" {
+		asked.Set("request_id", id)
+	}
+
+	giveUp := time.Now().Add(resumeFor)
+	for retry := p.firstRetry; ; retry = min(retry*2, lastRetry) {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(retry):
+		}
+		socket, err := p.open(ctx, session.Id, asked)
+		if err == nil {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			// Left while this was dialling: the new socket is nobody's.
+			if ctx.Err() != nil || p.session == nil {
+				_ = socket.Close()
+				return nil
+			}
+			p.socket = socket
+			return socket
+		}
+		var refused *RouterError
+		// A refusal that says who the caller is or what the session is will say it again.
+		if errors.As(err, &refused) && refused.Status >= 400 && refused.Status < 500 && refused.Status != 429 {
+			p.logger.Warn("the router refused the session socket, not reconnecting", "error", err)
+			return nil
+		}
+		if time.Now().After(giveUp) {
+			p.logger.Warn("could not reconnect the session socket", "error", err, "for", resumeFor)
+			return nil
+		}
+		p.logger.Debug("could not reconnect the session socket", "error", err, "retrying in", retry)
+	}
+}
+
+// open dials the session's socket, with credentials minted for it: a token signed when the
+// session opened may have expired by the time it reconnects.
+func (p *Pipeline) open(ctx context.Context, id string, asked url.Values) (*Socket, error) {
+	backend, err := p.backend.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	credentials, err := backend.Credentials()
+	if err != nil {
+		return nil, err
+	}
+	socket := p.socketFor(backend, credentials, id, asked)
+	if err := socket.Open(ctx); err != nil {
+		return nil, err
+	}
+	return socket, nil
 }
 
 // runTool runs one of the caller's functions and answers the model with what it said.
@@ -581,7 +783,8 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 		}
 	}
 
-	output, err := p.functions.Call(ctx, name, frame.String("arguments"))
+	line := tools.WithLine(ctx, toolLine{send: p.command, holds: &p.holds})
+	output, err := p.functions.Run(line, toolCallOf(frame, p.sessionID()), name, frame.String("arguments"))
 	if err != nil {
 		p.logger.Error("the tool failed", "tool", name, "error", err)
 		result["error"] = err.Error()
@@ -598,6 +801,25 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	if err := socket.Send(result); err != nil {
 		p.logger.Error("the tool result never reached the model", "tool", name, "error", err)
 	}
+}
+
+// toolCallOf is the call a tool_call frame asks for, as tools.CallFrom gives it to the function.
+// sessionID stands in for a frame that does not name its session, as a router's from before
+// session_id did not.
+func toolCallOf(frame Frame, sessionID string) tools.Call {
+	call := tools.Call{ID: frame.String("id"), SessionID: frame.String("session_id"), TurnID: frame.String("turn_id"), Approved: frame.Bool("approved")}
+	if call.SessionID == "" {
+		call.SessionID = sessionID
+	}
+	if user := frame.Frame("user"); user != nil {
+		call.User = tools.User{ID: user.String("id"), Name: user.String("name")}
+		call.User.Custom, _ = user["custom"].(map[string]any)
+	}
+	if conversation := frame.Frame("conversation"); conversation != nil {
+		call.Conversation = tools.Conversation{CID: conversation.String("cid")}
+		call.Conversation.Custom, _ = conversation["custom"].(map[string]any)
+	}
+	return call
 }
 
 // stopWatching drops the socket and everything reading it.
@@ -660,6 +882,16 @@ func eventOf(frame Frame) Event {
 			Name: Frame(file).String("name"), MIMEType: Frame(file).String("mime_type"),
 			URL: Frame(file).String("url"), Size: Frame(file).Int("size"),
 		})
+	}
+	if event.Kind == "resumed" {
+		event.Resumed = &Resumption{Complete: frame.Bool("complete")}
+		if command := frame.Frame("command"); command != nil {
+			event.Resumed.Command = &acceleration.CommandReceipt{
+				RequestId: command.String("request_id"), State: command.String("state"),
+				UserMessageId: command.String("user_message_id"), AssistantMessageId: command.String("assistant_message_id"),
+				Duplicate: command.Bool("duplicate"),
+			}
+		}
 	}
 	if participant := frame.Frame("participant"); participant != nil {
 		event.Participant = Participant{

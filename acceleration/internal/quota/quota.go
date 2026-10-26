@@ -1,10 +1,16 @@
 // Package quota caps what one end user may spend in a day.
 //
-// It exists because a token is spent by whoever asks for it, and a customer's own backend
-// is trusted with that while a browser holding a token that backend minted is not. Two
-// buckets are counted rather than one: a user id, which is the honest answer to "who is
-// this", and an address, which is the answer that still holds when a backend mints a fresh
-// user id per request.
+// Two kinds of limit are counted apart, because they answer to different people. The
+// deployment's own default is a guard against a browser holding a token its customer's
+// backend minted: it counts device callers only, since a customer's backend is trusted with
+// its spend. A quota the customer set (on its organization, on an app, or on one named user)
+// is the customer's own rule about its users, so it counts everything recorded with the user,
+// a backend acting for them included.
+//
+// The deployment's default is counted in two buckets rather than one: a user id, which is the
+// honest answer to "who is this", and an address, which is the answer that still holds when a
+// backend mints a fresh user id per request. A customer's quota is counted per user, in a
+// bucket of its own, and against the address too for a device caller.
 //
 // A day is a UTC calendar day, so a new day is a new key and nothing has to be reset.
 package quota
@@ -41,7 +47,7 @@ const (
 )
 
 // ErrExhausted is what a caller with nothing left to spend is refused with. It is one error
-// for both buckets and both limits, with the limit that was reached named in the message.
+// for every bucket and limit, with the limit that was reached, and whose it is, in the message.
 var ErrExhausted = errors.New("quota: the daily limit is spent")
 
 // Limits is what one caller may spend in a day. A limit of zero is not enforced, which is
@@ -57,10 +63,92 @@ type Limits struct {
 // Enforced reports whether these limits constrain anything.
 func (l Limits) Enforced() bool { return l.MessagesPerDay > 0 || l.TokensPerDay > 0 }
 
-// Source answers which limits one customer's users are held to. It is given the
-// deployment's own, which are what a customer that decided nothing is held to.
+// Level is who set a daily limit.
+type Level string
+
+const (
+	// LevelDeployment is the router's own default, which counts device callers only.
+	LevelDeployment Level = ""
+	// LevelOrganization is an organization's policy: the default for every user of its apps.
+	LevelOrganization Level = "organization"
+	// LevelApp is an app's policy: the default for its users.
+	LevelApp Level = "app"
+	// LevelUser is one named user's own policy.
+	LevelUser Level = "user"
+)
+
+// Setter is who set one daily limit: the level, and the organization, app or user id there.
+type Setter struct {
+	Level Level
+	ID    string
+}
+
+// Customer reports whether the customer set the limit, rather than the deployment.
+func (s Setter) Customer() bool { return s.Level != LevelDeployment }
+
+// String names the limit's owner as a refusal does.
+func (s Setter) String() string {
+	switch s.Level {
+	case LevelUser:
+		return "user " + s.ID
+	case LevelApp:
+		return "every user of app " + s.ID
+	case LevelOrganization:
+		return "every user of organization " + s.ID
+	}
+	return "the router's default"
+}
+
+// Limit is one daily number and who set it. Zero is no cap.
+type Limit struct {
+	PerDay int64
+	By     Setter
+}
+
+// Quota is what one end user is held to, each number decided on its own: the first level that
+// sets it of the user's own, the app's, the organization's and the deployment's.
+type Quota struct {
+	Messages Limit
+	Tokens   Limit
+}
+
+// Default is the deployment's limits, which a customer that decided nothing is held to.
+func Default(limits Limits) Quota {
+	return Quota{Messages: Limit{PerDay: limits.MessagesPerDay}, Tokens: Limit{PerDay: limits.TokensPerDay}}
+}
+
+// Enforced reports whether the quota constrains anything.
+func (q Quota) Enforced() bool { return q.Messages.PerDay > 0 || q.Tokens.PerDay > 0 }
+
+// enforced are the limits that constrain something, the customer's or the deployment's.
+func (q Quota) enforced(customer bool) []counted {
+	var limits []counted
+	if q.Messages.PerDay > 0 && q.Messages.By.Customer() == customer {
+		limits = append(limits, counted{Limit: q.Messages, unit: "messages"})
+	}
+	if q.Tokens.PerDay > 0 && q.Tokens.By.Customer() == customer {
+		limits = append(limits, counted{Limit: q.Tokens, unit: "tokens"})
+	}
+	return limits
+}
+
+// counted is one enforced limit and what it counts.
+type counted struct {
+	Limit
+	unit string
+}
+
+func (c counted) spent(in spend) int64 {
+	if c.unit == "tokens" {
+		return in.tokens
+	}
+	return in.messages
+}
+
+// Source answers which quota one of a customer's users is held to. It is given the
+// deployment's own limits, which are what a customer that decided nothing is held to.
 type Source interface {
-	Limits(ctx context.Context, customerID string, defaults Limits) Limits
+	Quota(ctx context.Context, customerID, userID string, defaults Limits) Quota
 }
 
 // Status is what a caller has left of the limit nearest to refusing them. A zero Status is
@@ -86,9 +174,9 @@ type Limiter struct {
 	logger   *slog.Logger
 }
 
-// New returns a Limiter counting against the limits source gives each customer, or against
-// defaults for every customer when source is nil. Defaults of zero are allowed, since a
-// customer may still set limits of its own; a customer held to none is not counted.
+// New returns a Limiter counting against the quota source gives each user, or against
+// defaults for every user when source is nil. Defaults of zero are allowed, since a
+// customer may still set quotas of its own; a user held to none is not counted.
 func New(client rueidis.Client, defaults Limits, source Source, logger *slog.Logger) (*Limiter, error) {
 	if client == nil {
 		return nil, errors.New("quota: a redis client is required")
@@ -99,45 +187,76 @@ func New(client rueidis.Client, defaults Limits, source Source, logger *slog.Log
 	return &Limiter{redis: client, defaults: defaults, source: source, logger: logger}, nil
 }
 
+// bucket is one counter and the limits read against it.
+type bucket struct {
+	key    string
+	limits []counted
+}
+
 // Allow reports whether the caller may ask for another response, and what they have left
 // of the limit nearest to refusing them. The Status is returned with a refusal too.
 //
-// A caller with nothing to count against is allowed: one with neither a user nor an address,
-// and a customer's own process (Caller.ServerSide), which is trusted with its spend even
-// when it names a user.
+// A caller with nothing to count against is allowed: one with neither a user nor an address.
+// A customer's own process (Caller.ServerSide) is held only to the quotas the customer set,
+// and only for the user it names.
 func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.Caller) (Status, error) {
-	if l == nil {
+	if l == nil || !countable(customerID, caller) {
 		return Status{}, nil
 	}
-	// One clock reading names the day counted and the midnight it resets at.
-	now := time.Now()
-	keys := l.keys(customerID, caller, now)
-	if len(keys) == 0 {
-		return Status{}, nil
-	}
-
 	ctx, span := tracer.Start(ctx, "quota.allow")
 	defer span.End()
 
-	limits := l.limits(ctx, customerID)
-	if !limits.Enforced() {
+	// One clock reading names the day counted and the midnight it resets at.
+	now := time.Now()
+	held := l.quota(ctx, customerID, named(caller))
+	if !held.Enforced() {
 		return Status{}, nil
 	}
+	every := append(held.enforced(true), held.enforced(false)...)
+	var buckets []bucket
+	if key := customerKey(customerID, named(caller), now); key != "" {
+		if limits := held.enforced(true); len(limits) > 0 {
+			buckets = append(buckets, bucket{key: key, limits: limits})
+		}
+	}
+	if !caller.ServerSide {
+		// A name nobody vouched for has no customer bucket, so its device bucket answers for
+		// every number, as it did before customers counted backends.
+		limits := every
+		if caller.Verified {
+			limits = held.enforced(false)
+		}
+		if key := userKey(customerID, caller.UserID, now); key != "" && len(limits) > 0 {
+			buckets = append(buckets, bucket{key: key, limits: limits})
+		}
+		// An address answers for every limit, whoever set it, as it did before customers set any.
+		if key := addressKey(customerID, caller.IP, now); key != "" {
+			buckets = append(buckets, bucket{key: key, limits: every})
+		}
+	}
+	if len(buckets) == 0 {
+		return Status{}, nil
+	}
+	keys := make([]string, len(buckets))
+	for i, counter := range buckets {
+		keys[i] = counter.key
+	}
+	spent, err := l.spent(ctx, keys...)
+	if err != nil {
+		l.logger.Error("could not read a quota, allowing the request", "error", err)
+		return Status{}, nil
+	}
+
 	reset := nextMidnight(now)
 	var nearest Status
-	for _, key := range keys {
-		spent, err := l.spent(ctx, key)
-		if err != nil {
-			l.logger.Error("could not read a quota, allowing the request", "error", err)
-			return Status{}, nil
+	for i, counter := range buckets {
+		for _, limit := range counter.limits {
+			nearest = closer(nearest, limit.PerDay, limit.spent(spent[i]), reset)
 		}
-		nearest = closer(nearest, limits.MessagesPerDay, spent.messages, reset)
-		nearest = closer(nearest, limits.TokensPerDay, spent.tokens, reset)
-		if limits.MessagesPerDay > 0 && spent.messages >= limits.MessagesPerDay {
-			return nearest, stack.Wrap(fmt.Errorf("%w: %d messages a day", ErrExhausted, limits.MessagesPerDay))
-		}
-		if limits.TokensPerDay > 0 && spent.tokens >= limits.TokensPerDay {
-			return nearest, stack.Wrap(fmt.Errorf("%w: %d tokens a day", ErrExhausted, limits.TokensPerDay))
+		for _, limit := range counter.limits {
+			if limit.spent(spent[i]) >= limit.PerDay {
+				return nearest, stack.Wrap(fmt.Errorf("%w: %d %s a day, for %s", ErrExhausted, limit.PerDay, limit.unit, limit.By))
+			}
 		}
 	}
 	return nearest, nil
@@ -149,16 +268,24 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 // there is no longer a decision left for the answer to inform. A debit that does not land
 // is logged and the caller keeps the tokens.
 func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.Caller, tokens int64) {
-	if l == nil {
-		return
-	}
-	keys := l.keys(customerID, caller, time.Now())
-	if len(keys) == 0 {
+	if l == nil || !countable(customerID, caller) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	if !l.limits(ctx, customerID).Enforced() {
+	now := time.Now()
+	held := l.quota(ctx, customerID, named(caller))
+	if !held.Enforced() {
+		return
+	}
+	var keys []string
+	if key := customerKey(customerID, named(caller), now); key != "" && len(held.enforced(true)) > 0 {
+		keys = append(keys, key)
+	}
+	if !caller.ServerSide {
+		keys = append(keys, deviceKeys(customerID, caller, now)...)
+	}
+	if len(keys) == 0 {
 		return
 	}
 
@@ -180,53 +307,119 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 	}
 }
 
+// Effective is the quota one of a customer's users is held to now. A nil Limiter enforces
+// nothing, so it answers the zero Quota.
+func (l *Limiter) Effective(ctx context.Context, customerID, userID string) Quota {
+	if l == nil {
+		return Quota{}
+	}
+	return l.quota(ctx, customerID, userID)
+}
+
+// Today is what one of a customer's users has spent today toward the quotas the customer set,
+// a backend's work for them included, and when the count starts again.
+func (l *Limiter) Today(ctx context.Context, customerID, userID string) (messages, tokens int64, reset time.Time, err error) {
+	now := time.Now()
+	reset = nextMidnight(now)
+	key := customerKey(customerID, userID, now)
+	if l == nil || key == "" {
+		return 0, 0, reset, nil
+	}
+	spent, err := l.spent(ctx, key)
+	if err != nil {
+		return 0, 0, reset, err
+	}
+	return spent[0].messages, spent[0].tokens, reset, nil
+}
+
 // spend is what one bucket has been debited today.
 type spend struct {
 	messages int64
 	tokens   int64
 }
 
-// spent reads one bucket. A bucket nobody has spent from reads as zero rather than as an
-// error, since the first request of a day is the common case.
-func (l *Limiter) spent(ctx context.Context, key string) (spend, error) {
-	entries, err := l.redis.Do(ctx, l.redis.B().Hgetall().Key(key).Build()).AsStrMap()
-	if err != nil {
-		return spend{}, stack.Wrap(fmt.Errorf("quota: read %s: %w", key, err))
+// spent reads buckets in one round trip. A bucket nobody has spent from reads as zero rather
+// than as an error, since the first request of a day is the common case.
+func (l *Limiter) spent(ctx context.Context, keys ...string) ([]spend, error) {
+	commands := make([]rueidis.Completed, len(keys))
+	for i, key := range keys {
+		commands[i] = l.redis.B().Hgetall().Key(key).Build()
 	}
-	return spend{
-		messages: parseInt(entries[messagesField]),
-		tokens:   parseInt(entries[tokensField]),
-	}, nil
+	spent := make([]spend, len(keys))
+	for i, response := range l.redis.DoMulti(ctx, commands...) {
+		entries, err := response.AsStrMap()
+		if err != nil {
+			return nil, stack.Wrap(fmt.Errorf("quota: read %s: %w", keys[i], err))
+		}
+		spent[i] = spend{messages: parseInt(entries[messagesField]), tokens: parseInt(entries[tokensField])}
+	}
+	return spent, nil
 }
 
-// limits are what the customer's users are held to: what the source says, or the
-// deployment's own when there is no source.
-func (l *Limiter) limits(ctx context.Context, customerID string) Limits {
+// quota is what the user is held to: what the source says, or the deployment's own when
+// there is no source.
+func (l *Limiter) quota(ctx context.Context, customerID, userID string) Quota {
 	if l.source == nil {
-		return l.defaults
+		return Default(l.defaults)
 	}
-	return l.source.Limits(ctx, customerID, l.defaults)
+	return l.source.Quota(ctx, customerID, userID, l.defaults)
 }
 
-// keys are the buckets a caller falls in, which is none for one there is nothing to count
-// against and none for a customer's own process, which is trusted with its spend even
-// when it names a user. Both buckets are keyed by the customer as well: a user id is the
-// customer's own name for somebody, and each customer sets its own limit for an address.
-func (l *Limiter) keys(customerID string, caller routing.Caller, now time.Time) []string {
-	if caller.ServerSide {
-		return nil
-	}
-	day := now.UTC().Format("20060102")
+// countable reports whether a caller falls in any bucket: a user a customer named, or a
+// device caller's address.
+func countable(customerID string, caller routing.Caller) bool {
+	return customerID != "" && caller.UserID != "" || !caller.ServerSide && caller.IP != ""
+}
 
-	var keys []string
-	if customerID != "" && caller.UserID != "" {
-		keys = append(keys, "quota:"+day+":user:"+customerID+":"+caller.UserID)
+// named is the user whose own quota and customer bucket a caller answers for: the one a
+// backend or a verified token names, and nobody for an anonymous name, which anyone could
+// claim.
+func named(caller routing.Caller) string {
+	if caller.ServerSide || caller.Verified {
+		return caller.UserID
 	}
-	if caller.IP != "" {
-		keys = append(keys, "quota:"+day+":ip:"+customerID+":"+caller.IP)
+	return ""
+}
+
+// customerKey is the bucket the customer's quotas count a user in, whoever asked for the work.
+// A user id is the customer's own name for somebody, so it is keyed by the customer too.
+func customerKey(customerID, userID string, now time.Time) string {
+	if customerID == "" || userID == "" {
+		return ""
+	}
+	return "quota:" + day(now) + ":customer:" + customerID + ":" + userID
+}
+
+// deviceKeys are the buckets the deployment's default counts a device caller in.
+func deviceKeys(customerID string, caller routing.Caller, now time.Time) []string {
+	var keys []string
+	if key := userKey(customerID, caller.UserID, now); key != "" {
+		keys = append(keys, key)
+	}
+	if key := addressKey(customerID, caller.IP, now); key != "" {
+		keys = append(keys, key)
 	}
 	return keys
 }
+
+// userKey is a device caller's bucket by user id.
+func userKey(customerID, userID string, now time.Time) string {
+	if customerID == "" || userID == "" {
+		return ""
+	}
+	return "quota:" + day(now) + ":user:" + customerID + ":" + userID
+}
+
+// addressKey is a device caller's bucket by address. It is keyed by the customer as well, since
+// each customer sets its own limit for an address.
+func addressKey(customerID, ip string, now time.Time) string {
+	if ip == "" {
+		return ""
+	}
+	return "quota:" + day(now) + ":ip:" + customerID + ":" + ip
+}
+
+func day(now time.Time) string { return now.UTC().Format("20060102") }
 
 // closer returns whichever of nearest and one limit's standing has the smaller share left,
 // so a caller is told about the limit that will refuse them first. A limit of zero is not

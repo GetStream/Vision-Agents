@@ -38,6 +38,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = ErrorResponse.from_dict(response.json())
+
+        return response_402
+
     if response.status_code == 403:
         response_403 = ErrorResponse.from_dict(response.json())
 
@@ -47,6 +52,11 @@ def _parse_response(
         response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
+
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -72,9 +82,9 @@ def sync_detailed(
     """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
-    injection is screened if either turns it on, only a model both allow may be routed to, and the
-    organization's tags win over the app's.
+    tighten and cannot loosen: the stricter data policy wins, prompt injection is screened if either
+    turns it on, only a model both allow may be routed to, and the organization's tags win over the
+    app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -100,9 +110,9 @@ def sync(
     """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
-    injection is screened if either turns it on, only a model both allow may be routed to, and the
-    organization's tags win over the app's.
+    tighten and cannot loosen: the stricter data policy wins, prompt injection is screened if either
+    turns it on, only a model both allow may be routed to, and the organization's tags win over the
+    app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -124,9 +134,9 @@ async def asyncio_detailed(
     """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
-    injection is screened if either turns it on, only a model both allow may be routed to, and the
-    organization's tags win over the app's.
+    tighten and cannot loosen: the stricter data policy wins, prompt injection is screened if either
+    turns it on, only a model both allow may be routed to, and the organization's tags win over the
+    app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,9 +160,9 @@ async def asyncio(
     """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
-    injection is screened if either turns it on, only a model both allow may be routed to, and the
-    organization's tags win over the app's.
+    tighten and cannot loosen: the stricter data policy wins, prompt injection is screened if either
+    turns it on, only a model both allow may be routed to, and the organization's tags win over the
+    app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

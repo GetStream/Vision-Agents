@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
@@ -21,7 +23,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
 // classifier stands in for a provider so the screen can be driven without credentials.
@@ -54,6 +58,8 @@ type PolicySuite struct {
 	enforcer *Enforcer
 	app      string
 	org      string
+	// service is the usage service the money tests read from (money_test.go).
+	service *usagetest.Service
 }
 
 func TestPolicySuite(t *testing.T) {
@@ -71,26 +77,62 @@ func (s *PolicySuite) SetupSuite() {
 	s.Require().NoError(db.Migrate(s.ctx))
 	s.store = db
 	s.T().Cleanup(func() { s.Require().NoError(db.Close()) })
+	s.startUsage()
+}
+
+// quick is how fast a test's enforcer reads money: a pass every 50 ms, an account trusted for
+// 200 ms, and whatever goes unused or unacked dropped well inside a test.
+var quick = Settings{
+	Fresh: 50 * time.Millisecond, SpendEvery: 20 * time.Millisecond, SumEvery: 50 * time.Millisecond,
+	MaxStale: 200 * time.Millisecond, Idle: 100 * time.Millisecond, PendingTTL: 300 * time.Millisecond,
+}
+
+// ownerOf is work an app's backend asked for, with no key, user or category of its own.
+func ownerOf(appID string) routing.Owner { return routing.Owner{CustomerID: appID} }
+
+// limit writes one of the customer's spend limits, as the limits API does.
+func (s *PolicySuite) limit(limit store.Limit) store.Limit {
+	if limit.Interval == "" {
+		limit.Interval = usage.Daily
+	}
+	limit.UpdatedBy = "test"
+	s.Require().NoError(s.store.CreateLimit(s.ctx, &limit, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	return limit
+}
+
+// newEnforcer is an Enforcer over configs at quick's pace with the settings changed, closed
+// when the test ends.
+func (s *PolicySuite) newEnforcer(configs *appconfig.Store, logger *slog.Logger, change ...func(*Settings)) *Enforcer {
+	settings := quick
+	for _, apply := range change {
+		apply(&settings)
+	}
+	enforcer, err := New(configs, settings, logger)
+	s.Require().NoError(err)
+	s.T().Cleanup(enforcer.Close)
+	return enforcer
 }
 
 func (s *PolicySuite) SetupTest() {
 	configs, err := appconfig.New(appconfig.Options{Store: s.store})
 	s.Require().NoError(err)
-	enforcer, err := New(configs, nil)
-	s.Require().NoError(err)
-	s.enforcer = enforcer
+	s.enforcer = s.newEnforcer(configs, nil)
 	stamp := time.Now().UnixNano()
 	s.app = fmt.Sprintf("app-%d", stamp)
 	s.org = fmt.Sprintf("org-%d", stamp)
 	s.Require().NoError(s.store.JoinOrganization(s.ctx, s.app, s.org))
 }
 
-// spend records a request the app made just now.
+// spend records a billable request the app made just now.
 func (s *PolicySuite) spend(appID string, costMicros int64) {
-	s.Require().NoError(s.store.RecordRequest(s.ctx, &store.Request{
-		Modality: "llm", CustomerID: appID, Provider: "openai", Model: "gpt-5.6-luna",
-		StartedAt: time.Now().UTC(), CostMicros: costMicros, Success: true,
-	}))
+	s.spendAs(store.Request{CustomerID: appID, CostMicros: costMicros})
+}
+
+// spendAs records a billable request made just now, with the attribution given.
+func (s *PolicySuite) spendAs(request store.Request) {
+	request.Modality, request.Provider, request.Model = "llm", "openai", "gpt-5.6-luna"
+	request.StartedAt, request.Success, request.Billable = time.Now().UTC(), true, true
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &request))
 }
 
 func (s *PolicySuite) save(scope store.PolicyScope, id string, document store.PolicyDocument) {
@@ -119,40 +161,385 @@ func (s *PolicySuite) router(provider *classifier) *decisionrouter.Router {
 }
 
 func (s *PolicySuite) TestACustomerWithNoPolicyIsAdmitted() {
-	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
 
 	s.NoError(err)
 	s.False(admitted.DataPolicy.Asks())
 }
 
-func (s *PolicySuite) TestAnAppThatSpentItsBudgetIsRefused() {
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{
-		Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily},
-	})
-	s.spend(s.app, 400_000)
-	_, err := s.enforcer.Admit(s.ctx, s.app)
-	s.Require().NoError(err, "under budget")
+func (s *PolicySuite) TestAnAdmissionNamesTheOrganizationTheAppIsIn() {
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
 
-	s.spend(s.app, 700_000)
-	s.enforcer.forget(s.app)
-	_, err = s.enforcer.Admit(s.ctx, s.app)
-
-	s.ErrorIs(err, ErrBudgetSpent)
-	s.ErrorContains(err, "app's daily budget of $1.00")
+	s.NoError(err)
+	s.Equal(s.org, admitted.OrganizationID, "who the app's work is billed to")
 }
 
-func (s *PolicySuite) TestAnOrganizationBudgetIsSpentByAllOfItsApps() {
+func (s *PolicySuite) TestAnAppInNoOrganizationIsAdmittedWithNone() {
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app+"-alone"))
+
+	s.NoError(err)
+	s.Empty(admitted.OrganizationID)
+}
+
+// eventually is Require().Eventually polled on the test's own goroutine. Testify's polls on
+// another and may leave one running past the test, reading the next test's app and
+// organization as SetupTest writes them.
+func (s *PolicySuite) eventually(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) {
+	s.T().Helper()
+	deadline := time.Now().Add(waitFor)
+	for !condition() {
+		if time.Now().After(deadline) {
+			s.Require().Fail("Condition never satisfied", msgAndArgs...)
+		}
+		time.Sleep(tick)
+	}
+}
+
+// never is Never polled on the test's own goroutine, as eventually is.
+func (s *PolicySuite) never(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) {
+	s.T().Helper()
+	for deadline := time.Now().Add(waitFor); time.Now().Before(deadline); time.Sleep(tick) {
+		if condition() {
+			s.Fail("Condition satisfied", msgAndArgs...)
+			return
+		}
+	}
+}
+
+// spendRefused is what Admit's Spend says once the money loop has read what it waits for.
+func (s *PolicySuite) spendRefused(enforcer *Enforcer, appID string, kind error) error {
+	var spend error
+	s.eventually(func() bool {
+		admitted, err := enforcer.Admit(s.ctx, ownerOf(appID))
+		s.Require().NoError(err, "a refusal of money is no refusal of free work")
+		spend = admitted.Spend
+		return errors.Is(spend, kind)
+	}, 5*time.Second, 10*time.Millisecond, "refused with %v", kind)
+	return spend
+}
+
+func (s *PolicySuite) TestAnAppThatSpentItsLimitIsRefused() {
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 400_000)
+	s.never(func() bool {
+		admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
+		return err != nil || admitted.Spend != nil
+	}, 200*time.Millisecond, 10*time.Millisecond, "under its limit")
+
+	s.spend(s.app, 700_000)
+	spend := s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
+
+	s.ErrorContains(spend, "the daily limit of $1.00 on app "+s.app+" is spent; it resets at")
+}
+
+func (s *PolicySuite) TestAnOrganizationLimitIsSpentByAllOfItsApps() {
 	sibling := s.app + "-sibling"
 	s.Require().NoError(s.store.JoinOrganization(s.ctx, sibling, s.org))
-	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{
-		Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetHourly},
-	})
+	s.limit(store.Limit{Subject: usage.SubjectOrganization, Level: store.LevelOrganization, OrganizationID: s.org,
+		Interval: usage.Weekly, LimitMicros: 1_000_000})
 	s.spend(sibling, 1_000_000)
 
-	_, err := s.enforcer.Admit(s.ctx, s.app)
+	spend := s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
 
-	s.ErrorIs(err, ErrBudgetSpent)
-	s.ErrorContains(err, "organization's hourly budget")
+	s.ErrorContains(spend, "the weekly limit of $1.00 on the organization is spent")
+}
+
+func (s *PolicySuite) TestAKeyLimitRefusesThatKeyAndNoOther() {
+	s.limit(store.Limit{Subject: usage.SubjectAPIKey, Level: store.LevelAPIKey, OrganizationID: s.org, AppID: s.app,
+		APIKey: "key-a", LimitMicros: 1_000_000})
+	s.spendAs(store.Request{CustomerID: s.app, APIKey: "key-a", CostMicros: 1_000_000})
+
+	keyA := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{APIKey: "key-a"}}
+	keyB := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{APIKey: "key-b"}}
+	s.eventually(func() bool {
+		admitted, err := s.enforcer.Admit(s.ctx, keyA)
+		return err == nil && errors.Is(admitted.Spend, ErrBudgetSpent)
+	}, 5*time.Second, 10*time.Millisecond, "key a is refused")
+	admitted, err := s.enforcer.Admit(s.ctx, keyB)
+	s.Require().NoError(err)
+	s.NoError(admitted.Spend, "key b spent nothing")
+}
+
+func (s *PolicySuite) TestAUserLimitIsTheUsersAlone() {
+	s.limit(store.Limit{Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 500_000})
+	s.spendAs(store.Request{CustomerID: s.app, UserID: "u1", CostMicros: 600_000})
+
+	u1 := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{UserID: "u1"}}
+	var spend error
+	s.eventually(func() bool {
+		admitted, err := s.enforcer.Admit(s.ctx, u1)
+		spend = admitted.Spend
+		return err == nil && errors.Is(spend, ErrUserLimit)
+	}, 5*time.Second, 10*time.Millisecond, "u1 is refused")
+	s.ErrorContains(spend, "on every user of app "+s.app+" is spent for user u1")
+	resets, ok := ResetsAt(spend)
+	s.True(ok)
+	s.True(resets.After(time.Now()))
+	admitted, err := s.enforcer.Admit(s.ctx, routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{UserID: "u2"}})
+	s.Require().NoError(err)
+	s.NoError(admitted.Spend, "u2 spent nothing")
+}
+
+func (s *PolicySuite) TestACategoryLimitRefusesWorkCarryingIt() {
+	s.limit(store.Limit{Subject: usage.SubjectCategory, Level: store.LevelOrganization, OrganizationID: s.org,
+		Category: "team:finance", LimitMicros: 500_000})
+	s.spendAs(store.Request{CustomerID: s.app, UsageCategories: []string{"team:finance"}, CostMicros: 600_000})
+
+	finance := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{UsageCategories: []string{"team:finance"}}}
+	var spend error
+	s.eventually(func() bool {
+		admitted, err := s.enforcer.Admit(s.ctx, finance)
+		spend = admitted.Spend
+		return err == nil && errors.Is(spend, ErrBudgetSpent)
+	}, 5*time.Second, 10*time.Millisecond, "finance is refused")
+	s.ErrorContains(spend, "on team finance is spent")
+	admitted, err := s.enforcer.Admit(s.ctx, routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{UsageCategories: []string{"team:sales"}}})
+	s.Require().NoError(err)
+	s.NoError(admitted.Spend)
+}
+
+func (s *PolicySuite) TestAGrantAdmitsPastASpentLimitUntilItIsUsed() {
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 1_000_000)
+	s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(s.store.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+
+	var admitted routing.Admission
+	s.eventually(func() bool {
+		var err error
+		admitted, err = s.enforcer.Admit(s.ctx, ownerOf(s.app))
+		return err == nil && admitted.Spend == nil
+	}, 5*time.Second, 10*time.Millisecond, "admitted on the grant once it is read")
+	s.Equal([]int64{grant.ID}, admitted.Grants)
+
+	usageID := uuid.Must(uuid.NewV7())
+	drawn := s.enforcer.Settle(routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{OrganizationID: s.org}}, usageID, 2_000_000)
+	s.Equal([]int64{grant.ID}, drawn, "the row names the grant its work is drawn from")
+	_, refused := s.enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.NoError(refused)
+	s.ErrorIs(s.admitted().Spend, ErrBudgetSpent, "the hold uses the grant up at once")
+
+	s.spendAs(store.Request{UsageID: usageID, CustomerID: s.app, CostMicros: 2_000_000, LimitGrants: drawn})
+	s.enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 2_000_000}})
+	s.never(func() bool {
+		s.enforcer.money.mu.Lock()
+		defer s.enforcer.money.mu.Unlock()
+		return len(s.enforcer.money.accounts[s.org].grantHeld) == 0
+	}, 200*time.Millisecond, 10*time.Millisecond, "written is not counted: the grant hold stays")
+	s.enforcer.Counted([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 2_000_000}})
+	s.never(func() bool { return s.admitted().Spend == nil }, 300*time.Millisecond, 10*time.Millisecond,
+		"once the row is written and summed, what it paid for is the grant's")
+}
+
+// sharded is a store over a shared database and one shard, with the test's app in its
+// organization and a limit on the app, and configs over it.
+func (s *PolicySuite) sharded() (*store.Store, *appconfig.Store) {
+	dsn := os.Getenv("ROUTER_POSTGRES_DSN")
+	shared, shard := testenv.Database(dsn, "policy_grants_shared"), testenv.Database(dsn, "policy_grants_shard")
+	for _, each := range []string{shared, shard} {
+		db, err := store.Open(each)
+		s.Require().NoError(err)
+		s.Require().NoError(db.Migrate(s.ctx))
+		s.Require().NoError(db.Close())
+	}
+	db, err := store.OpenShards(store.Options{DSN: shared, ShardDSN: shard, Shards: map[string]string{"here": shard}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = db.Close() })
+	s.Require().NoError(db.JoinOrganization(s.ctx, s.app, s.org))
+	configs, err := appconfig.New(appconfig.Options{Store: db})
+	s.Require().NoError(err)
+	s.Require().NoError(db.CreateLimit(s.ctx, &store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app,
+		Interval: usage.Daily, LimitMicros: 1, UpdatedBy: "test"}, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	return db, configs
+}
+
+// shardRow is a billable row of the test's app, started now.
+func (s *PolicySuite) shardRow(cost int64, grants []int64) store.Request {
+	return store.Request{UsageID: uuid.Must(uuid.NewV7()), CustomerID: s.app, OrganizationID: s.org, Modality: "llm",
+		Provider: "openai", Model: "gpt", StartedAt: time.Now().UTC(), CostMicros: cost, Success: true, Billable: true, LimitGrants: grants}
+}
+
+func (s *PolicySuite) TestWithShardsTheReconcileRunsAsTheLoopsStart() {
+	db, configs := s.sharded()
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(db.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	// The shard has a row naming the grant and nothing counted it: its count was dropped.
+	_, err := db.RecordRequests(s.ctx, []store.Request{s.shardRow(500_000, []int64{grant.ID})})
+	s.Require().NoError(err)
+
+	s.newEnforcer(configs, nil)
+	s.eventually(func() bool {
+		read, err := db.Grant(s.ctx, "", grant.ID)
+		return err == nil && read.UsedMicros == 500_000
+	}, 5*time.Second, 20*time.Millisecond, "counted by the reconcile the loops start with, not one reconcileEvery on")
+}
+
+func (s *PolicySuite) TestWithShardsAGrantHoldStaysUntilItsRowCountsTowardTheGrant() {
+	db, configs := s.sharded()
+	enforcer := s.newEnforcer(configs, nil)
+	audit := store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}
+	row := s.shardRow
+	_, err := db.RecordRequests(s.ctx, []store.Request{row(1, nil)})
+	s.Require().NoError(err)
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(db.AddGrant(s.ctx, &grant, audit))
+	s.eventually(func() bool {
+		admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
+		return err == nil && admitted.Spend == nil && len(admitted.Grants) == 1
+	}, 5*time.Second, 10*time.Millisecond, "admitted on the grant once it is read")
+
+	used := row(2_000_000, nil)
+	owner := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{OrganizationID: s.org}}
+	used.LimitGrants = enforcer.Settle(owner, used.UsageID, used.CostMicros)
+	s.Equal([]int64{grant.ID}, used.LimitGrants)
+	// The shard has the row and nothing counted it: its count was dropped.
+	_, err = db.RecordRequests(s.ctx, []store.Request{used})
+	s.Require().NoError(err)
+	usageID := used.UsageID
+	enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 2_000_000}})
+	held := func() bool {
+		enforcer.money.mu.Lock()
+		defer enforcer.money.mu.Unlock()
+		return enforcer.money.accounts[s.org].grantHeld[grant.ID] > 0
+	}
+	s.never(func() bool { return !held() }, acklessAges*quick.PendingTTL+time.Second, 20*time.Millisecond,
+		"an uncounted row stays held against its grant past every timer")
+	admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.Require().NoError(err)
+	s.ErrorIs(admitted.Spend, ErrBudgetSpent, "the grant is not drawn twice meanwhile")
+
+	_, err = db.ReconcileGrantUses(s.ctx)
+	s.Require().NoError(err)
+	s.eventually(func() bool { return !held() }, 5*time.Second, 10*time.Millisecond, "let go once the reconcile counted it")
+	read, err := db.Grant(s.ctx, "", grant.ID)
+	s.Require().NoError(err)
+	s.EqualValues(2_000_000, read.UsedMicros)
+	admitted, err = enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.Require().NoError(err)
+	s.ErrorIs(admitted.Spend, ErrBudgetSpent, "the grant is used up by the row it counts")
+}
+
+func (s *PolicySuite) TestAGrantUntilMidnightIsExpiredAfterIt() {
+	var clock atomic.Pointer[time.Time]
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
+		settings.Now = func() time.Time {
+			if moved := clock.Load(); moved != nil {
+				return *moved
+			}
+			return time.Now()
+		}
+	})
+	_, midnight := usage.Window(usage.Daily, time.Now())
+	// A longer interval whose window goes on past midnight, so the user is still spent there.
+	longer := usage.Weekly
+	for _, interval := range []usage.Interval{usage.Weekly, usage.Biweekly, usage.Monthly} {
+		if _, end := usage.Window(interval, time.Now()); end.After(midnight) {
+			longer = interval
+			break
+		}
+	}
+	for _, interval := range []usage.Interval{usage.Daily, longer} {
+		s.limit(store.Limit{Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app,
+			Interval: interval, LimitMicros: 1_000_000})
+	}
+	s.spendAs(store.Request{CustomerID: s.app, UserID: "u1", CostMicros: 1_000_000})
+	u1 := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{UserID: "u1"}}
+	admit := func() routing.Admission {
+		admitted, err := enforcer.Admit(s.ctx, u1)
+		s.Require().NoError(err)
+		return admitted
+	}
+	s.eventually(func() bool { return errors.Is(admit().Spend, ErrUserLimit) }, 5*time.Second, 10*time.Millisecond, "u1 is spent")
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectUser, AppID: s.app, UserID: "u1",
+		AmountMicros: 1_000_000, ExpiresAt: &midnight, Reason: "a support case", Actor: "test"}
+	s.Require().NoError(s.store.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	s.eventually(func() bool { return len(admit().Grants) > 0 }, 5*time.Second, 10*time.Millisecond, "admitted on the grant today")
+
+	after := midnight.Add(time.Second)
+	clock.Store(&after)
+
+	var spend error
+	s.eventually(func() bool {
+		admitted := admit()
+		spend = admitted.Spend
+		return errors.Is(spend, ErrUserLimit) && len(admitted.Grants) == 0
+	}, 5*time.Second, 10*time.Millisecond, "past midnight the grant is expired and draws nothing")
+	s.ErrorContains(spend, "the "+string(longer)+" limit", "the longer limit is still spent; the day's is not")
+}
+
+// lockGrants holds limit_grants from another session until the test ends, as a long migration
+// or a stuck transaction would.
+func (s *PolicySuite) lockGrants() {
+	locked, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = locked.Rollback() })
+	_, err = locked.ExecContext(s.ctx, "LOCK TABLE limit_grants IN ACCESS EXCLUSIVE MODE")
+	s.Require().NoError(err)
+}
+
+func (s *PolicySuite) TestALockedGrantsTableKeepsTheLastGrantsAndTheLimitsRead() {
+	limit := s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 1_000_000)
+	s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(s.store.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	s.eventually(func() bool { return len(s.admitted().Grants) > 0 }, 5*time.Second, 10*time.Millisecond, "admitted on the grant")
+
+	s.lockGrants()
+
+	s.never(func() bool { admitted := s.admitted(); return admitted.Spend != nil || len(admitted.Grants) == 0 },
+		2*grantsTimeout, 20*time.Millisecond, "the last grants read keeps answering while the next cannot land")
+	start, _ := usage.Window(usage.Daily, time.Now())
+	s.Require().NoError(s.store.AddResets(s.ctx, []store.UsageReset{{
+		OrganizationID: s.org, Subject: limit.Subject, AppID: s.app, Interval: usage.Daily, WindowStart: start,
+		BaselineMicros: 1_000_000, Reason: "test", Actor: "test",
+	}}, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	s.eventually(func() bool { admitted := s.admitted(); return admitted.Spend == nil && len(admitted.Grants) == 0 },
+		grantsTimeout/2, 10*time.Millisecond, "the resets are read on time, so the work fits and draws no grant")
+}
+
+func (s *PolicySuite) TestAGrantNeverReadIsNeverDrawnAndTheLimitStillRefuses() {
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 1_000_000)
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(s.store.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil)
+	s.lockGrants()
+
+	started := time.Now()
+	s.spendRefused(enforcer, s.app, ErrBudgetSpent)
+	s.Less(time.Since(started), grantsTimeout, "the limits are read without waiting on the grants")
+	s.never(func() bool { return s.admit(enforcer, s.app).Spend == nil }, 2*grantsTimeout, 20*time.Millisecond,
+		"an app past its limit is not admitted while its grants cannot be read")
+}
+
+// admitted is the app's admission now, which refuses nothing outright.
+func (s *PolicySuite) admitted() routing.Admission {
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.Require().NoError(err)
+	return admitted
+}
+
+func (s *PolicySuite) TestAResetCountsFromItsBaseline() {
+	limit := s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 1_000_000)
+	s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
+
+	start, _ := usage.Window(usage.Daily, time.Now())
+	s.Require().NoError(s.store.AddResets(s.ctx, []store.UsageReset{{
+		OrganizationID: s.org, Subject: limit.Subject, AppID: s.app, Interval: usage.Daily, WindowStart: start,
+		BaselineMicros: 1_000_000, Reason: "test", Actor: "test",
+	}}, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+
+	s.eventually(func() bool {
+		admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
+		return err == nil && admitted.Spend == nil
+	}, 5*time.Second, 10*time.Millisecond, "admitted again once the reset is read")
 }
 
 func (s *PolicySuite) TestAnAppCanTightenItsOrganizationsDataPolicyButNotLoosenIt() {
@@ -164,7 +551,7 @@ func (s *PolicySuite) TestAnAppCanTightenItsOrganizationsDataPolicyButNotLoosenI
 		DataPolicy: options.DataPolicy{AllowTraining: &yes, Retention: options.RetentionNone},
 	})
 
-	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
 
 	s.Require().NoError(err)
 	s.Require().NotNil(admitted.DataPolicy.AllowTraining)
@@ -173,7 +560,7 @@ func (s *PolicySuite) TestAnAppCanTightenItsOrganizationsDataPolicyButNotLoosenI
 }
 
 func (s *PolicySuite) TestACustomerWithNoAllowlistMayUseAnyModel() {
-	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
 
 	s.Require().NoError(err)
 	s.Nil(admitted.Models)
@@ -187,7 +574,7 @@ func (s *PolicySuite) TestAnAppMayUseOnlyTheModelsItAndItsOrganizationBothAllow(
 		AllowedModels: &[]string{"openai/gpt-5.6-luna", "anthropic/claude-opus-5"},
 	})
 
-	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
 
 	s.Require().NoError(err)
 	s.Equal([]string{"openai/gpt-5.6-luna"}, admitted.Models)
@@ -198,7 +585,7 @@ func (s *PolicySuite) TestAnOrganizationsAllowlistAppliesToAnAppWithoutOne() {
 		AllowedModels: &[]string{"deepseek/DeepSeek-V4-Flash-0731"},
 	})
 
-	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
 
 	s.Require().NoError(err)
 	s.Equal([]string{"deepseek/DeepSeek-V4-Flash-0731"}, admitted.Models)
@@ -207,7 +594,7 @@ func (s *PolicySuite) TestAnOrganizationsAllowlistAppliesToAnAppWithoutOne() {
 func (s *PolicySuite) TestAnEmptyAllowlistIsKeptAsAllowingNothing() {
 	s.save(store.ScopeApp, s.app, store.PolicyDocument{AllowedModels: &[]string{}})
 
-	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
 
 	s.Require().NoError(err)
 	s.NotNil(admitted.Models)
@@ -222,10 +609,49 @@ func (s *PolicySuite) TestAnOrganizationsTagsWinOverItsAppsTags() {
 		Tags: map[string]string{"application": "athena", "environment": "test"},
 	})
 
-	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
 
 	s.Require().NoError(err)
 	s.Equal(routing.Tags{"application": "athena", "cost_center": "research", "environment": "production"}, admitted.Tags)
+}
+
+func (s *PolicySuite) TestAnAttributionNamesTheOrganizationAndItsTags() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Tags: map[string]string{"environment": "production"}})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Tags: map[string]string{"application": "athena", "environment": "test"}})
+
+	attributed, err := s.enforcer.Attribute(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Equal(s.org, attributed.OrganizationID)
+	s.Equal(routing.Tags{"application": "athena", "environment": "production"}, attributed.Tags)
+}
+
+func (s *PolicySuite) TestAFailedAttributionIsNotWhatTheNextRequestIsAdmittedOn() {
+	cancelled, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	_, err := s.enforcer.Attribute(cancelled, s.app)
+	s.Require().Error(err, "a lookup that failed is the caller's to try again")
+
+	s.enforcer.mu.Lock()
+	_, kept := s.enforcer.decisions[s.app]
+	s.enforcer.mu.Unlock()
+	s.False(kept, "no decision is kept from it")
+	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.Require().NoError(err)
+	s.Equal(s.org, admitted.OrganizationID)
+}
+
+func (s *PolicySuite) TestAnAttributionLooksAgainPastADecisionAFailedReadMade() {
+	cancelled, cancel := context.WithCancel(s.ctx)
+	cancel()
+	failed, _ := s.enforcer.Admit(cancelled, ownerOf(s.app))
+	s.Require().Empty(failed.OrganizationID, "Admit keeps allowing on what the failed read made of it")
+
+	attributed, err := s.enforcer.Attribute(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Equal(s.org, attributed.OrganizationID)
 }
 
 func (s *PolicySuite) TestNothingIsScreenedUnlessAPolicyTurnsItOn() {
@@ -314,14 +740,13 @@ func (s *PolicySuite) TestAPolicyReadErrorRequiresItsOwnApp() {
 	s.Require().NoError(closed.Close())
 	configs, err := appconfig.New(appconfig.Options{Store: closed})
 	s.Require().NoError(err)
-	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
-	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
 
 	requires, err := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
 
 	s.Error(err)
 	s.True(requires)
-	_, admitted := enforcer.Admit(s.ctx, s.app)
+	_, admitted := enforcer.Admit(s.ctx, ownerOf(s.app))
 	s.NoError(admitted, "a request is still admitted when the policies cannot be read")
 }
 
@@ -347,6 +772,16 @@ func quotaOf(messages, tokens *int64) *store.Quota {
 	return &store.Quota{MessagesPerUserPerDay: messages, TokensPerUserPerDay: tokens}
 }
 
+// limitsOf is the numbers of a quota, whoever set them.
+func limitsOf(held quota.Quota) quota.Limits {
+	return quota.Limits{MessagesPerDay: held.Messages.PerDay, TokensPerDay: held.Tokens.PerDay}
+}
+
+// limits is the numbers the suite's app's user is held to.
+func (s *PolicySuite) limits(userID string) quota.Limits {
+	return limitsOf(s.enforcer.Quota(s.ctx, s.app, userID, deployment))
+}
+
 func (s *PolicySuite) TestADailyLimitIsTheAppsNumberElseTheDeployments() {
 	cases := []struct {
 		name              string
@@ -366,17 +801,17 @@ func (s *PolicySuite) TestADailyLimitIsTheAppsNumberElseTheDeployments() {
 			want: quota.Limits{},
 		},
 		{
-			// A limit is set only on an app, so an organization's is never read, whatever
-			// its document holds.
-			name:         "an organization's limit is not one",
+			// The app's number wins where it sets one, and the organization's shows through
+			// where it does not.
+			name:         "an app's limit wins over its organization's",
 			organization: quotaOf(new(int64(5)), new(int64(5))),
 			app:          quotaOf(new(int64(20_000)), nil),
-			want:         quota.Limits{MessagesPerDay: 20_000, TokensPerDay: deployment.TokensPerDay},
+			want:         quota.Limits{MessagesPerDay: 20_000, TokensPerDay: 5},
 		},
 		{
-			name:         "an organization's limit is not one for an app that sets none",
+			name:         "an organization's limit is the default for an app that sets none",
 			organization: quotaOf(new(int64(5)), new(int64(5))),
-			want:         deployment,
+			want:         quota.Limits{MessagesPerDay: 5, TokensPerDay: 5},
 		},
 	}
 	for _, c := range cases {
@@ -384,18 +819,77 @@ func (s *PolicySuite) TestADailyLimitIsTheAppsNumberElseTheDeployments() {
 			s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: c.organization})
 			s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: c.app})
 
-			s.Equal(c.want, s.enforcer.Limits(s.ctx, s.app, deployment))
+			s.Equal(c.want, s.limits("someone"))
 		})
 	}
 }
 
 func (s *PolicySuite) TestARaisedDailyLimitIsSeenAtOnceOnTheNodeThatSavedIt() {
-	s.enforcer.Limits(s.ctx, s.app, deployment)
+	s.limits("someone")
 	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(3)), nil)})
 
-	limits := s.enforcer.Limits(s.ctx, s.app, deployment)
+	s.EqualValues(3, s.limits("someone").MessagesPerDay, "the cached decision is dropped when the policy is saved")
+}
 
-	s.EqualValues(3, limits.MessagesPerDay, "the cached decision is dropped when the policy is saved")
+func (s *PolicySuite) TestEachNumberSaysWhoSetIt() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: quotaOf(nil, new(int64(9)))})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(4)), nil)})
+
+	held := s.enforcer.Quota(s.ctx, s.app, "someone", deployment)
+
+	s.Equal(quota.Limit{PerDay: 4, By: quota.Setter{Level: quota.LevelApp, ID: s.app}}, held.Messages)
+	s.Equal(quota.Limit{PerDay: 9, By: quota.Setter{Level: quota.LevelOrganization, ID: s.org}}, held.Tokens)
+	s.False(quota.Default(deployment).Messages.By.Customer(), "the deployment's is nobody's the customer set")
+}
+
+func (s *PolicySuite) TestAUsersOwnQuotaWinsOverTheirAppsAndOrganizations() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: quotaOf(new(int64(5)), new(int64(5)))})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(20)), nil)})
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(1_000)), nil)})
+
+	held := s.enforcer.Quota(s.ctx, s.app, "vip", deployment)
+
+	s.Equal(quota.Limit{PerDay: 1_000, By: quota.Setter{Level: quota.LevelUser, ID: "vip"}}, held.Messages)
+	s.EqualValues(5, held.Tokens.PerDay, "the tokens the user's own leaves out are the organization's")
+	s.Equal(quota.Limits{MessagesPerDay: 20, TokensPerDay: 5}, s.limits("someone"), "another user keeps the app's")
+}
+
+func (s *PolicySuite) TestTheSameUserIDInTwoAppsIsTwoUsers() {
+	sibling := fmt.Sprintf("app-sibling-%d", time.Now().UnixNano())
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, sibling, s.org))
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "same"), store.PolicyDocument{Quota: quotaOf(new(int64(1)), nil)})
+
+	s.EqualValues(1, s.limits("same").MessagesPerDay)
+	s.Equal(deployment, limitsOf(s.enforcer.Quota(s.ctx, sibling, "same", deployment)))
+}
+
+func (s *PolicySuite) TestDeletingAUsersQuotaFallsBackToTheirApps() {
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(20)), nil)})
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(1_000)), nil)})
+	s.Require().EqualValues(1_000, s.limits("vip").MessagesPerDay)
+
+	deleted, err := s.enforcer.Delete(s.ctx, store.ScopeUser, store.UserScopeID(s.app, "vip"))
+
+	s.Require().NoError(err)
+	s.True(deleted)
+	s.EqualValues(20, s.limits("vip").MessagesPerDay, "seen at once on the node that deleted it")
+	again, err := s.enforcer.Delete(s.ctx, store.ScopeUser, store.UserScopeID(s.app, "vip"))
+	s.Require().NoError(err)
+	s.False(again, "there was none left to delete")
+}
+
+func (s *PolicySuite) TestAnAppWithNoUserPoliciesLooksNoUserUp() {
+	s.limits("someone")
+	decided, ok := s.enforcer.decided(s.app)
+	s.Require().True(ok)
+	s.False(decided.users, "the app's decision answers its users with no lookup of their own")
+
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(2)), nil)})
+	s.limits("someone")
+
+	decided, ok = s.enforcer.decided(s.app)
+	s.Require().True(ok)
+	s.True(decided.users, "saving a user's policy drops the app's decision, which reads it again")
 }
 
 func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
@@ -404,15 +898,14 @@ func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
 	s.Require().NoError(closed.Close())
 	configs, err := appconfig.New(appconfig.Options{Store: closed})
 	s.Require().NoError(err)
-	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
-	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
 
-	s.Equal(deployment, enforcer.Limits(s.ctx, s.app, deployment))
+	s.Equal(deployment, limitsOf(enforcer.Quota(s.ctx, s.app, "someone", deployment)))
 }
 
 func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
-	// The policies are cached in Redis and the spend is not, so closing Postgres once the
-	// cache is warm fails the budget's read alone.
+	// The policies are cached in Redis and the limits and spend are not, so closing Postgres
+	// once the cache is warm fails their reads alone, which the limits loop makes, never Admit.
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR is not set")
@@ -422,19 +915,66 @@ func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	configs, err := appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 	s.T().Cleanup(configs.Close)
-	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
-	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
 	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app, store.PolicyDocument{
-		Quota:  quotaOf(new(int64(20_000)), nil),
-		Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily},
+		Quota: quotaOf(new(int64(20_000)), nil),
 	}))
-	s.Require().EqualValues(20_000, enforcer.Limits(s.ctx, s.app, deployment).MessagesPerDay)
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.Require().EqualValues(20_000, enforcer.Quota(s.ctx, s.app, "someone", deployment).Messages.PerDay)
 	s.Require().NoError(db.Close())
 	enforcer.forget(s.app)
 
-	limits := enforcer.Limits(s.ctx, s.app, deployment)
+	limits := limitsOf(enforcer.Quota(s.ctx, s.app, "someone", deployment))
+	requires, unread := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
 
-	_, unread := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
-	s.Require().Error(unread, "the spend could not be read")
 	s.EqualValues(20_000, limits.MessagesPerDay, "the app's limit, not the deployment's")
+	s.NoError(unread, "the policies were read; only the limits and what they spent could not be")
+	s.False(requires)
+	admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.NoError(err)
+	s.NoError(admitted.Spend, "limits never read admit")
+}
+
+func (s *PolicySuite) TestToolOutputIsKeptAsLongAsTheSessionWithoutAPolicy() {
+	kept, err := s.enforcer.ToolOutputRetention(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Empty(kept)
+}
+
+func (s *PolicySuite) TestAnAppCanShortenItsOrganizationsToolOutputRetentionButNotLengthenIt() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{ToolOutputRetention: "7d"})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{ToolOutputRetention: "30d"})
+
+	kept, err := s.enforcer.ToolOutputRetention(s.ctx, s.app)
+	s.Require().NoError(err)
+	s.Equal(options.Retention("7d"), kept, "the organization's is the longest any of its apps keeps")
+
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{ToolOutputRetention: options.RetentionNone})
+	kept, err = s.enforcer.ToolOutputRetention(s.ctx, s.app)
+	s.Require().NoError(err)
+	s.Equal(options.RetentionNone, kept)
+}
+
+func (s *PolicySuite) TestAnOrganizationsToolOutputRetentionAppliesToAnAppWithoutOne() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{ToolOutputRetention: "24h"})
+
+	kept, err := s.enforcer.ToolOutputRetention(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Equal(options.Retention("24h"), kept)
+}
+
+func (s *PolicySuite) TestAPolicyReadErrorKeepsNoToolOutput() {
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	configs, err := appconfig.New(appconfig.Options{Store: closed})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
+
+	kept, err := enforcer.ToolOutputRetention(s.ctx, s.app)
+
+	s.Error(err)
+	s.Equal(options.RetentionNone, kept)
 }

@@ -159,6 +159,16 @@ export interface ConnectorDeclaration {
    */
   connection?: string;
   required?: boolean;
+  /**
+   * Whether code in the agent's sandbox may call the connector's API with the binding's
+   * connection. Left out sends no sandbox key.
+   */
+  sandbox?: boolean;
+  /**
+   * Tool names or `path.Match` patterns whose every call waits for the session's user to
+   * allow it. Left out sends no require_approval key.
+   */
+  requireApproval?: string[];
 }
 
 /**
@@ -563,6 +573,8 @@ export class Agent {
         tools: [],
         tool_patterns: entry.tools ?? ["*"],
         ...(entry.required === undefined ? {} : { required: entry.required }),
+        ...(entry.sandbox ? { sandbox: true } : {}),
+        ...(entry.requireApproval === undefined ? {} : { require_approval: entry.requireApproval }),
         connection:
           entry.connection === undefined
             ? { type: "session" }

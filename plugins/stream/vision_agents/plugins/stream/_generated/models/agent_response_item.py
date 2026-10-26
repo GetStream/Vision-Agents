@@ -28,7 +28,8 @@ class AgentResponseItem:
             keep the order they happened in.
         response_id (str):
         payload (AgentResponseItemPayload | Unset): Whatever the kind carries that text cannot: a tool's arguments, a
-            guardrail's reason, the id that ties a call to its result.
+            guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took
+            out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording.
         session_id (str | Unset):
         text (str | Unset):
         tool_name (str | Unset):

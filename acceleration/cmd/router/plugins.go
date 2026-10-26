@@ -142,6 +142,7 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		IncludeRotating: scope.IncludeRotating,
 		Store:           pgStore,
 		Configs:         configs,
+		Complaint:       api.SensitiveBindingsComplaint,
 		Registry:        registry,
 		Credentials:     credentials,
 		Transports:      transports,

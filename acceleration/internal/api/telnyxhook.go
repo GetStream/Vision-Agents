@@ -96,7 +96,12 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, phone.ErrSuspended) {
-		hangUp(w, logger, "hung up a telnyx call to a number of an app whose telephony is suspended", "to", to)
+		reject(w, logger, "rejected a telnyx call to a number of an app whose telephony is suspended", "to", to)
+		return
+	}
+	if answer, refused := moneyError(err); refused {
+		reject(w, logger, "rejected a telnyx call to a number of an organization that may not pay for it",
+			"to", to, "code", answer.Code)
 		return
 	}
 	if errors.Is(err, store.ErrNoStoredBridge) {
@@ -119,6 +124,12 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 func hangUp(w http.ResponseWriter, logger *slog.Logger, why string, attributes ...any) {
 	logger.Warn(why, attributes...)
 	writePlan(w, logger, phonetelnyx.RenderHangup())
+}
+
+// reject refuses a call without answering it, for a refusal the customer is billed nothing for.
+func reject(w http.ResponseWriter, logger *slog.Logger, why string, attributes ...any) {
+	logger.Info(why, attributes...)
+	writePlan(w, logger, phonetelnyx.RenderReject())
 }
 
 func writePlan(w http.ResponseWriter, logger *slog.Logger, plan phone.Plan) {

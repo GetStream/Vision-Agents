@@ -711,6 +711,21 @@ func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
 	s.Equal("v1", value(s.configsNamed("support")[0].SyncHash))
 }
 
+// A sync that sends plugins writes them, an empty list included: only a sync that leaves them
+// out keeps the stored ones.
+func (s *SyncSuite) TestASyncSendingPluginsWritesThemAndASyncLeavingThemOutKeepsThem() {
+	stored := func() []PluginEntry { return value(s.configsNamed("support")[0].Plugins) }
+
+	s.sync(map[string]any{"name": "support", "hash": "v1", "plugins": []string{"linear"}})
+	s.Equal([]PluginEntry{{Name: "linear"}}, stored())
+
+	s.sync(map[string]any{"name": "support", "hash": "v2", "instructions": "be kind"})
+	s.Equal([]PluginEntry{{Name: "linear"}}, stored(), "a sync that leaves plugins out keeps them")
+
+	s.sync(map[string]any{"name": "support", "hash": "v3", "plugins": []string{}})
+	s.Empty(stored(), "a sync that sends an empty list takes them out")
+}
+
 // pdfSkill is a skill synced from a folder that brings a reference and a script.
 func pdfSkill() []map[string]any {
 	return []map[string]any{{
@@ -858,4 +873,18 @@ func (s *SyncSuite) TestTwoSyncedSandboxBindingsGivingTheSandboxOneEnvVarAreRefu
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, `connector bindings "code" and "docs" both set sandbox`)
 	s.Empty(s.configsNamed("builder"))
+}
+
+func (s *SyncSuite) TestSyncingAnAgentStoresHowLongItKeepsToolOutput() {
+	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "tools": map[string]any{"output_retention": "30d"}})
+	s.Equal("30d", value(result.Config.Tools.OutputRetention))
+
+	again := s.sync(map[string]any{"name": "concierge", "hash": "v2"})
+	s.Equal("30d", value(again.Config.Tools.OutputRetention), "a directory that says nothing leaves what is stored")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "concierge", "hash": "v3", "tools": map[string]any{"output_retention": "3651d"},
+	})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "tools.output_retention")
 }

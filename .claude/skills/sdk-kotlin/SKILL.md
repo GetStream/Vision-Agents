@@ -120,6 +120,10 @@ for the router, Stream Chat and Stream Video. There is no call token and no cred
   token: a token expires an hour in, and two clients refreshing at once fetch one.
 - Camera direction and state are set before joining, so no front-facing frame is published.
   Speakerphone on after joining, since a hands-free agent wants the speaker.
+- The camera is sampled for the agent through `call.videoFilter`, the call's one filter slot.
+  Whatever filter is there stays underneath and runs first (moderation's blur is a
+  `BitmapVideoFilter`, so the one over it is too), and `CameraFilter` puts itself back on top
+  when something replaces it. Never clear the slot or replace a filter you did not set.
 - `RECORD_AUDIO` and `CAMERA` are the host's to request. The emulator does not test echo
   cancellation, Bluetooth or routing; release RTC changes after device testing.
 

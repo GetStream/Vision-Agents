@@ -16,8 +16,14 @@ public sealed class DispatchTests
             await peer.SendAsync(new { type = "ready", worker_id = "worker-1" });
             await peer.SendAsync(new
             {
-                type = "call", work_id = "w1", call_id = "c1", call_type = "agent", called_number = "+15552223333", caller_number = "+15550001111",
-                custom = new { campaign = "spring", ignored = 3 }, at = "2026-09-24T10:00:00Z",
+                type = "call",
+                work_id = "w1",
+                call_id = "c1",
+                call_type = "agent",
+                called_number = "+15552223333",
+                caller_number = "+15550001111",
+                custom = new { campaign = "spring", ignored = 3 },
+                at = "2026-09-24T10:00:00Z",
             });
             told.Add(await peer.ReceiveAsync("done"));
             await peer.SendAsync(new { type = "call", work_id = "w2", call_id = "c2", call_type = "agent", called_number = "+15552223333" });
@@ -74,7 +80,13 @@ public sealed class DispatchTests
         {
             await peer.SendAsync(new
             {
-                type = "message", work_id = "w1", agent_id = "support", session_id = "s1", request_id = "req-1", user_id = "ada", text = "hi",
+                type = "message",
+                work_id = "w1",
+                agent_id = "support",
+                session_id = "s1",
+                request_id = "req-1",
+                user_id = "ada",
+                text = "hi",
             });
             done = await peer.ReceiveAsync("done");
         });

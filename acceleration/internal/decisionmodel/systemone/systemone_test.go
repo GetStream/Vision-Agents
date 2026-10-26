@@ -365,3 +365,41 @@ func (s *SystemOneSuite) TestTheModelThatAnsweredIsReportedRatherThanTheAliasTha
 	s.EqualValues(312, answers.Usage.InputTokens)
 	s.EqualValues(48, answers.Usage.OutputTokens)
 }
+
+func (s *SystemOneSuite) TestOpenRoutersCostIsTheVendorCost() {
+	s.web.respond = `{"model":"clef-flash","answers":{"heard":{"type":"noul","noul":0.5}},
+		"usage":{"input_tokens":150,"output_tokens":2,"cost":0.0000057}}`
+
+	answers, err := s.ask("anything", map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Did anyone speak?", "", ""),
+	})
+	s.Require().NoError(err)
+
+	s.EqualValues(6, answers.VendorCostMicros(), "5.7 millionths of a dollar, rounded half up")
+}
+
+func (s *SystemOneSuite) TestACostThatIsNotANumberLosesNothingButTheCost() {
+	s.web.respond = `{"model":"clef-flash","answers":{"heard":{"type":"noul","noul":0.5}},
+		"usage":{"input_tokens":150,"output_tokens":2,"cost":{"total":0.0000057,"currency":"usd"}}}`
+
+	answers, err := s.ask("anything", map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Did anyone speak?", "", ""),
+	})
+	s.Require().NoError(err)
+
+	s.InDelta(0.5, answers.Answers["heard"].Yes, 0.001, "the answers are read")
+	s.EqualValues(150, answers.Usage.InputTokens)
+	s.Zero(answers.VendorCostMicros())
+}
+
+func (s *SystemOneSuite) TestAVendorThatSendsNoCostHasNone() {
+	s.web.respond = `{"model":"jev-1.13.0","answers":{"heard":{"type":"noul","noul":0.5}},
+		"usage":{"input_tokens":312,"output_tokens":48}}`
+
+	answers, err := s.ask("anything", map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Did anyone speak?", "", ""),
+	})
+	s.Require().NoError(err)
+
+	s.Zero(answers.VendorCostMicros())
+}

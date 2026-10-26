@@ -44,6 +44,18 @@ func (s *GeminiSuite) drain(provider *STS) []sts.Event {
 	}
 }
 
+// completed is the one reply settled so far.
+func (s *GeminiSuite) completed(provider *STS) sts.ResponseComplete {
+	var completes []sts.ResponseComplete
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.ResponseComplete); ok {
+			completes = append(completes, typed)
+		}
+	}
+	s.Require().Len(completes, 1)
+	return completes[0]
+}
+
 func heard(text string) serverMessage {
 	return serverMessage{ServerContent: &serverContent{InputTranscription: &transcription{Text: text}}}
 }
@@ -303,7 +315,167 @@ func (s *GeminiSuite) TestUsageIsAttachedToTheReplyItBelongsTo() {
 	events := s.drain(provider)
 	complete, ok := events[len(events)-1].(sts.ResponseComplete)
 	s.Require().True(ok)
-	s.Equal(sts.Usage{InputTokens: 120, OutputTokens: 60, InputAudioTokens: 100, OutputAudioTokens: 60}, complete.Usage)
+	s.Equal(sts.Usage{InputTokens: 120, OutputTokens: 60, InputTextTokens: 20, InputAudioTokens: 100, OutputAudioTokens: 60},
+		complete.Usage)
+}
+
+// TestUsageSplitsByModalityAndCountsThinking uses a typed turn as
+// gemini-3.8-live-extended-thinking reported it: the details fall 111 tokens short of the
+// prompt, and the thinking is outside the response count.
+func (s *GeminiSuite) TestUsageSplitsByModalityAndCountsThinking() {
+	provider := s.newProvider()
+
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{UsageMetadata: &usageMetadata{
+		PromptTokenCount:      3162,
+		ResponseTokenCount:    54,
+		ThoughtsTokenCount:    60,
+		PromptTokensDetails:   []modalityTokens{{Modality: "TEXT", TokenCount: 2829}, {Modality: "AUDIO", TokenCount: 222}},
+		ResponseTokensDetails: []modalityTokens{{Modality: "AUDIO", TokenCount: 54}},
+	}})
+	provider.handleMessage(turnComplete())
+
+	s.Equal(sts.Usage{
+		InputTokens:       3162,
+		OutputTokens:      114,
+		InputTextTokens:   2829,
+		InputAudioTokens:  222,
+		OutputTextTokens:  60,
+		OutputAudioTokens: 54,
+		ReasoningTokens:   60,
+	}, s.completed(provider).Usage, "Google bill thinking as text output")
+}
+
+// TestAResponseTheDetailsLeaveOutIsBilledAsText uses gemini-3.8-live's answer after a tool
+// call: 12 response tokens, the call, with no details, and 49 of thinking.
+func (s *GeminiSuite) TestAResponseTheDetailsLeaveOutIsBilledAsText() {
+	provider := s.newProvider()
+
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{UsageMetadata: &usageMetadata{
+		PromptTokenCount:   1362,
+		ResponseTokenCount: 12,
+		ThoughtsTokenCount: 49,
+		PromptTokensDetails: []modalityTokens{
+			{Modality: "TEXT", TokenCount: 468}, {Modality: "AUDIO", TokenCount: 516}, {Modality: "IMAGE", TokenCount: 256},
+		},
+	}})
+	provider.handleMessage(turnComplete())
+
+	usage := s.completed(provider).Usage
+	s.EqualValues(61, usage.OutputTextTokens)
+	s.EqualValues(61, usage.OutputTokens)
+	s.EqualValues(256, usage.InputImageTokens)
+}
+
+// TestAReplyOverSeveralTurnsSumsEveryField uses gemini-3.8-live-extended-thinking's tool
+// round trip: a filler while the tool ran, then the answer, billed as one reply.
+func (s *GeminiSuite) TestAReplyOverSeveralTurnsSumsEveryField() {
+	provider := s.newProvider()
+
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{
+		ServerContent: &serverContent{TurnComplete: true, InteractionStatus: "IN_PROGRESS"},
+		UsageMetadata: &usageMetadata{
+			PromptTokenCount:        3898,
+			CachedContentTokenCount: 1024,
+			ResponseTokenCount:      47,
+			ThoughtsTokenCount:      86,
+			PromptTokensDetails: []modalityTokens{
+				{Modality: "TEXT", TokenCount: 2943}, {Modality: "AUDIO", TokenCount: 516}, {Modality: "IMAGE", TokenCount: 256},
+			},
+			ResponseTokensDetails: []modalityTokens{{Modality: "AUDIO", TokenCount: 47}},
+		},
+	})
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{
+		ServerContent: &serverContent{TurnComplete: true, InteractionStatus: "IDLE"},
+		UsageMetadata: &usageMetadata{
+			PromptTokenCount:        7319,
+			CachedContentTokenCount: 2048,
+			ResponseTokenCount:      119,
+			ThoughtsTokenCount:      696,
+			PromptTokensDetails: []modalityTokens{
+				{Modality: "TEXT", TokenCount: 6199}, {Modality: "IMAGE", TokenCount: 352}, {Modality: "AUDIO", TokenCount: 563},
+			},
+			ResponseTokensDetails: []modalityTokens{{Modality: "TEXT", TokenCount: 27}, {Modality: "AUDIO", TokenCount: 92}},
+		},
+	})
+
+	s.Equal(sts.Usage{
+		InputTokens:       11217,
+		CachedInputTokens: 3072,
+		OutputTokens:      948,
+		InputTextTokens:   9142,
+		InputAudioTokens:  1079,
+		InputImageTokens:  608,
+		OutputTextTokens:  809,
+		OutputAudioTokens: 139,
+		ReasoningTokens:   782,
+	}, s.completed(provider).Usage)
+}
+
+// TestATurnWithNoPromptDetailsIsStillBilled sums a turn whose prompt has details with one
+// whose prompt has none. The split replaces the prompt total in the price, so the second
+// turn's prompt is billed at the audio rate rather than left out of it.
+func (s *GeminiSuite) TestATurnWithNoPromptDetailsIsStillBilled() {
+	provider := s.newProvider()
+
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{
+		ServerContent: &serverContent{TurnComplete: true, InteractionStatus: "IN_PROGRESS"},
+		UsageMetadata: &usageMetadata{
+			PromptTokenCount:      600,
+			ResponseTokenCount:    40,
+			PromptTokensDetails:   []modalityTokens{{Modality: "TEXT", TokenCount: 400}, {Modality: "AUDIO", TokenCount: 150}},
+			ResponseTokensDetails: []modalityTokens{{Modality: "AUDIO", TokenCount: 40}},
+		},
+	})
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{
+		ServerContent: &serverContent{TurnComplete: true, InteractionStatus: "IDLE"},
+		UsageMetadata: &usageMetadata{PromptTokenCount: 1000, ResponseTokenCount: 30},
+	})
+
+	usage := s.completed(provider).Usage
+	s.EqualValues(1600, usage.InputTokens)
+	s.EqualValues(400, usage.InputTextTokens)
+	s.EqualValues(1150, usage.InputAudioTokens, "150 described, and the 1,000 the second turn did not describe")
+}
+
+func (s *GeminiSuite) TestVideoIsBilledAsImages() {
+	provider := s.newProvider()
+
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{UsageMetadata: &usageMetadata{
+		PromptTokenCount: 900,
+		PromptTokensDetails: []modalityTokens{
+			{Modality: "TEXT", TokenCount: 300}, {Modality: "IMAGE", TokenCount: 256}, {Modality: "VIDEO", TokenCount: 344},
+		},
+	}})
+	provider.handleMessage(turnComplete())
+
+	usage := s.completed(provider).Usage
+	s.EqualValues(600, usage.InputImageTokens, "Google price video at the image rate")
+	s.EqualValues(300, usage.InputTextTokens)
+}
+
+// TestCachedTokensStayInTheirModality reads a cached prompt. Google publish no cached
+// rate for Live, so the cached tokens stay in their modality, at its input rate, and the
+// cached count is kept only as the total.
+func (s *GeminiSuite) TestCachedTokensStayInTheirModality() {
+	provider := s.newProvider()
+
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{UsageMetadata: &usageMetadata{
+		PromptTokenCount:        2600,
+		CachedContentTokenCount: 2048,
+		PromptTokensDetails:     []modalityTokens{{Modality: "TEXT", TokenCount: 2400}, {Modality: "AUDIO", TokenCount: 200}},
+	}})
+	provider.handleMessage(turnComplete())
+
+	s.Equal(sts.Usage{InputTokens: 2600, CachedInputTokens: 2048, InputTextTokens: 2400, InputAudioTokens: 200},
+		s.completed(provider).Usage)
 }
 
 func (s *GeminiSuite) TestAFillerSpokenWhileTheModelThinksIsPartOfTheSameReply() {
@@ -333,7 +505,8 @@ func (s *GeminiSuite) TestAFillerSpokenWhileTheModelThinksIsPartOfTheSameReply()
 	}
 	s.Require().Len(completes, 1, "the reply ends when the interaction does")
 	s.False(completes[0].Interrupted)
-	s.Equal(sts.Usage{InputTokens: 6528, OutputTokens: 2783}, completes[0].Usage, "each turn is billed on its own, so the reply is their sum")
+	s.Equal(sts.Usage{InputTokens: 6528, OutputTokens: 2783, InputAudioTokens: 6528, OutputTextTokens: 2783}, completes[0].Usage,
+		"each turn is billed on its own, so the reply is their sum")
 	s.Require().Len(chunks, 2)
 	s.Equal(chunks[0].Generation, chunks[1].Generation)
 }

@@ -53,7 +53,7 @@ func documentHandWritten(api huma.API) {
 			"`decision`, `delegated`, `task_settled` (files " +
 			"lists what the work's code handed back, each a name, mime_type, url and size, uploaded " +
 			"to a persistent conversation's channel and attached to the reply), " +
-			"`task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
+			"`task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
 			"`backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and " +
 			"message_end, the utterance being heard when it was cut, how many milliseconds of it had been, " +
 			"and where all it had been sent is in the reply's message, when any of it had), " +
@@ -145,10 +145,37 @@ func documentHandWritten(api huma.API) {
 			"`interrupt` (optionally naming a `request_id`) or `close` to act on the session. A " +
 			"session's instructions are its agent config's, so there is no command to change them. " +
 			"A `tool_call` is the only frame that must be answered: everything else is a " +
-			"report. Tool calls made by durable personal commands carry `request_id` and `turn_id`; " +
+			"report. It carries `id`, `name`, `arguments`, `turn_id`, `session_id`, `user` (`id` " +
+			"and `name` of the person whose turn asked for it, when the router knows) and " +
+			"`conversation` (`cid` when the conversation is kept, and the session's `custom`). " +
+			"Every watcher sees every `tool_call`, and `run` says whether this one is to run it: " +
+			"only a watcher that runs the tool answers, and a result from any other is dropped. A " +
+			"watcher says which tools it runs with `tools` when it attaches. Without it, it runs " +
+			"the session's tools when it is on the side that created the session: a backend for a " +
+			"session a backend created, the same person for one a device created. A tool a backend " +
+			"declared runs only on a backend, whatever a device says it holds. A call that no " +
+			"watcher attached runs fails at once. " +
+			"`tool_cancel` (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or " +
+			"the caller interrupted a call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and `turn_id`; " +
 			"their result must repeat both values so a result cannot be adopted by another command " +
 			"or turn.\n" +
-			"A call to a tool declared with an `approval` waits for a person. The client reports " +
+			"While it runs a call, the watcher running it may send `tool_hold` (`tool_call_id`) " +
+			"to keep the call going when the caller talks over the agent, which would otherwise " +
+			"cancel a call to an `interruptible` tool. Every watcher is sent `tool_held` (`id`) when it " +
+			"was held, or `tool_cancel` when the call had already stopped. " +
+			"An explicit `interrupt` still cancels a held call. It may also send `tool_update` " +
+			"(`tool_call_id`, `text`, `verbatim`) to say how the call is going: the agent tells a " +
+			"voice caller in its own words once nobody is talking, and a persistent conversation " +
+			"shows `text` as the summary of the call's step until it ends. On speech-to-speech, " +
+			"OpenAI Realtime, Gemini 3.1 Flash Live and Gemini 3.8 Live are told while the call is open; " +
+			"other models only report it. With `verbatim` true, " +
+			"the agent says or posts `text` as written instead. A newer update replaces one not yet " +
+			"said, and a call's result replaces both. Every watcher is sent `tool_updated` (`id`, " +
+			"`turn_id`, `tool`, `text`, `verbatim`) for each update. An update or hold from a watcher " +
+			"that does not run the call is dropped.\n" +
+			"On a voice call, a call to a tool declared with an `approval` is asked about out loud " +
+			"instead, and sent only once the caller said yes, with `approved` true; a watcher does " +
+			"not ask again. In writing, a call to a tool declared with an `approval` waits for a person. The client reports " +
 			"their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, " +
 			"and optionally a `summary` shown when they declined), before it answers the call with " +
 			"`tool_result`. A connector call waiting for the person to sign in " +
@@ -158,19 +185,47 @@ func documentHandWritten(api huma.API) {
 			"the session's user, and the router sends it only once they allow it: `tool_approval` " +
 			"with its `tool_call_id`, the `request_id` of the command it answers and `allowed`, from " +
 			"that user or their backend, `turn_id` left out or not. Declined, or not answered in 10 " +
-			"minutes, it is not sent and the model is told so. It needs no `tool_result`.\n" +
+			"minutes, it is not sent and the model is told so. It needs no `tool_result`. " +
+			"A `tool_approval` no call waits for (answered already, stopped, or naming another " +
+			"`request_id` or `turn_id`) is answered with `tool_approval_ignored`: the " +
+			"`tool_call_id`, `request_id` and `turn_id` it was sent with, each left out when it was, " +
+			"and `reason`, a sentence saying why; the socket stays open. Every watcher is sent it. " +
+			"The call of a durable command answered with its `request_id` and no `turn_id` is " +
+			"answered so too, its `reason` naming the missing `turn_id`. A call outside a durable " +
+			"command waits for its `tool_result`, so an approval sent before it without a " +
+			"`request_id` gets no answer.\n" +
 			"`tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. " +
 			"An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally " +
 			"with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.\n" +
 			"`respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the " +
 			"conversation receives the question and later the findings, without raw images. Video " +
 			"capture uses task-correlated `get_video_frames` tool requests and `tool_result` " +
-			"replies. Frames are never attached automatically to conversational turns.",
+			"replies. Frames are never attached automatically to conversational turns.\n" +
+			"A watcher that may lose its connection, such as to the router restarting, asks for a " +
+			"resumable socket with `resumable=true`. Its first frame is `resumed`, and every frame " +
+			"after it except `hearing` carries a `cursor`. To reconnect, open the socket again with " +
+			"the same credentials and `cursor` set to the last one received: the frames sent after " +
+			"it are sent again, then the live ones. A session keeps its last 256 frames for this, " +
+			"for as long as it is held: a persistent text session until 5 minutes after its last " +
+			"watcher left, a call until it ends. `resumed` carries `cursor`, where the stream now " +
+			"carries on from, and `complete`, false when some frames after the cursor asked from " +
+			"are gone, because the router restarted, the conversation was reopened, or the watcher " +
+			"missed more than 256: read what was missed back from the conversation then. " +
+			"`request_id` names a command the watcher was waiting on, and `resumed.command` is its " +
+			"receipt. A command whose reply the router stopped on its way down is `interrupted`: " +
+			"it is never run again, so a client that still wants the answer asks once more under a " +
+			"new request id. A session the router stopped on its way down closes a resumable socket " +
+			"with 1012 (service restart) rather than 1000, which is the cue to reconnect. A socket " +
+			"that does not ask to resume is sent the frames and the close it always was.",
 		Parameters: []*huma.Param{
 			{Name: "id", In: "path", Description: "The session, as returned when it was created.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "interim", In: "query", Description: "Also send `hearing` frames, which are the words as they are revised.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
 			{Name: "decisions", In: "query", Description: "Send `decision` frames.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: true}},
 			{Name: "replay_pending_tools", In: "query", Description: "Replay pending live voice tool requests to a durable tool host.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
+			{Name: "tools", In: "query", Description: "The session's tools this watcher runs, separated by commas; empty for none. Left out, it runs the session's tools when it is on the side that created the session.", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "resumable", In: "query", Description: "Send `resumed` first and a `cursor` on every frame after it, so the socket can be resumed.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
+			{Name: "cursor", In: "query", Description: "Resume after this frame's `cursor`, sending again what came after it. Implies `resumable`.", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "request_id", In: "query", Description: "A command to report the receipt of in `resumed`, for a watcher that was waiting on it.", Schema: &huma.Schema{Type: huma.TypeString}},
 		},
 		Responses: map[string]*huma.Response{
 			"101": {Description: "The socket is open"},
@@ -202,7 +257,10 @@ func documentHandWritten(api huma.API) {
 			"every other event go over the session's events socket, as they do for a call.\n" +
 			"A refused start is an `error` frame with `error`, the message, and the socket closes. " +
 			"An `error` frame for a field refused from a device also carries `code` and " +
-			"`error_type`, the `code` and `type` that `createSession` answers the same field with.\n" +
+			"`error_type`, the `code` and `type` that `createSession` answers the same field with, " +
+			"and so does a session refused for money: `account_suspended` (`permission`), or " +
+			"`insufficient_credits`, `system_limit_reached` or `spend_limit_reached` " +
+			"(`payment_required`).\n" +
 			"The session lasts as long as the socket. Closing the socket, or sending `stop`, ends " +
 			"the conversation. A conversation that ends closes the socket.",
 		Responses: map[string]*huma.Response{
@@ -265,7 +323,21 @@ func documentHandWritten(api huma.API) {
 			"`tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an " +
 			"optional `played_ms` saying how much of the reply the listener heard. What the routed " +
 			"model cannot do is refused with an `error` frame rather than dropped. All four report " +
-			"failures as `error` frames and end with `closed`.\n" +
+			"failures as `error` frames and end with `closed`. A refusal about money also carries " +
+			"`code` and `error_type`, as an HTTP request is refused: `account_suspended` " +
+			"(`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or " +
+			"`spend_limit_reached` (`payment_required`) for a model that costs money, while one that " +
+			"costs nothing is still served; the socket then closes with 1008.\n" +
+			"A server-side caller is told what each unit cost and when its organization's credit " +
+			"runs low; an end user's device is told neither. A settled `transcript`, a " +
+			"`synthesis_complete` and a `complete` carry `cost_micros`, what that turn, utterance " +
+			"or response cost in millionths of a dollar. What is recorded as the socket closes, such " +
+			"as a transcriber's last audio or a voice's failed utterance, comes on no frame. A " +
+			"`balance` frame, with `balance_micros` " +
+			"and `warning` (`low` or `exhausted`), says the organization's balance went down into " +
+			"that state while the socket was open, the values X-Stream-Balance-Micros and " +
+			"X-Stream-Balance-Warning carry on an answer: once per crossing, and at once after " +
+			"`started` when it already is.\n" +
 			"Search is answered at `/v1/search` rather than here: one question and its answer need " +
 			"no socket held open between them. Memory and phone are recorded rather than routed, so " +
 			"they are not served either.",

@@ -99,7 +99,11 @@ type nativePeer struct {
 	setup  json.RawMessage
 }
 
-func (s *AgentSuite) joinNativeDelegating() *nativePeer {
+func (s *AgentSuite) joinNativeDelegating() *nativePeer { return s.joinNativeWith(nil) }
+
+// joinNativeWith joins a native agent over the real OpenAI adapter, with configure changing
+// its options first when given.
+func (s *AgentSuite) joinNativeWith(configure func(*Options)) *nativePeer {
 	connections := make(chan *websocket.Conn, 1)
 	frames := make(chan map[string]json.RawMessage, 32)
 	upgrader := websocket.Upgrader{}
@@ -149,11 +153,15 @@ func (s *AgentSuite) joinNativeDelegating() *nativePeer {
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
 	s.edge = newLoopbackEdge()
-	s.agent, err = New(Options{
+	options := Options{
 		CustomerID: "acme", Edge: s.edge, STS: router, STSTarget: "openai/gpt-realtime-2",
 		LLM: reasoner, SubagentTarget: "stub/stub-model",
 		Skills: harness.Skills{Skills: []harness.Skill{{Name: "think", Description: "reason carefully", Instructions: "Solve it", Deadline: time.Minute}}},
-	})
+	}
+	if configure != nil {
+		configure(&options)
+	}
+	s.agent, err = New(options)
 	s.Require().NoError(err)
 	s.events = collect(s.agent)
 	s.T().Cleanup(func() { s.agent.Close() })

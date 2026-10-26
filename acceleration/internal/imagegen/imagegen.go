@@ -19,9 +19,11 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -223,6 +225,34 @@ func Accepted(err error) bool {
 type Result struct {
 	Images []Image
 }
+
+// Used is the pictures counted as they came back, not as they were asked for, and the pixels
+// they hold between them for a model billed by the megapixel.
+func (r Result) Used() pricing.Quantities {
+	used := pricing.Quantities{pricing.Images: int64(len(r.Images))}
+	for _, picture := range r.Images {
+		used[pricing.Pixels] += int64(picture.Width) * int64(picture.Height)
+	}
+	return used
+}
+
+// Attributes is the size the pictures were drawn at, so the price list can key on it. The
+// first picture's size stands for all of them, since one request draws them alike.
+func (r Result) Attributes() map[string]string {
+	if len(r.Images) == 0 {
+		return nil
+	}
+	return map[string]string{
+		AttributeWidth:  strconv.Itoa(r.Images[0].Width),
+		AttributeHeight: strconv.Itoa(r.Images[0].Height),
+	}
+}
+
+// AttributeWidth and AttributeHeight are an image row's picture size, in pixels.
+const (
+	AttributeWidth  = "width"
+	AttributeHeight = "height"
+)
 
 // Provider is an image generation provider.
 //

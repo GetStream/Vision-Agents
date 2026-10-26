@@ -35,6 +35,18 @@ func (s *Store) RecordCallResource(ctx context.Context, resource *CallResource) 
 	return nil
 }
 
+// DeleteCallResource forgets one leg's row, for a leg that was never placed. It is named by
+// its id because a call's legs on one shared trunk have the same call and trunk.
+func (s *Store) DeleteCallResource(ctx context.Context, id int64) error {
+	_, err := s.shard.NewDelete().Model((*CallResource)(nil)).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete call resource: %w", err))
+	}
+	return nil
+}
+
 // ReleaseCallResourcesInApp deletes the trunks and routes one call's legs were given in
 // one Stream app, and returns them. A call's id is only unique within an app, so an event
 // about it releases only what that app holds; unpinned also takes the rows written before
@@ -55,6 +67,38 @@ func (s *Store) ReleaseCallResourcesInApp(ctx context.Context, scope AppScope, c
 		return nil, fmt.Errorf("store: release call resources: %w", err)
 	}
 	return slices.Concat(lists...), nil
+}
+
+// StaleCallResources are the call resource rows older than before, for calls whose end hook
+// never arrived. They are left in place until ForgetCallResource.
+func (s *Store) StaleCallResources(ctx context.Context, before time.Time) ([]CallResource, error) {
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]CallResource, error) {
+		var stale []CallResource
+		err := db.NewSelect().Model(&stale).
+			Where("created_at < ?", before).
+			Scan(ctx)
+		return stale, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: stale call resources: %w", err)
+	}
+	return slices.Concat(lists...), nil
+}
+
+// ForgetCallResource deletes a row StaleCallResources returned. The row may be on any shard,
+// whose ids are their own, so it is matched by its call and trunk too.
+func (s *Store) ForgetCallResource(ctx context.Context, resource CallResource) error {
+	_, err := onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
+		return db.NewDelete().Model((*CallResource)(nil)).
+			Where("id = ?", resource.ID).
+			Where("call_id = ?", resource.CallID).
+			Where("trunk_id = ?", resource.TrunkID).
+			Exec(ctx)
+	})
+	if err != nil {
+		return fmt.Errorf("store: forget call resource: %w", err)
+	}
+	return nil
 }
 
 // CallResourcesInApp is what ReleaseCallResourcesInApp would delete for one call, read

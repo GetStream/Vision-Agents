@@ -1,0 +1,12 @@
+{
+  "approx_logical_bytes": 52428800,
+  "approx_row_count": 1204,
+  "created_at": "2026-10-01T09:30:45Z",
+  "updated_at": "2026-10-22T17:12:14Z",
+  "encryption": {
+    "mode": "default"
+  },
+  "index": {
+    "status": "up-to-date"
+  }
+}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -40,6 +41,7 @@ func TestChannelsSuite(t *testing.T) {
 
 func (s *ChannelsSuite) SetupSuite() {
 	s.meta = &metaAPI{}
+	s.daytona = daytonatest.Start(s.T())
 	s.channelAPI = httptest.NewTLSServer(http.HandlerFunc(s.meta.serve))
 	s.T().Cleanup(s.channelAPI.Close)
 	s.RouterSuite.SetupSuite()
@@ -226,6 +228,28 @@ func (s *ChannelsSuite) TestAMessageIsAnsweredBackOnWhatsApp() {
 	s.Equal(http.StatusAccepted, s.deliver(line, writer, "msg-"+s.utils.uuid(), "what is open?"))
 
 	s.Equal("Noted.", s.answer(writer))
+}
+
+// A file the code the agent ran made is sent back with its words.
+func (s *ChannelsSuite) TestAFileTheAgentsCodeMadeIsSentBack() {
+	number := s.number()
+	line := s.connect(number)
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name:     "channelled-" + s.utils.uuid(),
+		Mode:     pointerTo(AgentModeText),
+		Llm:      pointerTo("scheduling/scheduling-model"),
+		Sandbox:  pointerTo(Daytona),
+		Channels: &AgentChannels{Whatsapp: &ChannelLineRequest{Number: number}},
+	}, nil))
+	report := s.codeHandsBackAReport()
+	writer := s.writer()
+
+	s.Require().Equal(http.StatusAccepted, s.deliver(line, writer, "msg-"+s.utils.uuid(), "how did I walk?"))
+
+	s.Require().Eventually(func() bool { return len(s.meta.documentsTo(writer)) > 0 },
+		settleFor, 50*time.Millisecond, "no file was sent to %s", writer)
+	s.Equal([]string{report}, s.meta.documentsTo(writer))
+	s.Equal("Done.", s.answer(writer))
 }
 
 // A conversation of the writer's own is what makes the agent's memory of them theirs, and it
@@ -545,10 +569,12 @@ func (s *ChannelsSuite) send(request *http.Request) (int, []byte) {
 	return response.StatusCode, answered.Bytes()
 }
 
-// metaAPI stands in for Meta's Cloud API, keeping the text of every message sent to it.
+// metaAPI stands in for Meta's Cloud API, keeping the text of every message sent to it, and
+// the link of every document.
 type metaAPI struct {
-	mu   sync.Mutex
-	sent map[string][]string
+	mu        sync.Mutex
+	sent      map[string][]string
+	documents map[string][]string
 }
 
 func (m *metaAPI) serve(w http.ResponseWriter, r *http.Request) {
@@ -557,14 +583,22 @@ func (m *metaAPI) serve(w http.ResponseWriter, r *http.Request) {
 		Text struct {
 			Body string `json:"body"`
 		} `json:"text"`
+		Document struct {
+			Link string `json:"link"`
+		} `json:"document"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	m.mu.Lock()
 	if m.sent == nil {
 		m.sent = map[string][]string{}
+		m.documents = map[string][]string{}
 	}
-	m.sent[body.To] = append(m.sent[body.To], body.Text.Body)
+	if body.Document.Link != "" {
+		m.documents[body.To] = append(m.documents[body.To], body.Document.Link)
+	} else {
+		m.sent[body.To] = append(m.sent[body.To], body.Text.Body)
+	}
 	m.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -575,4 +609,11 @@ func (m *metaAPI) to(number string) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]string(nil), m.sent[number]...)
+}
+
+// documentsTo is the link of every document sent to one number, in order.
+func (m *metaAPI) documentsTo(number string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.documents[number]...)
 }

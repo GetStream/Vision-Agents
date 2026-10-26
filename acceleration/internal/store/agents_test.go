@@ -91,7 +91,7 @@ func (s *StoreSuite) TestAnEditCommittedWhileABindingWaitsIsKept() {
 
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding)
+		_, _, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding, nil)
 		done <- err
 	}()
 	s.Require().Eventually(func() bool {
@@ -115,9 +115,9 @@ func (s *StoreSuite) TestABindingIsAddedOnceAndOnlyToALiveConnection() {
 	config := s.boundConfig("acme-app")
 	binding := fixed(s.connection("acme-app", nil).ID)
 
-	after, added, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding)
+	after, added, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding, nil)
 	s.Require().NoError(err)
-	_, again, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding)
+	_, again, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding, nil)
 	s.Require().NoError(err)
 
 	s.True(added)
@@ -131,7 +131,7 @@ func (s *StoreSuite) TestABindingIsAddedOnceAndOnlyToALiveConnection() {
 	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", deleted.ID))
 	gone := fixed(deleted.ID)
 	gone.Name = "gone"
-	_, _, err = s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, gone)
+	_, _, err = s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, gone, nil)
 	s.ErrorIs(err, ErrNoConnectorConnection)
 }
 
@@ -173,7 +173,7 @@ func (s *StoreSuite) TestABindingAddedToACustomConnectorTheCustomerHasNoneOfIsRe
 	s.crm("other-app")
 	config := s.boundConfig("acme-app")
 
-	_, added, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, crmBinding("inbox", ""))
+	_, added, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, crmBinding("inbox", ""), nil)
 
 	s.ErrorIs(err, ErrNoConnectorDefinition)
 	s.False(added)

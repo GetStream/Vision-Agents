@@ -24,24 +24,20 @@ func (s *CerebrasSuite) TestCredentialsComeFromTheEnvironmentWhenNotGiven() {
 	s.ErrorContains(err, apiKeyEnvVar+" is required")
 
 	s.T().Setenv(apiKeyEnvVar, "from-env")
-	provider, err := New(Options{})
+	provider, err := New(Options{Model: "qwen-3.8-27b"})
 	s.Require().NoError(err)
 	s.Equal(ProviderName, provider.Provider())
 }
 
 func (s *CerebrasSuite) TestTheModelIsTheIdCerebrasServes() {
-	provider, err := New(Options{APIKey: "k", Model: "gemma-4-31b"})
+	provider, err := New(Options{APIKey: "k", Model: "qwen-3.8-27b"})
 	s.Require().NoError(err)
 
-	s.Equal("gemma-4-31b", provider.Model())
+	s.Equal("qwen-3.8-27b", provider.Model())
 }
 
-func (s *CerebrasSuite) TestTheDefaultIsGemma4() {
-	provider, err := New(Options{APIKey: "k"})
-	s.Require().NoError(err)
+func (s *CerebrasSuite) TestAModelHasToBeNamed() {
+	_, err := New(Options{APIKey: "k"})
 
-	s.Equal(defaultModel, provider.Model())
-	s.Equal(ProviderName, provider.Provider())
-	s.Empty(provider.Capabilities().ReasoningEfforts,
-		"reasoning is the wrong trade on the live path")
+	s.ErrorContains(err, "model is required", "the model it used to default to is archived")
 }

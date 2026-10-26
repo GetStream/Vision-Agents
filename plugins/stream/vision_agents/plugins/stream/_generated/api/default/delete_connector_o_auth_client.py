@@ -41,6 +41,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = ErrorResponse.from_dict(response.json())
+
+        return response_402
+
     if response.status_code == 403:
         response_403 = ErrorResponse.from_dict(response.json())
 
@@ -55,6 +60,11 @@ def _parse_response(
         response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
+
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -81,7 +91,8 @@ def sync_detailed(
     """Remove the app's own OAuth client for a connector
 
      Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect
-    with another client.
+    with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is
+    first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -115,7 +126,8 @@ def sync(
     """Remove the app's own OAuth client for a connector
 
      Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect
-    with another client.
+    with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is
+    first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -144,7 +156,8 @@ async def asyncio_detailed(
     """Remove the app's own OAuth client for a connector
 
      Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect
-    with another client.
+    with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is
+    first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -176,7 +189,8 @@ async def asyncio(
     """Remove the app's own OAuth client for a connector
 
      Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect
-    with another client.
+    with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is
+    first asked to revoke the grant of each, and a refusal is logged; the connections stay.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

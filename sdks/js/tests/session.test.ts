@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { Client, ConfigurationError, Session, Socket, Tools } from "../src/index.js";
+import {
+  CallNotHeldError,
+  Client,
+  ConfigurationError,
+  Session,
+  Socket,
+  Tools,
+  type ToolCall,
+} from "../src/index.js";
 import { TestRouter, type Connection } from "./router.js";
 
 describe("Socket", () => {
@@ -251,13 +259,33 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("reports a tool the model asked for that nothing is registered as", async () => {
-    const [session, connection] = await opened(new Tools());
+  it("leaves a call for a tool held elsewhere to whoever holds it", async () => {
+    const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
+    const [session, connection] = await opened(tools);
 
-    connection.send({ type: "tool_call", id: "call_1", name: "unknown", arguments: "{}" });
+    // Every watcher is sent every call and the first answer wins, so answering a tool this
+    // session does not hold would beat the backend that runs it.
+    connection.send({ type: "tool_call", id: "call_1", name: "book_flight", arguments: "{}" });
+    connection.send({ type: "tool_call", id: "call_2", name: "lookup", arguments: "{}" });
 
-    const answer = await connection.next();
-    assert.match(String(answer["error"]), /nothing is registered as unknown/);
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_2", output: "found" });
+    await session.close();
+  });
+
+  it("answers no call at all when it holds no tools", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "tool_call", id: "call_1", name: "book_flight", arguments: "{}" });
+    connection.send({ type: "joined" });
+    // Frames are read in order, so once joined is read the call before it has been seen.
+    for await (const event of session.events()) {
+      if (event.kind === "joined") {
+        break;
+      }
+    }
+    session.say("one moment");
+
+    assert.deepEqual(await connection.next(), { type: "say", text: "one moment" });
     await session.close();
   });
 
@@ -282,6 +310,114 @@ describe("Session", () => {
 
     await connection.next();
     assert.equal(aborted, true);
+    await session.close();
+  });
+
+  it("leaves a call the router addresses to another watcher", async () => {
+    const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "lookup", arguments: "{}", run: false });
+    connection.send({ type: "tool_call", id: "call_2", name: "lookup", arguments: "{}", run: true });
+
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_2", output: "found" });
+    await session.close();
+  });
+
+  it("hands a function the call it runs for, and sends how it is going", async () => {
+    let seen: ToolCall | undefined;
+    const tools = new Tools().register({
+      name: "search",
+      description: "Search flights",
+      run: (_input, _signal, toolCallContext) => {
+        seen = toolCallContext;
+        toolCallContext.update("checking three airlines");
+        toolCallContext.say("Still looking, one moment.");
+        return "found two";
+      },
+    });
+    const [session, connection] = await opened(tools);
+
+    connection.send({
+      type: "tool_call",
+      id: "call_1",
+      turn_id: "turn_2",
+      name: "search",
+      arguments: "{}",
+      user: { id: "sam", name: "Sam", custom: { tier: "gold" } },
+      conversation: { cid: "agent:kept", custom: { line: "support" } },
+      approved: true,
+    });
+
+    assert.deepEqual(await connection.next(), {
+      type: "tool_update",
+      tool_call_id: "call_1",
+      text: "checking three airlines",
+      verbatim: false,
+    });
+    assert.deepEqual(await connection.next(), {
+      type: "tool_update",
+      tool_call_id: "call_1",
+      text: "Still looking, one moment.",
+      verbatim: true,
+    });
+    assert.equal((await connection.next())["output"], "found two");
+    assert.equal(seen?.id, "call_1");
+    assert.equal(seen?.sessionId, "sess_1", "the session the call came over");
+    assert.equal(seen?.turnId, "turn_2");
+    assert.deepEqual(seen?.user, { id: "sam", name: "Sam", custom: { tier: "gold" } });
+    assert.deepEqual(seen?.conversation, { cid: "agent:kept", custom: { line: "support" } });
+    assert.equal(seen?.approved, true);
+    await session.close();
+  });
+
+  it("keeps a held call going when the caller talks over the agent", async () => {
+    let release = () => {};
+    let writing: AbortSignal | undefined;
+    const tools = new Tools().register({
+      name: "charge",
+      description: "Charge the card",
+      run: async (_input, _signal, toolCallContext) => {
+        writing = await toolCallContext.disallowInterruptions();
+        await new Promise<void>((resolve) => (release = resolve));
+        return "charged";
+      },
+    });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "charge", arguments: "{}" });
+    assert.deepEqual(await connection.next(), { type: "tool_hold", tool_call_id: "call_1" });
+    connection.send({ type: "tool_held", id: "call_1" });
+    while (!writing) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    connection.send({ type: "tool_cancel", id: "call_1" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release();
+
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_1", output: "charged" });
+    assert.equal(writing.aborted, false);
+    await session.close();
+  });
+
+  it("hands a call stopped before it could be held a signal already aborted", async () => {
+    let writing: AbortSignal | undefined;
+    const tools = new Tools().register({
+      name: "charge",
+      description: "Charge the card",
+      run: async (_input, _signal, toolCallContext) => {
+        writing = await toolCallContext.disallowInterruptions();
+        return writing.aborted ? "never charged" : "charged";
+      },
+    });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "charge", arguments: "{}" });
+    assert.deepEqual(await connection.next(), { type: "tool_hold", tool_call_id: "call_1" });
+    connection.send({ type: "tool_cancel", id: "call_1" });
+
+    assert.equal((await connection.next())["output"], "never charged");
+    assert.ok(writing?.reason instanceof CallNotHeldError);
     await session.close();
   });
 
@@ -381,6 +517,23 @@ describe("Session", () => {
       });
       assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
       assert.deepEqual(ran, []);
+      await session.close();
+    });
+
+    it("runs at once a call the caller already allowed out loud", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send({ ...refundCall, approved: true });
+
+      assert.deepEqual(await connection.next(), {
+        type: "tool_result",
+        tool_call_id: "call_1",
+        request_id: "m1",
+        turn_id: "t1",
+        output: "Refunded A-1042",
+      });
+      assert.deepEqual(session.approvals, []);
+      assert.deepEqual(ran, ["A-1042"]);
       await session.close();
     });
 

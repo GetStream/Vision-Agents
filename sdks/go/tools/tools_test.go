@@ -313,3 +313,18 @@ func TestWordsAloneStayAString(t *testing.T) {
 		t.Errorf("the tool_result output is %#v, want the string", wire)
 	}
 }
+
+func TestOutsideACallItsProgressGoesNowhere(t *testing.T) {
+	ctx := context.Background()
+	toolCallContext := CallFrom(ctx)
+
+	if err := toolCallContext.Update(ctx, "working"); err != nil {
+		t.Errorf("an update outside a toolCallContext failed: %v", err)
+	}
+	if err := toolCallContext.Say(ctx, "one moment"); err != nil {
+		t.Errorf("words outside a toolCallContext failed: %v", err)
+	}
+	if held := toolCallContext.DisallowInterruptions(ctx); held != ctx {
+		t.Error("holding a call that is not one changed its context")
+	}
+}

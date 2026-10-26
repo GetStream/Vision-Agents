@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -29,31 +28,6 @@ var opsSecurity = []map[string][]string{{"OpsKey": {}}}
 
 // maxReportBytes caps a registrar's report, which is a few hundred bytes of JSON.
 const maxReportBytes = 64 << 10
-
-// staffOperation reports whether an operation is reached with the ops key.
-func staffOperation(operation *huma.Operation) bool {
-	return slices.ContainsFunc(operation.Security, func(requirement map[string][]string) bool {
-		_, ops := requirement["OpsKey"]
-		return ops
-	})
-}
-
-// requireOpsKey answers a staff operation called without this deployment's ops key with a
-// 401, and one on a deployment with no ops key the same: nobody is staff there.
-func (s *Server) requireOpsKey(api huma.API) func(huma.Context, func(huma.Context)) {
-	return func(ctx huma.Context, next func(huma.Context)) {
-		if !staffOperation(ctx.Operation()) {
-			next(ctx)
-			return
-		}
-		sent := ctx.Header(opsKeyHeader)
-		if s.opsKey == "" || subtle.ConstantTimeCompare([]byte(sent), []byte(s.opsKey)) != 1 {
-			writeOperationError(ctx, unauthenticated("this operation is Stream staff's: it needs "+opsKeyHeader))
-			return
-		}
-		next(ctx)
-	}
-}
 
 // dlcError answers a 10DLC failure with the status it deserves.
 func dlcError(err error) error {
@@ -1101,6 +1075,7 @@ func (s *Server) registerDLC(api huma.API) {
 		Summary:     "List use cases waiting on Stream",
 		Description: "Every app's use cases in one status, longest waiting first, with the profile " +
 			"each was submitted on.\n\nStream staff only: it needs the ops key.",
+		Tags:      []string{staffTag},
 		Security:  opsSecurity,
 		Responses: map[string]*huma.Response{"200": {Description: "A page of use cases"}},
 		Errors:    staffErrors,
@@ -1111,6 +1086,7 @@ func (s *Server) registerDLC(api huma.API) {
 		Path:        "/v1/ops/use-cases/{id}",
 		Summary:     "Get a use case to review",
 		Description: "A use case with its app, profile and history.\n\nStream staff only: it needs the ops key.",
+		Tags:        []string{staffTag},
 		Security:    opsSecurity,
 		Responses:   map[string]*huma.Response{"200": {Description: "The use case"}},
 		Errors:      staffErrors,
@@ -1123,6 +1099,7 @@ func (s *Server) registerDLC(api huma.API) {
 		Description: "Approves, rejects or hands back a submitted use case. Approving registers the " +
 			"brand and the campaign with the vendor, which approves it in turn.\n\nStream staff " +
 			"only: it needs the ops key.",
+		Tags:      []string{staffTag},
 		Security:  opsSecurity,
 		Responses: map[string]*huma.Response{"200": {Description: "The use case as reviewed"}},
 		Errors:    staffErrors,

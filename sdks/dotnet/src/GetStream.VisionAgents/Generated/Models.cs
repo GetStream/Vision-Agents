@@ -254,6 +254,9 @@ namespace GetStream.VisionAgents.Models
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
         /// <summary>
         /// Absent when calls are reviewed by Stream's default guide.
         /// </summary>
@@ -406,6 +409,9 @@ namespace GetStream.VisionAgents.Models
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("review")]
         public AgentReview? Review { get; set; } = default!;
 
@@ -553,6 +559,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         /// <summary>
+        /// How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
+        /// <summary>
         /// How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("review")]
@@ -677,6 +689,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("policy")]
         public ConnectorBindingPolicy? Policy { get; set; } = default!;
+
+        /// <summary>
+        /// Names or path.Match patterns of the binding's tools whose every call waits for a person to allow it before the router sends it, such as create_issue or delete_*. The step of the call asks the session's user in its conversation, who answers with the session socket's tool_approval. Declined, or not answered in 10 minutes, the call is not sent and the model is told so. A session with nobody to ask, such as an incognito one or one opened by an MCP event, refuses the call at once. Each entry must match a tool the binding grants, or one of its tool_patterns. Refused with sandbox, whose code calls the API with nobody asked. At most 128, the cap tools has.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("require_approval")]
+        public System.Collections.Generic.List<string>? RequireApproval { get; set; } = default!;
 
         /// <summary>
         /// Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
@@ -933,7 +951,7 @@ namespace GetStream.VisionAgents.Models
         public int Ordinal { get; set; } = default!;
 
         /// <summary>
-        /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+        /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("payload")]
         public System.Collections.Generic.Dictionary<string, object>? Payload { get; set; } = default!;
@@ -1115,11 +1133,17 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// How an agent is offered its plugin, MCP server and connector tools.
+    /// How an agent is offered its tools, and how long what they were given and gave back is kept.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentTools
     {
+
+        /// <summary>
+        /// How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("output_retention")]
+        public string? OutputRetention { get; set; } = default!;
 
         /// <summary>
         /// Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
@@ -1603,45 +1627,6 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("vendor")]
         public string Vendor { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class Budget
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("interval")]
-        public string Interval { get; set; } = default!;
-
-        /// <summary>
-        /// The cap, in millionths of a dollar.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("limit_micros")]
-        public long LimitMicros { get; set; } = default!;
-
-        /// <summary>
-        /// When the current interval ends.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("resets_at")]
-        public System.DateTimeOffset? ResetsAt { get; set; } = default!;
-
-        /// <summary>
-        /// What has been spent in the current interval.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("spent_micros")]
-        public long? SpentMicros { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -2363,6 +2348,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string Name { get; set; } = default!;
 
+        /// <summary>
+        /// Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("paused_reason")]
+        public string? PausedReason { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("started_at")]
         public System.DateTimeOffset? StartedAt { get; set; } = default!;
 
@@ -2422,6 +2413,18 @@ namespace GetStream.VisionAgents.Models
             get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
             set { _additionalProperties = value; }
         }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CancelPriceChangeInput
+    {
+
+        /// <summary>
+        /// Why the change is called off.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
 
     }
 
@@ -2863,6 +2866,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ClassifyUsage
     {
+
+        /// <summary>
+        /// What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says: absent when it recorded nothing. Only a server-side caller is told.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long? CostMicros { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("input_tokens")]
         public long InputTokens { get; set; } = default!;
@@ -4894,6 +4903,12 @@ namespace GetStream.VisionAgents.Models
         public string? ProjectId { get; set; } = default!;
 
         /// <summary>
+        /// How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
+        /// <summary>
         /// The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("return_url")]
@@ -5602,6 +5617,42 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    /// <summary>
+    /// The quota a user is held to: each number is the first set of the user's own, the app's, the organization's and the router's default. Both are 0 on a router that counts nothing.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class EffectiveQuota
+    {
+
+        /// <summary>
+        /// Responses the user may ask for today. 0 is no cap.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("messages_per_user_per_day")]
+        public long MessagesPerUserPerDay { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("messages_set_by")]
+        public string MessagesSetBy { get; set; } = default!;
+
+        /// <summary>
+        /// Tokens the user's responses may cost today. 0 is no cap.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tokens_per_user_per_day")]
+        public long TokensPerUserPerDay { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tokens_set_by")]
+        public string TokensSetBy { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Equals
     {
@@ -5622,7 +5673,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string Code { get; set; } = default!;
@@ -6682,6 +6733,498 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    /// <summary>
+    /// A spend limit: what one subject may spend in each window of its interval. Billable work for a subject with no room left under any of its limits is refused, 402 spend_limit_reached, or 429 user_limit_reached with Retry-After for an end user's. A subject is also held to every subject that contains it, so an app's work is refused once its organization's limit is spent.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class Limit
+    {
+
+        /// <summary>
+        /// The key, for a limit at api_key level.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string? ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The app, for a limit at app, api_key or user level, or on an app's category or team.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string? AppId { get; set; } = default!;
+
+        /// <summary>
+        /// The usage category, for a category's limit.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("category")]
+        public string? Category { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// The lowest of limit_micros and the limits, in the same interval, of every subject that contains this one: what the subject can spend before something refuses it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("effective_limit_micros")]
+        public long EffectiveLimitMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public long Id { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("interval")]
+        public string Interval { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("level")]
+        public string Level { get; set; } = default!;
+
+        /// <summary>
+        /// What the subject may spend in each window, in millionths of a dollar.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("limit_micros")]
+        public long LimitMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("note")]
+        public string? Note { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("subject")]
+        public string Subject { get; set; } = default!;
+
+        /// <summary>
+        /// The team, for a team's limit.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("updated_at")]
+        public System.DateTimeOffset UpdatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Who last wrote it, as the audit log names them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("updated_by")]
+        public string UpdatedBy { get; set; } = default!;
+
+        /// <summary>
+        /// The end user, for a limit at user level.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What changes about a spend limit: its amount and its note. A field left out keeps what is stored.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitChange
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("limit_micros")]
+        public long? LimitMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("note")]
+        public string? Note { get; set; } = default!;
+
+    }
+
+    /// <summary>
+    /// A one-time amount one subject may spend past its own limits once one of them is spent, until it is used up, expires or is revoked. It is not credit: the organization's balance still pays, and credit, the operator's spend hard limit and the limits of every subject that contains this one still refuse. Work admitted on it draws its whole cost from it, so the last request can take it a little past its amount.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitGrant
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("amount_micros")]
+        public long AmountMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string? ApiKey { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string? AppId { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("category")]
+        public string? Category { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Who made it, as the audit log names them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("created_by")]
+        public string CreatedBy { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("expires_at")]
+        public System.DateTimeOffset? ExpiresAt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public long Id { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        /// <summary>
+        /// amount_micros less used_micros, never below 0.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("remaining_micros")]
+        public long RemainingMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("revoked_at")]
+        public System.DateTimeOffset? RevokedAt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("revoked_by")]
+        public string? RevokedBy { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public string State { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("subject")]
+        public string Subject { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
+        /// What the work admitted on it has cost: the whole billable cost of every row drawn from it, as the usage records have them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("used_micros")]
+        public long UsedMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// A one-time grant to one subject, which names the subject's own ids, never a default's.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitGrantInput
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("amount_micros")]
+        public long AmountMicros { get; set; } = default!;
+
+        /// <summary>
+        /// The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string? ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The app. Required at app, api_key and user level, and for an app's category or team.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string? AppId { get; set; } = default!;
+
+        /// <summary>
+        /// The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("category")]
+        public string? Category { get; set; } = default!;
+
+        /// <summary>
+        /// When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("expires_at")]
+        public System.DateTimeOffset? ExpiresAt { get; set; } = default!;
+
+        /// <summary>
+        /// Why it is made; more than spaces.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("subject")]
+        public string Subject { get; set; } = default!;
+
+        /// <summary>
+        /// The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
+        /// The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitGrantPage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<LimitGrant>? Items { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Why a grant ends now.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitGrantRevocation
+    {
+
+        /// <summary>
+        /// Why it ends; more than spaces.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitInForce
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("effective_limit_micros")]
+        public long EffectiveLimitMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public long Id { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("level")]
+        public string Level { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("limit_micros")]
+        public long LimitMicros { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// A spend limit to create. Every limit is the customer's; an unknown field is refused.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitInput
+    {
+
+        /// <summary>
+        /// The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string? ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The app. Required at app, api_key and user level, and for an app's category or team.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string? AppId { get; set; } = default!;
+
+        /// <summary>
+        /// The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("category")]
+        public string? Category { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("interval")]
+        public string Interval { get; set; } = default!;
+
+        /// <summary>
+        /// Left out, the level of the most specific id given: api_key or user when it is named, else app when app_id is, else organization.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("level")]
+        public string? Level { get; set; } = default!;
+
+        /// <summary>
+        /// What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("limit_micros")]
+        public long LimitMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("note")]
+        public string? Note { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("subject")]
+        public string Subject { get; set; } = default!;
+
+        /// <summary>
+        /// The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
+        /// The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitPage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<Limit>? Items { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// A reset of one subject's spend for its limits, in the current windows of the intervals named.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitResetInput
+    {
+
+        /// <summary>
+        /// The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string? ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The app. Required at app, api_key and user level, and for an app's category or team.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string? AppId { get; set; } = default!;
+
+        /// <summary>
+        /// The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("category")]
+        public string? Category { get; set; } = default!;
+
+        /// <summary>
+        /// The windows to reset. Left out, every one.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("intervals")]
+        public System.Collections.Generic.List<string>? Intervals { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("subject")]
+        public string Subject { get; set; } = default!;
+
+        /// <summary>
+        /// The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
+        /// The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitWindow
+    {
+
+        /// <summary>
+        /// What the subject had spent in the window when it was last reset; its limit counts spend past this.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("baseline_micros")]
+        public long BaselineMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("interval")]
+        public string Interval { get; set; } = default!;
+
+        /// <summary>
+        /// The limit in force, absent when the subject has none in this interval.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("limit")]
+        public LimitInForce? Limit { get; set; } = default!;
+
+        /// <summary>
+        /// The limit is spent and the subject's work is admitted on one of its grants.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("on_grant")]
+        public bool OnGrant { get; set; } = default!;
+
+        /// <summary>
+        /// What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("room_micros")]
+        public long? RoomMicros { get; set; } = default!;
+
+        /// <summary>
+        /// What the subject spent in the window, as the usage records count it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("spent_micros")]
+        public long SpentMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("window_end")]
+        public System.DateTimeOffset WindowEnd { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("window_start")]
+        public System.DateTimeOffset WindowStart { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class LinkChannelRequest
     {
@@ -6779,6 +7322,216 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("verbosity")]
         public string? Verbosity { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// A one-time grant staff make for an organization, for support. It is the customer's like any other.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ManageLimitGrantInput
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("amount_micros")]
+        public long AmountMicros { get; set; } = default!;
+
+        /// <summary>
+        /// The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string? ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The app. Required at app, api_key and user level, and for an app's category or team.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string? AppId { get; set; } = default!;
+
+        /// <summary>
+        /// The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("category")]
+        public string? Category { get; set; } = default!;
+
+        /// <summary>
+        /// When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("expires_at")]
+        public System.DateTimeOffset? ExpiresAt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("organization_id")]
+        public string OrganizationId { get; set; } = default!;
+
+        /// <summary>
+        /// Why it is made; more than spaces.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("subject")]
+        public string Subject { get; set; } = default!;
+
+        /// <summary>
+        /// The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
+        /// The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+    }
+
+    /// <summary>
+    /// A spend limit staff create for an organization, for support. It is the customer's like any other.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ManageLimitInput
+    {
+
+        /// <summary>
+        /// The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string? ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The app. Required at app, api_key and user level, and for an app's category or team.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string? AppId { get; set; } = default!;
+
+        /// <summary>
+        /// The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("category")]
+        public string? Category { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("interval")]
+        public string Interval { get; set; } = default!;
+
+        /// <summary>
+        /// Left out, the level of the most specific id given: api_key or user when it is named, else app when app_id is, else organization.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("level")]
+        public string? Level { get; set; } = default!;
+
+        /// <summary>
+        /// What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("limit_micros")]
+        public long LimitMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("note")]
+        public string? Note { get; set; } = default!;
+
+        /// <summary>
+        /// The organization the limit is for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("organization_id")]
+        public string OrganizationId { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("subject")]
+        public string Subject { get; set; } = default!;
+
+        /// <summary>
+        /// The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
+        /// The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+    }
+
+    /// <summary>
+    /// A reset staff make of one subject's spend for its limits, for support.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ManageLimitResetInput
+    {
+
+        /// <summary>
+        /// The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string? ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The app. Required at app, api_key and user level, and for an app's category or team.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string? AppId { get; set; } = default!;
+
+        /// <summary>
+        /// The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("category")]
+        public string? Category { get; set; } = default!;
+
+        /// <summary>
+        /// The windows to reset. Left out, every one.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("intervals")]
+        public System.Collections.Generic.List<string>? Intervals { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("organization_id")]
+        public string OrganizationId { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("subject")]
+        public string Subject { get; set; } = default!;
+
+        /// <summary>
+        /// The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
+        /// The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+    }
+
+    /// <summary>
+    /// Who a management call is recorded as made by: the actor and the name the call named, as the audit log keeps them.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ManageStatus
+    {
+
+        /// <summary>
+        /// The X-Stream-Actor-Id the call named.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("actor")]
+        public string Actor { get; set; } = default!;
+
+        /// <summary>
+        /// The X-Stream-Actor-Name it named, decoded from percent-encoding. Absent when it named none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string? Name { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -7410,7 +8163,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
+        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("custom")]
         public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;
@@ -7846,7 +8599,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
+    /// What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Policy
@@ -7858,8 +8611,18 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("allowed_models")]
         public System.Collections.Generic.List<string>? AllowedModels { get; set; } = default!;
 
+        /// <summary>
+        /// The organization's own warning threshold, in millionths of a dollar: at or below it, every answer to a backend says X-Stream-Balance-Warning: low, and the organization's stream event destinations get one account.balance_low. It wins over the tier's. Left out, the tier's applies. Only an organization's policy has one: an app's that sets it is refused.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("balance_warning_micros")]
+        public long? BalanceWarningMicros { get; set; } = default!;
+
+        /// <summary>
+        /// Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400 budget_moved, and none is read back.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("budget")]
-        public Budget? Budget { get; set; } = default!;
+        [System.Obsolete]
+        public System.Collections.Generic.Dictionary<string, object>? Budget { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("data_policy")]
         public DataPolicy? DataPolicy { get; set; } = default!;
@@ -7880,10 +8643,22 @@ namespace GetStream.VisionAgents.Models
         public bool? RequireOwnStreamApp { get; set; } = default!;
 
         /// <summary>
+        /// How the scope's sessions are handed back a conversation they carry on. The most specific level wins, field by field: a server-side session request, then its agent config, then the app's policy, then the organization's, then the router's default (text only, 100 turns, 60000 characters).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
+        /// <summary>
         /// Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        /// <summary>
+        /// How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool_output_retention")]
+        public string? ToolOutputRetention { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -7968,6 +8743,639 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("vendor")]
         public string Vendor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceChange
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("cancel_reason")]
+        public string? CancelReason { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("cancelled_at")]
+        public System.DateTimeOffset? CancelledAt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("cancelled_by")]
+        public string? CancelledBy { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// The actor that made it, or the router release that loaded it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("created_by")]
+        public string CreatedBy { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
+        public System.DateTimeOffset EffectiveAt { get; set; } = default!;
+
+        /// <summary>
+        /// The entries it wrote. Absent from a list of changes.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("entries")]
+        public System.Collections.Generic.List<PriceChangeEntry>? Entries { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("kind")]
+        public string Kind { get; set; } = default!;
+
+        /// <summary>
+        /// The list's markup from effective_at on. Absent left it as it was.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
+        public long? MarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// &lt;UTC yyyymmddhhmmss&gt;_&lt;the name it was given&gt;: the price_version of every row its entries price.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("source")]
+        public string Source { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceChangeEntry
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("free")]
+        public bool? Free { get; set; } = default!;
+
+        /// <summary>
+        /// The entry's own markup in basis points. Absent takes the list's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
+        public long? MarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// Such as llm, stt, tts, sms or phone.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("modality")]
+        public string Modality { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's rates, by meter.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tiers")]
+        public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
+
+        /// <summary>
+        /// The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public System.Collections.Generic.Dictionary<string, string>? When { get; set; } = default!;
+
+        /// <summary>
+        /// The change stopped pricing the item under its when.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("withdrawn")]
+        public bool? Withdrawn { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceChangeInput
+    {
+
+        /// <summary>
+        /// Required when the preview answers confirmation_required.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("confirm")]
+        public bool? Confirm { get; set; } = default!;
+
+        /// <summary>
+        /// When the change takes effect. Absent is now; it may be up to two years ahead, but never more than 5 minutes in the past, and a time up to 5 minutes past is taken as now.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
+        public System.DateTimeOffset? EffectiveAt { get; set; } = default!;
+
+        /// <summary>
+        /// Each replaces its item's entry under its when whole: every rate, tier and markup it has.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("entries")]
+        public System.Collections.Generic.List<PriceEntryInput>? Entries { get; set; } = default!;
+
+        /// <summary>
+        /// The list's markup in basis points from effective_at on. Absent leaves it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
+        public long? MarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// 1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// What changed, from what to what. At least one sentence; trimmed, and refused when blank.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's page and the date it was read, or the operator's own decision. Trimmed, and refused when blank.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("source")]
+        public string Source { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceChangePage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<PriceChange> Items { get; set; } = new System.Collections.Generic.List<PriceChange>();
+
+        /// <summary>
+        /// Pass as `cursor` for the next page. Absent on the last one.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceEntry
+    {
+
+        /// <summary>
+        /// The markup the entry is sold at: its own, else the list's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("charged_markup_bps")]
+        public long ChargedMarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// What customers are charged: each rate with the markup added, to 12 significant digits.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("charged_rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? ChargedRates { get; set; } = default!;
+
+        /// <summary>
+        /// What customers are charged for long prompts.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("charged_tiers")]
+        public System.Collections.Generic.List<PriceTier>? ChargedTiers { get; set; } = default!;
+
+        /// <summary>
+        /// When the entry took effect, or takes effect.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
+        public System.DateTimeOffset? EffectiveAt { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor charges nothing for it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("free")]
+        public bool? Free { get; set; } = default!;
+
+        /// <summary>
+        /// The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("local")]
+        public bool? Local { get; set; } = default!;
+
+        /// <summary>
+        /// The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
+        public long? MarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// Such as llm, stt, tts, sms or phone.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("modality")]
+        public string Modality { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's rates, by meter.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's rates for long prompts.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tiers")]
+        public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
+
+        /// <summary>
+        /// The price change that wrote the entry, which every row it prices names as its price_version.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("version")]
+        public string? Version { get; set; } = default!;
+
+        /// <summary>
+        /// The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public System.Collections.Generic.Dictionary<string, string>? When { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceEntryInput
+    {
+
+        /// <summary>
+        /// The vendor charges nothing for it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("free")]
+        public bool? Free { get; set; } = default!;
+
+        /// <summary>
+        /// Refused with invalid_price: a model is local when the routing config says so.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("local")]
+        public bool? Local { get; set; } = default!;
+
+        /// <summary>
+        /// The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
+        public long? MarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// Such as llm, stt, tts, sms or phone.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("modality")]
+        public string Modality { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        /// <summary>
+        /// Rates for long prompts. Each tier rates every meter the entry does.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tiers")]
+        public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
+
+        /// <summary>
+        /// Refused with invalid_price: an entry's version is the change that writes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("version")]
+        public string? Version { get; set; } = default!;
+
+        /// <summary>
+        /// The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public System.Collections.Generic.Dictionary<string, string>? When { get; set; } = default!;
+
+        /// <summary>
+        /// Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("withdrawn")]
+        public bool? Withdrawn { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceItem
+    {
+
+        /// <summary>
+        /// Such as llm, stt, tts, sms or phone.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("modality")]
+        public string Modality { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public System.Collections.Generic.Dictionary<string, string>? When { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceList
+    {
+
+        /// <summary>
+        /// The moment the list is read at.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("at")]
+        public System.DateTimeOffset At { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("entries")]
+        public System.Collections.Generic.List<PriceEntry> Entries { get; set; } = new System.Collections.Generic.List<PriceEntry>();
+
+        /// <summary>
+        /// The list's markup in basis points, added to every entry with none of its own.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
+        public long MarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("unpriced")]
+        public System.Collections.Generic.List<PriceItem> Unpriced { get; set; } = new System.Collections.Generic.List<PriceItem>();
+
+        /// <summary>
+        /// The entries of the changes not cancelled that take effect after at, soonest first.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("upcoming")]
+        public System.Collections.Generic.List<UpcomingPriceEntry> Upcoming { get; set; } = new System.Collections.Generic.List<UpcomingPriceEntry>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PricePreview
+    {
+
+        /// <summary>
+        /// createPriceChange answers 409 confirmation_required without confirm: true.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("confirmation_required")]
+        public bool ConfirmationRequired { get; set; } = default!;
+
+        /// <summary>
+        /// When the change would take effect.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
+        public System.DateTimeOffset EffectiveAt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<PricePreviewItem> Items { get; set; } = new System.Collections.Generic.List<PricePreviewItem>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps_after")]
+        public long MarkupBpsAfter { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps_before")]
+        public long MarkupBpsBefore { get; set; } = default!;
+
+        /// <summary>
+        /// The items that make it so.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("needs_confirmation")]
+        public System.Collections.Generic.List<PriceItem>? NeedsConfirmation { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PricePreviewItem
+    {
+
+        /// <summary>
+        /// How it is priced after. Absent when nothing will.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("after")]
+        public PricedEntry? After { get; set; } = default!;
+
+        /// <summary>
+        /// How it is priced before the change. Absent when nothing prices it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("before")]
+        public PricedEntry? Before { get; set; } = default!;
+
+        /// <summary>
+        /// The factor the markup it is sold at moves by. Absent when either is 0.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markup_factor")]
+        public double? MarkupFactor { get; set; } = default!;
+
+        /// <summary>
+        /// Such as llm, stt, tts, sms or phone.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("modality")]
+        public string Modality { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("needs_confirmation")]
+        public bool? NeedsConfirmation { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("rate_factors")]
+        public System.Collections.Generic.Dictionary<string, double>? RateFactors { get; set; } = default!;
+
+        /// <summary>
+        /// It is priced before the change and billable with no rate after.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("unpriced")]
+        public bool? Unpriced { get; set; } = default!;
+
+        /// <summary>
+        /// The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public System.Collections.Generic.Dictionary<string, string>? When { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceRate
+    {
+
+        /// <summary>
+        /// The quantity is rounded up to a multiple of this before it is priced, such as 60 for a call billed by the started minute.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("increment")]
+        public long? Increment { get; set; } = default!;
+
+        /// <summary>
+        /// The least quantity billed once anything is used.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("minimum")]
+        public long? Minimum { get; set; } = default!;
+
+        /// <summary>
+        /// The units the rate is for: 1000000 for a rate per million tokens, 1 for one per image.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("per")]
+        public long Per { get; set; } = default!;
+
+        /// <summary>
+        /// US dollars for every per units.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("usd")]
+        public double Usd { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PriceTier
+    {
+
+        /// <summary>
+        /// A prompt longer than this many input tokens is priced at these rates, for the whole request.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("above_input_tokens")]
+        public long AboveInputTokens { get; set; } = default!;
+
+        /// <summary>
+        /// By meter.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate> Rates { get; set; } = new System.Collections.Generic.Dictionary<string, PriceRate>();
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PricedEntry
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("charged_rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? ChargedRates { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("charged_tiers")]
+        public System.Collections.Generic.List<PriceTier>? ChargedTiers { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("free")]
+        public bool? Free { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("local")]
+        public bool? Local { get; set; } = default!;
+
+        /// <summary>
+        /// The markup it is sold at.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
+        public long MarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's rates.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tiers")]
+        public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
+
+        /// <summary>
+        /// The change that wrote it. Absent for the change previewed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("version")]
+        public string? Version { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -8164,20 +9572,20 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+    /// What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user &lt;id&gt;, every user of app &lt;id&gt;, every user of organization &lt;id&gt;), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Quota
     {
 
         /// <summary>
-        /// How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+        /// How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level's applies: the app's, then the organization's, then the router's default.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("messages_per_user_per_day")]
         public long? MessagesPerUserPerDay { get; set; } = default!;
 
         /// <summary>
-        /// How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+        /// How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the next level's applies, as for messages.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tokens_per_user_per_day")]
         public long? TokensPerUserPerDay { get; set; } = default!;
@@ -8328,6 +9736,42 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// How a conversation is handed back to the model when a session carries it on.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ResumeHistory
+    {
+
+        /// <summary>
+        /// Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("include_tools")]
+        public bool? IncludeTools { get; set; } = default!;
+
+        /// <summary>
+        /// How many characters are handed back, tool calls and results included: about four to a token. The whole of it is sent, and billed, with the first reply after the conversation is resumed, and is cached from then on by models that cache, so keep it well inside the model's context window. Omitted is 60000.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_characters")]
+        public long? MaxCharacters { get; set; } = default!;
+
+        /// <summary>
+        /// How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_messages")]
+        public long? MaxMessages { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -8979,7 +10423,7 @@ namespace GetStream.VisionAgents.Models
         public string DeliveredTo { get; set; } = default!;
 
         /// <summary>
-        /// Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again); on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
+        /// Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error")]
         public string? Error { get; set; } = default!;
@@ -9357,6 +10801,9 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("incognito")]
         public bool? Incognito { get; set; } = default!;
 
+        /// <summary>
+        /// What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("instructions")]
         public string? Instructions { get; set; } = default!;
 
@@ -9848,6 +11295,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("executor")]
         public string? Executor { get; set; } = default!;
 
+        /// <summary>
+        /// Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("interruptible")]
+        public bool? Interruptible { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string Name { get; set; } = default!;
 
@@ -9856,6 +11309,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("parameters")]
         public System.Collections.Generic.Dictionary<string, object>? Parameters { get; set; } = default!;
+
+        /// <summary>
+        /// How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("timeout_ms")]
+        public long? TimeoutMs { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -9869,7 +11328,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+    /// Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. On a voice call the router asks instead: it does not send the call, answers the model at once with the title, each {argument} in it filled in from the call, and offers the model confirm_tool_call. A cascade says the question as written; a speech-to-speech model is told to ask it in those words. Only a yes within 15 seconds of the question finishing sends the call, under its own id and with approved true, and the tool's timeout starts then. A no, or silence, declines it, and the call is never sent.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SessionToolApproval
@@ -10706,7 +12165,7 @@ namespace GetStream.VisionAgents.Models
         public string? ConfigId { get; set; } = default!;
 
         /// <summary>
-        /// Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job.
+        /// Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error, unless it was refused for money, which is answered 402 or 403 as any request is. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("inline")]
         public bool? Inline { get; set; } = default!;
@@ -10755,6 +12214,57 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("value")]
         public string Value { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SpendHardLimitUsage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("daily")]
+        public SpendHardLimitWindow? Daily { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("monthly")]
+        public SpendHardLimitWindow? Monthly { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SpendHardLimitWindow
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("limit_micros")]
+        public long LimitMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("room_micros")]
+        public long RoomMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("spent_micros")]
+        public long SpentMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("window_end")]
+        public System.DateTimeOffset WindowEnd { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -11253,6 +12763,54 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SubjectUsage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string? ApiKey { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string? AppId { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("category")]
+        public string? Category { get; set; } = default!;
+
+        /// <summary>
+        /// The subject's live grants, which its work is admitted on once one of its limits is spent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("grants")]
+        public System.Collections.Generic.List<LimitGrant>? Grants { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("spend_hard_limit")]
+        public SpendHardLimitUsage? SpendHardLimit { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("subject")]
+        public string Subject { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+        /// <summary>
+        /// The current window of every interval, daily first.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("windows")]
+        public System.Collections.Generic.List<LimitWindow>? Windows { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SuspendTelephonyRequest
     {
 
@@ -11383,6 +12941,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
+
+        /// <summary>
+        /// How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("role")]
         public string? Role { get; set; } = default!;
@@ -11822,7 +13386,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself.
+    /// A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ToolApprovalCommand
@@ -11843,8 +13407,11 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("tool_call_id")]
         public string ToolCallId { get; set; } = default!;
 
+        /// <summary>
+        /// The turn of the call. Required, except for a connector call whose binding sets require_approval.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("turn_id")]
-        public string TurnId { get; set; } = default!;
+        public string? TurnId { get; set; } = default!;
 
         /// <summary>
         /// One of `tool_approval`.
@@ -12176,7 +13743,7 @@ namespace GetStream.VisionAgents.Models
         public string? ConfigId { get; set; } = default!;
 
         /// <summary>
-        /// Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+        /// Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later; a request refused for money is answered 402 or 403 instead, as any request is. No database is required. Cancelling the request cancels the work. The audio goes in source.audio, at most 8 MiB, with no source.url and no callback, else a 400; deadline 90 seconds. Default false retains asynchronous stored jobs.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("inline")]
         public bool? Inline { get; set; } = default!;
@@ -12396,6 +13963,111 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("turn_count")]
         public long TurnCount { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class UpcomingPriceEntry
+    {
+
+        /// <summary>
+        /// The markup the entry is sold at: its own, else the list's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("charged_markup_bps")]
+        public long ChargedMarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// What customers are charged: each rate with the markup added, to 12 significant digits.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("charged_rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? ChargedRates { get; set; } = default!;
+
+        /// <summary>
+        /// What customers are charged for long prompts.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("charged_tiers")]
+        public System.Collections.Generic.List<PriceTier>? ChargedTiers { get; set; } = default!;
+
+        /// <summary>
+        /// When the entry took effect, or takes effect.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
+        public System.DateTimeOffset? EffectiveAt { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor charges nothing for it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("free")]
+        public bool? Free { get; set; } = default!;
+
+        /// <summary>
+        /// The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("local")]
+        public bool? Local { get; set; } = default!;
+
+        /// <summary>
+        /// The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
+        public long? MarkupBps { get; set; } = default!;
+
+        /// <summary>
+        /// Such as llm, stt, tts, sms or phone.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("modality")]
+        public string Modality { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's rates, by meter.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        /// <summary>
+        /// The change's reason.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's rates for long prompts.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tiers")]
+        public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
+
+        /// <summary>
+        /// The price change that wrote the entry, which every row it prices names as its price_version.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("version")]
+        public string? Version { get; set; } = default!;
+
+        /// <summary>
+        /// The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public System.Collections.Generic.Dictionary<string, string>? When { get; set; } = default!;
+
+        /// <summary>
+        /// The item under its when stops being priced at effective_at.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("withdrawn")]
+        public bool? Withdrawn { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -13035,6 +14707,117 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("vendor_payload")]
         public System.Collections.Generic.Dictionary<string, object>? VendorPayload { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// One end user of the calling app: their own quota, if any, the quota they are held to, and what they spent today.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class UserPolicy
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("effective")]
+        public EffectiveQuota Effective { get; set; } = new EffectiveQuota();
+
+        /// <summary>
+        /// Responses counted today toward a quota the customer set, the app's backend acting for the user included. A day held only to the router's default counts the user's devices alone, which this leaves out.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("messages")]
+        public long Messages { get; set; } = default!;
+
+        /// <summary>
+        /// The user's own quota. Left out, the user has none of their own and is held to the defaults.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("quota")]
+        public Quota? Quota { get; set; } = default!;
+
+        /// <summary>
+        /// When the day ends and the count starts again: the next UTC midnight.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resets_at")]
+        public System.DateTimeOffset ResetsAt { get; set; } = default!;
+
+        /// <summary>
+        /// Tokens counted today toward a quota the customer set, counted as messages is.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tokens")]
+        public long Tokens { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string UserId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class UserPolicyEntry
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("quota")]
+        public Quota? Quota { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("updated_at")]
+        public System.DateTimeOffset UpdatedAt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string UserId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// One end user's own policy, which holds a quota only.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class UserPolicyInput
+    {
+
+        /// <summary>
+        /// The user's own quota. Left out, null, or setting neither number, removes the user's own and the defaults apply.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("quota")]
+        public Quota? Quota { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class UserPolicyPage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<UserPolicyEntry>? Items { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

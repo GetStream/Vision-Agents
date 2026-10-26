@@ -117,6 +117,8 @@ func NewRecordings(options Options) (*Recordings, error) {
 		Live:     options.Live,
 		Voices:   options.Voices,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -219,6 +221,8 @@ func (r *Recordings) Record(
 		return tts.Recorded{}, routing.ProviderConfig{}, routing.Refused(err)
 	}
 	request := recording.request()
+	request.Attribution = routing.AttributionFrom(ctx)
+	request.Spent = routing.SpentFrom(ctx)
 
 	var recorded tts.Recorded
 	// failed is the vendor's own answer, whole, for a walk that asked only one candidate.

@@ -15,3 +15,7 @@ output-options:
     - streamModality
     - dispatchCalls
     - openSocketSession
+  # Staff operations (/v1/ops/*, /v1/manage/*) are Stream's own, reached with a staff key and
+  # never by a customer. They stay in the spec, which Stream's staff tools are typed from.
+  exclude-tags:
+    - Staff

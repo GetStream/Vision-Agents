@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
     from ..models.plugin_with_options import PluginWithOptions
+    from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
     from ..models.simulation_declaration import SimulationDeclaration
@@ -88,6 +89,8 @@ class SyncAgentRequest:
                 the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once,
                 unless its entry sets user: then each end user connects it with their own account, from the conversation, the
                 first time the agent needs it.
+            resume_history (ResumeHistory | Unset): How a conversation is handed back to the model when a session carries it
+                on.
             role (AgentRole | Unset): What the agent is for in the app, beyond answering people. agent_moderator is the
                 app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a
                 second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an
@@ -110,7 +113,8 @@ class SyncAgentRequest:
             stt (str | Unset):
             subagent (str | Unset): Only a voice agent names one: a text agent runs everything on its llm.
             tags (SyncAgentRequestTags | Unset):
-            tools (AgentTools | Unset): How an agent is offered its plugin, MCP server and connector tools.
+            tools (AgentTools | Unset): How an agent is offered its tools, and how long what they were given and gave back
+                is kept.
             tts (str | Unset):
             video (SessionVideo | Unset):
             voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
@@ -138,6 +142,7 @@ class SyncAgentRequest:
     mode: AgentMode | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[PluginWithOptions | str] | Unset = UNSET
+    resume_history: ResumeHistory | Unset = UNSET
     role: AgentRole | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
@@ -249,6 +254,10 @@ class SyncAgentRequest:
                     plugins_item = plugins_item_data
                 plugins.append(plugins_item)
 
+        resume_history: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.resume_history, Unset):
+            resume_history = self.resume_history.to_dict()
+
         role: str | Unset = UNSET
         if not isinstance(self.role, Unset):
             role = self.role.value
@@ -347,6 +356,8 @@ class SyncAgentRequest:
             field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
+        if resume_history is not UNSET:
+            field_dict["resume_history"] = resume_history
         if role is not UNSET:
             field_dict["role"] = role
         if sandbox is not UNSET:
@@ -394,6 +405,7 @@ class SyncAgentRequest:
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
         from ..models.plugin_with_options import PluginWithOptions
+        from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
         from ..models.simulation_declaration import SimulationDeclaration
@@ -533,6 +545,13 @@ class SyncAgentRequest:
 
                 plugins.append(plugins_item)
 
+        _resume_history = d.pop("resume_history", UNSET)
+        resume_history: ResumeHistory | Unset
+        if isinstance(_resume_history, Unset):
+            resume_history = UNSET
+        else:
+            resume_history = ResumeHistory.from_dict(_resume_history)
+
         _role = d.pop("role", UNSET)
         role: AgentRole | Unset
         if isinstance(_role, Unset):
@@ -635,6 +654,7 @@ class SyncAgentRequest:
             mode=mode,
             plugin_events=plugin_events,
             plugins=plugins,
+            resume_history=resume_history,
             role=role,
             sandbox=sandbox,
             sandbox_options=sandbox_options,

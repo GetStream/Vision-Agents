@@ -121,6 +121,9 @@ and check that the pods start and open an existing connection. To roll back, res
 - Commit and push first, and build from a clean tree: the version has to name a commit somebody else can check out.
 - Values and router are one deployment. Rolling the auth work also meant moving `ROUTER_AUTH_MODE` to `proxy`, because `noauth` had changed meaning underneath it. Render the chart, diff it against the live release, explain every line.
 - Migrations run on start. Additive is fine; anything else wants a plan first.
+- Never roll back below `accelerate-v0.6.135`, the first tag with f38926d2 (#1182): an older
+  router ignores `require_approval` on connector bindings, so their write tools run without
+  the person's approval.
 - The version is deliberately not in the pod spec. The fetch initContainer's log says which binary a pod started on; after a fastdeploy, ask `--status` instead.
 - A model with no key in that environment drops to the next candidate, and when a strict term like `diarize` leaves none the STT socket just closes on the caller. Check the key before reading that as a bug.
 - Verify from outside: `examples/routers/stt_realtime_example -staging` streams a file through the hosted router and prints which model answered.

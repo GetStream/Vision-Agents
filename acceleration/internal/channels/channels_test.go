@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,10 +151,11 @@ func (s *WhatsAppSuite) TestSomethingThatIsNotADeliveryIsRefused() {
 }
 
 func (s *WhatsAppSuite) TestAnAnswerIsSentToTheNumberThatWroteAsTheLine() {
-	err := s.provider.Send(context.Background(), s.account, "13479018418",
+	sent, err := s.provider.Send(context.Background(), s.account, "13479018418",
 		Reply{Text: "You have three open issues."})
 
 	s.Require().NoError(err)
+	s.Equal(Sent{Messages: 1}, sent)
 	s.Require().Len(s.api.sent, 1)
 	s.Equal("/1345390685325117/messages", s.api.sent[0].path)
 	s.Equal("Bearer meta-token", s.api.sent[0].token)
@@ -164,12 +166,13 @@ func (s *WhatsAppSuite) TestAnAnswerIsSentToTheNumberThatWroteAsTheLine() {
 
 // Meta takes one thing per message, so a reply with a file is two messages, the words first.
 func (s *WhatsAppSuite) TestARenderIsSentAfterTheWordsAboutIt() {
-	err := s.provider.Send(context.Background(), s.account, "13479018418", Reply{
+	sent, err := s.provider.Send(context.Background(), s.account, "13479018418", Reply{
 		Text:  "Here is the teapot.",
 		Files: []File{{Name: "render.png", MimeType: "image/png", URL: "https://files/render.png"}},
 	})
 
 	s.Require().NoError(err)
+	s.Equal(Sent{Messages: 2}, sent, "Meta bills each message")
 	s.Require().Len(s.api.sent, 2)
 	s.Equal("text", s.api.sent[0].body["type"])
 	s.Equal("image", s.api.sent[1].body["type"])
@@ -177,7 +180,7 @@ func (s *WhatsAppSuite) TestARenderIsSentAfterTheWordsAboutIt() {
 }
 
 func (s *WhatsAppSuite) TestALoginIsSentAsAButtonRatherThanAURLToCopy() {
-	err := s.provider.Send(context.Background(), s.account, "13479018418", Reply{
+	_, err := s.provider.Send(context.Background(), s.account, "13479018418", Reply{
 		Link: &Link{Text: "Connect Google Calendar", URL: "https://accounts.google.com/o/oauth2"},
 	})
 
@@ -201,7 +204,7 @@ func (s *WhatsAppSuite) TestMetasRefusalIsCarriedIntoTheError() {
 	defer refusing.Close()
 	provider := &whatsAppProvider{client: refusing.Client(), baseURL: refusing.URL}
 
-	err := provider.Send(context.Background(), s.account, "13479018418", Reply{Text: "hello"})
+	_, err := provider.Send(context.Background(), s.account, "13479018418", Reply{Text: "hello"})
 
 	s.Require().Error(err)
 	s.Contains(err.Error(), "Recipient phone number not in allowed list")
@@ -209,7 +212,9 @@ func (s *WhatsAppSuite) TestMetasRefusalIsCarriedIntoTheError() {
 
 func (s *WhatsAppSuite) TestNothingToSayIsNoRequestAtAll() {
 	s.True(Reply{}.Empty())
-	s.NoError(s.provider.Send(context.Background(), s.account, "13479018418", Reply{}))
+	sent, err := s.provider.Send(context.Background(), s.account, "13479018418", Reply{})
+	s.NoError(err)
+	s.Equal(Sent{}, sent)
 	s.Empty(s.api.sent)
 }
 
@@ -298,6 +303,40 @@ func (s *TelnyxSuite) TestATextIsReadWithTheNumberItCameFrom() {
 	}, messages[0])
 }
 
+// An MMS carries its files in media, and one of files alone is still a message, billed as one.
+func (s *TelnyxSuite) TestAnMMSIsReadWithHowManyFilesItCarried() {
+	messages, err := s.provider.Parse([]byte(`{"data":{"event_type":"message.received",
+		"payload":{"id":"msg-3","text":"","type":"MMS",
+			"media":[{"url":"https://media/1.jpg","content_type":"image/jpeg"},{"url":"https://media/2.jpg"}],
+			"from":{"phone_number":"+13479018418"},"to":[{"phone_number":"+12187021098"}]}}}`))
+
+	s.Require().NoError(err)
+	s.Require().Len(messages, 1)
+	s.Equal(2, messages[0].Media)
+	s.Empty(messages[0].Text)
+}
+
+// A send that fails after its words went out says what it sent.
+func (s *TelnyxSuite) TestASendThatFailsPartwaySaysWhatWentOut() {
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if _, media := body["media_urls"]; media {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer failing.Close()
+	provider := &telnyxProvider{client: failing.Client(), baseURL: failing.URL}
+
+	sent, err := provider.Send(context.Background(), s.account, "+13479018418",
+		Reply{Text: "Here it is.", Files: []File{{URL: "https://files/render.png"}}})
+
+	s.Require().Error(err)
+	s.Equal(Sent{Messages: 1, Segments: 1}, sent)
+}
+
 // Telnyx reports on what this router sent down the same webhook, and that is not a question.
 func (s *TelnyxSuite) TestAReportOnTheRoutersOwnMessageIsNotAnswered() {
 	messages, err := s.provider.Parse([]byte(`{"data":{"event_type":"message.sent",
@@ -309,10 +348,11 @@ func (s *TelnyxSuite) TestAReportOnTheRoutersOwnMessageIsNotAnswered() {
 }
 
 func (s *TelnyxSuite) TestAnAnswerIsSentFromTheLineToTheNumberThatWrote() {
-	err := s.provider.Send(context.Background(), s.account, "+13479018418",
+	sent, err := s.provider.Send(context.Background(), s.account, "+13479018418",
 		Reply{Text: "Try Roscioli."})
 
 	s.Require().NoError(err)
+	s.Equal(Sent{Messages: 1, Segments: 1}, sent)
 	s.Require().Len(s.api.sent, 1)
 	s.Equal("/messages", s.api.sent[0].path)
 	s.Equal("Bearer telnyx-key", s.api.sent[0].token)
@@ -327,10 +367,13 @@ func (s *TelnyxSuite) TestMoreThanTenFilesAreSentAsSeveralMessages() {
 		files = append(files, File{URL: "https://files/render.png"})
 	}
 
-	err := s.provider.Send(context.Background(), s.account, "+13479018418", Reply{Files: files})
+	sent, err := s.provider.Send(context.Background(), s.account, "+13479018418",
+		Reply{Text: strings.Repeat("a", 161), Files: files})
 
 	s.Require().NoError(err)
-	s.Require().Len(s.api.sent, 2)
+	s.Equal(Sent{Messages: 3, Segments: 2, Media: 2}, sent, "the words by their segments, each MMS by itself")
+	s.Require().Len(s.api.sent, 3)
+	s.api.sent = s.api.sent[1:]
 	s.Len(s.api.sent[0].body["media_urls"], telnyxMaxMedia)
 	s.Len(s.api.sent[1].body["media_urls"], 2)
 }
@@ -442,12 +485,13 @@ func (s *LinqSuite) TestTheRoutersOwnMessageComingBackIsNotAnswered() {
 }
 
 func (s *LinqSuite) TestAnAnswerIsPostedToTheChatItWasAskedIn() {
-	err := s.provider.Send(context.Background(), s.account, "chat_7", Reply{
+	sent, err := s.provider.Send(context.Background(), s.account, "chat_7", Reply{
 		Text:  "Here it is.",
 		Files: []File{{URL: "https://files/render.png"}},
 	})
 
 	s.Require().NoError(err)
+	s.Equal(Sent{Messages: 1}, sent, "the parts are one message")
 	s.Require().Len(s.api.sent, 1)
 	s.Equal("/chats/chat_7/messages", s.api.sent[0].path)
 	s.Equal("Bearer linq-key", s.api.sent[0].token)
@@ -461,7 +505,7 @@ func (s *LinqSuite) TestAnAnswerIsPostedToTheChatItWasAskedIn() {
 
 // iMessage previews a URL, so a login reads as a link rather than needing a button.
 func (s *LinqSuite) TestALoginIsSentAsALinkInTheText() {
-	err := s.provider.Send(context.Background(), s.account, "chat_7", Reply{
+	_, err := s.provider.Send(context.Background(), s.account, "chat_7", Reply{
 		Link: &Link{Text: "Connect Google Calendar", URL: "https://accounts.google.com/o/oauth2"},
 	})
 

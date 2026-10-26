@@ -50,7 +50,7 @@ func (s *Server) search(ctx context.Context, request *searchRequest) (*searchRes
 		Options:       held,
 	})
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, refusedRequest(err)
 	}
 	defer session.Close()
 
@@ -66,7 +66,7 @@ func (s *Server) search(ctx context.Context, request *searchRequest) (*searchRes
 		OutputSchema:   held.OutputSchema,
 	})
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, refusedRequest(err)
 	}
 
 	results := make([]SearchResult, 0, len(found.Documents))

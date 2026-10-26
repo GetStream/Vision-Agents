@@ -74,6 +74,9 @@ func newProvider(options Options, dial dialer) *Provider {
 	return &Provider{dial: dial, logger: options.Logger, ctx: ctx, stop: stop, calls: map[string]call{}}
 }
 
+// StreamLeg is the number's own line, with the call id on the leg.
+func (p *Provider) StreamLeg() phone.StreamLeg { return phone.StreamLegShared }
+
 // Dial starts the call and returns before anyone answers, as every vendor's API does. What
 // happens after, including a call that never connects, is in the logs under its
 // vendor_call_id.
@@ -98,7 +101,7 @@ func (p *Provider) Dial(_ context.Context, outbound phone.Outbound) (phone.Diale
 		Stream: sipbridge.StreamTrunk{
 			URI: outbound.Bridge.URI, Username: outbound.Bridge.Username, Password: outbound.Bridge.Password,
 		},
-		Call:   sipbridge.CallParams{From: outbound.From, To: outbound.To, RingTimeout: outbound.RingTimeout},
+		Call:   sipbridge.CallParams{From: outbound.From, To: outbound.To, RingTimeout: outbound.RingTimeout, CallID: outbound.CallID},
 		Logger: p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id),
 	}.WithDefaults()
 	if err := config.Validate(); err != nil {

@@ -283,13 +283,33 @@ type CallUsage struct {
 	Requests          int64 `bun:"requests"`
 }
 
+// RuntimeModality is the modality of the rows that bill the time a session was open, a slice
+// at a time. They cost what the session's time cost, and are not requests.
+const RuntimeModality = "runtime"
+
+// SandboxModality is the modality of the rows that bill the time a session's sandbox held its
+// provider's resources, a slice at a time. Like runtime they are a session's time, not
+// requests.
+const SandboxModality = "sandbox"
+
+// requestCount counts a query's rows that are requests, leaving the sliced time of runtime and
+// sandboxes out.
+const requestCount = "COUNT(*) FILTER (WHERE modality NOT IN ('" + RuntimeModality + "', '" + SandboxModality + "'))"
+
+// ownSlicesOnly keeps out of a call's totals the sliced time of other sessions of its agent:
+// a call's runtime and sandbox are its own session's (session_id = ?).
+const ownSlicesOnly = "(modality NOT IN ('" + RuntimeModality + "', '" + SandboxModality + "') OR session_id = ?)"
+
 // CallUsage totals the work one call paid for. Like the models it used, it is keyed by
 // agent and window rather than by call, because a request row carries the Stream call
-// rather than the session that recorded it.
+// rather than the session that recorded it. Runtime and sandbox time are the exception: they
+// are the session's (sessionID), so another session of the same agent at the same time is
+// not counted.
 //
 // Failed requests are counted: a model that read the prompt and then fell over is still
-// billed for having read it.
-func (s *Store) CallUsage(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) (CallUsage, error) {
+// billed for having read it. The call's runtime and sandbox time are in its cost and not
+// among its requests.
+func (s *Store) CallUsage(ctx context.Context, customerID, agentID, sessionID string, from time.Time, to *time.Time) (CallUsage, error) {
 	if customerID == "" || agentID == "" {
 		return CallUsage{}, stack.Wrap(errors.New("store: a customer and an agent id are required"))
 	}
@@ -301,9 +321,10 @@ func (s *Store) CallUsage(ctx context.Context, customerID, agentID string, from 
 			ColumnExpr("COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens").
 			ColumnExpr("COALESCE(SUM(output_tokens), 0) AS output_tokens").
 			ColumnExpr("COALESCE(SUM(cost_micros), 0) AS cost_micros").
-			ColumnExpr("COUNT(*) AS requests").
+			ColumnExpr(requestCount+" AS requests").
 			Where("customer_id = ?", customerID).
 			Where("agent_id = ?", agentID).
+			Where(ownSlicesOnly, sessionID).
 			Where("started_at >= ?", from)
 		if to != nil {
 			query = query.Where("started_at <= ?", *to)
@@ -342,9 +363,9 @@ type ModelTokens struct {
 
 // CallTokens is what each model a call used read, wrote and cost, the busiest first. Models
 // that bill by audio or characters rather than tokens read zero tokens. Keyed by agent and
-// window like CallUsage, and read while the call is still going as well as after: to is nil
-// for one that has not ended.
-func (s *Store) CallTokens(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) ([]ModelTokens, error) {
+// window like CallUsage, its runtime the session's, and read while the call is still going
+// as well as after: to is nil for one that has not ended. Runtime is no model's requests.
+func (s *Store) CallTokens(ctx context.Context, customerID, agentID, sessionID string, from time.Time, to *time.Time) ([]ModelTokens, error) {
 	if customerID == "" || agentID == "" {
 		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
 	}
@@ -358,7 +379,7 @@ func (s *Store) CallTokens(ctx context.Context, customerID, agentID string, from
 			ColumnExpr("COALESCE(SUM(output_tokens), 0) AS output_tokens").
 			ColumnExpr("COALESCE(SUM(cost_micros), 0) AS cost_micros").
 			ColumnExpr("COALESCE(SUM(output_cost_micros), 0) AS output_cost_micros").
-			ColumnExpr("COUNT(*) AS requests").
+			ColumnExpr(requestCount+" AS requests").
 			ColumnExpr("COALESCE(SUM(input_instruction_tokens), 0) AS input_instruction_tokens").
 			ColumnExpr("COALESCE(SUM(input_message_tokens), 0) AS input_message_tokens").
 			ColumnExpr("COALESCE(SUM(input_tool_definition_tokens), 0) AS input_tool_definition_tokens").
@@ -367,6 +388,7 @@ func (s *Store) CallTokens(ctx context.Context, customerID, agentID string, from
 			ColumnExpr("COALESCE(SUM(input_video_tokens), 0) AS input_video_tokens").
 			Where("customer_id = ?", customerID).
 			Where("agent_id = ?", agentID).
+			Where(ownSlicesOnly, sessionID).
 			Where("started_at >= ?", from).
 			Group("modality", "provider", "model").
 			OrderExpr("SUM(input_tokens + output_tokens) DESC, provider, model")

@@ -5,6 +5,7 @@ class AuditSource(StrEnum):
     API = "api"
     CLI = "cli"
     DASHBOARD = "dashboard"
+    MANAGE = "manage"
     SDK = "sdk"
 
     def __str__(self) -> str:

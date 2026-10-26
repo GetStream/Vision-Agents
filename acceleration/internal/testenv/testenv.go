@@ -87,15 +87,24 @@ func Database(dsn, name string) string {
 	return own
 }
 
+// maxDatabaseName is the longest identifier Postgres keeps: NAMEDATALEN is 64 and one byte
+// is the terminator. It cuts a longer one without a word, so two suites whose names agree on
+// the first 63 bytes would share a database, and the second CREATE would find it there.
+// https://www.postgresql.org/docs/16/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
+const maxDatabaseName = 63
+
 // createDatabase creates the database the DSN names, connecting through the server's
 // postgres database to do it. A server that cannot be reached is left to the suites, which
-// skip or fail on it themselves.
+// skip or fail on it themselves. A name Postgres would cut is a panic.
 func createDatabase(dsn string) {
 	parsed, err := url.Parse(dsn)
 	if err != nil {
 		return
 	}
 	name := strings.TrimPrefix(parsed.Path, "/")
+	if len(name) > maxDatabaseName {
+		panic(fmt.Sprintf("testenv: database name %q is %d bytes and Postgres keeps %d: shorten the suite's name", name, len(name), maxDatabaseName))
+	}
 	parsed.Path = "/postgres"
 	db := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(parsed.String())))
 	defer db.Close()

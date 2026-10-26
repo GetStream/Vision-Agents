@@ -34,7 +34,7 @@ for example `http://192.168.1.20:8080` and `http://192.168.1.20:8099`. From Andr
 one is the local network, which the app asks for when it opens.
 
 The app builds against `sdks/kotlin` through an included build, so a change to the SDK shows
-up in the app without publishing it. Stream Chat 7.15.0 is on `https://stream-io-repo.com`
+up in the app without publishing it. Stream Chat 7.16.0 is on `https://stream-io-repo.com`
 rather than Maven Central, which `settings.gradle.kts` adds.
 
 The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
@@ -45,10 +45,13 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
 - **Chat** is a text session: no call is joined, nothing is transcribed or spoken, and the
   replies still come through the same model with the same instructions, skills and knowledge a
   call would have had. The session is kept in a Stream Chat channel, which the router writes
-  and the app shows with Stream's AI components (`stream-chat-android-ai-compose`): the reply
-  streaming in (`StreamingText`), the model's reasoning as it thinks (`StreamingReasoning`,
-  reassembled from the live updates by `LiveReasoning`), each tool call as it runs
-  (`AIMessageParts`), and what the agent is doing before it answers (`AITypingIndicator`).
+  and the app shows with Stream's AI components (`stream-chat-android-ai-compose`).
+  `AIConversation` lays it out in turns: a question moves to the top and its reply writes
+  itself out below it, with the model's reasoning as it thinks (reassembled from the live
+  updates by `LiveReasoning`), each tool call as it runs, and the answer streaming in. Older
+  messages load as you scroll up. Under a finished reply you can copy, share and rate it
+  (`AIReplyActionsRow`); ratings stay on the phone, as the router takes none yet. What the
+  agent is doing before it answers shows as a thinking timer or `AITypingIndicator`.
   `ChatComposer` asks, dictates and stops a reply; `AISuggestions` starts a conversation.
 - **Voice** starts a session, which puts the agent on a call, and joins it over Stream Video as
   the user `setUser` named, with the token `backend` signed. It asks for the microphone first,

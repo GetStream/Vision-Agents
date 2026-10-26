@@ -12,6 +12,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -146,6 +148,41 @@ func (s *TelnyxChannelSuite) TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread()
 	s.Contains(s.scheduledTurnTools(), "schedule_task", "the turn answers the person, who may schedule again")
 	s.Equal(replies+1, s.repliesIn(channel), "the reply is kept in the thread")
 	s.Eventually(func() bool { return !s.threadOpen(channel) }, settleFor, 10*time.Millisecond, "the session was left open")
+}
+
+// codeHandsBackAReport has every code run on the suite's Daytona write report.csv, and queues
+// the next turn's runs of code that hand it back, one by default. It returns where the report
+// is published.
+func (s *RouterSuite) codeHandsBackAReport(runs ...llm.ToolCall) string {
+	s.daytona.Writes("report.csv", []byte("day,steps\nmon,9000\n"))
+	if len(runs) == 0 {
+		runs = []llm.ToolCall{reportRun()}
+	}
+	s.schedulingScript.plan(runs...)
+	return "https://cdn.fake/file/report.csv"
+}
+
+// reportRun is a run of code that hands back report.csv.
+func reportRun() llm.ToolCall {
+	return llm.ToolCall{ID: store.NewID(), Name: sandbox.ToolName,
+		Arguments: `{"code": "open('report.csv', 'w').write('day,steps')", "files": ["report.csv"]}`}
+}
+
+// A reply that is only the file the task's code made, with no words, is texted as the file's
+// link.
+func (s *TelnyxChannelSuite) TestATaskWhoseReplyIsOnlyAFileTextsTheFile() {
+	person := "+13125550001"
+	s.config.Sandbox = string(Daytona)
+	task, _ := s.scheduledInThread(person)
+	report := s.codeHandsBackAReport()
+	s.schedulingScript.saySilently()
+	sent := len(s.telnyx.sent())
+
+	run := s.deliveredByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunDelivered, run.State, "error %v", run.Error)
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal(telnyxMessage{from: s.line, to: person, text: report}, s.took(sent + 1)[sent].withoutAuthorization())
 }
 
 // A turn another router is taking in the thread is waited for, and the thread's turn is let go
@@ -320,6 +357,61 @@ func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsGoneFailsFinally() {
 	s.Zero(s.scheduledTurns())
 }
 
+// removeThread takes the thread channel's link away, as if its thread were gone.
+func (s *RouterSuite) removeThread(channel string) error {
+	ctx := context.Background()
+	if _, err := s.store.DB().ExecContext(ctx, "DELETE FROM channel_thread_messages WHERE channel_id = ?", channel); err != nil {
+		return err
+	}
+	_, err := s.store.DB().ExecContext(ctx, "DELETE FROM channel_threads WHERE channel_id = ?", channel)
+	return err
+}
+
+// A thread removed while the task's turn runs fails the run for good, and nothing is texted:
+// the reply has no thread left to go to (AI-1883).
+func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFinally() {
+	task, channel := s.scheduledInThread("+13125550001")
+	sent := len(s.telnyx.sent())
+	release := s.schedulingScript.holdScheduled()
+	defer release()
+	removed := make(chan error, 1)
+	go func() {
+		for deadline := time.Now().Add(settleFor); s.scheduledTurns() == 0 && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
+		removed <- s.removeThread(channel)
+		release()
+	}()
+
+	run := s.deliveredByTheWorker(task)
+
+	s.Require().NoError(<-removed)
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(scheduling.ReasonThreadGone, *run.Error)
+	s.Equal(1, run.Attempts, "a gone thread is not tried again")
+	s.Equal(1, s.scheduledTurns())
+	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+}
+
+// A reply the conversation finished on a thread that is gone, as a person's turn on a thread
+// removed meanwhile, is sent nowhere and logged as no failure: there is nobody to tell.
+func (s *TelnyxChannelSuite) TestAReplyOnARemovedThreadIsSentNowhereAndLogsNothing() {
+	person := "+13125550001"
+	channel := s.smsTurn(person, "hello")
+	sent := len(s.telnyx.sent())
+	s.Require().NoError(s.removeThread(channel))
+
+	s.bridge.(*channelbridge.Bridge).Reply(conversation.FinishedReply{
+		Customer: s.customerID(), CID: "agent:" + channel, MessageID: s.utils.uuid(), Text: "Too late.",
+	})
+
+	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	for line := range strings.Lines(s.logged.String()) {
+		s.False(strings.Contains(line, "could not send a reply to its external thread") && strings.Contains(line, channel), "logged: %s", line)
+	}
+}
+
 // One person's task never reaches another person's thread on the same line.
 func (s *TelnyxChannelSuite) TestATaskNeverReachesAnotherPersonsThread() {
 	task, _ := s.scheduledInThread("+13125550001")
@@ -432,7 +524,7 @@ func (s *TelnyxChannelSuite) TestAThreadTasksDeliverToCannotChange() {
 func (s *TelnyxChannelSuite) TestATaskWithoutAThreadIsDeliveredAsBefore() {
 	s.schedulingOn(&s.config)
 	next := time.Now().Add(2 * time.Hour).UTC()
-	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: "alice", CallerKind: "server",
+	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: "alice", CallerKind: "server", APIKey: s.RouterSuite.app.key,
 		Title: "Stretch", Instructions: "Remind them to stretch.", StartLocal: next, Timezone: "Europe/Amsterdam",
 		NextRunAt: &next, Channels: []string{"conversation"}}
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
@@ -455,7 +547,7 @@ func (s *TelnyxSandboxSuite) TestATaskPastTheSandboxsDailyLimitIsHeldBack() {
 	s.took(1)
 	next := time.Now().Add(2 * time.Hour).UTC()
 	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: stored[0]["user_id"].(string),
-		CallerKind: "server", ChannelThread: channel, Title: "Stretch", Instructions: "Remind them to stretch.",
+		CallerKind: "server", APIKey: s.RouterSuite.app.key, ChannelThread: channel, Title: "Stretch", Instructions: "Remind them to stretch.",
 		StartLocal: next, Timezone: "Europe/Amsterdam", NextRunAt: &next, Channels: []string{"conversation"}}
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
 

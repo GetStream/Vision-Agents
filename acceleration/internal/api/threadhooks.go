@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -100,7 +101,7 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 			s.logger.Error("could not let go of a thread's turn; it runs out instead", "channel", thread.ChannelID, "error", err)
 		}
 	}()
-	turn, cancelTurn := context.WithTimeout(context.Background(), askTimeout)
+	turn, cancelTurn := context.WithTimeout(routing.WithAttribution(context.Background(), chatHookAttribution(thread.CustomerID, event)), askTimeout)
 	defer cancelTurn()
 
 	// A session a caller opened on the channel through the API answers there; otherwise this
@@ -129,14 +130,15 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 
 	// One id for the message, kept across the retries below: an attempt that
 	// started the reply before the wait gave up makes the next a duplicate
-	// rather than a second answer.
+	// rather than a second answer. Only a reply another way into the session is
+	// still writing is waited out; any other failure ends the message, as each
+	// attempt whose turn did not start leaves a cancelled reply in the channel.
 	followUpID := "thread_" + store.NewID()
 	for {
 		err = found.FollowUp(turn, followUpID, event.Message.Text)
-		if err == nil || turn.Err() != nil {
+		if !errors.Is(err, conversation.ErrResponseRunning) || turn.Err() != nil {
 			break
 		}
-		// A reply another way into the session is writing ("a response is already running").
 		time.Sleep(threadTurnPoll)
 	}
 	if err != nil {
@@ -182,6 +184,7 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 		return nil, errors.New("the customer no longer writes in the app the hook came from")
 	}
 	spec := threadSpec(configs[0], thread)
+	spec.Attribution = chatHookAttribution(thread.CustomerID, event)
 	if person, personal := threadPerson(thread); personal && event.Message.User.ID == person {
 		spec.ThreadPerson, spec.ThreadChannel, spec.ThreadDelivery = person, thread.ChannelID, personalThreads[thread.ConnectorID]
 	}

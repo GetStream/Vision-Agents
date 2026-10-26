@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -109,7 +110,7 @@ func (c *Conversation) BeginFollowUp(id, text string) (CommandReceipt, error) {
 		return receipt, nil
 	}
 	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
-		return CommandReceipt{}, stack.Wrap(errors.New("a response is already running"))
+		return CommandReceipt{}, stack.Wrap(ErrResponseRunning)
 	}
 	now := time.Now().UTC()
 	question := ""
@@ -150,12 +151,15 @@ func (c *Conversation) FollowUpReply(id string) (state, text string, known bool)
 	return record.State, record.Reply, known
 }
 
-// FollowUpMessage is the id of the reply to the follow-up under id, or "" for an id the
-// conversation does not hold.
-func (c *Conversation) FollowUpMessage(id string) string {
+// FollowUpFinished is the reply to the follow-up under id as OnFinishedReply tells it, with
+// its files, for a follow-up delivered again to send rather than run twice. One the
+// conversation does not hold has no message id, text or files.
+func (c *Conversation) FollowUpFinished(id string) FinishedReply {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.data.Commands[id].AssistantMessageID
+	record := c.data.Commands[id]
+	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: record.AssistantMessageID, CommandID: id,
+		Text: record.Reply, Files: append([]sandbox.Attachment(nil), record.Files...)}
 }
 
 // rememberAsked keeps a finished reply that asked for a login, to mark it once the login is

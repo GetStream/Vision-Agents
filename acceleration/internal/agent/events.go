@@ -364,6 +364,18 @@ type ToolStarted struct {
 
 func (ToolStarted) isAgentEvent() {}
 
+// ToolUpdated is what whoever runs a call said about it while it runs (ToolUpdate): a
+// status the agent says in its own words, or Verbatim words it says as written.
+type ToolUpdated struct {
+	ID       string
+	TurnID   string
+	Tool     string
+	Text     string
+	Verbatim bool
+}
+
+func (ToolUpdated) isAgentEvent() {}
+
 // ToolApprovalDecided is a person's answer to a call that waited for their approval. It
 // changes how the call is shown; the call itself is still answered by its result.
 type ToolApprovalDecided struct {

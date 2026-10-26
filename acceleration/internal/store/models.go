@@ -1,14 +1,17 @@
 package store
 
 import (
+	"cmp"
 	"encoding/json"
 	"path"
 	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -17,12 +20,32 @@ import (
 type Request struct {
 	bun.BaseModel `bun:"table:requests,alias:r"`
 
-	ID       int64  `bun:"id,pk,autoincrement"`
-	Modality string `bun:"modality,notnull"`
+	ID int64 `bun:"id,pk,autoincrement"`
+	// UsageID is the unit of work, chosen before the row is first written, so writing it
+	// again is a no-op rather than a second charge. Rows from before it was kept have none.
+	// RecordRequests refuses a row without one; nullzero leaves a missing one to the column's
+	// random default, which is what a router from before it gets.
+	UsageID  uuid.UUID `bun:"usage_id,type:uuid,nullzero"`
+	Modality string    `bun:"modality,notnull"`
 	// CustomerID owns the request. Every statistic is keyed by it.
 	CustomerID string `bun:"customer_id,notnull"`
+	// OrganizationID is who is billed for it. The rest say who asked: OrganizationTier as
+	// Stream sent it, APIKey the key or the origin of work no key started, UserID empty when
+	// there is none, and UsageCategories what the customer counts the work under (nil
+	// writes none). APIKey names a key, never holds its secret: a row the writer loses is
+	// logged in full.
+	OrganizationID   string   `bun:"organization_id,notnull"`
+	OrganizationTier string   `bun:"organization_tier,notnull"`
+	APIKey           string   `bun:"api_key,notnull"`
+	UserID           string   `bun:"user_id,notnull"`
+	UsageCategories  []string `bun:"usage_categories,array,nullzero"`
+	// LimitGrants are the grants the work was admitted on past a spent limit, which its
+	// billable cost is drawn from (20261112121000_requests_limit_grants.sql).
+	LimitGrants []int64 `bun:"limit_grants,array,nullzero"`
 	// AgentID is the agent the work was done for. Empty outside a conversation.
 	AgentID string `bun:"agent_id,nullzero"`
+	// SessionID is the agent session the work ran in, empty outside one.
+	SessionID string `bun:"session_id,notnull"`
 	// CallID is the call the work happened in. Empty outside a conversation.
 	CallID string `bun:"call_id,nullzero"`
 	// Tags are the customer's own cost labels, aggregated into the tag rollups so spend
@@ -50,15 +73,59 @@ type Request struct {
 	// InputParts is what the prompt was made of, estimated and scaled to InputTokens.
 	InputParts InputParts `bun:"embed:input_"`
 	// Images is how many pictures were drawn.
-	Images    int64    `bun:"images,notnull"`
-	LatencyMs *float64 `bun:"latency_ms"`
-	// CostMicros is millionths of a dollar, priced from the provider's configured rates.
+	Images int64 `bun:"images,notnull"`
+	// Meters are the priced quantities with no column of their own: cache writes, speech to
+	// speech by modality, requests, pixels.
+	Meters pricing.Quantities `bun:"meters,type:jsonb,nullzero"`
+	// Attributes chose the price (a service tier, a country) or explain the row.
+	Attributes map[string]string `bun:"attributes,type:jsonb,nullzero"`
+	LatencyMs  *float64          `bun:"latency_ms"`
+	// CostMicros is millionths of a dollar: the cost at the vendor's rates plus the markup in
+	// force.
 	CostMicros int64 `bun:"cost_micros,notnull"`
 	// OutputCostMicros is the part of CostMicros the generated tokens were priced at.
-	OutputCostMicros int64  `bun:"output_cost_micros,notnull"`
-	Success          bool   `bun:"success,notnull"`
-	ErrorCode        string `bun:"error_code,nullzero"`
-	ErrorMessage     string `bun:"error_message,nullzero"`
+	OutputCostMicros int64 `bun:"output_cost_micros,notnull"`
+	// PriceVersion names what priced the row: the price change that wrote its entry, the
+	// embedded or file list a router prices with before it reads the database, "quoted" for
+	// an amount the vendor quoted outright, and empty for local or unpriced work.
+	PriceVersion string `bun:"price_version,notnull"`
+	// BaseCostMicros is the cost at the vendor's rates, before the markup, so the margin on
+	// the row is CostMicros - BaseCostMicros.
+	BaseCostMicros int64 `bun:"base_cost_micros,notnull"`
+	// Billable is false for free and local work, which counts toward no spend.
+	Billable     bool   `bun:"billable,notnull"`
+	Success      bool   `bun:"success,notnull"`
+	ErrorCode    string `bun:"error_code,nullzero"`
+	ErrorMessage string `bun:"error_message,nullzero"`
+	// ToShip is true until the usage service has the row; ShipError is why it refused it.
+	ToShip    bool       `bun:"to_ship,notnull"`
+	ShippedAt *time.Time `bun:"shipped_at"`
+	ShipError string     `bun:"ship_error,notnull"`
+}
+
+// Quantities is what the row is priced by: the typed columns as pricing meters, the prompt
+// split into tokens read fresh, read from cache and written to it, then Meters. Zero
+// quantities are left out.
+func (r Request) Quantities() pricing.Quantities {
+	used := pricing.Quantities{}
+	add := func(meter pricing.Meter, quantity int64) {
+		if quantity != 0 {
+			used[meter] += quantity
+		}
+	}
+	// Cached and cache-written tokens are part of the prompt, so they are billed once at
+	// their own rate rather than twice.
+	fresh := max(r.InputTokens-r.CachedInputTokens-r.Meters[pricing.CacheWriteInputTokens], 0)
+	add(pricing.AudioMs, r.AudioMs)
+	add(pricing.Characters, r.Characters)
+	add(pricing.InputTokens, fresh)
+	add(pricing.CachedInputTokens, r.CachedInputTokens)
+	add(pricing.OutputTokens, r.OutputTokens)
+	add(pricing.Images, r.Images)
+	for meter, quantity := range r.Meters {
+		add(meter, quantity)
+	}
+	return used
 }
 
 // InputParts splits an LLM prompt by what it carried. No provider reports this, so it is
@@ -265,9 +332,12 @@ type PhoneNumber struct {
 	BridgePasswordSealed     []byte `bun:"bridge_password_sealed,nullzero"`
 	BridgePasswordKEKVersion int    `bun:"bridge_password_kek_version,nullzero"`
 	// UseCaseID is the 10DLC use case the number sends as. Empty sends as the app's default.
-	UseCaseID   string     `bun:"dlc_use_case_id,nullzero"`
-	PurchasedAt time.Time  `bun:"purchased_at,notnull"`
-	ReleasedAt  *time.Time `bun:"released_at"`
+	UseCaseID   string    `bun:"dlc_use_case_id,nullzero"`
+	PurchasedAt time.Time `bun:"purchased_at,notnull"`
+	// AttachedAt is when the number was attached, so its callers reach an agent. A number
+	// can be on a trunk without it, to place calls only.
+	AttachedAt *time.Time `bun:"attached_at"`
+	ReleasedAt *time.Time `bun:"released_at"`
 }
 
 // CallBridge is what a vendor is told to do when the person it called picks up.
@@ -302,17 +372,111 @@ type CallBridge struct {
 type CallResource struct {
 	bun.BaseModel `bun:"table:call_resources,alias:cr"`
 
-	// TrunkID is the Stream SIP trunk this call leg was given, and the row's identity: a
-	// call may own several, its own plus one per transfer into it.
-	TrunkID    string `bun:"trunk_id,pk"`
+	ID int64 `bun:"id,pk,autoincrement"`
+	// TrunkID is the Stream SIP trunk this call leg was given: a call may own several, its
+	// own plus one per transfer into it.
+	TrunkID    string `bun:"trunk_id,notnull"`
 	RouteID    string `bun:"route_id,notnull"`
 	CallType   string `bun:"call_type,notnull"`
 	CallID     string `bun:"call_id,notnull"`
 	CustomerID string `bun:"customer_id,notnull"`
 	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
 	// stored as NULL, is the deployment's own app.
-	StreamAppPK int64     `bun:"stream_app_pk,nullzero"`
-	CreatedAt   time.Time `bun:"created_at,notnull"`
+	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
+	// Shared is a trunk and rule other calls use too: the call's end deletes only this row.
+	Shared    bool      `bun:"shared,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+}
+
+// What ended a call leg.
+const (
+	// LegLeft is the leg's phone leaving the call.
+	LegLeft = "left"
+	// LegEnded is the call ending with the leg still on it.
+	LegEnded = "ended"
+	// LegSwept is the sweep ending a leg nothing said had ended.
+	LegSwept = "swept"
+	// LegUnanswered is a leg that ended without its phone ever joining.
+	LegUnanswered = "unanswered"
+)
+
+// CallLeg is one leg of a phone call, from when its phone joined the call until it left or the
+// call ended, which is what its minutes are billed by. Who it is billed to is kept from when
+// it opened, so the minutes of a placed call stay with the key that placed it.
+type CallLeg struct {
+	bun.BaseModel `bun:"table:call_legs,alias:cl"`
+
+	ID               int64    `bun:"id,pk,autoincrement"`
+	CustomerID       string   `bun:"customer_id,notnull"`
+	OrganizationID   string   `bun:"organization_id,notnull"`
+	OrganizationTier string   `bun:"organization_tier,notnull"`
+	APIKey           string   `bun:"api_key,notnull"`
+	UserID           string   `bun:"user_id,notnull"`
+	UsageCategories  []string `bun:"usage_categories,array,nullzero"`
+	// StreamAppPK is the Stream app the call is in. Zero, stored as NULL, is the
+	// deployment's own app.
+	StreamAppPK int64  `bun:"stream_app_pk,nullzero"`
+	CallType    string `bun:"call_type,notnull"`
+	CallID      string `bun:"call_id,notnull"`
+	// StreamSessionID is Stream's session of the call, and ParticipantSession the user session
+	// of the leg's phone in it. Empty until known.
+	StreamSessionID    string `bun:"stream_session_id,notnull"`
+	ParticipantSession string `bun:"participant_session,notnull"`
+	Vendor             string `bun:"vendor,notnull"`
+	// Direction is Inbound or Outbound.
+	Direction    string `bun:"direction,notnull"`
+	LocalNumber  string `bun:"local_number,notnull"`
+	RemoteNumber string `bun:"remote_number,notnull"`
+	// Country is what the leg's minutes are priced by: where an outbound leg rang, and the
+	// country of the number an inbound one rang. Empty when unknown.
+	Country string            `bun:"country,notnull"`
+	AgentID string            `bun:"agent_id,notnull"`
+	Tags    map[string]string `bun:"tags,type:jsonb,nullzero"`
+	// DialedAt is when the vendor took the dial, or the call arrived. StartedAt is when the
+	// leg's phone joined, nil while it rings; EndedAt nil while the leg is open; EndReason
+	// what ended it (LegLeft and the rest).
+	DialedAt  time.Time  `bun:"dialed_at,notnull"`
+	StartedAt *time.Time `bun:"started_at"`
+	EndedAt   *time.Time `bun:"ended_at"`
+	EndReason string     `bun:"end_reason,notnull"`
+}
+
+// Connected reports whether the leg's phone ever joined the call, which is what makes it billed.
+func (l CallLeg) Connected() bool { return l.StartedAt != nil }
+
+// Used is how long an ended leg was connected, in seconds, a started second counting whole:
+// what a vendor bills its minutes from. A leg still open, or never connected, has used nothing.
+func (l CallLeg) Used() pricing.Quantities {
+	if l.StartedAt == nil || l.EndedAt == nil || !l.EndedAt.After(*l.StartedAt) {
+		return pricing.Quantities{pricing.CallSeconds: 0}
+	}
+	lasted := l.EndedAt.Sub(*l.StartedAt)
+	seconds := int64(lasted / time.Second)
+	if lasted%time.Second != 0 {
+		seconds++
+	}
+	return pricing.Quantities{pricing.CallSeconds: seconds}
+}
+
+// CallParticipant is a phone's join or leave of a call that no leg was waiting for when it
+// was delivered, kept for the leg that opens later (OpenCallLeg) and for the phone's join
+// that comes after its leave (ConnectCallLeg). One with no participant session is the call
+// hook having delivered a participant event of the call (HeardCall).
+type CallParticipant struct {
+	bun.BaseModel `bun:"table:call_participants,alias:cp"`
+
+	ID int64 `bun:"id,pk,autoincrement"`
+	// StreamAppPK and Unpinned are the scope of the hook that delivered it.
+	StreamAppPK        int64  `bun:"stream_app_pk,nullzero"`
+	Unpinned           bool   `bun:"unpinned,notnull"`
+	CallType           string `bun:"call_type,notnull"`
+	CallID             string `bun:"call_id,notnull"`
+	ParticipantSession string `bun:"participant_session,notnull"`
+	// Number is off the phone's participant id, empty when it named none.
+	Number     string     `bun:"number,notnull"`
+	JoinedAt   *time.Time `bun:"joined_at"`
+	LeftAt     *time.Time `bun:"left_at"`
+	RecordedAt time.Time  `bun:"recorded_at,notnull"`
 }
 
 // AgentConfig is a named set of the decisions a session is created with.
@@ -412,6 +576,15 @@ type AgentConfig struct {
 	// sends a tool's full description the first time it is called instead of running it
 	// (20261008130000_agent_config_progressive_tools.sql). Off unless a config turns it on.
 	ProgressiveTools bool `bun:"progressive_tools,notnull"`
+	// ToolOutputRetention is how long the config's sessions keep what their tools were
+	// given and gave back on the turns they record: options.RetentionNone for not at all, a
+	// duration such as 30d, or empty for as long as the session. The app's and the
+	// organization's policies can shorten it and never lengthen it
+	// (20261113120000_tool_output_retention.sql).
+	ToolOutputRetention options.Retention `bun:"tool_output_retention,notnull"`
+	// ResumeHistory is how the config's sessions are handed back a conversation they
+	// carry on. The zero value is the router's default.
+	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -1084,7 +1257,7 @@ type VoiceBinding struct {
 	SyncedAt *time.Time `bun:"synced_at,nullzero"`
 }
 
-// Which way a call went.
+// Which way a call, a leg of one or a text went.
 const (
 	// Inbound is somebody ringing the agent.
 	Inbound = "inbound"
@@ -1194,6 +1367,15 @@ type Campaign struct {
 	CreatedAt   time.Time         `bun:"created_at,notnull"`
 	StartedAt   *time.Time        `bun:"started_at"`
 	FinishedAt  *time.Time        `bun:"finished_at"`
+	// PausedReason is the code of what refused a call when the router paused the campaign
+	// itself, as telephony_suspended or insufficient_credits; empty otherwise.
+	PausedReason string `bun:"paused_reason,nullzero"`
+
+	// APIKey, UserID and UsageCategories are who scheduled the campaign, as the request that
+	// created it named them: the calls it places later are owned by them.
+	APIKey          string   `bun:"api_key,notnull"`
+	UserID          string   `bun:"user_id,notnull"`
+	UsageCategories []string `bun:"usage_categories,array,nullzero"`
 }
 
 // Contact is one person to ring, and what became of ringing them.
@@ -1576,6 +1758,40 @@ func (m ModelOverwrites) Empty() bool {
 	return m == ModelOverwrites{}
 }
 
+// ResumeHistory is how much of a conversation a model is handed back when a session opens
+// on it: reopened, resumed by id, joined by voice or forked. A field left unset is no
+// opinion, and the zero value is the router's default: replies as text, the newest 100 turns
+// within 60000 characters. It is set at four levels, the most specific winning field by
+// field (Over): a session, its agent config, its app's policy, its organization's.
+type ResumeHistory struct {
+	// IncludeTools hands each reply back with the tool calls it made and what they
+	// returned, as they were recorded. Over MaxCharacters the oldest results are trimmed
+	// first, and the conversation's first message is kept. Nil is no opinion, so a level
+	// can turn off what a broader one turned on.
+	IncludeTools *bool `json:"include_tools,omitempty"`
+	// MaxMessages is how many turns are handed back, zero for 100. Tool calls and their
+	// results are not turns.
+	MaxMessages int `json:"max_messages,omitempty"`
+	// MaxCharacters is how much text is handed back, tool calls and results included, zero
+	// for 60000.
+	MaxCharacters int `json:"max_characters,omitempty"`
+}
+
+// Over is r with base's settings wherever r has none.
+func (r ResumeHistory) Over(base ResumeHistory) ResumeHistory {
+	if r.IncludeTools == nil {
+		r.IncludeTools = base.IncludeTools
+	}
+	r.MaxMessages = cmp.Or(r.MaxMessages, base.MaxMessages)
+	r.MaxCharacters = cmp.Or(r.MaxCharacters, base.MaxCharacters)
+	return r
+}
+
+// Tools reports whether replies are handed back with their tool calls.
+func (r ResumeHistory) Tools() bool {
+	return r.IncludeTools != nil && *r.IncludeTools
+}
+
 // AgentSession is one session a caller opened, kept so it can be found after the process
 // that held it is gone.
 //
@@ -1605,10 +1821,15 @@ type AgentSession struct {
 	AgentID        string `bun:"agent_id,notnull"`
 	ConversationID string `bun:"conversation_id,notnull"`
 	// UserID is whose session it is; CallerKind says what that name is worth.
-	UserID      string `bun:"user_id,notnull"`
-	CallerKind  string `bun:"caller_kind,notnull"`
-	Title       string `bun:"title,notnull"`
-	Description string `bun:"description,notnull"`
+	UserID     string `bun:"user_id,notnull"`
+	CallerKind string `bun:"caller_kind,notnull"`
+	// APIKey and UsageCategories are the key, or origin, and the categories the session was
+	// opened with, which its usage is recorded under for its whole life. A session carried on
+	// from its row keeps them; one from before they were kept has no key.
+	APIKey          string   `bun:"api_key,notnull"`
+	UsageCategories []string `bun:"usage_categories,array,nullzero"`
+	Title           string   `bun:"title,notnull"`
+	Description     string   `bun:"description,notnull"`
 	// Project is what the conversation belongs to, a column as well as a cost tag so a
 	// list grouped by project needs no JSON unpacking.
 	Project string `bun:"project,notnull"`
@@ -1627,8 +1848,11 @@ type AgentSession struct {
 	ReturnURL string `bun:"return_url,nullzero"`
 	// Remembers is whether the session was opened with a memory user id, so it could have
 	// taught the memory store anything. Nil, as on a row made before it was kept, is not known.
-	Remembers *bool  `bun:"remembers"`
-	State     string `bun:"state,notnull"`
+	Remembers *bool `bun:"remembers"`
+	// ResumeHistory is what the session was opened with, which reopening it keeps. Zero
+	// takes the config's.
+	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,nullzero"`
+	State         string        `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
@@ -1769,6 +1993,35 @@ type AgentResponseItem struct {
 	// guardrail's reason, the attachments behind an answer.
 	Payload map[string]any `bun:"payload,type:jsonb,nullzero"`
 	At      time.Time      `bun:"at,notnull"`
+	// RedactAt is when a tool call's or a tool result's arguments and output are taken out
+	// (RedactToolOutput), stamped from the session's tool output retention when it is
+	// written. Nil is never, which every item recorded without a retention is.
+	RedactAt *time.Time `bun:"redact_at"`
+}
+
+// redactedToolKeys are what a redacted tool item keeps of its payload: what ties a call to
+// its result and says which product and SDK ran it. Anything else the payload carries,
+// the arguments above all, goes. An error is kept as having happened, not as its text.
+var redactedToolKeys = []string{"call_id", "product", "sdk"}
+
+// Redact takes out what a tool item carried of the call itself: its text (the result, or
+// a search's query), its arguments, and the wording of its error. What is left still says
+// which tool ran, when, whether it failed and which call a result answers, so a list of
+// items reads the same and tool usage still counts it. redactToolOutputSQL is the same
+// thing for rows already written, and the two are tested against each other.
+func (i *AgentResponseItem) Redact() {
+	payload := map[string]any{"redacted": true}
+	for _, key := range redactedToolKeys {
+		if value, ok := i.Payload[key]; ok && value != nil {
+			payload[key] = value
+		}
+	}
+	if _, failed := i.Payload["error"]; failed {
+		payload["error"] = "redacted"
+	}
+	i.Text = ""
+	i.Payload = payload
+	i.RedactAt = nil
 }
 
 // The kinds of end user a row records. They are the verified kinds of auth.Kind: an
