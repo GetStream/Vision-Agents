@@ -892,12 +892,31 @@ func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Res
 		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
 	}
 	for _, grant := range result.Unconnected {
-		said += fmt.Sprintf("\n\nIf this code needed %s (a 401 from %s), the user has not connected it: call %s__list_tools "+
+		said += fmt.Sprintf("\n\n"+unconnectedLine+"%s), the user has not connected it: call %s__list_tools "+
 			"so they can, then run the code again; if you cannot call it, tell the user they must connect %s.",
 			grant.Binding, strings.Join(grant.Hosts, ", "), grant.Binding, grant.Binding)
 	}
 	for _, binding := range result.Connected {
-		said += fmt.Sprintf("\n\n%s was just connected: if this run got 401, wait 20 seconds and run the code again.", binding)
+		said += "\n\n" + binding + justConnected
 	}
 	return said, published
+}
+
+// unconnectedLine and justConnected begin and end the lines HandBack adds for a late grant,
+// each of which tells the model to run the same code again once the user has connected
+// it (RunAgain).
+const (
+	unconnectedLine = "If this code needed %s (a 401 from "
+	justConnected   = " was just connected: if this run got 401, wait 20 seconds and run the code again."
+)
+
+// RunAgain reports whether a run of code's result (HandBack) tells the model to run the same
+// code again now: it said a binding was just connected, or named one as not connected that is
+// among connected, the bindings the user has connected since (sandbox.Connecting). Run again
+// while the user has not connected it, the same code would only get the same 401, as often as
+// the model asks.
+func RunAgain(result string, connected []string) bool {
+	return strings.Contains(result, justConnected) || slices.ContainsFunc(connected, func(binding string) bool {
+		return strings.Contains(result, fmt.Sprintf(unconnectedLine, binding))
+	})
 }
