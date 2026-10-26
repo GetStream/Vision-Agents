@@ -122,7 +122,8 @@ type commandRecord struct {
 	// ClientID is the install the command came from; a client tool call is addressed to it.
 	ClientID string `json:",omitempty"`
 	// Reply is what a follow-up's reply said when it finished, for the follow-up delivered
-	// again to carry rather than run twice (FollowUpReply).
+	// again to carry rather than run twice (FollowUpReply). Only one under ReadBackPrefix
+	// keeps it.
 	Reply string `json:",omitempty"`
 	// Files are that reply's files, which a reply carried again carries too (FollowUpFinished).
 	Files []sandbox.Attachment `json:",omitempty"`
@@ -131,6 +132,19 @@ type commandRecord struct {
 var ErrCommandNotFound = errors.New("command not found")
 
 var ErrCommandConflict = errors.New("command ID was already used with different content")
+
+// ErrResponseRunning is a follow-up refused because a reply is still being written.
+// It is the one refusal worth trying again: the reply finishes and the turn is free.
+var ErrResponseRunning = errors.New("a response is already running")
+
+// ReadBackPrefix starts the id of a follow-up whose reply is read back: a scheduled delivery
+// run again sends the reply it already got (FollowUpFinished) rather than run the turn twice.
+// Only such a follow-up keeps a copy of its reply and files; no other one is ever read back.
+const ReadBackPrefix = "st_"
+
+// readBack is whether the follow-up under id keeps a copy of its reply (ReadBackPrefix).
+func readBack(id string) bool { return strings.HasPrefix(id, ReadBackPrefix) }
+
 var validAuthorID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var validClientID = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
@@ -850,11 +864,11 @@ func commandsIn(messages []Message) map[string]commandRecord {
 		}
 		record, ok := commands[m.CommandID]
 		if !ok {
-			commands[m.CommandID] = commandRecord{
-				CommandReceipt: CommandReceipt{CommandID: m.CommandID, AssistantMessageID: m.ID, State: m.State},
-				Reply:          m.Text,
-				Files:          m.Files,
+			record = commandRecord{CommandReceipt: CommandReceipt{CommandID: m.CommandID, AssistantMessageID: m.ID, State: m.State}}
+			if readBack(m.CommandID) {
+				record.Reply, record.Files = m.Text, m.Files
 			}
+			commands[m.CommandID] = record
 			continue
 		}
 		record.AssistantMessageID = m.ID
@@ -1718,8 +1732,9 @@ func (c *Conversation) finish(state string) {
 	}
 	now := time.Now().UTC()
 	c.state(state)
-	// Only a follow-up, which has no message of a person's, is read back this way.
-	if record, ok := c.data.Commands[m.CommandID]; ok && record.UserMessageID == "" {
+	// Only a follow-up, which has no message of a person's, is read back this way, and only
+	// one under ReadBackPrefix ever is.
+	if record, ok := c.data.Commands[m.CommandID]; ok && record.UserMessageID == "" && readBack(m.CommandID) {
 		record.Reply, record.Files = m.Text, append([]sandbox.Attachment(nil), m.Files...)
 		c.data.Commands[m.CommandID] = record
 	}

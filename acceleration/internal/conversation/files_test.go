@@ -316,3 +316,41 @@ func TestARetriedFollowUpsFilesAreReadBackAcrossRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []sandbox.Attachment{render}, c.FollowUpFinished("st_run").Files)
 }
+
+// Only a scheduled task's follow-up (ReadBackPrefix) is ever read back, so a thread message's
+// or a login's keeps no copy of its reply or files, live or after the conversation is read
+// back from Stream (AI-1557). Its record still says how the reply stands.
+func TestAFollowUpNobodyReadsBackKeepsNoCopyOfItsReply(t *testing.T) {
+	for _, id := range []string{"thread_message", "login_slack"} {
+		t.Run(id, func(t *testing.T) {
+			_, client := newChat(t)
+			service := NewForChat(client)
+			c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+			require.NoError(t, err)
+			_, err = c.BeginFollowUp(id, "carry on")
+			require.NoError(t, err)
+			render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
+			c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
+			c.Observe(agent.ToolRan{ID: "run-1", Tool: sandbox.ToolName, Result: "Attached.", Files: []sandbox.Attachment{render}})
+			c.Observe(agent.ResponseDelta{Text: "Here is your teapot."})
+			c.Observe(agent.Responded{})
+			require.Equal(t, "Here is your teapot.", current(c).Text, "the reply itself is written as ever")
+
+			uncopied := FinishedReply{Customer: "customer", CID: c.CID(), MessageID: current(c).ID, CommandID: id}
+			require.Equal(t, uncopied, c.FollowUpFinished(id))
+			state, text, known := c.FollowUpReply(id)
+			require.Equal(t, []any{"completed", "", true}, []any{state, text, known})
+			saved(t, c)
+			c.Release()
+			service.Close()
+
+			recovered := NewForChat(client)
+			t.Cleanup(recovered.Close)
+			c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+			require.NoError(t, err)
+			require.Equal(t, uncopied, c.FollowUpFinished(id))
+			state, text, known = c.FollowUpReply(id)
+			require.Equal(t, []any{"completed", "", true}, []any{state, text, known})
+		})
+	}
+}
