@@ -89,17 +89,40 @@ func (s *StoreSuite) TestPruneDeletesCompletedAndFailedTasksPastRetentionWithThe
 	s.aged("failed-old", "globex", ScheduledTaskFailed, 91*day)
 	s.aged("completed-new", "acme", ScheduledTaskCompleted, 89*day)
 	s.aged("failed-new", "acme", ScheduledTaskFailed, 89*day)
-	// Runs a task takes with it are not counted as pruned runs, and a run finished within
-	// the retention goes with its task all the same.
-	s.ranFor("of-completed-old", "acme", "completed-old", ScheduledTaskTriggerSchedule, ScheduledTaskRunDelivered, 10*day)
+	s.ranFor("of-completed-old", "acme", "completed-old", ScheduledTaskTriggerSchedule, ScheduledTaskRunDelivered, 91*day)
 	s.ranFor("of-completed-new", "acme", "completed-new", ScheduledTaskTriggerSchedule, ScheduledTaskRunDelivered, 10*day)
 
-	_, tasks, err := s.store.PruneScheduledTasks(s.ctx)
+	runs, tasks, err := s.store.PruneScheduledTasks(s.ctx)
 
 	s.Require().NoError(err)
+	s.EqualValues(1, runs)
 	s.EqualValues(2, tasks)
 	s.Equal([]string{"acme/completed-new", "acme/failed-new"}, s.taskIDs())
 	s.Equal([]string{"of-completed-new"}, s.runIDs())
+}
+
+// A completed task can be run by hand without its row changing, so it is kept while a run of
+// it is unfinished or finished within the retention, and goes once its last run is pruned.
+func (s *StoreSuite) TestPruneKeepsAnOldCompletedTaskWhileARunOfItIsUnfinishedOrRecent() {
+	s.aged("in-flight", "acme", ScheduledTaskFailed, 100*day)
+	s.aged("yesterday", "acme", ScheduledTaskCompleted, 100*day)
+	s.aged("long-ago", "acme", ScheduledTaskCompleted, 100*day)
+	s.aged("other-customer", "globex", ScheduledTaskCompleted, 100*day)
+	s.aged("other-customer", "acme", ScheduledTaskCompleted, 100*day)
+	s.ranFor("running", "acme", "in-flight", ScheduledTaskTriggerManual, ScheduledTaskRunRunning, -1)
+	s.ranFor("recent", "acme", "yesterday", ScheduledTaskTriggerManual, ScheduledTaskRunDelivered, day)
+	s.ranFor("old", "acme", "long-ago", ScheduledTaskTriggerManual, ScheduledTaskRunDelivered, 100*day)
+	// A recent run of the same task id under another customer does not keep this one.
+	s.ranFor("not-theirs", "acme", "other-customer", ScheduledTaskTriggerManual, ScheduledTaskRunDelivered, 100*day)
+	s.ranFor("theirs", "globex", "other-customer", ScheduledTaskTriggerManual, ScheduledTaskRunDelivered, day)
+
+	runs, tasks, err := s.store.PruneScheduledTasks(s.ctx)
+
+	s.Require().NoError(err)
+	s.EqualValues(2, runs)
+	s.EqualValues(2, tasks)
+	s.Equal([]string{"acme/in-flight", "acme/yesterday", "globex/other-customer"}, s.taskIDs())
+	s.Equal([]string{"recent", "running", "theirs"}, s.runIDs())
 }
 
 func (s *StoreSuite) TestPruneGoesOnUntilNoBatchIsLeft() {
@@ -144,7 +167,7 @@ func (s *StoreSuite) TestPruneRunsBesideFinishesWithoutDeadlock() {
 	for i := range 40 {
 		id := fmt.Sprintf("done-%d", i)
 		s.aged(id, "acme", ScheduledTaskCompleted, 91*day)
-		s.ranFor(id+"-run", "acme", id, ScheduledTaskTriggerManual, ScheduledTaskRunDelivered, day)
+		s.ranFor(id+"-run", "acme", id, ScheduledTaskTriggerManual, ScheduledTaskRunDelivered, 91*day)
 	}
 
 	var wg sync.WaitGroup
@@ -176,7 +199,7 @@ func (s *StoreSuite) TestPruneRunsBesideFinishesWithoutDeadlock() {
 		s.Require().NoError(err)
 	}
 
-	s.EqualValues(live*30, runs.Load(), "every old run goes once, whichever router's prune takes it")
+	s.EqualValues(live*30+40, runs.Load(), "every old run goes once, whichever router's prune takes it")
 	s.EqualValues(40, tasks.Load())
 	s.Len(s.runIDs(), live, "the finishes of this moment stay")
 }

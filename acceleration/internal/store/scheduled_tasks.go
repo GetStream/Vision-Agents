@@ -1026,7 +1026,9 @@ const (
 // PruneScheduledTasks deletes the runs that finished, and the tasks that completed or failed,
 // more than ScheduledTasksKept ago, in batches until none is left, and says how many of each.
 // A task counts from updated_at, which the finish of its last run sets as the task leaves
-// active. An active or paused task is never deleted, whatever its age; its old runs are.
+// active, but is kept while a run of it is unfinished or finished within ScheduledTasksKept:
+// a completed task can be run by hand without its row changing. An active or paused task is
+// never deleted, whatever its age; its old runs are.
 //
 // SKIP LOCKED keeps two routers pruning at once off each other's rows. The runs batch locks
 // only run rows, and the tasks batch takes the task row before the runs it cascades to, as
@@ -1044,8 +1046,12 @@ DELETE FROM scheduled_task_runs WHERE id IN (
 	tasks, err = s.pruneInBatches(ctx, scheduledTasksPruned, `
 DELETE FROM scheduled_tasks WHERE (customer_id, id) IN (
     SELECT customer_id, id FROM scheduled_tasks
-    WHERE state IN ('completed', 'failed') AND updated_at < now() - make_interval(secs => ?)
-    LIMIT ? FOR UPDATE SKIP LOCKED)`)
+    WHERE state IN ('completed', 'failed') AND updated_at < now() - make_interval(secs => ?0)
+    AND NOT EXISTS (
+        SELECT 1 FROM scheduled_task_runs r
+        WHERE r.customer_id = scheduled_tasks.customer_id AND r.task_id = scheduled_tasks.id
+        AND (r.finished_at IS NULL OR r.finished_at >= now() - make_interval(secs => ?0)))
+    LIMIT ?1 FOR UPDATE SKIP LOCKED)`)
 	if err != nil {
 		return runs, tasks, stack.Wrap(fmt.Errorf("store: prune scheduled tasks: %w", err))
 	}
