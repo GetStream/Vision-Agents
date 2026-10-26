@@ -214,8 +214,8 @@ func placeholderName(history []llm.Message, call llm.ToolCall) (string, bool) {
 		if !ok || (key != "name" && !strings.HasSuffix(key, "_name")) {
 			continue
 		}
-		if (slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || len(strings.Fields(text)) > 4 ||
-			notAName(text)) && !nameWasGiven(history, text) {
+		if (slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || len(strings.Fields(text)) > 4) &&
+			!nameWasGiven(history, text) {
 			return text, true
 		}
 	}
@@ -486,95 +486,10 @@ func misspelledResult(name, spelled string) string {
 
 var placeholders = []string{"caller", "the caller", "customer", "guest", "user", "john doe", "jane doe", "unknown", "n/a"}
 
-// notNames are words no name holds. Flux heard "Last name is Alvarez" as "Let Last name is
-// Alvarez", and MiniMax booked "Let Alvarez"; it heard a barge-in's "wait, wait" as "Wing
-// Wait" and booked that before the caller gave a name. Words that are also names (Will,
-// May, Rose) are left out.
-var notNames = []string{"let", "let's", "lets", "is", "my", "the", "name", "last", "first", "yes",
-	"okay", "ok", "um", "uh", "hi", "hello", "please", "thanks", "it's", "its", "under", "this", "that",
-	"wait", "sorry", "actually", "hold", "hang"}
-
-// notAName reports a name with a word in it that no name holds.
-func notAName(text string) bool {
-	for _, word := range strings.Fields(strings.ToLower(text)) {
-		if slices.Contains(notNames, strings.Trim(word, ".,!?\"")) {
-			return true
-		}
-	}
-	return false
-}
-
 // placeholderResult is what a call with a stand-in name is answered with.
 func placeholderResult(name string) string {
 	return fmt.Sprintf(didNotWork+"%q is not a name the caller gave. Call again with the name they "+
 		"gave, or ask them for it.", name)
-}
-
-// misshapenLastFour reports a "last four" argument that is not four digits. The transcriber
-// ran "nine eight two one, fourteen Cedar Lane" together as "982114 Cedar Lane", and
-// PhoneLLM Mini sent verify_account a last4 of 98214 and of 129821.
-func misshapenLastFour(call llm.ToolCall) (key, value string, misshapen bool) {
-	var arguments map[string]any
-	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
-		return "", "", false
-	}
-	for name, raw := range arguments {
-		text, ok := raw.(string)
-		if !ok || text == "" || !slices.Contains(lastFourKeys, strings.ToLower(name)) {
-			continue
-		}
-		digits := strings.Map(func(r rune) rune {
-			if unicode.IsDigit(r) {
-				return r
-			}
-			return -1
-		}, text)
-		if len(digits) != 4 || len(digits) != len(strings.TrimSpace(text)) {
-			return name, text, true
-		}
-		// Given the split, PhoneLLM Mini sent last4 9821 with the address "98214 Cedar Lane".
-		if address, ok := arguments["address"].(string); ok {
-			if number, _, _ := strings.Cut(strings.TrimSpace(address), " "); len(number) > 4 && strings.HasPrefix(number, digits) {
-				return "address", address, true
-			}
-		}
-	}
-	return "", "", false
-}
-
-var lastFourKeys = []string{"last4", "last_4", "last_four", "lastfour"}
-
-// misshapenResult is what a call with a misshapen last four is answered with. When the
-// caller's words hold a number run into the street after it, it spells out the split:
-// told only the rule, PhoneLLM Mini asked the caller for four digits they had already given.
-func misshapenResult(key, value string, history []llm.Message) string {
-	result := fmt.Sprintf(didNotWork+"%s takes exactly four digits, and %q is not four digits. ", key, value)
-	if !slices.Contains(lastFourKeys, strings.ToLower(key)) {
-		result = fmt.Sprintf(didNotWork+"the address %q still opens with the last four. ", value)
-	}
-	if number, street, ok := runTogether(history); ok {
-		return result + fmt.Sprintf("The caller's %q is the last four %s followed by the address %s %s: "+
-			"call again with those.", number+" "+street, number[:4], number[4:], street)
-	}
-	return result + "When what you heard runs into the next number (\"553017 Oak Road\"), the first " +
-		"four are the last four and the rest begins the address (17 Oak Road). Otherwise read back " +
-		"what you heard and ask for the four digits."
-}
-
-var runOn = regexp.MustCompile(`\b(\d{5,8})\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)`)
-
-// runTogether finds, in what the caller said last, a number of five to eight digits
-// followed by a capitalised street.
-func runTogether(history []llm.Message) (number, street string, ok bool) {
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Role != llm.User {
-			continue
-		}
-		if match := runOn.FindStringSubmatch(history[i].Content); match != nil {
-			return match[1], match[2], true
-		}
-	}
-	return "", "", false
 }
 
 func toolNames(tools harness.Tools) []string {

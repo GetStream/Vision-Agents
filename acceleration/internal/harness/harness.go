@@ -143,14 +143,9 @@ type Turn struct {
 	// Answers says the reply is offered no tools and must answer from what it has: the
 	// chain of tools before it has gone on as long as the caller can be kept waiting.
 	Answers bool
-	// MustCall has the model call one of its tools rather than answer in words.
-	MustCall bool
 	// NoTools offers the reply no tools without telling it to hurry: nobody has spoken
 	// yet, so there is nothing to act on.
 	NoTools bool
-	// OnlyTool narrows a turn that must call to the one tool it names. Made to call after
-	// dispatch_tech failed for want of a reboot, Qwen called dispatch_tech again.
-	OnlyTool string
 	// Asked is what the caller asked to change about this reply, written over the
 	// session's own overwrites.
 	Asked llmoptions.LLM
@@ -158,9 +153,6 @@ type Turn struct {
 	// (llm.ResponseParams.Attributes). Nil adds none.
 	Attributes func() map[string]string
 }
-
-// mustCallTokens bounds a reply that must call a tool.
-const mustCallTokens = 256
 
 // answerNow is the note a reply that Answers is given.
 const answerNow = "There is no time for another tool: answer the caller now from what the " +
@@ -388,34 +380,16 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		reasoning.Effort = toolReplyEffort
 	}
 
-	toolChoice := ""
-	maxTokens := h.options.MaxTokens
-	if turn.MustCall && turn.OnlyTool != "" {
-		if only := slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool { return tool.Name != turn.OnlyTool }); len(only) > 0 {
-			tools = only
-		}
-	}
-	if turn.MustCall && len(tools) > 0 {
-		toolChoice = "required"
-		// Constrained to a call, Gemma on vLLM once wrote nothing for 37 seconds while the
-		// caller waited; a call fits well inside this.
-		maxTokens = mustCallTokens
-		if h.options.MaxTokens > 0 {
-			maxTokens = min(h.options.MaxTokens, mustCallTokens)
-		}
-	}
-
 	return session.Create(ctx, llm.ResponseParams{
 		ID:                 turn.ID,
 		Purpose:            "reply",
-		ToolChoice:         toolChoice,
 		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,
 		Attributes:         turn.Attributes,
 		Instructions:       instructions,
 		Input:              input,
-		MaxOutputTokens:    maxTokens,
+		MaxOutputTokens:    h.options.MaxTokens,
 		Tools:              tools,
 		Store:              model.Store,
 		PreviousResponseID: previous,

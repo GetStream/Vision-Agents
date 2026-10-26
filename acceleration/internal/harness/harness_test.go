@@ -1812,39 +1812,3 @@ func (s *HarnessSuite) TestSlowProviderHeadersDoNotBlockTaskAcceptance() {
 		s.T().Fatal("cancellation did not stop provider startup")
 	}
 }
-
-func (s *HarnessSuite) TestATurnThatMustCallOneToolIsOfferedThatToolAlone() {
-	s.tools = testTools()
-	s.build(false)
-	only := s.tools.Tools[1].Name
-
-	s.answer(Turn{
-		ID:        "tool-1",
-		History:   []llm.Message{{Role: llm.User, Content: "the reboot did not help"}},
-		AfterTool: true,
-		MustCall:  true,
-		OnlyTool:  only,
-	})
-
-	s.Require().Len(s.fast.requests(), 1)
-	offered := s.fast.requests()[0].Tools
-	s.Require().Len(offered, 1)
-	s.Equal(only, offered[0].Name)
-	s.Equal("required", s.fast.requests()[0].ToolChoice)
-}
-
-func (s *HarnessSuite) TestAToolTheTurnNamesThatIsNotOfferedLeavesTheOthers() {
-	s.tools = testTools()
-	s.build(false)
-
-	s.answer(Turn{
-		ID:        "tool-1",
-		History:   []llm.Message{{Role: llm.User, Content: "the reboot did not help"}},
-		AfterTool: true,
-		MustCall:  true,
-		OnlyTool:  "walk_reboot",
-	})
-
-	s.Require().Len(s.fast.requests(), 1)
-	s.Len(s.fast.requests()[0].Tools, 2)
-}
