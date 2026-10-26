@@ -91,19 +91,30 @@ func (t *TrunkGroupTx) Trunks() ([]StreamTrunk, error) {
 	return trunks, nil
 }
 
-// SaveTrunk stores a trunk in the group, or replaces what is stored for it.
+// SaveTrunk stores a trunk in the group, or replaces what is stored for it. A trunk of
+// another group is refused rather than taken over.
 func (t *TrunkGroupTx) SaveTrunk(trunk StreamTrunk) error {
 	trunk.CustomerID, trunk.StreamAppPK, trunk.Vendor = t.group.CustomerID, t.group.StreamAppPK, t.group.Vendor
-	_, err := t.tx.NewInsert().Model(&trunk).
+	result, err := t.tx.NewInsert().Model(&trunk).
 		On("CONFLICT (id) DO UPDATE").
 		Set("numbers = EXCLUDED.numbers").
 		Set("bridge_uri = EXCLUDED.bridge_uri").
 		Set("bridge_username = EXCLUDED.bridge_username").
 		Set("bridge_password_sealed = EXCLUDED.bridge_password_sealed").
 		Set("bridge_password_kek_version = EXCLUDED.bridge_password_kek_version").
+		Where("st.customer_id = EXCLUDED.customer_id").
+		Where("st.vendor = EXCLUDED.vendor").
+		Where("st.stream_app_pk IS NOT DISTINCT FROM EXCLUDED.stream_app_pk").
 		Exec(t.ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: save trunk: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: save trunk: %w", err))
+	}
+	if affected == 0 {
+		return stack.Wrap(fmt.Errorf("store: trunk %s is another group's", trunk.ID))
 	}
 	return nil
 }

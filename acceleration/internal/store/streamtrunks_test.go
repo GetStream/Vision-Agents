@@ -41,6 +41,32 @@ func (s *StoreSuite) TestATrunkGroupSeesOnlyItsOwnTrunks() {
 	s.Equal([]string{"trunk-own"}, s.trunkIDs(group))
 }
 
+func (s *StoreSuite) TestATrunkAnotherGroupHoldsIsNotOverwritten() {
+	group := TrunkGroup{CustomerID: "acme", StreamAppPK: 7, Vendor: "twilio"}
+	s.savedTrunk(group, "trunk-taken")
+
+	for _, other := range []TrunkGroup{
+		{CustomerID: "globex", StreamAppPK: 7, Vendor: "twilio"},
+		{CustomerID: "acme", StreamAppPK: 8, Vendor: "twilio"},
+		{CustomerID: "acme", Vendor: "twilio"},
+		{CustomerID: "acme", StreamAppPK: 7, Vendor: "telnyx"},
+	} {
+		err := s.store.InTrunkGroup(s.ctx, other, func(_ context.Context, tx *TrunkGroupTx) error {
+			return tx.SaveTrunk(StreamTrunk{ID: "trunk-taken", Numbers: []string{"+15125559999"},
+				BridgeURI: "sip:x@y", BridgeUsername: "x", BridgePasswordSealed: []byte("theirs"), BridgePasswordKEKVersion: 1})
+		})
+		s.Error(err, other)
+	}
+
+	s.Require().NoError(s.store.InTrunkGroup(s.ctx, group, func(_ context.Context, tx *TrunkGroupTx) error {
+		trunks, err := tx.Trunks()
+		s.Require().Len(trunks, 1)
+		s.Equal([]string{"+15125550000"}, trunks[0].Numbers)
+		s.Equal([]byte("sealed"), trunks[0].BridgePasswordSealed)
+		return err
+	}))
+}
+
 func (s *StoreSuite) TestTheDeploymentsAppIsAGroupOfItsOwn() {
 	s.savedTrunk(TrunkGroup{CustomerID: "acme", Vendor: "twilio"}, "trunk-deployment")
 	s.savedTrunk(TrunkGroup{CustomerID: "acme", StreamAppPK: 7, Vendor: "twilio"}, "trunk-own-app")
