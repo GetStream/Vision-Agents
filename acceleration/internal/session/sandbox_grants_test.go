@@ -674,6 +674,20 @@ func (s *SandboxGrantsSuite) TestACallerWithNoConnectionGetsALateGrantAndIsToldH
 		"user they must connect crm. Once they have, run the code again; if it still gets 401, wait 20 seconds and run it once more.")
 }
 
+// TestARunNamesOnlyTheLateGrantsNotConnected: the app's own connection, bound from the start,
+// needs no login.
+func (s *SandboxGrantsSuite) TestARunNamesOnlyTheLateGrantsNotConnected() {
+	s.daytonaAPI()
+	s.sandboxRevision()
+	app := s.connection("", "secondary")
+	box, _ := s.chatSandbox(s.config(sandboxed(s.fixed("app", app, "whoami")), sandboxed(s.chosen("crm", "whoami"))), Consent{})
+
+	result, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal(sandbox.Result{Unconnected: []string{"crm"}}, result)
+}
+
 // TestALoginFinishedInTheChatBindsTheGrantBeforeTheNextRun: the consent the model's
 // crm__list_tools began connects alice's account, and the next run's secret holds its token.
 func (s *SandboxGrantsSuite) TestALoginFinishedInTheChatBindsTheGrantBeforeTheNextRun() {
@@ -690,6 +704,8 @@ func (s *SandboxGrantsSuite) TestALoginFinishedInTheChatBindsTheGrantBeforeTheNe
 
 	s.connect(mine, "primary")
 	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	_, err = box.Run(s.ctx, " ", nil)
+	s.Require().Error(err, "a run that never ran says nothing, and leaves the line to the next")
 	bound, err := box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
 	later, err := box.Run(s.ctx, "print(1)", nil)
