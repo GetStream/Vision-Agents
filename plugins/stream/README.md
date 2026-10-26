@@ -146,6 +146,9 @@ nobody knows is refused rather than dropped: a misspelled `llm` that went quietl
 leave the agent running on a model the file does not name.
 `plugins` and `plugin_events` are refused too: connectors replaced them, so name each
 under `connectors` instead.
+A connector entry is its id alone, or a mapping with `name` and any of `connector`, `tools`,
+`connection`, `required`, `sandbox: true` (code in the sandbox may call the connector's API)
+and `require_approval` (tools whose every call waits for the user to allow it).
 
 A page in `knowledge/urls.yaml` written as a mapping may say `refresh_hours: 24` to be read
 again on a schedule. `simulations/*.yaml` each list simulations (`name`, `scenario`,
