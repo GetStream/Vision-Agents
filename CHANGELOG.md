@@ -2,6 +2,13 @@
 
 ## Features
 
+### Kotlin sessions name where a sign-in goes back to
+
+`SessionOptions.returnUrl` in the Kotlin SDK is sent as the session's `return_url`, as Swift's
+`returnURL` is: the app's own scheme in reverse domain form, such as
+`com.example.app:/connected`, which the router hands a connector's sign-in back to. Left null,
+nothing is sent and the sign-in goes back to the dashboard, as before.
+
 ### A tool on a speech-to-speech conversation can say how it is going
 
 `/v1/sts/stream` now takes `tool_update` (`tool_call_id`, `text`, `verbatim`) for a call the model is waiting on, and has the model say it the way an agent session does: once no reply is being spoken and the caller is not talking, a newer update for the call replacing one not yet said, and the call's `tool_result` dropping it. A status is said in the model's own words, `verbatim` words as written or close to them. An update for a call the model is not waiting on, or to a model that cannot be told about an open call, is dropped. `tool_hold` is answered with `tool_held` for an open call, and with `tool_cancel` for one the model cancelled or was answered for. In Python, `stream.STS` runs each function with `current_call()` set, so `update()`, `say()` and `disallow_interruptions()` work there as they do on `stream.Accelerated`; before, they did nothing.
