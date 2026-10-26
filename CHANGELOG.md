@@ -28,6 +28,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ## Bug Fixes
 
+### Code run again after the user connects a connector runs, instead of returning the old 401
+
+When sandbox code got a 401 because the user had not connected a connector, its result tells the model to run the code again once they connect. The agent's repeat-call guard answered that identical second `run_code` from the first result, so the turn ended on the old 401 although the connection was live. A `run_code` result that says a connector is not connected, or was just connected, no longer answers a repeat. Every other repeated call is still answered from its earlier result (AI-1987).
+
 ### A thread message the session refuses is given up at once
 
 A message in a thread channel (Slack, SMS, WhatsApp, iMessage) whose session refuses the turn for any reason but a reply still being written is now given up at once and logged. Before, the router tried it again every 50 ms for up to two minutes, writing one more cancelled reply into the channel each time and holding the thread's turn. A message that arrives while a reply is running still waits for it. Only a scheduled task's follow-up now keeps a copy of its reply and files in memory, the one that is read back on a retry (AI-1556, AI-1557).
