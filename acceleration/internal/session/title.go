@@ -16,6 +16,7 @@ import (
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
 // titleTarget names conversations. A fast tier: a title is a few words, and it is written
@@ -136,7 +137,7 @@ func (s *Session) name(event Event) {
 
 func (s *Session) retitle(ctx context.Context, said []spoken) error {
 	n := s.naming
-	named, err := n.titles.ask(ctx, s.spec, s.id, said)
+	named, err := n.titles.ask(ctx, s.Spec(), s.id, said)
 	if err != nil {
 		return err
 	}
@@ -152,13 +153,15 @@ func (s *Session) retitle(ctx context.Context, said []spoken) error {
 	}
 
 	if n.titles.records != nil {
-		n.titles.records.Described(s.spec.CustomerID, s.id, named.Title, named.Description, nil)
+		s.afterRow(func() {
+			n.titles.records.Described(s.spec.CustomerID, s.id, named.Title, named.Description, nil)
+		})
 	}
 	return n.service.Describe(ctx, s.spec.CustomerID, s.spec.ConversationID, named.Title, named.Description)
 }
 
 func (t *titler) ask(ctx context.Context, spec Spec, id string, said []spoken) (title, error) {
-	session, err := t.llm.Start(ctx, llmrouter.Request{
+	session, err := t.llm.Start(routing.WithAttribution(ctx, spec.Attribution), llmrouter.Request{
 		CustomerID: spec.CustomerID,
 		AgentID:    spec.AgentID,
 		Tags:       spec.Tags,

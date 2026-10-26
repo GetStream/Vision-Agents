@@ -1,4 +1,5 @@
 import Foundation
+import StreamCore
 
 /// What went wrong talking to the router.
 ///
@@ -53,8 +54,8 @@ public struct HTTPFailure: Sendable, Hashable {
     }
 }
 
-/// How much of a failure's body is read. The router's envelope is a few hundred bytes; a proxy's
-/// error page can be anything.
+/// How much of a failure's body is read as the failure. The router's envelope is a few hundred
+/// bytes; a proxy's error page can be anything.
 let maximumFailureBody = 64 << 10
 
 /// How much of a body that is not the envelope becomes the message.
@@ -64,8 +65,8 @@ extension HTTPFailure {
     /// What a failure's body says: the router's envelope, or else its text.
     init(status: Int, requestID: String, body: Data) {
         let detail =
-            (try? JSONDecoder().decode(JSONValue.self, from: body))?.objectValue["error"]?
-            .objectValue ?? [:]
+            (try? JSONDecoder().decode([String: RawJSON].self, from: body))?["error"]?
+            .dictionaryValue ?? [:]
         let message = detail["message"]?.stringValue ?? ""
         guard !message.isEmpty else {
             let text = String(decoding: body, as: UTF8.self)

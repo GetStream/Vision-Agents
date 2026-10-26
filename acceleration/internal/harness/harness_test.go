@@ -1657,6 +1657,48 @@ func (s *HarnessSuite) TestAPromptNearingTheContextWindowIsCompactedEvenWhenCach
 	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the summary was never asked for")
 }
 
+func (s *HarnessSuite) TestAColdCacheRightAfterAHistoryIsRewrittenIsNotAReasonToCompact() {
+	// A summary rewrites the history from the front, so the prompt after it misses the
+	// cache whatever the provider does. Read as the cache no longer paying, each summary
+	// started the next: a voice call compacted every other turn.
+	s.build(true)
+	cached := int64(float64(compactionMinTokens) * compactionCacheRatio)
+
+	started, err := s.harness.MaybeCompact(longHistory(), compactionMinTokens, cached)
+	s.Require().NoError(err)
+	s.False(started)
+
+	rewritten := append([]llm.Message{{Role: llm.System, Content: "Earlier conversation summary:\nDinner on Friday."}},
+		longHistory()...)
+	started, err = s.harness.MaybeCompact(rewritten, compactionMinTokens, 0)
+	s.Require().NoError(err)
+	s.False(started, "nothing could have cached a prompt that opens with a summary written since")
+	s.Empty(s.slow.requests())
+
+	continued := append(rewritten,
+		llm.Message{Role: llm.User, Content: "and Saturday?"},
+		llm.Message{Role: llm.Assistant, Content: "Saturday is free."},
+	)
+	started, err = s.harness.MaybeCompact(continued, compactionMinTokens, 0)
+	s.Require().NoError(err)
+	s.True(started, "a prompt that continues the last one and still misses the cache is cold")
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the summary was never asked for")
+}
+
+func (s *HarnessSuite) TestARewrittenHistoryNearingTheContextWindowIsStillCompacted() {
+	s.build(true)
+
+	started, err := s.harness.MaybeCompact(longHistory(), compactionMinTokens, compactionMinTokens)
+	s.Require().NoError(err)
+	s.False(started)
+
+	rewritten := append([]llm.Message{{Role: llm.System, Content: "Earlier conversation summary:\nDinner on Friday."}},
+		longHistory()...)
+	started, err = s.harness.MaybeCompact(rewritten, 80_000, 0)
+	s.Require().NoError(err)
+	s.True(started, "a prompt about to be refused for its length is summarised whatever the cache says")
+}
+
 func (s *HarnessSuite) TestShortHistoryIsNotCompacted() {
 	s.build(true)
 

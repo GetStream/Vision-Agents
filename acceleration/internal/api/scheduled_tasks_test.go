@@ -35,6 +35,62 @@ import (
 type schedulingScript struct {
 	mu    sync.Mutex
 	turns [][]llm.ToolCall
+	// rounds is the tool calls of the next rounds a tool's answer starts, one entry for each.
+	rounds [][]llm.ToolCall
+	// failing is how many scheduled turns each model opened from now on fails.
+	failing int
+	// held, when set, keeps the scheduled turns of every model back until it is closed.
+	held chan struct{}
+}
+
+// failScheduled has every model opened from now on fail its next times a scheduled task comes
+// due, for a session the test cannot reach before it opens.
+func (s *schedulingScript) failScheduled(times int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failing = times
+}
+
+// holdScheduled keeps every model's scheduled turns running, saying nothing, until release,
+// as schedulingModel.holdScheduled does, for models the test cannot reach before the delivery opens them.
+func (s *schedulingScript) holdScheduled() (release func()) {
+	held := make(chan struct{})
+	s.mu.Lock()
+	s.held = held
+	s.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(held) }) }
+}
+
+func (s *schedulingScript) holding() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.held
+}
+
+func (s *schedulingScript) failingTurns() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failing
+}
+
+// planRound queues the tool calls of the next round a tool's answer starts: a later round
+// of the turn a person's words began.
+func (s *schedulingScript) planRound(calls ...llm.ToolCall) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rounds = append(s.rounds, calls)
+}
+
+func (s *schedulingScript) nextRound() []llm.ToolCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.rounds) == 0 {
+		return nil
+	}
+	calls := s.rounds[0]
+	s.rounds = s.rounds[1:]
+	return calls
 }
 
 // plan queues the tool calls of the next turn somebody speaks.
@@ -59,7 +115,7 @@ func (s *schedulingScript) next() []llm.ToolCall {
 func (s *schedulingScript) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.turns = nil
+	s.turns, s.rounds, s.failing, s.held = nil, nil, 0, nil
 }
 
 // schedulingModel is a model that asks for the tool calls its test queued and
@@ -102,6 +158,7 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		names = append(names, tool.Name)
 	}
 	scheduled := strings.Contains(startedBy(params), "<scheduled_task")
+	everyHeld := m.script.holding()
 	m.mu.Lock()
 	m.offered = append(m.offered, names)
 	m.asked = append(m.asked, params)
@@ -110,16 +167,26 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		m.failing--
 	}
 	held := m.held
+	if held == nil {
+		held = everyHeld
+	}
 	if !scheduled {
 		held = nil
 	}
 	m.mu.Unlock()
 
-	// A turn somebody started runs what the test queued; the turn a tool's
-	// answer starts is simply agreed with.
+	// A turn somebody started runs what the test queued; the round a tool's
+	// answer starts runs what the test queued for a later round, and is
+	// otherwise simply agreed with, and so is a call offering no tools, such
+	// as the summary of a thread's episode.
 	var calls []llm.ToolCall
-	if len(params.Input) > 0 && params.Input[len(params.Input)-1].Role == llm.User {
-		calls = m.script.next()
+	if len(params.Tools) > 0 && len(params.Input) > 0 {
+		switch params.Input[len(params.Input)-1].Role {
+		case llm.User:
+			calls = m.script.next()
+		case llm.ToolResult:
+			calls = m.script.nextRound()
+		}
 	}
 	script := llmtest.New(llm.StreamOptions{ResponseID: params.ID, Provider: m.Provider(), Model: m.Model()})
 	if failing {
@@ -262,6 +329,9 @@ func (s *ScheduledTasksSuite) SetupSuite() {
 	s.sink = &channelSink{sent: map[string][]string{}}
 	s.channelAPI = httptest.NewTLSServer(http.HandlerFunc(s.sink.serve))
 	s.T().Cleanup(s.channelAPI.Close)
+	// A worker claims every task due in its database, so the suite's workers and those of
+	// the other suites and packages running beside it must not share one.
+	s.database = "scheduled_tasks"
 	s.RouterSuite.SetupSuite()
 	s.runReads = &runReads{}
 	if s.store != nil {
@@ -388,7 +458,7 @@ func (s *ScheduledTasksSuite) taskReloaded(task store.ScheduledTask) store.Sched
 // delivered waits for the task's latest run to be delivered, and returns it.
 func (s *ScheduledTasksSuite) delivered(task store.ScheduledTask) store.ScheduledTaskRun {
 	var latest store.ScheduledTaskRun
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		runs := s.runsOf(task)
 		if len(runs) == 0 {
 			return false
@@ -430,6 +500,7 @@ func (s *ScheduledTasksSuite) TestTheAgentSchedulesATaskForItsUser() {
 	s.Equal("Remind them to stretch.", task.Instructions)
 	s.Equal(store.ScheduledTaskActive, task.State)
 	s.Equal("agent", task.CreatedBy)
+	s.Equal("authenticated", task.CallerKind)
 	s.Equal(config, task.ConfigID)
 	s.Equal(opened.Id, task.SessionID)
 	s.Require().NotNil(task.NextRunAt)
@@ -550,7 +621,7 @@ func (s *ScheduledTasksSuite) TestTheAgentMovesATaskPastItsNextRunUnderAQuarterH
 
 func (s *ScheduledTasksSuite) seedListedTask(config string, user *testClient, state string) {
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
 		StartLocal: time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), Timezone: "Europe/Amsterdam", State: state,
 	}
@@ -639,7 +710,7 @@ func (s *ScheduledTasksSuite) TestTheAgentListsRunningTasksFirstAndSaysWhenThere
 	user := s.data.createUser()
 	seed := func(state string) string {
 		task := store.ScheduledTask{
-			CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+			CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 			CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
 			StartLocal: time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), Timezone: "Europe/Amsterdam", State: state,
 		}
@@ -910,7 +981,7 @@ func (s *ScheduledTasksSuite) TestATaskWithNoSessionYetOpensOneAtItsFirstOccurre
 	now := time.Now()
 	next := now.Add(-time.Minute)
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
@@ -935,7 +1006,7 @@ func (s *ScheduledTasksSuite) TestATaskThatComesDueOnACallWaitsForTheCallToEnd()
 	now := time.Now()
 	next := now.Add(-time.Minute)
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
@@ -964,7 +1035,7 @@ func (s *ScheduledTasksSuite) TestADueTaskIsHandedToTheNodeHoldingItsConversatio
 	now := time.Now()
 	next := now.Add(-time.Minute)
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
@@ -1026,7 +1097,7 @@ func (s *ScheduledTasksSuite) TestAConfigThatCannotBeReadIsNotReportedAsDeletedO
 	// being gone: that is a failure of the lookup, not an unknown config.
 	user := s.data.createUser()
 	task := store.ScheduledTask{
-		CustomerID: s.customerID(), UserID: user.userID,
+		CustomerID: s.customerID(), UserID: user.userID, APIKey: s.app.key,
 		CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
 		StartLocal: time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second), Timezone: "Europe/Amsterdam",
 		State: store.ScheduledTaskPaused,
@@ -1884,6 +1955,29 @@ func (s *ScheduledTasksSuite) TestRunningATaskByHandDeliversWithoutMovingTheSche
 	s.NotNil(read.LastRunAt)
 }
 
+func (s *ScheduledTasksSuite) TestATaskRunsAsTheKeyThatScheduledIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	scheduler := s.serverClient.actingFor(user)
+	scheduler.header.Set(auth.UsageCategoriesHeader, "project:reminders")
+	var created ScheduledTask
+	s.Require().Equal(http.StatusCreated, scheduler.do(http.MethodPost, "/v1/agents/scheduled-tasks", taskRequest(config), &created))
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/run", nil, nil))
+
+	var rows []store.Request
+	s.Require().Eventually(func() bool {
+		rows = nil
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(s.T().Context())
+		return err == nil && len(rows) > 0
+	}, 30*time.Second, 250*time.Millisecond, "the run recorded nothing")
+	for _, row := range rows {
+		s.Equal(s.app.key, row.APIKey, "%s %s", row.Modality, row.Purpose)
+		s.Equal(user.userID, row.UserID)
+		s.Equal([]string{"project:reminders"}, row.UsageCategories)
+	}
+}
+
 func (s *ScheduledTasksSuite) TestDeletingATaskDeletesItsRuns() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
@@ -1949,6 +2043,36 @@ func (s *ScheduledTasksSuite) TestACreateNamingASessionFollowsUpInIt() {
 	body.SessionId = &opened.Id
 	status, _ := s.taskFailure(s.serverClient.actingFor(other), http.MethodPost, "/v1/agents/scheduled-tasks", body)
 	s.Equal(http.StatusNotFound, status, "a session is only its own user's to schedule into")
+}
+
+// The row is written behind the conversation, so a session stopped while the writer is behind
+// has left the live set before its row exists; a create naming it waits for the row.
+func (s *ScheduledTasksSuite) TestACreateNamingASessionThatEndedBeforeItsRowWasWrittenFollowsUpInIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	release := s.stallTheRecordWriter()
+	opened := s.openScheduling(user, config, nil)
+	user.stopSession(opened.Id)
+
+	body := taskRequest(config)
+	body.ConfigId, body.SessionId = nil, &opened.Id
+	answered := make(chan int, 1)
+	go func() {
+		var created ScheduledTask
+		answered <- s.serverClient.actingFor(user).do(http.MethodPost, "/v1/agents/scheduled-tasks", body, &created)
+	}()
+	// Well under recordWriteTimeout (5s, internal/session/records.go), so only the create
+	// waiting for the writer keeps it unanswered this long.
+	s.Never(func() bool { return len(answered) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"the create answered before the writer had written the session's row")
+	release()
+
+	select {
+	case status := <-answered:
+		s.Equal(http.StatusCreated, status)
+	case <-time.After(10 * time.Second):
+		s.FailNow("the create never answered")
+	}
 }
 
 // An occurrence follows up by carrying the conversation on, so a create naming a session
@@ -2189,7 +2313,7 @@ func (s *ScheduledTasksSuite) TestATaskTextedOnWhatsAppArrivesThere() {
 	run := s.delivered(s.tasksOf(user)[0])
 	s.Equal("whatsapp", run.DeliveredTo)
 	s.Equal(created.Id, run.TaskID)
-	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
+	s.Require().Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
 	s.Equal("Done.", s.sink.to(writer)[0], "the words the agent answered with are the words carried out")
 	s.True(s.model().heard("<scheduled_task"), "the follow-up ran in the conversation")
@@ -2232,7 +2356,7 @@ func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
 
 	run := s.delivered(s.tasksOf(user)[0])
 	s.Equal("sms", run.DeliveredTo)
-	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
+	s.Require().Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
 	s.Equal("Done.", s.sink.to(writer)[0])
 }
@@ -2291,7 +2415,7 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 	s.makeDue(task)
 
 	var runs []store.ScheduledTaskRun
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		runs = s.runsOf(task)
 		return len(runs) > 0 && runs[0].State == store.ScheduledTaskRunFailed
 	}, 30*time.Second, 250*time.Millisecond, "the occurrence never finished failing")
@@ -2687,7 +2811,7 @@ func (s *ScheduledTasksSuite) TestAQuietOneShotEditedWhileHeldIsHeldAgainAsItNow
 		stored := s.taskReloaded(task)
 		return stored.LeaseUntil != nil && stored.LeaseUntil.After(time.Now().Add(time.Hour))
 	}
-	s.Eventually(held, 15*time.Second, 250*time.Millisecond, "the task was never held")
+	s.Require().Eventually(held, 15*time.Second, 250*time.Millisecond, "the task was never held")
 	first := s.runsOf(task)[0]
 
 	var updated ScheduledTask
@@ -2697,7 +2821,7 @@ func (s *ScheduledTasksSuite) TestAQuietOneShotEditedWhileHeldIsHeldAgainAsItNow
 
 	// The held occurrence is settled, and the one-shot comes due again as it
 	// now reads: quiet hours still hold, so it is held again, not delivered.
-	s.Eventually(func() bool { return len(s.runsOf(task)) == 2 && held() },
+	s.Require().Eventually(func() bool { return len(s.runsOf(task)) == 2 && held() },
 		15*time.Second, 250*time.Millisecond, "the edited one-shot was never taken up again")
 	runs := s.runsOf(task)
 	s.Equal(first.ID, runs[1].ID)

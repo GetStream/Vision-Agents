@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
@@ -398,6 +399,7 @@ func (a *Agent) startNative(prep *prepared) {
 	a.mu.Lock()
 	a.pipe = p
 	a.sts = prep.sts
+	a.forgetUtterancesLocked()
 	if prep.harness != nil {
 		drained = make(chan struct{})
 		a.harness, a.harnessDrained = prep.harness, drained
@@ -610,7 +612,7 @@ func (a *Agent) openSpeech(ctx context.Context, s Settings, delegating bool) (*s
 	a.mu.Unlock()
 
 	on := true
-	session, err := a.options.STS.Start(ctx, stsrouter.Request{
+	session, err := a.options.STS.Start(routing.WithAttribution(ctx, a.options.Attribution), stsrouter.Request{
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
@@ -693,6 +695,13 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		return
 	}
 	a.utterances = 0
+	// What a reply cut off with the voice had been heard of, before it is forgotten.
+	var cutShort cutShort
+	if lost == a.tts && a.speakingTurn != "" {
+		cutShort = a.cutShortLocked(a.speakingTurn, time.Now())
+	}
+	// What the lost voice was saying will not be heard from it.
+	a.forgetUtterancesLocked()
 	replace := !a.closed && !a.switching.Load() &&
 		len(a.lostVoices) < maxLostVoices
 	if replace {
@@ -721,7 +730,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 			current.Release(cut)
 		}
 		a.turns.interrupt(cut)
-		a.emitter.Send(Interrupted{TurnID: cut})
+		a.emitter.Send(cutShort.cut(Interrupted{TurnID: cut}))
 	}
 	if !replace {
 		return

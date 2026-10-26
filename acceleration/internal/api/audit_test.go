@@ -135,6 +135,14 @@ func (s *AuditSuite) TestACallerThatNamesNoClientIsRecordedAsTheApi() {
 	s.Empty(entry.ActorName)
 }
 
+func (s *AuditSuite) TestAClientCannotClaimToBeTheManagementAPI() {
+	// Only the manage key makes a change the management API's.
+	config := s.createConfigAs(s.serverClient.from("manage", "volt-7", "Ada Lovelace"),
+		map[string]any{"name": "claims-manage"})
+
+	s.Equal(AuditSource("api"), s.latest(AuditFilter{AgentID: &config.Id}).Source)
+}
+
 func (s *AuditSuite) TestTheLogIsNarrowedToOneAgent() {
 	kept := s.createConfig(map[string]any{"name": "kept"})
 	other := s.createConfig(map[string]any{"name": "other"})

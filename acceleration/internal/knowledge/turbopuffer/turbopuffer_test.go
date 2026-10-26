@@ -101,14 +101,14 @@ func (s *TurbopufferSuite) TestSearchReturnsThePassagesAndWhereTheyCameFrom() {
 	found, err := s.store.Search(s.ctx, knowledge.Query{Namespace: "handbook", Text: "delivery"})
 	s.Require().NoError(err)
 
-	s.Require().Len(found, 2)
+	s.Require().Len(found.Documents, 2)
 	s.Equal(knowledge.Document{
 		ID:     "shipping_0",
 		Text:   "Delivery is free over $50.",
 		Source: "shipping.md",
 		Score:  4.2,
-	}, found[0])
-	s.Equal("Next-day costs $9.", found[1].Text)
+	}, found.Documents[0])
+	s.Equal("Next-day costs $9.", found.Documents[1].Text)
 }
 
 func (s *TurbopufferSuite) TestANumericIdIsStillReadable() {
@@ -119,9 +119,9 @@ func (s *TurbopufferSuite) TestANumericIdIsStillReadable() {
 	found, err := s.store.Search(s.ctx, knowledge.Query{Namespace: "handbook", Text: "hours"})
 	s.Require().NoError(err)
 
-	s.Require().Len(found, 1)
-	s.Equal("7", found[0].ID)
-	s.Empty(found[0].Source)
+	s.Require().Len(found.Documents, 1)
+	s.Equal("7", found.Documents[0].ID)
+	s.Empty(found.Documents[0].Source)
 }
 
 func (s *TurbopufferSuite) TestAnEmptyKnowledgeBaseIsNotAFailure() {
@@ -133,7 +133,8 @@ func (s *TurbopufferSuite) TestAnEmptyKnowledgeBaseIsNotAFailure() {
 	found, err := s.store.Search(s.ctx, knowledge.Query{Namespace: "handbook", Text: "anything"})
 
 	s.Require().NoError(err)
-	s.Empty(found)
+	s.Empty(found.Documents)
+	s.Equal(knowledge.Billed{Requests: 1}, found.Billed, "the request was made, and turbopuffer billed nothing it said")
 }
 
 func (s *TurbopufferSuite) TestSearchingWithoutANamespaceIsRejectedBeforeTheNetwork() {
@@ -146,7 +147,7 @@ func (s *TurbopufferSuite) TestSearchingWithoutANamespaceIsRejectedBeforeTheNetw
 func (s *TurbopufferSuite) TestWrittenPassagesAreIndexedForFullTextSearch() {
 	// Nothing embeds anything here, so a passage that was not indexed for BM25 could be
 	// written and never found again.
-	err := s.store.Upsert(s.ctx, "handbook", []knowledge.Document{
+	_, err := s.store.Upsert(s.ctx, "handbook", []knowledge.Document{
 		{ID: "shipping_0", Text: "Delivery is free over $50.", Source: "shipping.md"},
 	})
 	s.Require().NoError(err)
@@ -171,20 +172,35 @@ func (s *TurbopufferSuite) TestALargeIngestIsWrittenInSeveralRequests() {
 		documents[i] = knowledge.Document{ID: strconv.Itoa(i), Text: "a passage"}
 	}
 
-	s.Require().NoError(s.store.Upsert(s.ctx, "handbook", documents))
+	billed, err := s.store.Upsert(s.ctx, "handbook", documents)
+	s.Require().NoError(err)
 
 	s.Len(s.search.bodies, 2, "one request for a whole body of documentation would be refused")
+	s.EqualValues(2, billed.Requests, "each request is billed on its own")
 }
 
 func (s *TurbopufferSuite) TestAPassageWithNothingToReadIsRejectedBeforeTheNetwork() {
-	err := s.store.Upsert(s.ctx, "handbook", []knowledge.Document{{ID: "empty", Text: "  "}})
+	_, err := s.store.Upsert(s.ctx, "handbook", []knowledge.Document{{ID: "empty", Text: "  "}})
 
 	s.ErrorContains(err, "something to read")
 	s.Empty(s.search.path, "a passage the model cannot read is not worth storing")
 }
 
+func (s *TurbopufferSuite) TestABadPassageLateInALargeIngestWritesNothing() {
+	documents := make([]knowledge.Document, upsertBatch+1)
+	for i := range documents {
+		documents[i] = knowledge.Document{ID: strconv.Itoa(i), Text: "a passage"}
+	}
+	documents[upsertBatch].Text = ""
+
+	_, err := s.store.Upsert(s.ctx, "handbook", documents)
+
+	s.ErrorContains(err, "something to read")
+	s.Empty(s.search.bodies, "a first batch written under a call that failed would be billed and never recorded")
+}
+
 func (s *TurbopufferSuite) TestWritingWithoutANamespaceIsRejected() {
-	err := s.store.Upsert(s.ctx, "", []knowledge.Document{{ID: "1", Text: "a passage"}})
+	_, err := s.store.Upsert(s.ctx, "", []knowledge.Document{{ID: "1", Text: "a passage"}})
 
 	s.ErrorContains(err, "namespace")
 }

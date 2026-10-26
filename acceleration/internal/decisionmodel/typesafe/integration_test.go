@@ -8,9 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/decisionmodelsuite"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/systemone"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -28,6 +30,22 @@ type TypeSafeIntegrationSuite struct {
 
 func TestTypeSafeIntegrationSuite(t *testing.T) {
 	suite.Run(t, new(TypeSafeIntegrationSuite))
+}
+
+// TypeSafeDecisionModelSuite holds Jev to what every decision model vendor is held to.
+type TypeSafeDecisionModelSuite struct {
+	decisionmodelsuite.Suite
+}
+
+func TestTypeSafeDecisionModelSuite(t *testing.T) {
+	suite.Run(t, &TypeSafeDecisionModelSuite{Suite: decisionmodelsuite.Suite{
+		New: func() decisionmodel.Provider {
+			provider, err := New(systemone.Options{})
+			require.NoError(t, err)
+			return provider
+		},
+		Requires: []string{"TYPESAFE_API_KEY"},
+	}})
 }
 
 func (s *TypeSafeIntegrationSuite) SetupSuite() {

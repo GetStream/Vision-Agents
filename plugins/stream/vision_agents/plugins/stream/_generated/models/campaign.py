@@ -30,6 +30,10 @@ class Campaign:
         name (str):
         state (CampaignState):
         finished_at (datetime.datetime | Unset):
+        paused_reason (str | Unset): Why the router paused the campaign itself, as the code of what refused its next
+            call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached.
+            The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer
+            paused, and cleared by starting it.
         started_at (datetime.datetime | Unset):
         tags (CampaignTags | Unset):
     """
@@ -42,6 +46,7 @@ class Campaign:
     name: str
     state: CampaignState
     finished_at: datetime.datetime | Unset = UNSET
+    paused_reason: str | Unset = UNSET
     started_at: datetime.datetime | Unset = UNSET
     tags: CampaignTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -64,6 +69,8 @@ class Campaign:
         finished_at: str | Unset = UNSET
         if not isinstance(self.finished_at, Unset):
             finished_at = self.finished_at.isoformat()
+
+        paused_reason = self.paused_reason
 
         started_at: str | Unset = UNSET
         if not isinstance(self.started_at, Unset):
@@ -88,6 +95,8 @@ class Campaign:
         )
         if finished_at is not UNSET:
             field_dict["finished_at"] = finished_at
+        if paused_reason is not UNSET:
+            field_dict["paused_reason"] = paused_reason
         if started_at is not UNSET:
             field_dict["started_at"] = started_at
         if tags is not UNSET:
@@ -121,6 +130,8 @@ class Campaign:
         else:
             finished_at = datetime.datetime.fromisoformat(_finished_at)
 
+        paused_reason = d.pop("paused_reason", UNSET)
+
         _started_at = d.pop("started_at", UNSET)
         started_at: datetime.datetime | Unset
         if isinstance(_started_at, Unset):
@@ -144,6 +155,7 @@ class Campaign:
             name=name,
             state=state,
             finished_at=finished_at,
+            paused_reason=paused_reason,
             started_at=started_at,
             tags=tags,
         )

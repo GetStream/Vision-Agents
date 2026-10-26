@@ -42,7 +42,7 @@ func (s *SessionSuite) TestASessionEndsWhenItsTimeoutIsReached() {
 	created := s.joins(Spec{})
 
 	set := time.Now()
-	created.SetTimeout(testTimeout)
+	created.SetTimeout(testTimeout, TimeoutHangup)
 
 	s.timedOut(created)
 	s.GreaterOrEqual(time.Since(set), testTimeout, "the session ended before its timeout")
@@ -53,9 +53,9 @@ func (s *SessionSuite) TestSettingTheTimeoutAgainMovesTheMoment() {
 	s.manages()
 	created := s.joins(Spec{})
 
-	created.SetTimeout(testTimeout)
+	created.SetTimeout(testTimeout, TimeoutHangup)
 	time.Sleep(testTimeout / 2)
-	created.SetTimeout(4 * testTimeout)
+	created.SetTimeout(4*testTimeout, TimeoutHangup)
 
 	time.Sleep(2 * testTimeout)
 	s.Equal(Live, created.State(), "the session ended at the timeout that was moved")
@@ -66,7 +66,7 @@ func (s *SessionSuite) TestClearingTheTimeoutKeepsTheSessionRunning() {
 	s.manages()
 	created := s.joins(Spec{})
 
-	created.SetTimeout(testTimeout)
+	created.SetTimeout(testTimeout, TimeoutHangup)
 	created.ClearTimeout()
 
 	s.outlives(created)
@@ -76,7 +76,7 @@ func (s *SessionSuite) TestAZeroTimeoutEndsTheSessionNow() {
 	s.manages()
 	created := s.joins(Spec{})
 
-	created.SetTimeout(0)
+	created.SetTimeout(0, TimeoutHangup)
 
 	s.timedOut(created)
 }
@@ -95,7 +95,7 @@ func (s *SessionSuite) TestATimeoutEndsTheSessionWithAnInterrupt() {
 	}
 
 	set := time.Now()
-	created.SetTimeout(0)
+	created.SetTimeout(0, TimeoutHangup)
 
 	s.timedOut(created)
 	s.Less(time.Since(set), finishWithin/2, "the session waited for the reply instead of interrupting it")
@@ -142,7 +142,7 @@ func (s *SessionSuite) TestAReopenedSessionIsNotEndedByTheOldTimeout() {
 	s.T().Cleanup(func() { _ = reopened.Close() })
 
 	// The old session's timer fired just before it closed.
-	old.end()
+	old.end(TimeoutHangup)
 
 	s.Equal(Live, reopened.State())
 	s.True(s.manager.Running(reopened.ID()), "the reopened session was taken off")
@@ -158,7 +158,7 @@ func (s *SessionSuite) TestATimeoutDuringStopOrShutdownIsHarmless() {
 	for range 5 {
 		created := s.joins(Spec{})
 		var stopped sync.WaitGroup
-		stopped.Go(func() { created.SetTimeout(0) })
+		stopped.Go(func() { created.SetTimeout(0, TimeoutHangup) })
 		stopped.Go(func() {
 			_, err := s.manager.Close(created.ID(), OwnerOf(created.Spec()))
 			s.NoError(err)
@@ -168,7 +168,7 @@ func (s *SessionSuite) TestATimeoutDuringStopOrShutdownIsHarmless() {
 	}
 
 	created := s.joins(Spec{})
-	created.SetTimeout(0)
+	created.SetTimeout(0, TimeoutHangup)
 	s.Require().NoError(s.manager.Shutdown())
 	s.Equal(Ended, created.State())
 	s.Zero(s.manager.Len())
@@ -179,7 +179,7 @@ func (s *SessionSuite) TestTimeoutCallsOnAnEndedSessionDoNothing() {
 	created := s.joins(Spec{})
 	ended := make(chan struct{}, 4)
 	created.mu.Lock()
-	created.end = func() { ended <- struct{}{} }
+	created.end = func(TimeoutReason) { ended <- struct{}{} }
 	created.mu.Unlock()
 
 	// A leave reported while the session is still closing must not set a new timeout.
@@ -192,11 +192,11 @@ func (s *SessionSuite) TestTimeoutCallsOnAnEndedSessionDoNothing() {
 		defer created.mu.Unlock()
 		return created.closing
 	}, "the session never started closing")
-	created.SetTimeout(0)
+	created.SetTimeout(0, TimeoutHangup)
 	edge.holdSpeech(false)
 	s.Require().NoError(<-closed)
 
-	created.SetTimeout(0)
+	created.SetTimeout(0, TimeoutHangup)
 	created.ClearTimeout()
 
 	select {
@@ -212,7 +212,7 @@ func (s *SessionSuite) TestATimeoutClearedDuringAVoiceChangeDoesNotEndTheSession
 
 	// Stands in for StopVoice clearing the timeout while the timer that fired waits on it.
 	created.commandMu.Lock()
-	created.SetTimeout(0)
+	created.SetTimeout(0, TimeoutHangup)
 	created.mu.Lock()
 	timer := created.timeout
 	created.mu.Unlock()

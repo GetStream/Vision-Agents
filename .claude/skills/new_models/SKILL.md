@@ -75,6 +75,14 @@ Routing a vendor and having code for it are different questions. Check
 is the cheapest thing on the list, because the client already exists and the work is config.
 Anthropic was in exactly that state — `internal/llm/anthropic` with nothing routed to it.
 
+When you report a price, report the cached-input rate too if the vendor has one: an entry in
+`acceleration/prices/vendor.json` with no `cached_input_tokens` rate bills cached tokens at its
+input rate. Report the other dimensions a vendor prices by as well, as `vendor.json` writes
+them: cache writes (a `cache_write_input_tokens` rate), a dearer long prompt (`tiers`), service
+tiers (an entry per tier, `"when": {"service_tier": …}`) and, for speech to speech, each
+modality's rate (`input_audio_tokens`, `output_text_tokens` and the rest). A model the
+deployment runs itself has no price; its `router.yaml` entry says `local: true`.
+
 ## 4. Report
 
 Report every model that clears the bar, ordered by how much it would improve what we route.

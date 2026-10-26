@@ -12,6 +12,7 @@ package sts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -41,6 +42,7 @@ var (
 	ErrNoTools           = errors.New("sts: this model does not call tools")
 	ErrInstructionsFixed = errors.New("sts: this model takes its instructions only when the session opens")
 	ErrToolsFixed        = errors.New("sts: this model takes its tools only when the session opens")
+	ErrNoCallUpdates     = errors.New("sts: this model cannot be told how an open tool call is going")
 )
 
 // Capabilities is what one model can be asked for.
@@ -73,6 +75,15 @@ type Capabilities struct {
 	ToolsMidSession        bool
 	// Usage reports whether the model says what a response cost in tokens.
 	Usage bool
+	// SessionBilled reports a vendor that bills every second the session is open, which it
+	// reports in SessionUsage, rather than its replies. The replies are then recorded unbilled,
+	// for their timing, and the seconds are the bill.
+	SessionBilled bool
+	// BilledAudio reports a vendor that keeps a running count of the audio it bills, and
+	// reports its growth on every reply it settles (Usage.AudioBilled). A reply settled
+	// without it, cut off before the vendor said, bills no audio: the vendor's next count
+	// includes what was heard, or the session's last row does.
+	BilledAudio bool
 	// Resumable reports whether a session survives its connection, so the provider can
 	// reconnect without the conversation starting over.
 	Resumable bool
@@ -158,6 +169,47 @@ type STS interface {
 	SampleRate() int
 	// Capabilities is what this model can be asked for.
 	Capabilities() Capabilities
+}
+
+// CallUpdater is a model that can be told how a tool call it is waiting on is going, and
+// says so to the caller while the call stays open.
+type CallUpdater interface {
+	// UpdatesCalls reports whether this session takes UpdateCall.
+	UpdatesCalls() bool
+	// UpdateCall has the model speak about an open call. It calls no tool for that, and the
+	// call still waits for its Answer. One that takes none returns ErrNoCallUpdates.
+	UpdateCall(update CallUpdate) error
+}
+
+// CallUpdate is what a model is told about a call that is still open.
+type CallUpdate struct {
+	CallID string
+	// Status is what whoever runs the call reports, or with Verbatim, words to say.
+	Status   string
+	Verbatim bool
+	// Guidance is how to say it, and Instructions the agent's own, for a model whose reply
+	// takes instructions in place of the session's.
+	Guidance     string
+	Instructions string
+}
+
+// statusGuidance and sayGuidance are what a model is asked to say about a call that is
+// still open: a status in its own words, or words as written, which a model can only be
+// asked for.
+const (
+	statusGuidance = "Something the caller asked for is still being worked on, and whoever is doing it " +
+		"reports: %q. Tell the caller where it has got to in one short sentence, in your own words. It is " +
+		"still running: do not call it again and do not guess its result."
+	sayGuidance = "Something the caller asked for is still being worked on. Say this to the caller now, " +
+		"in these words or close to them: %q. It is still running: do not call it again and do not guess its result."
+)
+
+// Guidance is how a model is asked to say status, or with verbatim, to say it as written.
+func Guidance(status string, verbatim bool) string {
+	if verbatim {
+		return fmt.Sprintf(sayGuidance, status)
+	}
+	return fmt.Sprintf(statusGuidance, status)
 }
 
 // Voiced is a model that can say which voice it speaks in. Empty means the vendor

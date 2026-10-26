@@ -43,8 +43,18 @@ The tools also need (`Manager.schedulingRunner`, `internal/session/schedule_tool
 
 - a router with a database;
 - a session that is not incognito, opened on a config;
-- a caller that is a verified user or a backend acting for one (`X-Stream-User-Id`). A guest
-  or an anonymous caller gets no tools.
+- a caller that is a verified user or a backend acting for one (`X-Stream-User-Id`), or the
+  person who wrote in an SMS (Telnyx) or WhatsApp thread, and only when that person writes,
+  not someone else in the thread (the task is theirs and keeps the thread; a Linq chat and a
+  Slack thread get no tools). A guest or an anonymous caller gets no tools.
+
+A task made in an SMS or WhatsApp thread comes back in that thread: the router opens the
+thread's conversation, the agent answers the task there, and the reply is texted to the
+person from the line. Its run says `delivered_to` `sms` or `whatsapp` once the line took the
+reply; a reply the line refused is `delivery_failed`, and the retry sends the same reply,
+files included, without a second turn; a thread removed while the turn ran is `thread_gone`,
+final (`internal/api/scheduled_thread_delivery.go`). Such a task's
+`deliver_to` reads `sms` or `whatsapp` and cannot be changed.
 
 The REST create does not need `scheduling.enabled` (`internal/api/scheduled_tasks.go:752`).
 
@@ -174,7 +184,10 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `timed_out` | The occurrence used its 20 min (`occurrenceBudget`) | no |
 | `schedule_unreadable` | The stored schedule no longer parses; the task is paused | no |
 | `user_on_call` | The user stayed on a call through the 10 min window | yes |
-| `channel_unreachable` | SMS, WhatsApp or iMessage would refuse: never wrote on it, opted out, outside WhatsApp's 24 h window, no line | yes |
+| `channel_unreachable` | SMS, WhatsApp or iMessage would refuse: never wrote on it, opted out, outside WhatsApp's 24 h window, no line. On a thread task: opted out (before the turn or by the time the reply is sent), or the sandbox gate holds it back | yes; not for a thread task's opted-out person |
+| `outside_window` | A WhatsApp thread task whose person last wrote over 24 h ago, with no template to send after the window | no |
+| `thread_gone` | A thread task's thread no longer exists, or is not its user's thread of its customer | no |
+| `connection_removed` | A thread task's line (its connection) was removed | no |
 | `no_reply` | The agent said nothing to carry | yes |
 | `reply_failed` | The reply was cancelled, interrupted or failed | yes |
 | `no_phone_number` | The user never texted this agent, so there is no number to ring | yes |

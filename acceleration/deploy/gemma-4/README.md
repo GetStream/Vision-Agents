@@ -86,7 +86,7 @@ actually wants long context.
 service carries the whole conversation, because a conversation that lives in the caller
 survives a failover. That means all but the newest message is identical to the previous turn's
 prompt, which is exactly what prefix caching is for. It is also what the
-`per_million_cached_input_tokens` rate in `internal/routing/router.yaml` is priced against.
+`cached_input_tokens` rate in `acceleration/prices/vendor.json` is priced against.
 
 ## Tool calling
 

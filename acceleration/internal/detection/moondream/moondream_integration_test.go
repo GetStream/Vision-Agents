@@ -25,6 +25,7 @@ func TestMoondreamIntegrationSuite(t *testing.T) {
 			require.NoError(t, err)
 			return provider
 		},
-		Requires: []string{APIKeyEnvVar},
+		Requires:      []string{APIKeyEnvVar},
+		ReportsBilled: true,
 	}})
 }

@@ -11,7 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 )
 
 // SigningSuite is what a forward carries, decided before anything is sent: the provider's
@@ -58,9 +58,9 @@ func (s *SigningSuite) TestASignatureVerifiesWithEachSecretItWasSignedWithAndNoO
 	header.Set(headerID, "msg_one")
 	header.Set(headerTimestamp, strconv.FormatInt(at.Unix(), 10))
 	header.Set(headerSignature, signature)
-	s.NoError(plugins.VerifyWebhook(current, header, body, at))
-	s.NoError(plugins.VerifyWebhook(previous, header, body, at))
-	s.ErrorIs(plugins.VerifyWebhook(other, header, body, at), plugins.ErrBadSignature)
+	s.NoError(webhook.Verify(current, header, body, at))
+	s.NoError(webhook.Verify(previous, header, body, at))
+	s.ErrorIs(webhook.Verify(other, header, body, at), webhook.ErrBadSignature)
 }
 
 // https://www.standardwebhooks.com/: the id «remains the same no matter how many times a
@@ -108,7 +108,7 @@ func (s *SigningSuite) slackBot() core.Manifest {
 }
 
 func (s *SigningSuite) secret() string {
-	secret, err := plugins.NewWebhookSecret()
+	secret, err := webhook.NewSecret()
 	s.Require().NoError(err)
 	return secret
 }

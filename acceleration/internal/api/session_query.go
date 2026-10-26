@@ -210,7 +210,7 @@ func (s *Server) querySessions(ctx context.Context, request *querySessionsReques
 	if err != nil {
 		return nil, err
 	}
-	return &querySessionsResponse{Body: sessionPageOf(found, query.filter.Limit, query.sort)}, nil
+	return &querySessionsResponse{Body: sessionPageOf(ctx, found, query.filter.Limit, query.sort)}, nil
 }
 
 // sessionQuery is a SessionQuery checked and turned into what the manager takes.
@@ -298,9 +298,9 @@ func sessionQueryOf(ctx context.Context, sent SessionQuery) (sessionQuery, error
 }
 
 // sessionPageOf renders a query's results as a page, with the cursor to the next one.
-func sessionPageOf(found []session.Found, limit int, sort SessionSortField) SessionPage {
+func sessionPageOf(ctx context.Context, found []session.Found, limit int, sort SessionSortField) SessionPage {
 	kept, more := page(found, store.SessionLimit(limit))
-	rendered := SessionPage{Items: sessionsOf(kept), HasMore: more}
+	rendered := SessionPage{Items: sessionsOf(ctx, kept), HasMore: more}
 	if more {
 		rendered.NextCursor = encodeCursor(sessionCursor{kept[len(kept)-1].Position(), sort})
 	}

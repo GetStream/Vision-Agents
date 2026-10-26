@@ -69,6 +69,11 @@ func headerText(value string) string {
 			value = decoded
 		}
 	}
+	return withoutControls(value)
+}
+
+// withoutControls is value with its control characters left out.
+func withoutControls(value string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1

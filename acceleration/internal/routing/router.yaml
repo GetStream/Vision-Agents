@@ -4,10 +4,10 @@
 # tier is what a model optimises for: low-latency for a live conversation, high-quality
 # when it can take longer. It defaults to low-latency.
 #
-# price is in US dollars and is whatever this deployment is billed, so it is config rather
-# than fact: check each vendor's pricing page, and for a self-hosted model divide the GPU
-# hour by the throughput you measured. A model sets whichever unit it is billed in and
-# leaves the rest at zero, and a model with no price reports a cost of zero.
+# Prices are not here. Each model's vendor price is in acceleration/prices/vendor.json, which
+# seeds a deployment's price list in its database, and a price changes there. local: true
+# marks a model this deployment runs itself: with no price it is free rather than logged as
+# billable work with no price.
 #
 # supports lists the optional terms a model can express: diarization, a speaking speed, a
 # domain filter. A request asking for one is only routed to a model that declared it, so a
@@ -28,9 +28,10 @@
 
 stt:
   providers:
-    # Deepgram do not store transcripts, and a request that asked not to be trained on
-    # carries mip_opt_out=true, which is what excludes it from the Model Improvement
-    # Partnership Program - their only route from an API request into a training set.
+    # Deepgram do not store transcripts, and a request whose data policy, its own or its
+    # customer's, refuses training or names a retention carries mip_opt_out=true, which is
+    # what excludes it from the Model Improvement Partnership Program - their only route
+    # from an API request into a training set.
     # Opted-out requests are "retained only for the duration necessary to process the
     # request", and show as opted out in their own usage logs, so this is auditable
     # rather than taken on trust.
@@ -52,8 +53,6 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: none
-      price:
-        per_audio_hour: 0.276
 
     - provider: deepgram
       model: flux-general-multi
@@ -65,16 +64,16 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: none
-      price:
-        per_audio_hour: 0.276
 
     # Gemini 3.5 Transcribe over the Live API. It detects the language itself and claims
-    # 85+ of them; the list here is the ones this deployment routes on. Billed per token
-    # rather than per hour of audio: $3.50/1M audio in at 25 tokens a second, plus
-    # $21.00/1M text out, which Google puts at about $0.009 an audio minute.
+    # 85+ of them; the list here is the ones this deployment routes on. Google bills it per
+    # token: $3.50/1M audio in at 25 tokens a second ($0.005 a minute), plus $21.00/1M text
+    # out at the 175 tokens a minute Google estimates ($0.004). The Live API reports no
+    # usage for it, on a turn or as the session closes, so it is billed by the audio the
+    # router streams to it, at Google's own blended estimate of $0.009 an audio minute.
     - provider: gemini
       model: gemini-3.5-transcribe-live
-      description: "Detects the language itself and can tidy the transcript as it writes it. About -e.009 an audio minute."
+      description: "Detects the language itself and can tidy the transcript as it writes it. About $0.009 an audio minute."
       benchmark: { word_error_rate: 0.04, latency_ms: 395 }
       languages:
         [
@@ -129,14 +128,13 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_audio_hour: 0.54
 
     # 25 languages; see nvidia/parakeet-tdt-0.6b-v3. Self-hosted on an L4, so the price is
     # the GPU rather than a per-hour-of-audio rate. Measured throughput on one replica.
     - provider: parakeet
       model: parakeet-tdt-0.6b-v3
       description: "Open weights on our own GPU, in 25 languages. No third party hears the audio."
+      local: true
       languages:
         [
           bg,
@@ -173,8 +171,6 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: none
-      price:
-        per_audio_hour: 0.079
 
     # The same weights as the entry above, on Together's serverless endpoint rather than
     # our own deployment. Kept as a separate provider because the bill and the pager are
@@ -224,8 +220,6 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_audio_hour: 0.21
 
     # NVIDIA's Nemotron 3 ASR, on Together's serverless endpoint and reached over the same
     # realtime socket as the Parakeet above. A separate provider because it is a different
@@ -246,8 +240,6 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_audio_hour: 0.09
 
     # Nemotron 3.5 ASR, the multilingual extension of the model above: the same cache-aware
     # architecture with language-ID prompt conditioning, so one checkpoint covers 40
@@ -301,8 +293,6 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_audio_hour: 0.27
 
     # xAI's Speech to Text. The languages are the ones the `language` parameter accepts,
     # which is what turns on the written form of numbers and currencies; the model
@@ -357,8 +347,6 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: 30d
-      price:
-        per_audio_hour: 0.20
 
     # Meta's Muse Voice Transcribe. The languages are named in full on the wire; the
     # provider translates these codes on the way out. Diarisation and endpointing are
@@ -410,16 +398,15 @@ stt:
       data_policy:
         trains_on_data: unknown
         retention: unknown
-      price:
-        per_audio_hour: 0.18
 
     # Cartesia's Ink 2 on the socket that detects turns for itself, which is the same job
     # Flux does and much the same shape of protocol - Cartesia publish a migration guide
     # from one to the other. English only: they say multilingual is coming, and until it
     # does ink-whisper is where the other languages are, on the batch endpoint.
     #
-    # Billed in credits at three a second of audio, silence included, which at the entry
-    # self-serve rate of $50 a million credits is the figure below.
+    # Billed by the second of audio input, silence included, at Cartesia's published rate of
+    # $0.00672757 a minute (about $0.40365 an hour). A turn says nothing of how long it was, so
+    # the audio the router streams to it is the bill.
     - provider: cartesia
       model: ink-2
       description: "Cartesia's live transcriber with its own turn detection, much like Flux. English only."
@@ -439,8 +426,6 @@ stt:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_audio_hour: 0.54
 
     # Inworld's own STT model on their bidirectional streaming socket.
     #
@@ -502,8 +487,6 @@ stt:
       data_policy:
         trains_on_data: unknown
         retention: unspecified
-      price:
-        per_audio_hour: 0.15
 
     # Scribe v2 Realtime, the streaming half of Scribe. The batch model below the fold in
     # the recording path is the more capable one - it diarises up to 32 speakers, tags
@@ -597,8 +580,6 @@ stt:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_audio_hour: 0.39
 
     # AssemblyAI's Universal-3.6 Pro Realtime, launched 2026-09-29 for voice agents. It
     # switches between its 32 languages mid-sentence and decides where a turn ended from
@@ -666,8 +647,6 @@ stt:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_audio_hour: 0.45
 
     # Microsoft's MAI-Transcribe-2-Streaming, launched 2026-10-01 in public preview, so
     # without an SLA. Reached over the OpenAI Realtime-compatible socket of a Foundry
@@ -761,8 +740,6 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_audio_hour: 0.54
 
     # Nova-3 on the batch listen endpoint, which is the recording path rather than the
     # live one. It is not a Flux model: Flux exists to decide where a turn ended while
@@ -798,8 +775,6 @@ stt:
       data_policy:
         trains_on_data: "no"
         retention: none
-      price:
-        per_audio_hour: 0.258
 
     # The load benchmark's stand-in, built only where mock_providers is on. Everything
     # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
@@ -812,6 +787,7 @@ stt:
     - provider: mock
       model: mock-stt
       description: "Reports turns from the energy of the audio and transcribes a fixed sentence. For load tests."
+      local: true
       languages: [zxx]
       realtime: true
       data_policy:
@@ -1001,8 +977,6 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 50.0
 
     # Realtime TTS-2 Flash, Inworld's low-latency model. Around 25ms TTFB server-side,
     # billed at the published $5 per million characters.
@@ -1071,8 +1045,6 @@ tts:
       data_policy:
         trains_on_data: unknown
         retention: unspecified
-      price:
-        per_million_chars: 5.0
 
     # Realtime TTS-2, the full model: natural-language steering, cross-lingual voices and
     # multi-turn context, generally available since 2026-09-02. Around 100ms TTFB server-side,
@@ -1143,8 +1115,6 @@ tts:
       data_policy:
         trains_on_data: unknown
         retention: unspecified
-      price:
-        per_million_chars: 25.0
 
     # Simba 3.2, Speechify's streaming-native English model: the fastest to first audio on
     # the Voice Arena's US English board in September 2026. There is no socket - a whole
@@ -1162,8 +1132,6 @@ tts:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_chars: 10.0
 
     # Flash is the low-latency model; the WebSocket streams audio as it is generated.
     - provider: elevenlabs
@@ -1217,8 +1185,6 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 50.0
 
     # v4 Turbo is v4 tuned for real time, a median ~100 ms to first audio by ElevenLabs'
     # own count. Like v3 conversational it acts audio tags and is served only on the
@@ -1272,8 +1238,6 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 40.0
 
     # Multilingual v2 is the quality model: better prosody, slower to first audio.
     - provider: elevenlabs
@@ -1321,8 +1285,6 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 110.0
 
     # v3 conversational is the only model that acts audio tags: written a direction such
     # as [laughs], it performs it rather than reading the word out. It is served on the
@@ -1373,8 +1335,6 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 110.0
 
     # v4 is the quality model that succeeds v3, first on the Artificial Analysis voice
     # arena at its launch. It is on the same text-to-dialogue socket as v3 conversational.
@@ -1424,8 +1384,6 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 80.0
 
     # Gemini 3.8 Flash TTS, second on the Artificial Analysis voice arena behind Sonic 3.6
     # and first on pronunciation robustness. It takes a whole sentence per request and
@@ -1550,9 +1508,6 @@ tts:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_chars: 0.125
-        per_audio_hour: 1.26
 
     # Gemini 3.8 Flash-Lite TTS, the same schema as Flash and the one Google pitch for
     # voice agent cascades. First on Voice Arena in US English and sixth on the Artificial
@@ -1658,9 +1613,6 @@ tts:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_chars: 0.125
-        per_audio_hour: 0.82
 
     # Fish's hosted Drama 3 (35B MoE, 3B active), directed in plain words via square brackets.
     - provider: fish
@@ -1697,8 +1649,6 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 50.0
 
     # Fish's hosted S2 Pro. 80+ languages; the common ones are listed.
     - provider: fish
@@ -1736,13 +1686,12 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 15.0
 
     # The same weights on our own Baseten deployment, where the price is the GPU.
     - provider: s2pro
       model: s2-pro
       description: "The same S2 Pro weights on our own GPUs."
+      local: true
       benchmark: { elo: 1122 }
       languages:
         [
@@ -1774,8 +1723,6 @@ tts:
       data_policy:
         trains_on_data: "no"
         retention: none
-      price:
-        per_million_chars: 9.0
 
     # Breeze TTS 2 on our own Baseten deployment. Two languages only, and it performs a
     # vocal event the way the ElevenLabs v3 socket does, so it sits in the high-quality
@@ -1788,6 +1735,7 @@ tts:
     - provider: breeze
       model: breeze-tts-2
       description: "Expressive and performs vocal events, in two languages. On our own GPUs."
+      local: true
       benchmark: { elo: 1205 }
       languages: [en, zh]
       realtime: true
@@ -1796,8 +1744,6 @@ tts:
       data_policy:
         trains_on_data: "no"
         retention: none
-      price:
-        per_million_chars: 14.8
 
     # Sonic 3.6 on /tts/bytes, which returns the whole file: the recording path, as eleven_v3
     # is for ElevenLabs, because a priority list asked for a recording only passes models
@@ -1870,8 +1816,6 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 50.0
 
     # TTS-2 on /tts/v1/voice, which returns the whole file: the recording path, as sonic-3.6
     # is for Cartesia, because a priority list asked for a recording only passes models with
@@ -1945,8 +1889,6 @@ tts:
       data_policy:
         trains_on_data: unknown
         retention: unspecified
-      price:
-        per_million_chars: 25.0
 
     # v3 on the plain synthesis endpoint, which returns the whole file rather than
     # streaming it. That is the recording path: an audiobook is not a conversation, so
@@ -1997,8 +1939,6 @@ tts:
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
-      price:
-        per_million_chars: 110.0
 
     # The load benchmark's stand-in, built only where mock_providers is on. Everything
     # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
@@ -2009,6 +1949,7 @@ tts:
     - provider: mock
       model: mock-tts
       description: "Says nothing, at the length and pace real speech would take. For load tests."
+      local: true
       languages: [zxx]
       realtime: false
       data_policy:
@@ -2089,10 +2030,9 @@ tts:
 # ability to call a function or take a typed turn, and the two transcripts whether the model
 # writes down what it heard and what it said.
 #
-# Prices are estimates. These models bill audio in, audio out and text at three different
-# rates, and Price has one token bucket, so the audio rates are applied to every token and
-# the split is lost. It is the perplexity/sonar treatment, and the same caveat: what makes
-# it an estimate is the shape of Price, not the vendor's list.
+# OpenAI Realtime and Gemini Live bill each modality at its own rate, text far below audio,
+# and report the split on every reply, so their rates are by modality. The per-token rates
+# beside them are the audio ones, and price a reply whose vendor reported only its totals.
 sts:
   providers:
     # Gemini 3.8 Live, generally available since September 2026 and what Google now point
@@ -2103,7 +2043,11 @@ sts:
     # Tools are non-blocking by default: the model closes its turn when it calls one, so a
     # slow tool no longer holds the conversation, though it stays quiet until the answer
     # comes. It takes no thinking level. Turns are a silence timer, not semantic. Billed
-    # like 3.1: audio in at $3/1M tokens, out at $12/1M. Google do not train on paid-tier
+    # like 3.1, per million tokens: text in at $0.75, images and video at $1, audio at $3;
+    # text out at $4.50, thinking included, and audio at $12
+    # (ai.google.dev/gemini-api/docs/pricing, read 2026-10-23). Each turn is billed for the
+    # whole context so far, and Google publish no cached rate for these models, so a cached
+    # token costs what a fresh one does. Google do not train on paid-tier
     # traffic and log it "for a limited period of time" with no figure, with no
     # zero-retention path on the Developer API, so this cannot serve a request naming a
     # retention ceiling.
@@ -2118,9 +2062,6 @@ sts:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 3.0
-        per_million_output_tokens: 12.0
 
     # Gemini 3.8 Live Extended Thinking, a separate model id rather than a setting on the
     # one above. It reasons in the background and runs tools asynchronously while speaking
@@ -2129,7 +2070,7 @@ sts:
     # both at high thinking and 1.35s to first audio. It refuses a session
     # without a thinking level and the provider sends low, its floor, unless overwrites say
     # otherwise, so the benchmark figures are for a slower setting than the default. Same
-    # rates as 3.8 Live, with the thinking billed as output. Same data terms.
+    # rates as 3.8 Live, with the thinking billed as text output. Same data terms.
     - provider: gemini
       model: gemini-3.8-live-extended-thinking
       description: "Near the top of the Artificial Analysis speech-to-speech board. Thinks in the background and talks while a tool runs. Sees images."
@@ -2141,9 +2082,6 @@ sts:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 3.0
-        per_million_output_tokens: 12.0
 
     # Gemini 3.1 Flash Live, which Google now call a legacy preview in favour of 3.8 Live.
     # Kept rather than removed because it still answers, passes the live suite and is the
@@ -2163,15 +2101,15 @@ sts:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 3.0
-        per_million_output_tokens: 12.0
 
     # GPT-Realtime-2.1, GPT-Realtime-2's update on the same socket and at the same rates,
     # better at spoken letters and digits, silence, noise and being interrupted. Artificial
     # Analysis put it at 75.2 on their speech-to-speech index against 2's 73.6, and it
     # resolves 45.7% of their tau-Voice support calls against 39.8%, at 1.21s to first
-    # audio. Audio in at $32/1M tokens, $0.40/1M cached, out at $64/1M. OpenAI do not train
+    # audio. Per million tokens: audio in at $32, $0.40 cached, out at $64; text in at $4,
+    # $0.40 cached, out at $24, reasoning included; images in at $5, $0.50 cached
+    # (developers.openai.com/api/docs/pricing, read 2026-10-23). The instructions are text,
+    # and most of a voice session's prompt. OpenAI do not train
     # on API traffic and keep it thirty days for abuse monitoring; zero retention is an
     # enterprise setting.
     - provider: openai
@@ -2185,10 +2123,6 @@ sts:
       data_policy:
         trains_on_data: "no"
         retention: 30d
-      price:
-        per_million_input_tokens: 32.0
-        per_million_cached_input_tokens: 0.40
-        per_million_output_tokens: 64.0
 
     # GPT-Realtime-2, which 2.1 above replaces at the same price. It stays declared because
     # callers name it outright, and a name that is no longer declared is an unknown target
@@ -2204,10 +2138,6 @@ sts:
       data_policy:
         trains_on_data: "no"
         retention: 30d
-      price:
-        per_million_input_tokens: 32.0
-        per_million_cached_input_tokens: 0.40
-        per_million_output_tokens: 64.0
 
     # GPT-Live-1 is not a Realtime model: it is served by the Live API at /v1/live/sessions,
     # which is its own package. It listens and speaks at once, has no turn detector to tune,
@@ -2215,8 +2145,8 @@ sts:
     # unless overwrites name another in backend_model. Tools therefore run while the model
     # keeps talking. It debuted top of the Artificial Analysis speech-to-speech index at
     # 81.5 with a GPT-6 Astra backend, but at 1.24-1.34s to first audio there. The voice
-    # layer is $0.05 a minute of session, billed per second, priced here by the caller's
-    # audio; the backend's tokens are billed on top and not counted, so this undercounts.
+    # layer is $0.05 a minute of session, billed per second as the session reports them;
+    # each backend response is billed on top as an LLM row of the backend model.
     # OpenAI publish no language list, so these are the languages their voices are named
     # for: English, Portuguese, German, French, Hindi, Japanese and Korean.
     # They do not train on API traffic. Retention is unknown: the Live API is missing
@@ -2231,15 +2161,13 @@ sts:
       data_policy:
         trains_on_data: "no"
         retention: unknown
-      price:
-        per_audio_hour: 3.0
 
     # xAI's Grok Voice 3.0 over its OpenAI-compatible socket, first on the Artificial
     # Analysis speech-to-speech index at 86.9 and 0.81s to first audio, and the top of their
     # tau-Voice board among full-duplex models at 71.6%. Same socket, session and events
-    # as the 2.0 below. It does not see, and it reports no usage, so it is priced by the
-    # caller's audio: $0.08 a minute of session, which undercounts the model's own speaking
-    # time. xAI's API terms match their transcription ones: no training, thirty days.
+    # as the 2.0 below. It does not see. It is priced by the audio xAI says it bills, the
+    # caller's and the model's, at $0.08 a minute, and $0.004 a typed turn. xAI's API terms
+    # match their transcription ones: no training, thirty days.
     - provider: xai
       model: grok-voice-3.0
       description: "xAI's Grok Voice 3.0, top of the Artificial Analysis speech-to-speech board and under a second to first audio. Cannot see."
@@ -2250,15 +2178,14 @@ sts:
       data_policy:
         trains_on_data: "no"
         retention: 30d
-      price:
-        per_audio_hour: 4.80
 
     # xAI's previous Grok Voice, which xAI deprecated when 3.0 above replaced it at the same
     # price. Kept, as Gemini 3.1 Flash Live is, so a config that names it does not start
-    # failing before xAI retire it. Priced as at its launch, $0.05 a minute of caller audio.
+    # failing before xAI retire it. Priced as at its launch, $0.05 a minute of the audio xAI
+    # bills, and $0.004 a typed turn as 3.0 is.
     - provider: xai
       model: grok-voice-think-fast-2.0
-      description: "xAI's previous Grok Voice, now deprecated. Fast, cannot see, and priced by the minute of caller audio."
+      description: "xAI's previous Grok Voice, now deprecated. Fast, cannot see, and priced by the minute of audio xAI bills."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -2266,8 +2193,6 @@ sts:
       data_policy:
         trains_on_data: "no"
         retention: 30d
-      price:
-        per_audio_hour: 3.0
 
     # Alibaba's Qwen 3.5 Omni, top of the Artificial Analysis quality board and by far the
     # cheapest, at $0.03 an hour of input on that board. It takes no tools and no typed
@@ -2284,8 +2209,6 @@ sts:
       data_policy:
         trains_on_data: unknown
         retention: unknown
-      price:
-        per_audio_hour: 0.03
 
     # Alibaba's Qwen-Audio 3.1 Plus, on the same socket as 3.5 Omni but its own dialect:
     # it takes tools, typed turns and a semantic turn detector, smart_turn, and does not
@@ -2305,8 +2228,6 @@ sts:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_audio_hour: 0.29
 
   # A title offers a shortcut to someone picking a model, in the order written here, so
   # the one a conversation gets by default comes first.
@@ -2369,11 +2290,17 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.13
-        per_million_cached_input_tokens: 0.028
-        per_million_output_tokens: 0.26
 
+    # Every OpenAI text model here is priced by the same rules
+    # (developers.openai.com/api/docs/pricing, read 2026-10-23): a prompt written to the
+    # cache, for the 30 minutes the provider asks for by not naming a retention, costs 1.25
+    # times input; a prompt over 272k tokens costs twice the input, cached and write rates
+    # and 1.5 times the output for the whole request; and the tier OpenAI answer that they
+    # served a request at multiplies every rate: flex and batch half, fast twice, and
+    # ultrafast, which only GPT-6 Astra and GPT-6.1 Sol offer, six times. Fast was called
+    # priority until July 2026, and GPT-5.6 and earlier still answer priority for a fast
+    # request, so priority is priced as fast. A tier not named here is priced at the
+    # default rates and logged.
     - provider: openai
       model: gpt-5.6-luna
       description: "OpenAI's small, fast model. Reads images, and costs little."
@@ -2383,10 +2310,6 @@ llm:
       realtime: true
       tier: low-latency
       input_modalities: [image]
-      price:
-        per_million_input_tokens: 0.20
-        per_million_cached_input_tokens: 0.02
-        per_million_output_tokens: 1.20
 
     # GPT-6 Luna, which takes over from GPT-5.6 Luna as what vlm prefers: half the input
     # price and well under half the output, and Artificial Analysis put it at the lowest cost
@@ -2412,10 +2335,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 0.10
-        per_million_cached_input_tokens: 0.01
-        per_million_output_tokens: 0.50
 
     # What llm-fast prefers, so this is the model a conversation gets unless it is down. It
     # is the dearest of this tier by some way and its thinking is billed as output, which is
@@ -2434,10 +2353,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 0.75
-        per_million_cached_input_tokens: 0.075
-        per_million_output_tokens: 3.75
 
     # Self-hosted, so there is no per-token bill: the deployment is charged by the minute.
     # The rates below convert Baseten's H100 rate of $0.10833/min at an assumed 1500 output
@@ -2447,14 +2362,12 @@ llm:
     - provider: gemma
       model: gemma-4-26B-A4B-it
       description: "Open weights on our own GPUs: 26B with 4B active, billed by the GPU minute rather than the token."
+      local: true
       benchmark: { intelligence_index: 13 }
       context_window: 256000
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.24
-        per_million_output_tokens: 1.20
 
     # MiniMax M3.1 Flash, 428B with about 23B active, on MiniMax's API until its weights are
     # out. It cannot stop thinking, so it runs at the lowest effort.
@@ -2466,24 +2379,6 @@ llm:
       realtime: true
       tier: low-latency
       reasoning_effort: low
-      price:
-        per_million_input_tokens: 0.15
-        per_million_cached_input_tokens: 0.015
-        per_million_output_tokens: 0.60
-
-    # Gemma 4 31B on Cerebras' public inference API, around 1500 tokens a second. Reasoning
-    # stays off: the live path wants the first word, not a think-then-speak turn.
-    - provider: cerebras
-      model: gemma-4-31b
-      description: "Gemma 4 31B on Cerebras, at around 1,500 tokens a second."
-      benchmark: { intelligence_index: 14 }
-      context_window: 256000
-      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
-      realtime: true
-      tier: low-latency
-      price:
-        per_million_input_tokens: 2.15
-        per_million_output_tokens: 2.70
 
     # Pro is a 1.6T-parameter frontier model: better answers, and slow enough that it wants
     # to be off the live path unless the caller asked for quality.
@@ -2495,10 +2390,6 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
-      price:
-        per_million_input_tokens: 1.32
-        per_million_cached_input_tokens: 0.132
-        per_million_output_tokens: 3.96
 
     - provider: openai
       model: gpt-5.6-terra
@@ -2509,14 +2400,12 @@ llm:
       realtime: true
       tier: high-quality
       input_modalities: [image]
-      price:
-        per_million_input_tokens: 2.00
-        per_million_cached_input_tokens: 0.20
-        per_million_output_tokens: 12.00
 
     # GPT-5.6 Sol, which GPT-6 Sol below replaces as what llm-thinking prefers. It stays
     # declared because callers name it outright as their subagent, and a name that is no
-    # longer declared is an unknown target rather than a failover.
+    # longer declared is an unknown target rather than a failover. These are OpenAI's
+    # promotional rates, "available at least through November 21, 2026"; the list price
+    # they replace is $5 in, $0.50 cached and $30 out.
     - provider: openai
       model: gpt-5.6-sol
       description: "OpenAI's previous frontier model, and still what llm-smart prefers. GPT-6 Sol is stronger and cheaper."
@@ -2526,20 +2415,15 @@ llm:
       realtime: true
       tier: high-quality
       input_modalities: [image]
-      price:
-        per_million_input_tokens: 5.00
-        per_million_cached_input_tokens: 0.50
-        per_million_output_tokens: 30.00
 
     # Anthropic's own pick for most work, and top of the Artificial Analysis Intelligence
-    # Index at 58 - at max effort. The provider reaches it over Anthropic's
-    # OpenAI-compatible endpoint, which ignores reasoning_effort, so it thinks at the medium
+    # Index at 58 - at max effort. The provider sends no effort, so it thinks at the medium
     # effort it defaults to, where that index puts it at 51. Thinking is adaptive and cannot
     # be switched off, and it counts against max_output_tokens. Forced tool use is a 400 on
     # this model, so a request with tool_choice required fails if it is routed here.
     #
-    # Cache reads are 5% of input rather than the usual 10%, but the compatibility endpoint
-    # does not cache, so that rate is what Anthropic bill rather than one this route reaches.
+    # Cache reads are 5% of input rather than the usual 10%, and five-minute cache writes
+    # 125% (https://platform.claude.com/docs/en/about-claude/pricing).
     - provider: anthropic
       model: claude-opus-5-5
       description: "Anthropic's Opus 5.5, top of the Artificial Analysis Intelligence Index. Reads images, and costs less than Sol."
@@ -2556,21 +2440,15 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: 30d
-      price:
-        per_million_input_tokens: 4.00
-        per_million_cached_input_tokens: 0.20
-        per_million_output_tokens: 20.00
 
     # Anthropic's middle model, second on the Artificial Analysis Intelligence Index at 56 -
-    # at max effort. The provider reaches it over Anthropic's OpenAI-compatible endpoint,
-    # which ignores reasoning_effort, so it thinks at the high effort it defaults to, where
-    # that index puts it at 47. Thinking is adaptive and counts against max_output_tokens.
+    # at max effort. The provider sends no effort, so it thinks at the high effort it
+    # defaults to, where that index puts it at 47. Thinking is adaptive and counts against max_output_tokens.
     # Forced tool use is a 400 on this model, so a request with tool_choice required fails
     # if it is routed here.
     #
-    # Cache reads are 5% of input since Anthropic halved them on 7 October 2026, but the
-    # compatibility endpoint does not cache, so that rate is what Anthropic bill rather than
-    # one this route reaches.
+    # Cache reads are 5% of input since Anthropic halved them on 7 October 2026, and
+    # five-minute cache writes 125%.
     - provider: anthropic
       model: claude-sonnet-5-5
       description: "Anthropic's Sonnet 5.5, faster than Opus 5.5 at half the price. Reads images."
@@ -2587,20 +2465,14 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: 30d
-      price:
-        per_million_input_tokens: 2.00
-        per_million_cached_input_tokens: 0.10
-        per_million_output_tokens: 10.00
 
     # Anthropic's fastest model, and the first Haiku with an effort setting. It is not on the
-    # Artificial Analysis Intelligence Index yet. The provider reaches it over Anthropic's
-    # OpenAI-compatible endpoint, which ignores reasoning_effort, so it thinks at the medium
-    # effort it defaults to; low effort, or thinking off, which Haiku allows at high effort
-    # and below, cannot be asked for from here. Thinking counts against max_output_tokens.
+    # Artificial Analysis Intelligence Index yet. The provider sends no effort, so it thinks
+    # at the medium effort it defaults to; low effort, or thinking off, which Haiku allows at
+    # high effort and below, cannot be asked for from here. Thinking counts against max_output_tokens.
     #
     # Prompts over 100k tokens are billed at five times these rates for the whole request,
-    # cache reads included. The compatibility endpoint does not cache, so the cached rate is
-    # what Anthropic bill rather than one this route reaches.
+    # cache reads and writes included, which these rates do not model.
     - provider: anthropic
       model: claude-haiku-5-5
       description: "Anthropic's Haiku 5.5, their fastest and cheapest model. Reads images, and thinks before it answers."
@@ -2616,10 +2488,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: 30d
-      price:
-        per_million_input_tokens: 0.10
-        per_million_cached_input_tokens: 0.01
-        per_million_output_tokens: 0.50
 
     # Moondream 3 over its OpenAI-compatible chat completions: a small vision model that
     # answers questions about a picture. It accepts tools and never calls one, so it is no
@@ -2637,9 +2505,6 @@ llm:
       data_policy:
         trains_on_data: unknown
         retention: unknown
-      price:
-        per_million_input_tokens: 0.30
-        per_million_output_tokens: 2.50
 
     # xAI's Grok 4.7 over their OpenAI-compatible chat completions, with a 500k context.
     # It cannot be told not to think: none is a 400, and xAI default it to high, so the
@@ -2659,10 +2524,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: 30d
-      price:
-        per_million_input_tokens: 2.00
-        per_million_cached_input_tokens: 0.50
-        per_million_output_tokens: 6.00
 
     # GPT-6 Sol, which GPT-6.1 Sol below replaces as what llm-thinking prefers. It stays
     # declared because callers name it outright, and because it is the Sol that can still be
@@ -2682,10 +2543,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 2.00
-        per_million_cached_input_tokens: 0.20
-        per_million_output_tokens: 10.00
 
     # GPT-6.1 Sol is GPT-6 Sol's direct upgrade at the same input and output price, and what
     # llm-thinking prefers, so this is the model the skills run on unless it is down.
@@ -2706,10 +2563,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 2.00
-        per_million_cached_input_tokens: 0.10
-        per_million_output_tokens: 10.00
 
     # GPT-6 Astra is OpenAI's most capable model, for the hardest end-to-end work, and 53 on
     # the Artificial Analysis Intelligence Index, the top of the non-Anthropic field. It
@@ -2728,10 +2581,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 10.00
-        per_million_cached_input_tokens: 1.00
-        per_million_output_tokens: 50.00
 
     # Meta's Muse Spark 1.3 on their hosted Model API, 48 on the Artificial Analysis
     # Intelligence Index at max effort and 45 at xhigh, and at around 230-250 output tokens
@@ -2756,10 +2605,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 1.25
-        per_million_cached_input_tokens: 0.15
-        per_million_output_tokens: 4.25
 
     # Meta's Muse Wonder, the model above Spark: 52 on the Artificial Analysis Intelligence
     # Index at max effort against Spark's 48, at around 180 output tokens a second. It takes
@@ -2779,10 +2624,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 4.00
-        per_million_cached_input_tokens: 0.20
-        per_million_output_tokens: 20.00
 
     # The open-weight models, and the hosts that serve them.
     #
@@ -2808,10 +2649,6 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.15
-        per_million_cached_input_tokens: 0.03
-        per_million_output_tokens: 0.50
 
     - provider: together
       model: zai-org/GLM-5.3-Flash
@@ -2827,10 +2664,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 0.15
-        per_million_cached_input_tokens: 0.03
-        per_million_output_tokens: 0.50
 
     # DeepSeek V4.1 Flash, second in OpenRouter's weekly usage. It reaches Baseten
     # through the deepseek provider, which already speaks V4's chat template, rather
@@ -2843,10 +2676,6 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.30
-        per_million_cached_input_tokens: 0.007
-        per_million_output_tokens: 1.20
 
     - provider: together
       model: deepseek-ai/DeepSeek-V4.1-Flash
@@ -2859,10 +2688,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 0.30
-        per_million_cached_input_tokens: 0.006
-        per_million_output_tokens: 1.20
 
     # DeepSeek V4.1 Flash 1017, the October update: shorter answers and stronger agent
     # benchmarks. Ollama Cloud served it the day it shipped, before Baseten or Together.
@@ -2878,10 +2703,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: none
-      price:
-        per_million_input_tokens: 0.30
-        per_million_cached_input_tokens: 0.006
-        per_million_output_tokens: 1.20
 
     # The two models the fast tier already runs on, somewhere else. Baseten serves both
     # through the deepseek provider above, so this is the failover for that host being
@@ -2896,10 +2717,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 0.14
-        per_million_cached_input_tokens: 0.03
-        per_million_output_tokens: 0.28
 
     - provider: together
       model: MiniMaxAI/MiniMax-M3
@@ -2912,10 +2729,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 0.30
-        per_million_cached_input_tokens: 0.06
-        per_million_output_tokens: 1.20
 
     # Together's Qwen3.8 Flash is the production release of Qwen3.8-Flash-Next, 125B with
     # 6B active, which Artificial Analysis score at 40 with thinking on. Thinking is off
@@ -2932,9 +2745,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 0.15
-        per_million_output_tokens: 0.47
 
     # NVIDIA's Nemotron 3.5 Super VL, 120B with 12B active and the strongest US open-weight
     # model, 26 on the Artificial Analysis Intelligence Index. It reads images, so it is
@@ -2953,10 +2763,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 0.15
-        per_million_cached_input_tokens: 0.02
-        per_million_output_tokens: 0.50
 
     - provider: baseten
       model: zai-org/GLM-5.3
@@ -2966,10 +2772,6 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
-      price:
-        per_million_input_tokens: 1.40
-        per_million_cached_input_tokens: 0.14
-        per_million_output_tokens: 4.40
 
     - provider: together
       model: zai-org/GLM-5.3
@@ -2982,10 +2784,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 1.40
-        per_million_cached_input_tokens: 0.26
-        per_million_output_tokens: 4.40
 
     # GLM 5.2 is the previous frontier release and costs exactly what 5.3 does, so it is
     # here for a caller that named it rather than as a cheaper alternative.
@@ -2997,10 +2795,6 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
-      price:
-        per_million_input_tokens: 1.40
-        per_million_cached_input_tokens: 0.14
-        per_million_output_tokens: 4.40
 
     - provider: together
       model: zai-org/GLM-5.2
@@ -3013,10 +2807,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 1.40
-        per_million_cached_input_tokens: 0.26
-        per_million_output_tokens: 4.40
 
     - provider: together
       model: deepseek-ai/DeepSeek-V4-Pro-0813
@@ -3028,10 +2818,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 1.32
-        per_million_cached_input_tokens: 0.13
-        per_million_output_tokens: 3.96
 
     - provider: baseten
       model: moonshotai/Kimi-K3
@@ -3041,10 +2827,6 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
-      price:
-        per_million_input_tokens: 3.00
-        per_million_cached_input_tokens: 0.30
-        per_million_output_tokens: 15.00
 
     - provider: together
       model: moonshotai/Kimi-K3
@@ -3057,10 +2839,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 3.00
-        per_million_cached_input_tokens: 0.30
-        per_million_output_tokens: 15.00
 
     - provider: together
       model: Qwen/Qwen3.8-2.4T-A95B
@@ -3073,10 +2851,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 2.00
-        per_million_cached_input_tokens: 0.25
-        per_million_output_tokens: 6.00
 
     # Nemotron 3 Ultra answers without thinking first, so it is the quality tier's only
     # model that starts writing at once. NVIDIA publish the weights; Baseten serve them.
@@ -3087,10 +2861,6 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
-      price:
-        per_million_input_tokens: 0.60
-        per_million_cached_input_tokens: 0.12
-        per_million_output_tokens: 2.40
 
     # Gemini 4 Argon, Google's flagship reasoning model, 53 on the Artificial Analysis
     # Intelligence Index at high thinking. It takes low, medium or high and minimal is a
@@ -3115,10 +2885,6 @@ llm:
       data_policy:
         trains_on_data: "no"
         retention: unspecified
-      price:
-        per_million_input_tokens: 2.00
-        per_million_cached_input_tokens: 0.10
-        per_million_output_tokens: 10.00
 
     # The load benchmark's stand-in, built only where mock_providers is on. Everything
     # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
@@ -3129,6 +2895,7 @@ llm:
     - provider: mock
       model: mock-llm
       description: "Answers one fixed sentence, a word at a time, and bills nothing. For load tests."
+      local: true
       context_window: 128000
       languages: [zxx]
       realtime: false
@@ -3142,18 +2909,16 @@ llm:
   aliases:
     # Small talk, as cheaply and quickly as it can be had: the smallest models here, for
     # an agent whose turns are short and whose instructions are simple. Gemma 4 26B, with
-    # 4B active per token, is preferred; Gemma 4 31B on Cerebras and GPT-5.6 Luna catch it
-    # being down. Like the STT groups this names its members, since being small is not
-    # something a model declares.
+    # 4B active per token, is preferred; GPT-5.6 Luna catches it being down. Like the STT
+    # groups this names its members, since being small is not something a model declares.
     llm-conversational:
       title: Conversational
-      description: "Super lightweight models for simple, short turns. Prefers Gemma 4 26B-A4B, then Gemma 4 31B on Cerebras and GPT-5.6 Luna."
+      description: "Super lightweight models for simple, short turns. Prefers Gemma 4 26B-A4B, then GPT-5.6 Luna."
       require_realtime: true
       tier: low-latency
       prefer: gemma/gemma-4-26B-A4B-it
       only:
         - gemma/gemma-4-26B-A4B-it
-        - cerebras/gemma-4-31b
         - openai/gpt-5.6-luna
 
     # A fast answer, in whatever language. The shorthand a caller reaches for when the only
@@ -3276,8 +3041,6 @@ search:
       realtime: true
       tier: low-latency
       supports: [domains, category, recency, location, contents]
-      price:
-        per_thousand_requests: 5.0
 
     # Perplexity's ranked index, which is the same endpoint their own answers are built on
     # with nothing written on top. $5 per 1,000 requests, whatever the request found.
@@ -3287,8 +3050,6 @@ search:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_thousand_requests: 5.0
 
     # Tavily searches its index and summarises in the same round trip, so it is the one
     # low-latency provider that answers in a sentence. Priced at the entry self-serve rate
@@ -3300,8 +3061,6 @@ search:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_thousand_requests: 8.0
 
     # Exa deciding for itself between its neural and keyword indexes. Better recall on a
     # question phrased the way somebody speaks, and slower than fast.
@@ -3313,8 +3072,6 @@ search:
       realtime: true
       tier: high-quality
       supports: [domains, category, recency, location, contents]
-      price:
-        per_thousand_requests: 5.0
 
     # Tavily's advanced depth crawls the pages it finds rather than trusting the index
     # snippet, at two credits a search and roughly double the latency.
@@ -3324,8 +3081,6 @@ search:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
-      price:
-        per_thousand_requests: 16.0
 
     # Sonar reads the pages and writes the answer, so this is a language model in the
     # middle of a conversation and is priced and timed like one. The rate is the $5 per
@@ -3337,8 +3092,6 @@ search:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
-      price:
-        per_thousand_requests: 6.0
 
     # Sonar Pro searches more widely before it answers and costs more per request to do it.
     - provider: perplexity
@@ -3347,8 +3100,6 @@ search:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
-      price:
-        per_thousand_requests: 12.0
 
   aliases:
     # Whichever provider answers quickest, in whatever language. The shorthand a session
@@ -3406,12 +3157,10 @@ decision_model:
       data_policy:
         trains_on_data: "no"
         retention: none
-      price:
-        per_million_input_tokens: 0.042
 
     # Everything below is reached through OpenRouter's Decisions API with one key, at
     # OpenRouter's listed rate (openrouter.ai/api/v1/models?output_modalities=decisions,
-    # read 2026-10-09). None declares a data_policy: what happens to a request depends on
+    # read 2026-10-09) unless its entry says otherwise. None declares a data_policy: what happens to a request depends on
     # the vendor OpenRouter forwards it to, so a customer who asks for a policy is kept
     # away from all of them rather than promised something nobody checked.
     #
@@ -3423,8 +3172,6 @@ decision_model:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.042
 
     - provider: openrouter
       model: openai/gpt-6-luna-decisions
@@ -3432,19 +3179,18 @@ decision_model:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.10
 
     # Clef Flash is Cloudflare's 9B decision model, and the most accurate on fine-grained
     # intents of the five JevStation compared (jevstation.com/decision-models, 2026-10-07).
+    # Its rate, like Liquid D1's and Clef's below, is what OpenRouter charged per input
+    # token in the cost it returned with each answer (2026-10-20), which differs from
+    # OpenRouter's listed rate.
     - provider: openrouter
       model: cloudflare/clef-flash
       description: "Cloudflare's small decision model. Very quick, and sharp on fine-grained intents."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.021
 
     - provider: openrouter
       model: respan/span-01-lite
@@ -3452,8 +3198,6 @@ decision_model:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        free: true
 
     - provider: openrouter
       model: liquid/d1
@@ -3461,20 +3205,16 @@ decision_model:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.04
 
     # Clef is the 27B sibling of Clef Flash and tops the Decision Index (Decision Index
-    # 0.2.1, 2026-09-28), at roughly five times Clef Flash's latency and ten times its
-    # price. It is the slower, better judge the accuracy shortcuts below resolve to.
+    # 0.2.1, 2026-09-28), at roughly five times Clef Flash's latency and a little more than
+    # its price. It is the slower, better judge the accuracy shortcuts below resolve to.
     - provider: openrouter
       model: cloudflare/clef
       description: "Cloudflare's large decision model. The most accurate here, slower and dearer than Clef Flash."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
-      price:
-        per_million_input_tokens: 0.24
 
     # Kev 4B reads 8,192 tokens at most, so a long policy and a long turn can overflow it.
     - provider: openrouter
@@ -3483,17 +3223,6 @@ decision_model:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.042
-
-    - provider: openrouter
-      model: perplexity/pplx-decider-v1.1-27b
-      description: "Perplexity's Decider V1.1 through OpenRouter. The cheapest per call of the large decision models."
-      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
-      realtime: true
-      tier: low-latency
-      price:
-        per_million_input_tokens: 0.02
 
     - provider: openrouter
       model: inception/mercury-decide
@@ -3501,8 +3230,6 @@ decision_model:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.02
 
     # The free Mercury Decide is the same model as above on an endpoint OpenRouter caps at
     # a few requests a minute and a few dozen a day. That is a guardrail that stops
@@ -3514,20 +3241,17 @@ decision_model:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: false
       tier: low-latency
-      price:
-        free: true
 
     # Perplexity's own Decisions API, at the rate its reference gives
     # (docs.perplexity.ai/api-reference/decisions-post, read 2026-10-09). It is the only
-    # host left for Decider V1: OpenRouter lists it but no longer has an endpoint behind it.
+    # host left for either Decider: OpenRouter lists both but has no endpoint behind them
+    # (V1.1 answered "No endpoints found" there on 2026-10-20).
     - provider: perplexity
       model: pplx-decider-v1.1-27b
-      description: "Perplexity's Decider V1.1 on Perplexity's own API."
+      description: "Perplexity's Decider V1.1 on Perplexity's own API. The cheapest per call of the large decision models."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.02
 
     - provider: perplexity
       model: pplx-decider-v1-27b
@@ -3535,8 +3259,6 @@ decision_model:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
-      price:
-        per_million_input_tokens: 0.02
 
   aliases:
     en-low-latency:
@@ -3581,8 +3303,6 @@ image:
       realtime: false
       tier: low-latency
       supports: [size, aspect_ratio, seed, negative_prompt, format]
-      price:
-        per_image: 0.04
 
     # Gemini 3.1 Flash Image, asked for 1K pictures. Google bills output images at $60 per
     # million tokens, which it quotes as $0.067 a 1K picture on the standard tier
@@ -3597,8 +3317,6 @@ image:
       tier: high-quality
       input_modalities: [image]
       supports: [aspect_ratio]
-      price:
-        per_image: 0.067
 
   aliases:
     # The default: whoever draws quickest.
@@ -3644,8 +3362,6 @@ detection:
       realtime: true
       tier: low-latency
       supports: [confidence]
-      price:
-        per_image: 0
 
     # YOLOv8 nano at 640 on Roboflow's serverless API, the model its SDK calls yolov8n-640.
     # 0.000125 credits an image at $6 an on-demand credit (roboflow.com/pricing, read
@@ -3657,8 +3373,6 @@ detection:
       realtime: true
       tier: low-latency
       supports: [confidence]
-      price:
-        per_image: 0.00075
 
     # Moondream 3 Preview finds whatever it is asked for, one word a call, and scores
     # nothing. About 740 input and 13 output tokens a call at $0.30 and $2.50 a million
@@ -3670,8 +3384,6 @@ detection:
       realtime: true
       tier: high-quality
       supports: [open_vocabulary]
-      price:
-        per_image: 0.00025
 
     # Roboflow's face Workflow, built into the provider: face detection, a crop of each
     # face and a CLIP embedding of each crop. CLIP describes how a face looks rather than
@@ -3684,8 +3396,6 @@ detection:
       realtime: true
       tier: high-quality
       supports: [confidence, embeddings]
-      price:
-        per_image: 0.0015
 
     # The caller's own Roboflow Workflow, named in overwrites.roboflow by workspace and
     # workflow_id or sent whole as a specification. Its price is whatever its blocks cost,
@@ -3697,8 +3407,6 @@ detection:
       realtime: true
       tier: high-quality
       supports: [confidence, embeddings]
-      price:
-        per_image: 0.00075
 
   aliases:
     # The default: COCO's classes, quickest first.

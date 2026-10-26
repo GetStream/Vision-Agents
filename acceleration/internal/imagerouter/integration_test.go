@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -107,4 +108,43 @@ func (s *ImageRouterIntegrationSuite) TestAGenerationIsOneRowCountingItsPictures
 	s.EqualValues(2, labelled[0].ImagesTotal)
 	s.EqualValues(80_000, labelled[0].CostMicrosTotal)
 	s.EqualValues(2, labelled[0].RequestCount)
+}
+
+func (s *ImageRouterIntegrationSuite) TestAnImageRowSaysTheSizeItWasDrawnAtWhichCanChooseThePrice() {
+	drawing := &stubImages{name: "quick", drawn: pictures(1, 1024, 1792)}
+	registry := NewRegistry()
+	registry.Register("quick", func(routing.Spec) (imagegen.Provider, error) { return drawing, nil })
+	perImage := func(usd float64) map[pricing.Meter]pricing.Rate {
+		return map[pricing.Meter]pricing.Rate{pricing.Images: {USD: usd, Per: 1}}
+	}
+	prices, err := pricing.NewList("sizes", []pricing.Entry{
+		{Modality: string(routing.Image), Provider: "quick", Model: "fast", Rates: perImage(0.04)},
+		{Modality: string(routing.Image), Provider: "quick", Model: "fast", Rates: perImage(0.08),
+			When: map[string]string{imagegen.AttributeWidth: "1024", imagegen.AttributeHeight: "1792"}},
+	}, 0, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	router, err := New(Options{
+		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{
+			{Provider: "quick", Model: "fast", Languages: []string{"en"}},
+		}},
+		Registry: registry,
+		Store:    s.store,
+		Pricer:   prices,
+		Logger:   slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+
+	generation, err := router.Generate(s.ctx, Request{
+		CustomerID: s.customerID, Target: "quick/fast", Image: imagegen.Request{Prompt: "a tall field", Width: 1024, Height: 1792},
+	})
+	s.Require().NoError(err)
+	router.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID).Scan(s.ctx))
+	s.Require().Len(rows, 1)
+	s.Equal("1024", rows[0].Attributes[imagegen.AttributeWidth])
+	s.Equal("1792", rows[0].Attributes[imagegen.AttributeHeight])
+	s.EqualValues(80_000, rows[0].CostMicros, "priced at the rate for its size")
+	s.Equal(rows[0].CostMicros, generation.CostMicros, "the caller is told what the row costs")
 }

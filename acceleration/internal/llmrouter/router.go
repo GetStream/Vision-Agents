@@ -15,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -58,6 +59,8 @@ type Options struct {
 	Quota *quota.Limiter
 	// Gate enforces the customer's policies. Nil enforces nothing.
 	Gate routing.Gate
+	// Pricer prices every row recorded. Nil is routing.Prices of Config.
+	Pricer pricing.Pricer
 	// Models resolves the custom/<name> models customers serve themselves. Nil leaves
 	// none.
 	Models routing.ModelResolver
@@ -69,6 +72,7 @@ type Options struct {
 	ReplyHedge time.Duration
 	// FlowHedge is the same for the flow controller's decisions. Zero hedges none.
 	FlowHedge time.Duration
+	Writer    *routing.Writer
 	Logger    *slog.Logger
 }
 
@@ -129,6 +133,8 @@ func New(options Options) (*Router, error) {
 		Live:     options.Live,
 		Models:   options.Models,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -145,6 +151,8 @@ func New(options Options) (*Router, error) {
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	core := routing.Request{
 		CustomerID:      request.CustomerID,
+		Attribution:     routing.AttributionFrom(ctx),
+		Spent:           routing.SpentFrom(ctx),
 		Caller:          request.Caller,
 		AgentID:         request.AgentID,
 		CallID:          request.CallID,

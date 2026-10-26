@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -29,6 +30,24 @@ func (s *CampaignsSuite) TestACampaignIsCreatedWithNobodyToRing() {
 		"a campaign that started itself would ring people nobody added yet")
 	s.Equal(3, created.Concurrency)
 	s.Empty(s.contacts(created.Id))
+}
+
+func (s *CampaignsSuite) TestACampaignKeepsWhoScheduledIt() {
+	// Its calls are placed later, by no request, and are owned by whoever scheduled them.
+	owner := s.data.createUser()
+	scheduler := s.serverClient.actingFor(owner)
+	scheduler.header.Set(auth.UsageCategoriesHeader, "project:outreach")
+	var created Campaign
+	s.Require().Equal(http.StatusCreated, scheduler.do(http.MethodPost, "/v1/agents/campaigns", map[string]any{
+		"name": "may", "config_id": s.data.createAgentConfig().Id, "from_number": s.utils.number(),
+	}, &created))
+
+	stored, err := s.store.Campaign(context.Background(), s.customerID(), created.Id)
+
+	s.Require().NoError(err)
+	s.Equal(s.app.key, stored.APIKey)
+	s.Equal(owner.userID, stored.UserID)
+	s.Equal([]string{"project:outreach"}, stored.UsageCategories)
 }
 
 func (s *CampaignsSuite) TestACampaignNamingAConfigNobodyHasIsRefused() {

@@ -162,30 +162,6 @@ class SchedulingSettings:
 
 
 @dataclass
-class PluginSettings:
-    """One catalog plugin the agent names, and how the router reaches it.
-
-    `agent.yaml` gives it as the plugin's id alone, or as a mapping naming it with the
-    rest.
-    """
-
-    name: str
-    user: bool = False
-    """Each end user connects the plugin with their own account, in the chat, rather than
-    the app once, on the dashboard, for every session."""
-    readonly: bool = False
-    """Reach the plugin's read-only endpoint, for a vendor that runs one."""
-    scopes: list[str] = field(default_factory=list)
-    """Asked for at consent in place of the catalog's. Empty keeps the catalog's."""
-    toolsets: list[str] = field(default_factory=list)
-    """Limit the server to these groups of tools, such as calcom's bookings. Empty
-    offers every tool."""
-    tools: list[str] = field(default_factory=list)
-    """Offer only the tools matching these names or patterns such as `get_*`.
-    Empty offers every tool."""
-
-
-@dataclass
 class ConnectorSettings:
     """One connector the agent binds.
 
@@ -203,11 +179,17 @@ class ConnectorSettings:
     binding, filled when a session opens."""
     required: bool | None = None
     """Whether a session needs this connector. None when the file says nothing about it."""
+    sandbox: bool = False
+    """Whether code in the agent's sandbox may call the connector's API with the binding's
+    connection. False sends no sandbox key."""
+    require_approval: list[str] | None = None
+    """Names or patterns of the tools whose every call waits for the session's user to
+    allow it. None sends no require_approval key."""
 
 
 @dataclass
 class ToolSettings:
-    """How plugin, MCP server and connector tools are offered."""
+    """How MCP server and connector tools are offered."""
 
     progressive: bool | None = None
     """Offer each tool by a summary, the first call to it returning its full description
@@ -240,6 +222,9 @@ class Settings:
     tts: str = ""
     sts: str | None = None
     voice: str = ""
+    """The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+    the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent takes
+    the vendor's own voice name instead."""
     llm: str = ""
     harness: str = ""
     subagent: str = ""
@@ -250,9 +235,6 @@ class Settings:
     sandbox: str = ""
     sandbox_options: SandboxSettings | None = None
     """How the sandbox is built. None when the file says nothing about it."""
-    plugins: list[PluginSettings] = field(default_factory=list)
-    """Catalog MCP servers the app connects once, on the dashboard, for every session, or
-    each end user with their own account, in the chat, for one with `user`."""
     connectors: list[ConnectorSettings] | None = None
     """Connectors the agent binds. None when the file says nothing about them, which
     leaves whatever is stored; an empty list removes them."""
@@ -260,8 +242,8 @@ class Settings:
     """MCP servers outside the catalog, opened by the router by their URL, with a login
     when the server asks for one."""
     tools: ToolSettings | None = None
-    """How plugin, MCP server and connector tools are offered. None when the file says
-    nothing about it."""
+    """How MCP server and connector tools are offered. None when the file says nothing
+    about it."""
     channels: ChannelsSettings | None = None
     """Lines the agent answers on besides Stream Chat. The provider's credentials live on
     the router, connected once for the app; this only names the numbers."""
@@ -506,8 +488,8 @@ def _declare(path: Path) -> Settings:
             settings.sandbox = _word(value)
         elif field_name == "sandbox_options":
             settings.sandbox_options = _sandbox_options(path, value)
-        elif field_name == "plugins":
-            settings.plugins = _plugins(path, field_name, value)
+        elif field_name in ("plugins", "plugin_events"):
+            _refuse_plugins(path, field_name, value)
         elif field_name == "connectors":
             settings.connectors = _connectors(path, value)
         elif field_name == "mcp_servers":
@@ -590,44 +572,12 @@ def _dispatch(path: Path, value: object) -> dict[str, str]:
     return {str(key): _word(item) for key, item in value.items() if _word(item)}
 
 
-def _plugins(path: Path, field_name: str, value: object) -> list[PluginSettings]:
-    """The catalog plugins one list names, each an id or a mapping naming it."""
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ValueError(f"{path} should give {field_name} as a list")
-    named = []
-    for item in value:
-        if isinstance(item, str):
-            if item.strip():
-                named.append(PluginSettings(name=item.strip()))
-            continue
-        if not isinstance(item, dict):
-            raise ValueError(
-                f"{path} should give each of {field_name} as a plugin id or a mapping"
-            )
-        extra = set(item) - {"name", "user", "readonly", "scopes", "toolsets", "tools"}
-        if extra:
-            raise ValueError(f"{path} unknown {field_name} setting: {sorted(extra)[0]}")
-        user = item.get("user", False)
-        if not isinstance(user, bool):
-            raise ValueError(f"{path} should give {field_name} user as true or false")
-        readonly = item.get("readonly", False)
-        if not isinstance(readonly, bool):
-            raise ValueError(
-                f"{path} should give {field_name} readonly as true or false"
-            )
-        named.append(
-            PluginSettings(
-                name=_word(item.get("name")),
-                user=user,
-                readonly=readonly,
-                scopes=_terms(path, f"{field_name}.scopes", item.get("scopes")),
-                toolsets=_terms(path, f"{field_name}.toolsets", item.get("toolsets")),
-                tools=_terms(path, f"{field_name}.tools", item.get("tools")),
-            )
-        )
-    return named
+def _refuse_plugins(path: Path, field_name: str, value: object) -> None:
+    """Connectors replaced plugins, so a file still naming any is refused. An empty key
+    names none and is let through, as the Go SDK does."""
+    if value is None or value == []:
+        return
+    raise ValueError(f"{path}: `{field_name}` is no longer supported: use `connectors`")
 
 
 def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
@@ -654,7 +604,15 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
             raise ValueError(
                 f"{path} should give each of connectors as a connector id or a mapping"
             )
-        extra = set(item) - {"name", "connector", "tools", "connection", "required"}
+        extra = set(item) - {
+            "name",
+            "connector",
+            "tools",
+            "connection",
+            "required",
+            "sandbox",
+            "require_approval",
+        }
         if extra:
             raise ValueError(f"{path} unknown connectors setting: {sorted(extra)[0]}")
         name = _text(item.get("name"))
@@ -682,6 +640,9 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
                     f"{path} should give connectors required as true or false"
                 )
             required = flag
+        sandbox = item.get("sandbox")
+        if sandbox is not None and not isinstance(sandbox, bool):
+            raise ValueError(f"{path} should give connectors sandbox as true or false")
         named.append(
             ConnectorSettings(
                 name=name,
@@ -689,6 +650,8 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
                 tools=_connector_tools(path, name, item),
                 connection=connection,
                 required=required,
+                sandbox=bool(sandbox),
+                require_approval=_connector_require_approval(path, item),
             )
         )
     return named
@@ -715,20 +678,27 @@ def _connector_tools(
     return patterns
 
 
+def _connector_require_approval(
+    path: Path, item: dict[str, object]
+) -> list[str] | None:
+    """Patterns as written. Absent or null sends none; an empty list is sent as one."""
+    raw = item.get("require_approval")
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not all(isinstance(piece, str) for piece in raw):
+        raise ValueError(f"{path} should give connectors.require_approval as a list")
+    return list(raw)
+
+
 def _refuse_connector_aliases(settings: Settings) -> None:
-    """An alias is also how its tools are prefixed, so it cannot be a plugin or MCP name."""
+    """An alias is also how its tools are prefixed, so it cannot be an MCP server name."""
     if not settings.connectors:
         return
-    plugins = {plugin.name for plugin in settings.plugins}
     servers = {server.name for server in settings.mcp_servers}
     for entry in settings.connectors:
         if entry.name in servers:
             raise ValueError(
                 f'"{entry.name}" is named under both connectors and mcp_servers'
-            )
-        if entry.name in plugins:
-            raise ValueError(
-                f'"{entry.name}" is named under both connectors and plugins'
             )
 
 

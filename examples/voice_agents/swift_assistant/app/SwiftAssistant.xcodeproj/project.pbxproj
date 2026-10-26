@@ -150,7 +150,7 @@
 			);
 			mainGroup = B2000500;
 			packageReferences = (
-				B2000B01 /* XCLocalSwiftPackageReference "../../../../sdks/swift/core" */,
+				B2000B01 /* XCLocalSwiftPackageReference "../../../.." */,
 				B2000B02 /* XCRemoteSwiftPackageReference "stream-chat-swift" */,
 				B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */,
 			);
@@ -312,9 +312,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		B2000B01 /* XCLocalSwiftPackageReference "../../../../sdks/swift/core" */ = {
+		B2000B01 /* XCLocalSwiftPackageReference "../../../.." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../../../sdks/swift/core;
+			relativePath = ../../../..;
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -323,7 +323,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/GetStream/stream-chat-swift";
 			requirement = {
-				branch = "add/ai-conversation-view";
+				branch = develop;
 				kind = branch;
 			};
 		};

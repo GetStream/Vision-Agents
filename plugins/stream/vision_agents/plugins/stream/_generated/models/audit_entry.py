@@ -37,9 +37,14 @@ class AuditEntry:
             id (str):
             resource_id (str): The resource, which may since have been deleted.
             resource_type (AuditResourceType): What the change was made to. All of them are configuration: what an agent
-                does while it runs is traffic, and is read from the sessions and the logs instead.
+                does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the
+                deployment's own, changed through the management API, and is never listed for an app. end_user is one of the
+                app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of
+                the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named
+                grant:<id>; a change staff made through the management API is kept under the organization's id.
             source (AuditSource): Which client made it, from the X-Stream-Client header. api is a caller that named no
-                client: it reached the API directly, which is all that can be said about it.
+                client: it reached the API directly, which is all that can be said about it. manage is the management API,
+                called with the manage key, which no header can claim.
             actor_id (str | Unset): Who made it, as their client named them. Absent for a change nobody signed, such as a
                 process syncing on startup.
             actor_name (str | Unset): Their name, as their client named them. Never an email address: the only one the

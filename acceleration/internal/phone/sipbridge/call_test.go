@@ -1,6 +1,7 @@
 package sipbridge
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -230,4 +231,21 @@ func TestAnInfoDuringSetupIsRefused(t *testing.T) {
 	code, reason := infoStatus(err)
 	require.Equal(t, 500, code)
 	require.Equal(t, "Server Internal Error", reason)
+}
+
+func TestAReinviteLogsTheAddressesBothWays(t *testing.T) {
+	var buf bytes.Buffer
+	customer := &fakeLeg{}
+	stream := &fakeLeg{reinviteAnswer: sdpAt("198.51.100.20")}
+	c := newCall(customer, stream, slog.New(slog.NewJSONHandler(&buf, nil)))
+	c.establish()
+
+	_, err := c.onReinvite(t.Context(), customerSide, sdpAt("203.0.113.10"))
+
+	require.NoError(t, err)
+	logged := buf.String()
+	require.Contains(t, logged, "203.0.113.10")
+	require.Contains(t, logged, "198.51.100.20")
+	require.Contains(t, logged, `"side":"customer"`)
+	require.Contains(t, logged, `"side":"stream"`)
 }

@@ -28,6 +28,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -63,7 +65,9 @@ type Options struct {
 	// Redis is the broker the reads are queued on.
 	Redis  asynq.RedisConnOpt
 	Reader search.Reader
-	Writer knowledge.Writer
+	// Knowledge is where what was read is written, each call recorded for the customer: under
+	// the key that asked for a read, or as the crawler's own work for a refresh.
+	Knowledge *metered.Knowledge
 	// ChunkSize is how much of a page goes in one passage. Zero is the ingest default.
 	ChunkSize int
 	// CheckInterval is how often the worker looks for reads that are due, and how long a
@@ -83,7 +87,7 @@ type Service struct {
 	queue     *asynq.Client
 	worker    *asynq.Server
 	reader    search.Reader
-	writer    knowledge.Writer
+	knowledge *metered.Knowledge
 	chunkSize int
 	sweep     time.Duration
 	logger    *slog.Logger
@@ -103,7 +107,7 @@ func New(options Options) (*Service, error) {
 	if options.Reader == nil {
 		return nil, errors.New("urls: something has to read the pages")
 	}
-	if options.Writer == nil {
+	if options.Knowledge == nil {
 		return nil, errors.New("urls: a knowledge base is required")
 	}
 	if options.ChunkSize <= 0 {
@@ -133,7 +137,7 @@ func New(options Options) (*Service, error) {
 		queue:     asynq.NewClient(options.Redis),
 		worker:    asynq.NewServer(options.Redis, config),
 		reader:    options.Reader,
-		writer:    options.Writer,
+		knowledge: options.Knowledge,
 		chunkSize: options.ChunkSize,
 		sweep:     every,
 		logger:    options.Logger,
@@ -247,7 +251,8 @@ func (s *Service) Remove(ctx context.Context, customerID, id string) error {
 	}
 
 	base := knowledge.Scoped(page.CustomerID, page.Namespace)
-	if err := s.writer.Delete(ctx, base, ingest.IDs(page.URL, 0, page.Passages)); err != nil {
+	owner := routing.Owner{CustomerID: page.CustomerID, Attribution: routing.AttributionFrom(ctx)}
+	if err := s.knowledge.For(owner).Delete(ctx, base, ingest.IDs(page.URL, 0, page.Passages)); err != nil {
 		return err
 	}
 	return s.store.DeleteKnowledgeURL(ctx, customerID, page.ID)
@@ -289,17 +294,40 @@ func (s *Service) refresh() {
 	}
 }
 
+// crawlerOrigin is the key a read nobody asked for is recorded under: a refresh, or a task
+// queued before the asker was kept on it.
+var crawlerOrigin = routing.JobOrigin("crawler")
+
 // indexPayload names the page a task reads. The customer is in it so the worker looks the
-// row up the same way a request does, rather than by id alone.
+// row up the same way a request does, rather than by id alone. Attribution is who asked for
+// the read, which its writes are recorded under; a refresh has none.
 type indexPayload struct {
-	CustomerID string `json:"customer_id"`
-	ID         string `json:"id"`
+	CustomerID  string               `json:"customer_id"`
+	ID          string               `json:"id"`
+	Attribution *routing.Attribution `json:"attribution,omitempty"`
 }
 
-// enqueue queues a read of the page. A read of it already waiting is enough: the task id
-// is the page, so asking twice before the worker gets to it reads it once.
+// owner is who the read's writes are recorded for.
+func (p indexPayload) owner() routing.Owner {
+	owner := routing.Owner{CustomerID: p.CustomerID}
+	if p.Attribution != nil {
+		owner.Attribution = *p.Attribution
+	}
+	if owner.APIKey == "" {
+		owner.APIKey = crawlerOrigin
+	}
+	return owner
+}
+
+// enqueue queues a read of the page, for whoever ctx says asked. A read of it already waiting
+// is enough: the task id is the page, so asking twice before the worker gets to it reads it
+// once.
 func (s *Service) enqueue(ctx context.Context, page store.KnowledgeURL) error {
-	payload, err := json.Marshal(indexPayload{CustomerID: page.CustomerID, ID: page.ID})
+	queued := indexPayload{CustomerID: page.CustomerID, ID: page.ID}
+	if asked := routing.AttributionFrom(ctx); asked.APIKey != "" {
+		queued.Attribution = &asked
+	}
+	payload, err := json.Marshal(queued)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("urls: queue a read of %s: %w", page.URL, err))
 	}
@@ -343,7 +371,7 @@ func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 	written := page.Passages
 	read, err := s.reader.Read(ctx, page.URL)
 	if err == nil {
-		err = s.write(ctx, &page, read)
+		err = s.write(ctx, s.knowledge.For(payload.owner()), &page, read)
 	}
 	last := false
 	if err != nil {
@@ -378,19 +406,19 @@ func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 // write cuts the page into passages, writes them, and removes whatever the last read left
 // past the end of this one. Writing first means a lookup landing mid-update reads the new
 // passages or the old ones rather than a gap.
-func (s *Service) write(ctx context.Context, page *store.KnowledgeURL, read search.Page) error {
+func (s *Service) write(ctx context.Context, writer knowledge.Writer, page *store.KnowledgeURL, read search.Page) error {
 	passages := ingest.Split(page.URL, read.Text, s.chunkSize)
 	if len(passages) == 0 {
 		return fmt.Errorf("urls: there is nothing to read at %s", page.URL)
 	}
 	base := knowledge.Scoped(page.CustomerID, page.Namespace)
-	if err := s.writer.Upsert(ctx, base, passages); err != nil {
+	if err := writer.Upsert(ctx, base, passages); err != nil {
 		return err
 	}
 	// A page that got shorter would otherwise leave its old tail behind, still findable
 	// and no longer on the page it claims to come from.
 	stale := ingest.IDs(page.URL, len(passages), page.Passages)
-	if err := s.writer.Delete(ctx, base, stale); err != nil {
+	if err := writer.Delete(ctx, base, stale); err != nil {
 		return err
 	}
 

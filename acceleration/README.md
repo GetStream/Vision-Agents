@@ -46,6 +46,7 @@ and billing as a direct API call.
 | `cmd/chat`           | Types a line, reads the answer                                      |
 | `cmd/agent`          | Joins a Stream call and holds a conversation                        |
 | `cmd/phone`          | Buys numbers, points them at an agent, calls out and transfers live calls |
+| `cmd/phonecheck`     | Places a live test call and logs where each hop of it ran |
 | `cmd/knowledge`      | Reads documents into a knowledge base an agent can look things up in |
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
@@ -82,7 +83,7 @@ go run ./cmd/router --config /etc/router.yaml
 ```
 
 Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`,
-`trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
+`trusted_proxies`, `routing_config`, `phone_config`, `prices_file`, `voices_bucket_url`, and the nested
 `postgres.dsn`, `redis.{addr,username,password}`, `node.{advertise,listen}`, `listen_fd`, `shutdown.drain`, `auth.{mode,kek}`,
 `rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
 `stream.{api_key,api_secret}`. Naming no file loads one of the three embedded in the
@@ -102,25 +103,30 @@ the other commands that read them there.
 | `ROUTER_NODE_ADVERTISE` | `host:port` this node's peers reach it at. Unset works it out from this host's own address and `ROUTER_ADDR`'s port, which is right wherever a pod is reachable from its peers. See [More than one node](#more-than-one-node) |
 | `ROUTER_NODE_LISTEN`    | A second listen address, for this node's peers only. Unset means they use `ROUTER_ADDR`. Set it when two routers share one `ROUTER_ADDR`, so a request for a draining router's session still reaches it |
 | `ROUTER_LISTEN_FD`      | A listening socket inherited from a supervisor, served instead of `ROUTER_ADDR`, so an old and a new router take connections from one queue |
-| `ROUTER_SHUTDOWN_DRAIN` | How long a stopping router keeps its sessions after it stops taking work, e.g. `1h`. Unset ends them once HTTP has drained (10s). A second signal ends the wait |
+| `ROUTER_SHUTDOWN_DRAIN` | How long a stopping router keeps its sessions after it stops taking work, e.g. `1h`. Unset ends them once HTTP has drained (10s). A second signal ends the wait. A draining router stops serving metrics when the drain starts, so a router started after it on the same `ROUTER_METRICS_ADDR` serves them |
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
+| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for a model, and loads both into its database. Only the first load reads its `markup_bps`, and nothing applies a markup yet. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
-| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring |
+| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
+| `ROUTER_AUTH_KEK_V<n>_WRAPPED` | Version `n` of the keyring as base64 ciphertext a KMS wrapped with the AAD `router-kek-v<n>`, in place of `ROUTER_AUTH_KEK_V<n>`. The router unwraps it at startup with `ROUTER_AUTH_KMS_KEY` into the same key, so the rows it sealed still open. Setting both forms of one version is refused |
+| `ROUTER_AUTH_KMS_KEY`   | The Cloud KMS key that unwraps every `ROUTER_AUTH_KEK_V<n>_WRAPPED`, as `projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>`. The router calls Cloud KMS once at startup, with Application Default Credentials. Unset, only the plain keys are read. See «The key encryption key in Cloud KMS» |
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default, or `proxy`, the egress proxy (`internal/sandbox/egress`), which needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL`, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, and the proxy served by the same router (`ROUTER_CODE_SANDBOX_PROXY_ADDR`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`). Behind the proxy a sandbox reaches the proxy alone, and the proxy reaches its grants' hosts and the config's `allowed_domains`; a config with `network: true` and no `allowed_domains`, or with a `network_allow_list`, is refused when a session with a sandbox binding starts |
-| `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it |
+| `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it. A prefix belongs to one deployment (one Redis): routers that share a prefix delete each other's secrets, so never use `stg` locally |
 | `ROUTER_CODE_SANDBOX_PROXY_ADDR` | Where the router serves the sandbox egress proxy (`internal/sandbox/egress`), such as `:8091` on staging. Unset, the default, serves none. Needs Redis and connectors on |
 | `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY` | The PEM certificate and private key of the CA the proxy signs each granted host's certificate with. The router refuses to start with `ROUTER_CODE_SANDBOX_PROXY_ADDR` set and either missing, or a certificate setting that holds a private key. Only the certificate goes into a sandbox |
-| `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS |
+| `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
-| `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an app's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
-| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an app's policy sets its own (`quota`) |
+| `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
+| `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
+| `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user's devices may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
+| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user's devices may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`) |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies and the flow controller's decisions (`ROUTER_FLOW_HEDGE`) are hedged, not the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
@@ -164,6 +170,50 @@ the other commands that read them there.
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
 | `EXAMPLE_BASE_URL`      | Optional; points `cmd/agent`'s demo link at another deployment |
+
+### The key encryption key in Cloud KMS
+
+A hosted deployment can keep its key encryption key out of its secrets. Cloud KMS wraps the
+key once. At each start the router unwraps it with one `Decrypt` call and then seals and opens
+rows in memory, as before. The key is the same string, so every row it sealed still opens and
+the nodes of a deployment still agree. A laptop keeps the plain `ROUTER_AUTH_KEK`.
+
+1. Make a symmetric Cloud KMS key, and give the router's service account
+   `roles/cloudkms.cryptoKeyDecrypter` on that key only. `roles/cloudkms.admin` cannot decrypt
+   ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
+   opened 2026-10-22):
+
+   ```bash
+   gcloud kms keys add-iam-policy-binding KEY --keyring=KEYRING --location=LOCATION \
+     --member=serviceAccount:ROUTER_SERVICE_ACCOUNT --role=roles/cloudkms.cryptoKeyDecrypter
+   ```
+
+2. Wrap the current key as version 1, with the AAD `router-kek-v1` (`router-kek-v<n>` for
+   version `n`). `printf %s` adds no newline: the unwrapped key must be the same bytes as the
+   plain one, or no row opens. `gcloud kms encrypt` reads a `-` input from stdin and writes
+   the ciphertext to stdout for `-`
+   ([gcloud kms encrypt](https://docs.cloud.google.com/sdk/gcloud/reference/kms/encrypt),
+   opened 2026-10-22). The ciphertext is raw bytes, and the plaintext and the AAD cannot both
+   be stdin (`lib/surface/kms/encrypt.py` in Google Cloud SDK 580.0.0). GNU `base64` breaks
+   lines, so `tr` joins them. Whoever runs it needs `roles/cloudkms.cryptoKeyEncrypter` on the
+   key, which `roles/cloudkms.admin` lacks too
+   ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
+   opened 2026-10-22):
+
+   ```bash
+   printf %s "$ROUTER_AUTH_KEK" | gcloud kms encrypt --key=KEY --keyring=KEYRING \
+     --location=LOCATION --plaintext-file=- --ciphertext-file=- \
+     --additional-authenticated-data-file=<(printf %s router-kek-v1) | base64 | tr -d '\n'
+   ```
+
+3. Set `ROUTER_AUTH_KMS_KEY` to the key's resource name and `ROUTER_AUTH_KEK_V1_WRAPPED` to the
+   base64, then remove `ROUTER_AUTH_KEK` and `ROUTER_AUTH_KEK_V1`: a version set both ways is
+   refused. The wrapped value is ciphertext, so it can live in plain chart values.
+4. Restart. A start that cannot unwrap a key stops, and its error names the variable and the
+   KMS error, never the key or the ciphertext.
+
+To roll back, set `ROUTER_AUTH_KEK` to the same key again and unset `ROUTER_AUTH_KMS_KEY` and
+`ROUTER_AUTH_KEK_V1_WRAPPED`. The router then reads the plain key and calls no KMS.
 
 ## Authentication
 
@@ -264,8 +314,10 @@ A backend may still say which of its users it is working for, in `X-Stream-User-
 server token names no user by definition, so the header is the only place to put it, and it
 is unsigned because a caller holding the secret could mint a token for that user anyway.
 What it buys is that the session the backend opens belongs to that user, so the user's own
-device can reach it afterwards. It costs nothing: the caller is still server-side, still
-reaches everything, and is still charged no daily limit.
+device can reach it afterwards. The caller is still server-side and still reaches
+everything. It is held only to the daily quotas the customer set for that user, never to the
+router's default, and is refused only work that asks a model for something (a session, a
+turn, a run, a socket), never a read.
 
 Beside it, a backend may say the email that user signs in with, in `X-Stream-User-Email`. The
 router keeps the latest one per user and reads it from a server-side caller only, since a
@@ -348,11 +400,27 @@ Two things are counted, per UTC day, and reaching either refuses the next respon
 | Model responses | 200 | What "200 messages a day" means |
 | Tokens | 5,000,000 | A backstop for the caller who asks for few responses and makes each one enormous. A turn of an agent with a few MCP servers carries tens of thousands of tokens of tool definitions, so it should not be what an ordinary day hits first |
 
-These numbers are the deployment's default. An app sets its own as `quota` in its policy,
-`PUT /v1/policies/app` (`messages_per_user_per_day`, `tokens_per_user_per_day`), above the
-default or below it, and `0` is no cap. The PUT replaces the whole policy, so one that leaves
-`quota` out clears it and the default applies again. Organizations have none: a `quota` sent
-to `PUT /v1/policies/organization` is a 400. Each number is decided on its own. A limit Stream
+These numbers are the deployment's default. A customer sets its own as `quota`
+(`messages_per_user_per_day`, `tokens_per_user_per_day`), above the default or below it, and
+`0` is no cap, at three levels:
+
+| Where | Applies to |
+| ----- | ---------- |
+| `PUT /v1/policies/organization` | every user of the organization's apps |
+| `PUT /v1/policies/app` | the app's users, over the organization's |
+| `PUT /v1/policies/users/{user_id}` | one named user of the calling app, over the app's |
+
+Each number is the first set of the user's own, the app's, the organization's and the
+deployment's, decided on its own. The same user id in two apps is two users. A policy PUT
+replaces the whole policy, so one that leaves `quota` out clears it and the next level applies
+again; `DELETE /v1/policies/users/{user_id}` removes a user's own. A user's policy holds a
+quota only. `GET /v1/policies/users/{user_id}` answers the user's own, what they are held to
+with who set each number, and what they spent today toward a quota the customer set, and
+`GET /v1/policies/users` lists the app's users with one. Stream staff read and write any of the
+three through `/v1/manage/organizations/{organization_id}/policies/{scope}/{id}` (manage key,
+audited with source `manage`); an app that is not the organization's answers 404. An app with
+no user policies costs no lookup per user; once it has one, other routers see a change within
+5 s. A limit Stream
 sets on a whole app is the gateway's (AI-1253), a staff spend cap is AI-1254, and a history of
 policy changes is AI-1255.
 
@@ -366,9 +434,17 @@ customer too, since each has its own limit. Both matter.
 A user id is the honest answer to who is asking, and the address is the answer that
 still holds when a backend mints a fresh user id per request.
 
-What a backend asks for is never counted, even when it names the user it acts for, and
-neither are the backend's own turns in a session it opened. Answers from `mock/*` models are not
-counted either. A counted HTTP answer carries `X-Quota-Limit`, `X-Quota-Remaining`
+Against the deployment's default, what a backend asks for is never counted, even when it
+names the user it acts for, and neither are the backend's own turns in a session it opened.
+A quota the customer set is the customer's own rule about its users, so it counts everything
+recorded with the user, a backend acting for them included, in a bucket of its own per user
+(and, for a device caller, against the address as well). An app's `quota` counted only device
+callers before; it now counts its backend's work for the user too. A backend over a user's
+quota is refused only work that asks a model for something, never a read. An anonymous
+caller's name is anybody's, so it is never held to that user's own quota nor counted in their
+bucket: it is held to the app's or organization's, counted by the name and the address. A refusal names the quota:
+`user <id>`, `every user of app <id>`, or the router's default. Answers from `mock/*` models
+are not counted either. A counted HTTP answer carries `X-Quota-Limit`, `X-Quota-Remaining`
 and `X-Quota-Reset` (the unix time of the next UTC midnight), for the limit nearest to
 refusing the caller.
 
@@ -397,9 +473,8 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 
 | Setting | What it does |
 | ------- | ------------ |
-| `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses are refused. Both the app's and the organization's caps apply |
 | `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
-| `quota` | On an app's policy only: what one end user may spend in a UTC day, in place of the deployment's default. An organization's policy that sets it is a 400. See [Daily limits](#daily-limits) |
+| `quota` | What one end user may spend in a UTC day, in place of the deployment's default: the organization's for every user of its apps, the app's over it, and a named user's own (`/v1/policies/users/{user_id}`) over both. Unlike the rest, a more specific level wins rather than the stricter. See [Daily limits](#daily-limits) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
 
 The screen asks one question per harm in OpenRouter's prompt injection list (instruction
@@ -407,10 +482,165 @@ override, privileged modes, system override, prompt extraction, role manipulatio
 jailbreaks, safety bypass, role spoofing, control tokens), and decodes base64, hex and
 letter-spaced text first so an encoded attack is judged on what it says.
 
-An organization's budget sums the apps the router has seen that organization name. Behind a
-proxy that is the `X-Stream-Organization-Id` header; with API keys it is the key's app. `noauth`
-reads no organization, so only app policies apply there. Decisions are cached per app for 10s,
-so a budget can overshoot by what is spent in that window, and every read fails open.
+An organization's policy applies to the apps the router has seen that organization name. Behind
+a proxy that is the `X-Stream-Organization-Id` header; with API keys it is the key's app.
+`noauth` reads no organization, so only app policies apply there. Every read of a policy fails
+open. A policy has no `budget` any more: one sent is a 400 `budget_moved`, and spend limits are
+their own table (below).
+
+### Spend limits
+
+The customer's spend limits are rows of the `limits` table, one per subject, level and interval
+(`daily`, `weekly` from Monday, `biweekly` from Monday 2024-01-01, `monthly`, all UTC). A
+subject is what spends: the organization, an app, an API key, an end user of an app, a usage
+category across the organization, or one within an app (a team is the category
+`team:<name>`). A row at a level above its subject is a default for each subject of its kind
+there: an app-level `api_key` row limits every key of the app on its own, a row naming the key
+wins over it, and the app's wins over the organization's. Work is refused once any subject it
+counts for has spent its limit in the current window, so the organization's limit still refuses
+an app whose own has room: 402 `spend_limit_reached`, or 429 `user_limit_reached` with
+`Retry-After` for a limit on one end user, which stops that user alone. A reset
+(`usage_resets`) counts a subject's spend from what it had spent when it was made, until the
+window ends; the usage records are untouched. An origin (`hook:chat` and the rest) is no key a
+limit counts, and a user id the usage records leave off is no user.
+
+They are written through `/v1/spend/limits`, server-side only: one server-side credential of
+any app manages every limit of its organization (an app seen in no organization is its own).
+
+| Operation | Path | What it does |
+| --------- | ---- | ------------ |
+| `listLimits`, `createLimit` | `GET`, `POST /v1/spend/limits` | The organization's limits by id, filtered by subject, level, ids, team, category or interval; a new one, 201 |
+| `getLimit`, `updateLimit`, `deleteLimit` | `GET`, `PATCH`, `DELETE /v1/spend/limits/{limit_id}` | One limit; its amount and note only; 204 |
+| `getLimitUsage` | `GET /v1/spend/limits/usage` | One subject's current window in every interval: spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
+| `resetLimitUsage` | `POST /v1/spend/limits/usage/reset` | Resets the subject's spend for its limits in the windows named, with a reason |
+
+A team is `subject: team` (or `app_team` with an `app_id`) and `team: finance`, kept as the
+category `team:finance`; a category starting `team:` is a 400 `use_team`. A level left out is
+the most specific the ids name. A limit above the one, in the same interval, of a subject that
+contains it is a 400 `limit_above_parent` naming it (the organization contains its apps and
+categories, an app its keys, users and categories, and an organization's category the same
+category in an app); lowering a parent is allowed, and every read shows
+`effective_limit_micros`, the lowest of the row's and its parents'. A second limit on the same
+subject, level and interval is a 409 `limit_exists` naming the first. Writes are audited as
+`limit`. The router that wrote a limit holds to it at once, the others within 5 s. Staff reach
+the same operations for support under `/v1/manage/spend/limits`, with the manage key and an
+`organization_id`; what they write is the customer's.
+
+A grant (`POST /v1/spend/limits/grants`, listed with `GET` and ended with
+`POST /v1/spend/limits/grants/{grant_id}/revoke`) is a one-time amount one subject may spend
+past its own limits: once any of them is spent, its work is admitted on the grant, the one that
+expires first, until the grant is used up, expires (at most 366 days away; the next midnight UTC
+gives "more for today") or is revoked. It lifts that subject's limits and nothing else: a
+parent's limit, credit and the operator's spend hard limit still refuse. Work admitted on a
+grant draws its whole cost from it, and its row names the grant (`requests.limit_grants`). The
+writer adds each row it writes to the grant's `used_micros` once (`limit_grant_uses`, by usage
+id), and a reconcile every 10 minutes counts a row a router stopped before counting. A subject
+must have a limit to be granted (404 `no_limit`), and an organization has at most 20 live
+grants, a used-up one not counted (409 `too_many_grants`). `getLimitUsage` lists the subject's live grants and says, per window, when
+its work runs on one.
+
+The organization and app budgets that policies held moved into this table with the migration
+`20261112120000_limits`: each became the organization's or the app's own limit on its interval,
+an app's under the organization it was last seen in, or under itself when it was seen in none.
+The migration stops while an hourly budget exists, since limits have no hourly interval. Coming
+down puts one budget back into each policy from its scope's own limits.
+
+### Admission
+
+Before every routed session and every LLM response the router answers from memory what the
+customer may do, so an agent's speech never waits on a database:
+
+- An app's policies are read through the configuration cache the first time it is seen, and
+  again in the background every 5 s while it is in use. The authenticated request that first
+  names an app starts that read, so its first session usually finds it done.
+- Its organization's money is read every 5 s, for every organization in use at once, from the
+  usage service (`ROUTER_USAGE_URL`), 100 organizations a call: the status, the balance, the
+  spend hard limit and this day's and month's spend. The customer's spend limits are read on a
+  loop of their own, so a slow Postgres never makes a balance stale: the organization's limits
+  and resets every 5 s, and what each subject with a limit spent from the usage service's
+  counters every second (`ROUTER_USAGE_REDIS_URL`, the Redis the service mirrors its windows
+  to), or from the service itself every 5 s when that is not set, when a counter is missing,
+  and for 5 s after that Redis fails a read.
+  With no usage service there is no credit or spend hard limit, and each limited subject's
+  spend is summed from the request rows every 10 s, four at a time.
+- What this router recorded since is held by usage id from the moment the row is recorded,
+  and each ledger lets go of it on its own read: against the balance and the spend hard
+  limit, once a standing asked for after the usage service had the row lands (its ack, or the
+  shard showing the row shipped, as by another router's sweeper); against the spend limits of
+  every subject the row counts for, once a read of the counters asked for after an ack that
+  says the counters took the row lands (or a read of the service itself after any ack), or
+  with no usage service once a sum asked for after the shard wrote the row lands. Counted
+  twice for a moment, never not at all. A row a ledger is never known to have is let go 10
+  minutes after the later of when it was held and when that ledger last failed to read, and
+  logged; while no read lands, every hold is kept. While the usage service acks none of an
+  organization's rows, its limits' holds are kept too, and their 10 minutes start once acks
+  come back. A limit counts only what was held in its current UTC window; the balance counts
+  everything held.
+
+In that order: a suspended organization is refused everything, 403 `account_suspended`. A
+balance at or below what is held refuses work that costs money, 402 `insufficient_credits`.
+The organization's spend hard limit, per UTC day and calendar month, refuses it however much
+credit is left, 402 `system_limit_reached`; nothing a customer writes lifts it. Then the
+customer's spend limits, subject by subject (the organization, the app, each category in the
+organization and then in the app, the key, the user), 402 `spend_limit_reached`, or 429
+`user_limit_reached` for the user. A model the deployment runs itself, or one that is free, is
+still served past every one of them but a suspension. An organization is admitted until its
+first read lands. Once it has gone a minute without one, its tier's `fail_mode` decides: a
+closed tier refuses work that costs money until the balance can be read, an open one is
+admitted on the last read. The customer's limits are read before the first admission that
+needs them: an organization's the first time this router sees it, and what a subject with a
+limit spent the first time it sees the subject, waiting at most 250 ms. A read that does not
+land by then, or limits and spend last read over a minute ago, are the tier's `fail_mode` to
+answer as well (an organization with no tier, or no usage service, follows the default tier,
+which fails closed). The metrics are `router_admission_refresh_errors_total`,
+`router_admission_oldest_read_seconds` and, in `shadow`, `router_admission_would_refuse_total`
+by reason.
+
+Billable work is reserved before it starts, through the metering layer, so a new vendor gets
+it without writing it: `routing.Call` reserves `Meter.Estimate` (a search request, the images
+asked for, a text's segments), an LLM response its prompt and `max_output_tokens` (4,096 when
+unset), renewed every minute while it streams, a TTS utterance its characters, and a stream
+(STT, STS, `routing.Slices`) a lease of one minute of its meters, renewed every 30 s and
+released when it ends. A speech-to-speech session whose lease is refused because its money ran
+out refuses its next turn with the money error and closes; nothing else stops a voice model
+replying. One refused because the money could not be checked (holds unshared, a balance
+unread; `policy.Transient`) refuses that turn and stays open until a renewal lands. A transcription
+keeps running, and an agent's next turn is refused by its LLM's reservation. A reservation is a
+hold under the usage id its row will carry, checked in the order above and answered from
+memory; a refusal asks no vendor and records no row. The row settles it at its cost, and a
+reservation never recorded expires (2 minutes, 90 s for a lease). Holds are shared through
+the deployment's Redis (`ROUTER_REDIS_ADDR`): every 50 ms each router writes what changed to
+one hash per subject (`hold:{<org>}:<subject>`, and `hold:{<org>}:grant:<id>` per grant), and
+reads back what the other routers hold, which every figure subtracts as it does its own; the
+subjects it has nothing to write for are read every second. A shared hold is dropped 10 s after
+the usage service acked its row, by when every router's reads count it, and nothing in a
+router ever writes a total. Once a change has waited 10 s unwritten, work that costs money is
+refused with 503 `spend_check_unavailable` and `Retry-After: 5` until a write lands; free work
+is still served. With no Redis, holds stay in the process and nothing is refused for this.
+The usage alerts loop pages `holds_flush_failing` once `router_holds_unflushed_oldest_seconds`
+is over 10: customers' billable work is being refused, so restore the router's connection to
+`ROUTER_REDIS_ADDR`; the first write that lands clears it.
+The metrics are `router_holds_flushed_total`, `router_holds_flush_errors_total`,
+`router_holds_unflushed_oldest_seconds`, `router_holds_live`, `router_holds_refused_total`
+and `router_holds_per_subject`.
+
+Telephony asks the same admission: buying a number, placing or transferring a call, and every
+text an agent sends or answers on a line. Whatever a phone vendor charges for is billed work,
+so a refusal of money refuses it (402, or 403 `account_suspended`). A call to one of the
+organization's numbers is refused: on Telnyx it is rejected before it is answered, so it is
+not billed. Over Stream SIP the bridge has already answered the caller when the router hears
+of the call, so no agent is dispatched and the call is ended through Stream at once; the few
+seconds it was up are billed by the vendor. The same holds for a telephony suspension.
+Releasing a number is never refused. A campaign is refused at start, and one refused midway
+pauses with the refusal's code as `paused_reason`, giving the contact it was about to ring
+back to be rung once it is started again. A scheduled task that could not be delivered for
+money records the refusal's code.
+
+Holds are bounded in memory: an account keeps at most 10,000 apart and folds the oldest,
+remembering up to 100,000 folded usage ids (about 15 MB per account at most), and the process
+remembers at most 500,000 folded ids across every account (about 60 MB). A folded id past
+either cap is forgotten (`router_admission_folded_ids_forgotten_total`): it is then held
+until its fold's timer rather than its ack, which only ever refuses sooner.
 
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.
@@ -442,7 +672,7 @@ pick rather than a list of their own to keep:
 
 | Group                | What it is                                                                      |
 | -------------------- | ------------------------------------------------------------------------------- |
-| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B, Gemma 4 31B on Cerebras and GPT-5.6 Luna, pinned to Gemma 4 26B |
+| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B and GPT-5.6 Luna, pinned to Gemma 4 26B |
 | `llm-fast`           | The low-latency tier, pinned to Gemini 3.8 Flash                                |
 | `llm-smart`          | The high-quality tier, pinned to GPT-5.6 Sol                                    |
 | `stt-fast`           | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en`         |
@@ -473,7 +703,8 @@ the conversation carries on without. Both name the model this deployment wants r
 leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.1-sol` — and
 only reach the rest of their tier when that model is unavailable or fails to start.
 
-Which models those shortcuts reach for LLM, and what each is billed at per million tokens:
+Which models those shortcuts reach for LLM, and what each is billed at per million tokens
+(the vendor rates in `prices/vendor.json`):
 
 | Model                            | Tier         | In     | Cached  | Out     |
 | -------------------------------- | ------------ | ------ | ------- | ------- |
@@ -559,9 +790,9 @@ target. The agent's `llm` field and its optional `subagent` do not select that b
 | `openai/gpt-realtime-2.1`                 | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
 | `openai/gpt-realtime-2`                   | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
 
-These are estimates, and `router.yaml` says why: the vendors price audio in, audio out and
-text at three different rates, `Price` has one token bucket, so the audio rates are applied
-to every token. A reply is one row, settled when the model finishes it; the caller's audio
+The vendors price audio in, audio out and text at different rates, and where a vendor reports
+its tokens by modality (OpenAI Realtime, Gemini Live) each is priced at its own rate in
+`prices/vendor.json`. A reply is one row, settled when the model finishes it; the caller's audio
 since the last reply is the row's `audio_ms`, and the tokens are what the vendor reported.
 `stssuite` is what every one of these models is held to on a real call, the way `sttsuite`
 and `ttssuite` hold a transcriber and a voice. `.claude/skills/router-sts` is the vocabulary.
@@ -1064,7 +1295,11 @@ both need `redis.addr`:
   request naming a session that is not here is handed to the node that is by gRPC. Peers
   are reached over h2c on the API's own port, so there is no second port to open between
   them, and the node answering runs its own handler: it authenticates and authorizes the
-  caller itself rather than taking a peer's word for either.
+  caller itself rather than taking a peer's word for either. Since anyone reaching that
+  port can speak gRPC to it, a peer presents a credential derived from the key encryption
+  keyring (`ROUTER_AUTH_KEK`, `ROUTER_AUTH_KEK_V<n>`), and a node accepts the one of any key
+  it holds, so a rotation needs no pause. A node with no keyring refuses every peer, and
+  every node holding one refuses it.
 
 That register also answers who is writing as an agent, which is what an arriving chat
 message names. Without it a message landing on the wrong node finds nothing running and
@@ -1148,7 +1383,18 @@ runtime lookup is unchanged.
 `knowledge_namespace` gives the model a `lookup` tool over full-text search, so a caller's
 question about prices or opening hours is answered out of the handbook rather than guessed
 at. Each search is a `requests` row with modality `knowledge`, like everything else that
-costs money.
+costs money: a `lookup`, priced per lookup, carrying the bytes turbopuffer billed it as
+searching (at least 1.28 GB) and returning, and each write or delete request a `write` of the
+bytes written. What each cost turbopuffer is kept as `attributes.provider_cost_micros`.
+
+Storage is sampled hourly by `router usage storage`: one `storage` row per knowledge base and
+hour, of its size as `byte_hours`, owned by its app under `job:knowledge_storage`. By default
+it records the last hour to have ended, so a retry within the next hour bills the same one;
+`--hour` records another, at the size the base holds now, since turbopuffer keeps no past
+sizes. Run exactly one such job per turbopuffer key and region, not one per shard or router:
+it reads every namespace the key holds, and skips those of apps this deployment has never
+seen, which belong to another deployment sharing the key. A base it cannot read fails the run
+and alerts as `storage_missed`, naming the hour to run again.
 
 **Search is what is true today.** Neither the model nor the handbook can answer what the
 traffic is doing, whether a place is open or what a score is: one was trained months ago and
@@ -1300,6 +1546,7 @@ offered custom voices and the router routes around it for calls that want one.
 | `turn_stats_hourly`                      | Hour, customer and agent: turns, interruptions, audio |
 | `turn_latency_hourly`                    | Hour, customer, agent, leg and latency bin           |
 | `phone_numbers`                          | Number held, kept after release because it was billed |
+| `call_legs`                              | Leg of a phone call, from when it connected to when the call ended |
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
 | `calls`                                  | Conversation that happened, with its summary and score |
 | `campaigns`, `campaign_contacts`         | List of people to ring, and what became of each     |
@@ -1349,6 +1596,59 @@ speech-to-audio path.
 per number, so the provider and route paths do not serve those modalities while the
 statistics paths do.
 
+**No vendor is called without its usage being recorded.** The routers' sessions count what
+they can see (the audio streamed to a transcriber, the characters sent to a voice, the
+prompt and what came back from a model) and bill that, marked `usage_estimated`, when the
+vendor says nothing; request-and-response work goes through `routing.Call`, and work billed
+after the fact through `routing.Settle`. A session hands its vendor to nobody. A
+speech-to-speech session also bills what its vendor reports on the side: GPT-Live's seconds
+(`session_seconds`) and its backend model's responses (LLM rows with
+`attributes.parent_session`), OpenAI Realtime's input transcription (a row of
+`gpt-4o-mini-transcribe`), and the audio xAI bills and its typed turns (`audio_ms`,
+`messages`). `internal/metered/guard_test.go`, part of `go test ./...`, fails a file that holds
+a vendor-facing type or imports a vendor's package outside the routers, `internal/metered`
+and the services that meter their own work, and a model vendor that runs no suite. So adding a
+vendor is:
+
+1. one package under its modality implementing the modality's interface, whose tests embed
+   the modality's suite (`llmsuite`, `sttsuite`, `ttssuite`, `stssuite`, `searchsuite`,
+   `detectionsuite`, `imagegensuite`, `decisionmodelsuite`), which checks it reports what
+   it used;
+2. one `Register` call in the modality's router registry;
+3. its rates in `prices/vendor.json` (see [Prices](#prices)).
+
+**Telephony is billed by what each vendor bills.** Every text that arrives and every one sent
+is a `phone` row under the line's vendor and channel (`telnyx/sms`, `meta/whatsapp`,
+`linq/imessage`), with `messages`, an SMS's `message_segments` (GSM-7 or UCS-2, as a carrier
+counts them) and the MMS beside it (`media_messages`), priced by `direction`, the other party's
+`country` and, for WhatsApp, its `category` (`service`: the agent only writes inside the
+24-hour window). A WhatsApp or iMessage line sends through the app's own Meta or Linq account,
+so its rows are priced and not billed (`vendor_account = "app"`). Each leg of a call (the call
+placed, each transfer into it, a call that arrived) is a `call_legs` row. A placed call or a
+transfer rings from when the vendor takes the dial and starts when the person's phone joins the
+Stream call (`call.session_participant_joined`), matched to its leg by the phone's number; a
+call that arrives starts at `call.session_started`, one leg per Stream session. Legs are timed by
+when Stream made each event (no earlier than the leg was dialled, and arrival time for an event
+made over an hour before it), and a join or leave delivered before its leg is written is kept
+for a day (`call_participants`) for the leg to take. A join delivered again after the call ended
+revives the leg the end left unanswered, billed once. A leg ends when its phone leaves
+(`call.session_participant_left`) or the call ends (`call.session_ended`), and is then a
+`call_minutes` row of its `call_seconds`, billed to whoever placed the call, or the app under
+`phone:inbound`, and priced by direction and country. A leg that never connected bills nothing. A
+leg still open after four hours is ended, logged at ERROR and given away, since nothing says how
+long it lasted. A leg whose row was lost is written again by the sweep, under the same usage id.
+The call hook has to deliver the participant events: run `go run ./cmd/phone hooks -url <router
+url>` again once. Until then a placed call that ends unanswered with no participant event
+delivered logs `call hook does not deliver participant events; re-run cmd/phone hooks` at ERROR,
+once an hour per app. Placing a call is a free `dial` row, for its latency and failures. A number is
+billed every month it is held, on the day it was bought, at the price its vendor quoted (or the
+number's offer when the purchase names none; with neither, as work with no price); the month it
+was bought in under the buyer's key and each after it by `router usage numbers` under
+`job:number_rental`. A 10DLC brand, a campaign's review and its first three months are billed when
+it is registered, and each month after by `router usage dlc` under `job:dlc_fees`. While the 10DLC
+sandbox holds an app, its texts and minutes are priced and given away (`dlc_sandbox = "true"`); a
+leg the sweep ended does not count toward its minutes.
+
 **The audit log holds configuration, not traffic.** `audit_log` keeps one row per change to
 an agent config, skill, knowledge document, knowledge url, router config, plugin or policy:
 the fields that moved with the value on each side, which client the change came from
@@ -1380,6 +1680,134 @@ rather than a time to respond and its status is the `101` of the upgrade. A `5xx
 at error instead, because an access log at a busy deployment is the one stream nobody reads
 all of. A preflight is not logged, and the query string is never logged: a socket names its
 customer there and a telephony vendor names a token.
+
+### The usage service
+
+`cmd/usage` is a second binary in the same image, with a database of its own. Producers ship
+it usage events (`POST /v1/events`); it records each once by its `usage_id`, adds it to what
+every subject the event names (its organization, app, key, user, and each category across
+the organization and within the app) spent in the current daily, weekly, bi-weekly and
+monthly window, and writes those totals to Redis before it answers, as
+`usage:{<org>}:<subject>:<ids>` hashes with one `<interval>:<YYYYMMDD>` field per window.
+Routers read the current window's field from Redis, and read through `POST /v1/windows` when
+that field is missing, not only when the key is: a key written in an earlier window holds that
+window's field alone. The ack's `mirrored` says whether Redis took a batch's totals; sending
+the batch again rewrites them. It never prices: an event carries what the work cost. Nothing
+ships to it yet.
+
+```bash
+USAGE_POSTGRES_DSN='postgres://postgres:postgres@localhost:55432/usage?sslmode=disable' \
+USAGE_INGEST_TOKEN=local-usage-token USAGE_REDIS_URL=redis://localhost:56379 \
+USAGE_MANAGE_KEY=local-usage-manage-key USAGE_TIERS_FILE=tiers/dev.json \
+  go run ./cmd/usage            # or `docker compose build router && docker compose up usage`
+go run ./cmd/usage --help       # every setting
+```
+
+**Accounts and tiers.** Every organization has an account: its credit (`granted_micros`,
+the sum of its credit entries), its spend (`spent_micros`, debited in the transaction that
+records its events, so a batch sent twice debits once), its status (`active` or
+`suspended`), and its own value for any of its tier's settings (`limit_overrides`). A tier is
+a string producers send on every event; the service assigns none. Its row holds its
+`fail_mode` (what admission does while it cannot read a balance) and its `limits`: a spend
+hard limit per UTC day and calendar month (0 or absent is none), per-channel counts,
+recipients, countries and concurrency, sandbox bounds, and a low-balance threshold. A tier
+string with no row gets the `default` row's, which cannot be deleted. The code names no tier
+but `default`: the rows are data. At start the service adds the tiers of an operator's tier
+file (`USAGE_TIERS_FILE`) that the database lacks, then a built-in `default` (fail closed,
+nothing else) if there is still none; a tier the database has is changed only through the
+API. `tiers/dev.json` holds made-up tiers for the local stack and the tests.
+
+```bash
+go run ./cmd/usage tiers check --file tiers/dev.json   # exits non-zero on the first error
+go run ./cmd/usage tiers sync --dry-run                # what the next start would add
+```
+
+`POST /v1/standings` answers, per organization, the tier asked about (`fallback_tier` when it
+has no row), the overrides and the settings in force, the status, the balance, and the
+organization's spend in the current day and month. The management API under `/v1/manage`
+(tiers, accounts, limits, credit, suspension, usage) takes `USAGE_MANAGE_KEY` in
+`X-Manage-Key` and an actor in `X-Stream-Actor-Id`, never the ingest token; without the key
+every route answers 404 `not_configured`. Each change is written to `manage_audit` with its
+actor. A credit is written once per `Idempotency-Key`, and only its sign is checked. A
+suspension, a restore and a change to an organization's settings need one too, so a request
+sent again cannot make its change a second time: a replay with the same organization and body
+changes nothing, writes no audit row and answers the standing as it is now. The key is one
+space across the four writes: a key already used for another operation, organization or body
+is a 409 `idempotency_key_reused`. Keys are kept in `manage_requests`, for good.
+
+The service checks its own alerts, sends them to Sentry (`usage_alert:<name>`) and logs them.
+A rejected event, a batch refused whole for what it holds (`batch_refused`: a 400, 413 or 422,
+any 4xx but a 401), ingest failing and Redis refusing the totals page. A router's events
+arriving late warns (other producers ship late by design and are not measured), and so does
+a batch sent without the ingest token (`batch_unauthorized`, a 401): a misconfigured
+producer, or no producer at all. `usage_batches_refused_total{status}` counts both kinds of
+refusal.
+
+## Prices
+
+`prices/vendor.json` holds the vendors' published list prices, one entry per model (and per
+service tier where a vendor charges one), embedded in the binary. It has no markup and no
+negotiated figure. A deployment may lay a price file of its own over it with
+`ROUTER_PRICES_FILE`: for one model and `when`, the first file with an entry wins, and its
+`markup_bps` is the operator's markup.
+
+At start, right after migrating, a router loads them into the shared database's
+`price_changes` and `price_entries`: everything into an empty database, as one `seed` change
+with the file's markup, and otherwise only the models the database has never priced, as one
+`release` change. A model the database has priced keeps its rates, and the markup stays as
+it is, whatever the files say now. Each load is audited (`price_list`, source `cli`). A load
+that fails is retried every 30 seconds while the router serves; a file that does not parse
+stops the router at start. Rows are only ever added: a trigger refuses to change or delete
+an entry, and a change can only be cancelled before it takes effect. The one exception is
+`router prices reload`, for a development database only, below.
+
+| Command | What it does |
+| --- | --- |
+| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's vendor rates, its markup and what it charges; `--unpriced` lists the routed models no entry prices |
+| `router prices sync --dry-run` | What the next start would load, writing nothing |
+| `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database |
+| `router prices drift [--since 168h] [--json]` | Per model, over every shard, how far each row's cost at the vendor's rates is from what the vendor said it charged (`attributes.vendor_cost_micros`) |
+| `router prices export [--from <routing config>] [--phone] [--out <path>] [--strip]` | Writes a routing config's old `price:` blocks as a price file, and with `--strip` takes them out of it |
+| `router prices reload --development [--dry-run]` | Development only: empties the price list and seeds it again from the price files, as a fresh database's first start does. See below |
+
+A start never changes a rate the database already has, so on a laptop an edit to
+`vendor.json` (a rate fixed, say) does not reach a database seeded before it.
+`router prices reload --development` puts the files' list back: in one transaction, under the
+lock a load takes, it empties `price_changes` and `price_entries` (every change goes, those
+scheduled, cancelled or setting a markup included), then writes the `seed` a fresh database
+gets from `ROUTER_PRICES_FILE` over `vendor.json`, with that file's markup. It first prints
+the database it is pointed at, the address it connects to and the address the server answers
+as (never the password), then what it removed, what it seeded, and the items whose price
+moved; `--dry-run` prints the same and writes nothing. The audit log keeps its rows and gains
+two: the removal (`deleted`, named `<time>_reload`), then the seed. Rows already recorded keep
+the `price_version` that priced them, which then names no change. Running routers read the
+new list within 30 seconds, so none needs a restart.
+
+It refuses to run unless `--development` is passed and the database is on this machine or is
+compose's: both the host `postgres.dsn` names and the address the driver connects to (a
+`host` query parameter included) must be `localhost`, a loopback address, a unix socket or
+`postgres` (compose's service, as the router's container reaches it). It also refuses under a
+`ROUTER_ENV` other than unset, `local`, `development` or `testing`, but that is not what
+protects a deployment: most leave `ROUTER_ENV` unset, which reads as `local`. Their remote
+database host is what refuses it. A port-forward or proxy listening on localhost for a remote
+database passes the host check, and only `--development` stands in its way, so read the
+database and address the command prints first, and start with `--dry-run`.
+
+`vendor.json` is built into the binary, so after editing it rebuild what runs the command: `go
+run` does that itself, and the compose router needs `docker compose up -d --build router`
+first, which also restarts it on the new image.
+
+```bash
+cd acceleration && go run ./cmd/router prices reload --development --dry-run
+docker compose up -d --build router && docker compose exec router router prices reload --development
+```
+
+Until the router prices from the database, it prices every row from its price files:
+`ROUTER_PRICES_FILE` over the embedded `vendor.json`, at the rates they give and with no
+markup. A `price:` block in a routing config is ignored, with a warning at start;
+`router prices export --from <your config> --out own-prices.json` moves one into a file for
+`ROUTER_PRICES_FILE`, which keeps those models priced. The `check_prices` skill checks the list
+against what each vendor charges.
 
 ## Transcripts, memory and phone
 
@@ -1561,12 +1989,19 @@ The customer is always the authenticated caller, never anything in the body or t
 so an export is the caller's own data and an import lands under the caller's own app
 however the file was edited on the way. An import upserts and refuses a row whose primary
 key belongs to another tenant, so replaying the same change twice lands where applying it
-once would and a guessed id overwrites nothing.
+once would and a guessed id overwrites nothing. A request row is the exception: each
+deployment numbers its own, so it is imported by its `usage_id` with an id the destination
+gives it, written once, and a delete of it is replayed by its `usage_id`, or for a row from
+before usage ids by the one its import made from its source id.
 
 Key rows, sealed secrets, OAuth access and refresh tokens, organizations and apps are not
 exported. A moved deployment mints its own keys and re-authorizes its plugin connections.
 Voice recordings live in the bucket rather than in Postgres, so their rows move and copying
 the bucket is the operator's.
+
+A phone number still held moves only in E.164 form (`+15551234567`) and only while no other
+app here holds it; one given back moves as written. A moved number arrives detached: its
+trunk, route and call stay behind, so it is attached again where it arrives.
 
 Changes are captured by a trigger per table writing into `data_changes`, gated on a row in
 `data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting
@@ -1636,6 +2071,10 @@ uv run ../sdks/swift/generate.py
 (cd ../dashboard && npm run types)
 ```
 
+The usage service's operations are a spec of their own, `internal/usage/server/openapi.yaml`,
+which no SDK is generated from. Render it from the service's binary, whose error responses it
+describes: `go run ./cmd/usage openapi`.
+
 The Swift client is generated from a filter rather than from the whole spec, and
 `generate.py --check` fails if anything in that filter is not marked `x-client-accessible`.
 Dropping that mark is therefore the whole of removing an operation from the iOS SDK.
@@ -1684,11 +2123,12 @@ go run github.com/bufbuild/buf/cmd/buf@v1.73.0 generate
 - **Delegation is not tool calling.** Standardising a tool schema across providers is a
   bigger question than routing needs answered, and a tool call is the wrong shape for a
   phone call anyway: it blocks the reply on the result. The harness has the fast model ask
-  a slower one for help in its own words, in the middle of a sentence it goes on to finish;
-  `Session.LLM()` still reaches the provider's own `Client()` for anything else.
-- **Costs come from config, not from the provider.** Each model declares what this
-  deployment is billed, and the recorder prices every row once. A model with no price
-  reports a cost of zero rather than a guess.
+  a slower one for help in its own words, in the middle of a sentence it goes on to finish.
+- **Costs come from the price list, not from the provider.** The recorder prices every row
+  once, through one price list (`internal/pricing`) of the vendors' rates in
+  `prices/vendor.json` (see [Prices](#prices)). A model with no price reports a cost of zero
+  rather than a guess, and is logged as billable work with no price unless it is marked
+  `free` or `local`.
 - **Transcript modes.** `delta` appends, `replacement` supersedes the current in-progress
   text, `final` is settled. Both speech-to-text providers send replacements.
 - **An audio chunk does not say whether it is the last.** A streaming voice only learns

@@ -280,31 +280,53 @@ dispatch:
 	}
 }
 
-func TestTheDeclarationSaysWhoConnectsEachPlugin(t *testing.T) {
+func TestPluginsAreRefusedWithAPointerToConnectors(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "name: triage\nplugins:\n  - sentry\n"+
-		"  - name: linear\n    user: false\n    readonly: true\n    tools: [list_issues]\n  - google_calendar\n")
+	write(t, root, "agent.yaml", "name: triage\nplugins:\n  - sentry\n")
 
-	folder, err := Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := folder.Settings.Plugins
-	if len(got) != 3 || got[0].Name != "sentry" || got[0].User != nil {
-		t.Fatalf("the plugins read as %+v", got)
-	}
-	if got[1].Name != "linear" || got[1].User == nil || *got[1].User || !got[1].Readonly ||
-		strings.Join(got[1].Tools, ",") != "list_issues" || got[2].Name != "google_calendar" || got[2].User != nil {
-		t.Errorf("the plugins read as %+v", got)
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "agent.yaml: plugins is no longer read") ||
+		!strings.Contains(err.Error(), "name the provider under connectors") {
+		t.Fatalf("a folder naming plugins loaded: %v", err)
 	}
 }
 
-func TestAPluginEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
+func TestPluginEventsAreRefusedWithAPointerToConnectors(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "name: triage\nplugins:\n  - name: linear\n    read_only: true\n")
+	write(t, root, "agent.yaml", "name: triage\nplugin_events:\n  - plugin: sentry\n    event: issue.created\n")
 
-	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "read_only") {
-		t.Errorf("an entry with a misspelt key loaded: %v", err)
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "agent.yaml: plugin_events is no longer read") ||
+		!strings.Contains(err.Error(), "name the provider under connectors") {
+		t.Fatalf("a folder naming plugin events loaded: %v", err)
+	}
+}
+
+func TestAPluginNamedOutsideAListIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nplugins: sentry\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "plugins is no longer read") {
+		t.Fatalf("a folder naming a plugin loaded: %v", err)
+	}
+}
+
+func TestEmptyPluginKeysLoadAsTheyDidBefore(t *testing.T) {
+	for _, declared := range []string{
+		"plugins: []\nplugin_events: []\n",
+		"plugins:\nplugin_events:\n",
+	} {
+		root := filepath.Join(t.TempDir(), "concierge")
+		write(t, root, "agent.yaml", "name: concierge\n"+declared+"connectors:\n  - linear\n")
+
+		folder, err := Load(root)
+		if err != nil {
+			t.Fatalf("%q: %v", declared, err)
+		}
+		// Probed on 259da758b, while the SDK still read both keys.
+		if got := folder.Settings.Connectors; len(got) != 1 || got[0] != (ConnectorSettings{Name: "linear"}) {
+			t.Errorf("%q: the connectors read as %#v", declared, got)
+		}
 	}
 }
 
@@ -325,26 +347,6 @@ func TestTheOldPluginKeysAreRefused(t *testing.T) {
 	}
 }
 
-func TestTheDeclarationSaysWhichPluginEventsTheAgentTakes(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "name: triage\nplugins: [sentry]\nplugin_events:\n"+
-		"  - plugin: sentry\n    event: issue.created\n    arguments:\n      project: web\n"+
-		"    instructions: Triage it.\n")
-
-	folder, err := Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	events := folder.Settings.PluginEvents
-	if len(events) != 1 {
-		t.Fatalf("the plugin events read as %+v", events)
-	}
-	if events[0].Plugin != "sentry" || events[0].Event != "issue.created" ||
-		events[0].Arguments["project"] != "web" || events[0].Instructions != "Triage it." {
-		t.Errorf("the plugin event read as %+v", events[0])
-	}
-}
-
 func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 	for _, declaration := range []string{
 		"name: jean\nlmm: openai/gpt-5.6\n",
@@ -353,7 +355,6 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 		"sandbox_options:\n  timeout: soon\n",
 		"sandbox_options:\n  memory: 4\n",
 		"keyterms: Vision Agents\n",
-		"plugin_events:\n  - plugin: sentry\n    name: issue.created\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", declaration)
@@ -610,22 +611,21 @@ func TestAnEmptyConnectorToolListIsRefused(t *testing.T) {
 	}
 }
 
+func TestAConnectorSandboxThatIsNotABooleanIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    sandbox: github\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "agent.yaml") || !strings.Contains(err.Error(), "`github` into bool") {
+		t.Errorf("a sandbox that is not a boolean loaded: %v", err)
+	}
+}
+
 func TestAConnectorEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    plugin: github\n")
 
 	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "plugin") {
 		t.Errorf("an entry with a key nobody knows loaded: %v", err)
-	}
-}
-
-func TestAConnectorAliasThatIsAlsoAPluginIsRefused(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nplugins:\n  - linear\nconnectors:\n  - linear\n")
-
-	_, err := Load(root)
-	if err == nil || !strings.Contains(err.Error(), `"linear" is named under both connectors and plugins`) {
-		t.Fatalf("the shared alias loaded: %v", err)
 	}
 }
 
@@ -639,11 +639,9 @@ func TestAConnectorAliasThatIsAlsoAnMCPServerIsRefused(t *testing.T) {
 	}
 }
 
-func TestAConnectorAliasMayDifferFromItsPluginAndMCPName(t *testing.T) {
+func TestAConnectorAliasMayDifferFromItsMCPName(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `name: concierge
-plugins:
-  - linear
 connectors:
   - name: issues
     connector: linear

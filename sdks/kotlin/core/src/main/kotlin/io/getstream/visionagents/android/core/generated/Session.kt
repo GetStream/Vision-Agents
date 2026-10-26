@@ -59,7 +59,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param description 
  * @param forkedFrom The session this one continued from, empty for one opened fresh.
  * @param incognito Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
- * @param instructions 
+ * @param instructions What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it.
  * @param lastResponseAt When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
  * @param llm The provider and model answering, once routing has picked one.
  * @param mode 
@@ -141,6 +141,7 @@ internal data class Session (
     @SerialName(value = "incognito")
     val incognito: kotlin.Boolean? = null,
 
+    /* What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it. */
     @SerialName(value = "instructions")
     val instructions: kotlin.String? = null,
 

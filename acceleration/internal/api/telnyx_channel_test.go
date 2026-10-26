@@ -53,6 +53,8 @@ type telnyxLine struct {
 	line       string
 	connection Connection
 	config     store.AgentConfig
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 // The bridge's answers to STOP, START and HELP (channelbridge/keywords.go), which are
@@ -67,6 +69,13 @@ func TestTelnyxChannelSuite(t *testing.T) {
 	runSuite(t, new(TelnyxChannelSuite))
 }
 
+// SetupSuite gives the suite a database of its own: its tests start a scheduled-task worker,
+// which claims every task due in its database, whoever made it.
+func (s *TelnyxChannelSuite) SetupSuite() {
+	s.database = "telnyx_channel"
+	s.telnyxLine.SetupSuite()
+}
+
 // SetupSuite registers ed25519 and the real bearer scheme, whose Wrap puts the API key on a
 // reply, and the real channel bridge.
 func (s *telnyxLine) SetupSuite() {
@@ -76,6 +85,8 @@ func (s *telnyxLine) SetupSuite() {
 		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
 	}
 	s.channelProvider = func() string { return s.telnyx.server.Listener.Addr().String() }
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -538,6 +549,17 @@ type fakeTelnyx struct {
 
 	mu       sync.Mutex
 	messages []telnyxMessage
+	// refusals are the statuses the next sends are answered with instead of being taken;
+	// refused, when set, is called as each is answered.
+	refusals []int
+	refused  func()
+}
+
+// refuse has the fake answer the next send with status, calling then as it does.
+func (f *fakeTelnyx) refuse(status int, then func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refusals, f.refused = append(f.refusals, status), then
 }
 
 // telnyxMessage is one message the fake took.
@@ -573,6 +595,16 @@ func (f *fakeTelnyx) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
+	if len(f.refusals) > 0 {
+		status, then := f.refusals[0], f.refused
+		f.refusals = f.refusals[1:]
+		f.mu.Unlock()
+		if then != nil {
+			then()
+		}
+		w.WriteHeader(status)
+		return
+	}
 	f.messages = append(f.messages, telnyxMessage{from: sent.From, to: sent.To, text: sent.Text, authorization: r.Header.Get("Authorization")})
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")

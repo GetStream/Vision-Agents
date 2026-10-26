@@ -73,6 +73,10 @@ type ScheduledTask struct {
 	ConfigID   string `bun:"config_id,notnull"`
 	UserID     string `bun:"user_id,notnull"`
 	CallerKind string `bun:"caller_kind,notnull"`
+	// APIKey and UsageCategories are those of whoever scheduled the task, the key a session's
+	// was opened with when its agent scheduled it: every occurrence is owned by them.
+	APIKey          string   `bun:"api_key,notnull"`
+	UsageCategories []string `bun:"usage_categories,array,nullzero"`
 	// OriginSessionID is the session the task was created in, SessionID the one
 	// it follows up in, ConversationID that session's Chat conversation.
 	OriginSessionID string `bun:"origin_session_id,notnull"`
@@ -80,6 +84,10 @@ type ScheduledTask struct {
 	ConversationID  string `bun:"conversation_id,notnull"`
 	Title           string `bun:"title,notnull"`
 	Instructions    string `bun:"instructions,notnull"`
+	// ChannelThread is the thread channel of the external thread the task was
+	// made in (channel_threads.channel_id): an SMS or WhatsApp thread.
+	// Empty for a task made anywhere else.
+	ChannelThread string `bun:"channel_thread,notnull"`
 	// StartLocal is the first occurrence as the user's clock reads it, held in
 	// UTC so its fields are the wall clock's; Timezone says which clock.
 	StartLocal time.Time  `bun:"start_local,notnull"`
@@ -343,7 +351,8 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 				break
 			}
 		}
-		save := tx.NewUpdate().Model(task).ExcludeColumn("customer_id", "created_at")
+		// Who scheduled the task is fixed when it is created.
+		save := tx.NewUpdate().Model(task).ExcludeColumn("customer_id", "created_at", "api_key", "usage_categories")
 		if len(delivering) > 0 {
 			save = save.ExcludeColumn("claim_id", "lease_until")
 		}

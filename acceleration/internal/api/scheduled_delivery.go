@@ -97,10 +97,21 @@ type scheduledDelivery struct {
 	Channels       []string `json:"channels,omitempty"`
 	// Due is when the occurrence came due, or when the hold on it ended.
 	Due time.Time `json:"due"`
+	// APIKey and UsageCategories are the task's: the key and categories that scheduled it.
+	APIKey          string   `json:"api_key,omitempty"`
+	UsageCategories []string `json:"usage_categories,omitempty"`
 }
 
 func (d scheduledDelivery) owner() session.Owner {
 	return session.Owner{CustomerID: d.CustomerID, UserID: d.UserID, Kind: auth.Kind(d.CallerKind)}
+}
+
+// attribution owns an occurrence's work as whoever scheduled the task: its key, its user and
+// its categories. The router acts, so the caller is the server, as scheduledOwnerContext says.
+// A task created before tasks kept a key reads back job:scheduled_task (the migration); one
+// that names none now is a gap the writer reports.
+func (d scheduledDelivery) attribution() routing.Attribution {
+	return routing.Attribution{APIKey: d.APIKey, UserID: d.UserID, CallerKind: routing.CallerServer, UsageCategories: d.UsageCategories}
 }
 
 // scheduledPeerAnswer is what the node holding a conversation answers a
@@ -140,7 +151,9 @@ func (a scheduledPeerAnswer) failure() error {
 // follow up in it; live on another, hand the occurrence to that node and
 // take its word for where it landed; ended, reopen it from its row the way
 // a message to an ended chat does, and hold it until it has answered. A
-// task whose first occurrence has no session yet opens one on its config.
+// task whose first occurrence has no session yet opens one on its config. A
+// task made in an SMS or WhatsApp thread is carried out in that thread
+// (deliverOnThread), whatever its channels say.
 func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
 	task := claimed.Task
 	// A hold ends after the occurrence came due: its lateness counts from then.
@@ -149,21 +162,23 @@ func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.Claimed
 		due = *held
 	}
 	delivery := scheduledDelivery{
-		CustomerID:     task.CustomerID,
-		TaskID:         task.ID,
-		RunID:          claimed.Run.ID,
-		SessionID:      task.SessionID,
-		ConversationID: task.ConversationID,
-		ConfigID:       task.ConfigID,
-		UserID:         task.UserID,
-		CallerKind:     task.CallerKind,
-		Timezone:       task.Timezone,
-		CommandID:      "st_" + claimed.Run.ID,
-		Text:           scheduledPrompt(claimed, time.Now()),
-		Channels:       task.Channels,
-		Due:            due,
+		CustomerID:      task.CustomerID,
+		TaskID:          task.ID,
+		RunID:           claimed.Run.ID,
+		SessionID:       task.SessionID,
+		ConversationID:  task.ConversationID,
+		ConfigID:        task.ConfigID,
+		UserID:          task.UserID,
+		CallerKind:      task.CallerKind,
+		APIKey:          task.APIKey,
+		UsageCategories: task.UsageCategories,
+		Timezone:        task.Timezone,
+		CommandID:       "st_" + claimed.Run.ID,
+		Text:            scheduledPrompt(claimed, time.Now()),
+		Channels:        task.Channels,
+		Due:             due,
 	}
-	ctx = routing.WithScheduledTurn(ctx)
+	ctx = routing.WithAttribution(routing.WithScheduledTurn(ctx), delivery.attribution())
 	if s.sessions == nil {
 		return "", "", errors.New("this router runs no sessions")
 	}
@@ -174,6 +189,9 @@ func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.Claimed
 		if until, held := quietHold(task, time.Now()); held {
 			return "", "", &scheduling.Postponed{Until: until}
 		}
+	}
+	if task.ChannelThread != "" {
+		return s.deliverOnThread(ctx, delivery, task.ChannelThread)
 	}
 	if delivery.SessionID != "" {
 		if _, live := s.sessions.Get(delivery.SessionID, delivery.owner()); live {
@@ -241,7 +259,7 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 			continue
 		}
 		var failure *scheduling.Failure
-		reason = cmp.Or(reason, scheduling.ReasonOf(err))
+		reason = cmp.Or(reason, deliveryReason(err))
 		final = final && errors.As(err, &failure) && failure.Final
 		missed = false
 	}
@@ -250,6 +268,22 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 		return "", "", &scheduling.Missed{Err: err}
 	}
 	return "", "", &scheduling.Failure{Reason: reason, Final: final, Err: err}
+}
+
+// deliveryReason is the code a failed attempt is recorded under. Refused for money, it is the
+// refusal's own code, such as insufficient_credits, and a later attempt may land once the
+// organization has paid; a failure that carries one says so whatever reason it gave.
+func deliveryReason(err error) string {
+	if answer, refused := moneyError(err); refused {
+		return answer.Code
+	}
+	var failure *scheduling.Failure
+	if errors.As(err, &failure) {
+		if answer, refused := moneyError(failure.Err); refused {
+			return answer.Code
+		}
+	}
+	return scheduling.ReasonOf(err)
 }
 
 // undelivered is a failed attempt recorded under reason.
@@ -677,6 +711,7 @@ func (s *Server) openTaskSession(ctx context.Context, delivery scheduledDelivery
 	spec.Greeting = ""
 	spec.Caller = routing.Caller{UserID: delivery.UserID, ServerSide: true}
 	spec.CallerKind = auth.Kind(delivery.CallerKind)
+	spec.Attribution = delivery.attribution()
 	spec.Timezone = delivery.Timezone
 	tagScheduled(&spec.Custom, delivery)
 	created, err := s.sessions.Create(ctx, spec)
@@ -734,7 +769,7 @@ func (s *Server) deliverByPhone(ctx context.Context, delivery scheduledDelivery,
 		return "", "", undeliveredFinally(scheduling.ReasonRungAlready, errors.New("a call was placed for this occurrence already"))
 	}
 	placed, err := s.phone.Call(ctx, phone.CallRequest{
-		Owner:     routing.Owner{CustomerID: delivery.CustomerID},
+		Owner:     routing.Owner{CustomerID: delivery.CustomerID, Attribution: delivery.attribution()},
 		From:      from,
 		To:        to,
 		SessionID: sessionID,
@@ -763,6 +798,7 @@ func callSpec(config store.AgentConfig, delivery scheduledDelivery, agentID stri
 	spec.ConversationID = delivery.ConversationID
 	spec.Caller = routing.Caller{UserID: delivery.UserID, ServerSide: true}
 	spec.CallerKind = auth.Kind(delivery.CallerKind)
+	spec.Attribution = delivery.attribution()
 	spec.Timezone = delivery.Timezone
 	// The agent placed this call, so it is told how to get past whatever
 	// answers.
@@ -909,5 +945,6 @@ func scheduledOwnerContext(ctx context.Context, delivery scheduledDelivery) cont
 	ctx = context.WithValue(ctx, serverSideContextKey{}, true)
 	ctx = context.WithValue(ctx, kindContextKey{}, auth.Kind(delivery.CallerKind))
 	ctx = routing.WithCaller(ctx, routing.Caller{UserID: delivery.UserID, ServerSide: true})
+	ctx = routing.WithAttribution(ctx, delivery.attribution())
 	return routing.WithScheduledTurn(ctx)
 }

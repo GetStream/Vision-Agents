@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 var investigate = Tool{Name: "investigate_sdk", Description: "Read SDK source"}
@@ -35,12 +37,12 @@ func TestAHostedCallIsAnsweredByTheWorkerRunningIt(t *testing.T) {
 
 	go func() {
 		call := <-worker.ToolCalls()
-		worker.Resolve(call.ID, ToolResult{Output: "targetSdkVersion 35 in " + call.Arguments})
+		worker.Resolve(call.ID, ToolResult{Output: llm.TextParts("targetSdkVersion 35 in " + call.Arguments)})
 	}()
 	output, err := pool.RunHosted(context.Background(), "acme", "support",
 		ToolCall{ID: "call-1", SessionID: "s", Name: "investigate_sdk", Arguments: `{"sdk":"android"}`})
-	if err != nil || output != `targetSdkVersion 35 in {"sdk":"android"}` {
-		t.Fatalf("answered %q, %v", output, err)
+	if err != nil || llm.TextOf(output) != `targetSdkVersion 35 in {"sdk":"android"}` {
+		t.Fatalf("answered %q, %v", llm.TextOf(output), err)
 	}
 }
 
@@ -68,13 +70,13 @@ func TestAHostedCallGoesToWhicheverHostHasTheLeastToAnswer(t *testing.T) {
 	}
 	go func() {
 		call := <-idle.ToolCalls()
-		idle.Resolve(call.ID, ToolResult{Output: "read android"})
+		idle.Resolve(call.ID, ToolResult{Output: llm.TextParts("read android")})
 	}()
 	output, err := pool.RunHosted(context.Background(), "acme", "support",
 		ToolCall{ID: "call-1", Name: "investigate_sdk"})
 
-	if err != nil || output != "read android" {
-		t.Fatalf("answered %q, %v; the idle host should have taken it", output, err)
+	if err != nil || llm.TextOf(output) != "read android" {
+		t.Fatalf("answered %q, %v; the idle host should have taken it", llm.TextOf(output), err)
 	}
 }
 
@@ -113,7 +115,56 @@ func TestAHostedCallIsBoundedByTheWorkersTimeout(t *testing.T) {
 	if _, err := pool.RunHosted(context.Background(), "acme", "support", ToolCall{ID: "call-1", Name: "investigate_sdk"}); err == nil {
 		t.Fatal("a call nobody answered did not time out")
 	}
-	if worker.Resolve("call-1", ToolResult{Output: "late"}) {
+	if worker.Resolve("call-1", ToolResult{Output: llm.TextParts("late")}) {
 		t.Error("an answer after the timeout was taken")
+	}
+}
+
+// progressHeard is a conversation that records what a hosted call told it.
+type progressHeard struct {
+	held    []string
+	updates []string
+	holds   bool
+}
+
+func (p *progressHeard) HoldTool(id string) bool {
+	p.held = append(p.held, id)
+	return p.holds
+}
+
+func (p *progressHeard) ToolUpdate(id, text string, verbatim bool) {
+	p.updates = append(p.updates, id+": "+text)
+}
+
+func TestAWorkerRunningAHostedCallReachesItsConversation(t *testing.T) {
+	pool := NewPool()
+	worker, _ := pool.Register("acme", Registration{Capacity: 1})
+	if err := pool.Host(worker, "support", []Tool{investigate}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	heard := &progressHeard{holds: true}
+
+	go func() {
+		call := <-worker.ToolCalls()
+		worker.Update(call.ID, "reading the gradle files", false)
+		if _, held := worker.Hold(call.ID); !held {
+			t.Error("a call its conversation holds was not held")
+		}
+		worker.Resolve(call.ID, ToolResult{Output: llm.TextParts("35")})
+	}()
+	if _, err := pool.RunHosted(context.Background(), "acme", "support",
+		ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk", Progress: heard}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(heard.updates) != 1 || heard.updates[0] != "call-1: reading the gradle files" || len(heard.held) != 1 {
+		t.Fatalf("the conversation heard %+v and held %+v", heard.updates, heard.held)
+	}
+	if _, held := worker.Hold("call-1"); held {
+		t.Error("an answered call was held")
+	}
+	worker.Update("call-1", "late", false)
+	if len(heard.updates) != 1 {
+		t.Errorf("an answered call's update reached the conversation: %+v", heard.updates)
 	}
 }

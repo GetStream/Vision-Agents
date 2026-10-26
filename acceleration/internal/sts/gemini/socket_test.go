@@ -362,3 +362,62 @@ func (s *GeminiSocketSuite) TestAResumedConnectionCountsItsAudioAfresh() {
 	s.False(stopped.At.Before(before.Add(-200*time.Millisecond)), "the offset is placed on this connection's audio only")
 	s.False(stopped.At.After(after.Add(-200 * time.Millisecond)))
 }
+
+func (s *GeminiSocketSuite) TestANonBlockingSessionsToolsSayTheirResultFollows() {
+	fake := newFakeLive()
+	defer fake.close()
+	provider, _ := s.connect(fake, Options{
+		NonBlocking: true,
+		Tools:       []llm.Tool{{Name: "get_weather", Description: "Weather.", Parameters: map[string]any{"type": "object"}}},
+	})
+	defer func() { _ = provider.Close() }()
+
+	declared := (<-fake.setups).Tools[0].FunctionDeclarations[0]
+	s.Equal("NON_BLOCKING", declared.Behavior)
+	s.Contains(declared.Description, "Weather.")
+	s.Contains(declared.Description, "do not guess", "a model that keeps talking must not make the result up")
+	s.True(provider.UpdatesCalls())
+}
+
+func (s *GeminiSocketSuite) TestAnOpenCallIsToldOfWithAPartialResponseAndEndedByItsResult() {
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{NonBlocking: true, Tools: []llm.Tool{{Name: "get_weather"}}})
+	defer func() { _ = provider.Close() }()
+	s.serve(conn, serverMessage{ToolCall: &toolCall{FunctionCalls: []functionCall{{ID: "call_1", Name: "get_weather"}}}})
+	s.nextEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.ToolCall); return ok })
+
+	s.Require().NoError(provider.UpdateCall(sts.CallUpdate{CallID: "call_1", Status: "searching", Guidance: "Tell them where it is."}))
+
+	partial := s.nextFrame(conn).ToolResponse.FunctionResponses[0]
+	s.Equal("call_1", partial.ID)
+	s.Equal("get_weather", partial.Name)
+	s.Equal(map[string]any{"status": "searching", "instructions": "Tell them where it is."}, partial.Response)
+	s.Require().NotNil(partial.WillContinue)
+	s.True(*partial.WillContinue, "the call is still open")
+	s.Equal("WHEN_IDLE", partial.Scheduling)
+
+	s.Require().NoError(provider.Answer("call_1", `{"forecast":"sunny"}`, nil))
+	result := s.nextFrame(conn).ToolResponse.FunctionResponses[0]
+	s.Equal(`{"forecast":"sunny"}`, result.Response["output"])
+	s.Require().NotNil(result.WillContinue)
+	s.False(*result.WillContinue, "the result closes the call")
+	s.Equal("WHEN_IDLE", result.Scheduling)
+}
+
+func (s *GeminiSocketSuite) TestABlockingSessionIsNotToldOfAnOpenCall() {
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Tools: []llm.Tool{{Name: "get_weather"}}})
+	defer func() { _ = provider.Close() }()
+	s.Empty((<-fake.setups).Tools[0].FunctionDeclarations[0].Behavior)
+	s.serve(conn, serverMessage{ToolCall: &toolCall{FunctionCalls: []functionCall{{ID: "call_1", Name: "get_weather"}}}})
+	s.nextEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.ToolCall); return ok })
+
+	s.False(provider.UpdatesCalls())
+	s.ErrorIs(provider.UpdateCall(sts.CallUpdate{CallID: "call_1", Status: "searching"}), sts.ErrNoCallUpdates)
+	s.Require().NoError(provider.Answer("call_1", "{}", nil))
+	result := s.nextFrame(conn).ToolResponse.FunctionResponses[0]
+	s.Nil(result.WillContinue, "a blocking call's answer is as it always was")
+	s.Empty(result.Scheduling)
+}

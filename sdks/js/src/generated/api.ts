@@ -150,7 +150,8 @@ export type paths = {
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does, offered a piece at a time: a caller running its own pipeline sends audio or text and gets transcripts, audio or completions back, and the request is failed over and billed exactly as it would be inside a session.
          *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
          *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. A model that refuses the session part way through hands it to the next model routed for it, which is announced with another `started` frame naming its `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields; incomplete responses additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
-         *     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`.
+         *     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`. A refusal about money also carries `code` and `error_type`, as an HTTP request is refused: `account_suspended` (`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or `spend_limit_reached` (`payment_required`) for a model that costs money, while one that costs nothing is still served; the socket then closes with 1008.
+         *     A server-side caller is told what each unit cost and when its organization's credit runs low; an end user's device is told neither. A settled `transcript`, a `synthesis_complete` and a `complete` carry `cost_micros`, what that turn, utterance or response cost in millionths of a dollar. What is recorded as the socket closes, such as a transcriber's last audio or a voice's failed utterance, comes on no frame. A `balance` frame, with `balance_micros` and `warning` (`low` or `exhausted`), says the organization's balance went down into that state while the socket was open, the values X-Stream-Balance-Micros and X-Stream-Balance-Warning carry on an answer: once per crossing, and at once after `started` when it already is.
          *     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
          */
         readonly get: operations["streamModality"];
@@ -413,7 +414,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Start ringing
-         * @description Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left.
+         * @description Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["startCampaign"];
@@ -1075,6 +1076,8 @@ export type paths = {
          * Forward a connector's provider events to a URL
          * @description Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
          *
+         *     The id `stream` is the router's own events, which need no provider app: `account.balance_low` once the organization's balance is at or below its warning threshold, and `account.balance_exhausted` once it is at or below nothing, each sent once per crossing to every `stream` destination of every app of the organization, whatever its forward. The balance they go by is what was spent: work under way that has not finished does not count, so it can be above X-Stream-Balance-Micros. Any change to the organization's credit re-arms them, a refund or an adjustment as much as a top-up or a grant. The body is `{type, timestamp, data: {organization_id, app_id, balance_micros, threshold_micros, tier}}`, and webhook-id is `balance:<organization>:<kind>:<granted_micros>`.
+         *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["createConnectorEventDestination"];
@@ -1154,7 +1157,7 @@ export type paths = {
         readonly post?: never;
         /**
          * Remove the app's own OAuth client for a connector
-         * @description Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+         * @description Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client. Where the connector's manifest says revoke_on_delete (Nessy), the provider is first asked to revoke the grant of each, and a refusal is logged; the connections stay.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -1722,7 +1725,8 @@ export type paths = {
          * @description Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
          *     The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
          *     The input is handed to the agent as JSON data, never as instructions.
-         *     A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+         *     Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
+         *     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
          */
         readonly post: operations["createRun"];
         readonly delete?: never;
@@ -1894,7 +1898,7 @@ export type paths = {
         /**
          * One session
          * @description Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-         *     A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+         *     A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
          */
         readonly get: operations["getSession"];
         readonly put?: never;
@@ -1902,6 +1906,8 @@ export type paths = {
         /**
          * Delete a session
          * @description Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+         *
+         *     If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped: deleting it again later deletes the rest.
          *
          *     To end a call and keep the conversation, stop the session instead.
          */
@@ -1973,17 +1979,19 @@ export type paths = {
         /**
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
-         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a line the agent says as written rather than asking the model, such as its greeting, with the purpose it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a line the agent says as written rather than asking the model, such as its greeting, with the purpose it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for an utterance reported before the track got to it, how long after at it is expected to be heard, from the speech queued ahead of it, and message_start and message_end, where that text is in the reply's Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of and sentences held back are in one and not the other; a streaming voice's grows as it is sent more), `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+         *     message_start and message_end are offsets in Unicode code points into the text of the Chat message the reply is written into, the one whose turn_id names the turn, from message_start up to message_end. They are left out where the router does not know them.
          *     `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
          *     `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url: the launch page takes the handoff from that origin only, and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
-         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
+         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is running again with authorization.status connected and no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at the provider, declines the login (declined); a consent that ended otherwise without connecting, such as with another account, is failed, and one not finished by expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
          *     A respond command carrying request_id emits command_accepted with a nested command receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text and images returns the existing IDs without invoking the model again; reuse with different content emits an error. Its images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `request_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
          *     Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
          *     `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers should leave this disabled. Persistent text command recovery is unchanged.
-         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are its agent config's, so there is no command to change them. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
-         *     A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`.
+         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are its agent config's, so there is no command to change them. A `tool_call` is the only frame that must be answered: everything else is a report. It carries `id`, `name`, `arguments`, `turn_id`, `session_id`, `user` (`id` and `name` of the person whose turn asked for it, when the router knows) and `conversation` (`cid` when the conversation is kept, and the session's `custom`). Every watcher sees every `tool_call`, and `run` says whether this one is to run it: only a watcher that runs the tool answers, and a result from any other is dropped. A watcher says which tools it runs with `tools` when it attaches. Without it, it runs the session's tools when it is on the side that created the session: a backend for a session a backend created, the same person for one a device created. A tool a backend declared runs only on a backend, whatever a device says it holds. A call that no watcher attached runs fails at once. `tool_cancel` (`id`, `turn_id`) says a call is no longer wanted: its timeout passed, or the caller interrupted a call to an `interruptible` tool. Tool calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
+         *     While it runs a call, the watcher running it may send `tool_hold` (`tool_call_id`) to keep the call going when the caller talks over the agent, which would otherwise cancel a call to an `interruptible` tool. Every watcher is sent `tool_held` (`id`) when it was held, or `tool_cancel` when the call had already stopped. An explicit `interrupt` still cancels a held call. It may also send `tool_update` (`tool_call_id`, `text`, `verbatim`) to say how the call is going: the agent tells a voice caller in its own words once nobody is talking, and a persistent conversation shows `text` as the summary of the call's step until it ends. On speech-to-speech, OpenAI Realtime, Gemini 3.1 Flash Live and Gemini 3.8 Live are told while the call is open; other models only report it. With `verbatim` true, the agent says or posts `text` as written instead. A newer update replaces one not yet said, and a call's result replaces both. Every watcher is sent `tool_updated` (`id`, `turn_id`, `tool`, `text`, `verbatim`) for each update. An update or hold from a watcher that does not run the call is dropped.
+         *     On a voice call, a call to a tool declared with an `approval` is asked about out loud instead, and sent only once the caller said yes, with `approved` true; a watcher does not ask again. In writing, a call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`. A connector call waiting for the person to sign in (`awaiting_authorization`) is declined with `tool_approval` too, naming only its `tool_call_id` with `allowed` false: the router answers that call itself. A connector call whose binding sets `require_approval` waits on its step (`awaiting_approval`) for the session's user, and the router sends it only once they allow it: `tool_approval` with its `tool_call_id`, the `request_id` of the command it answers and `allowed`, from that user or their backend, `turn_id` left out or not. Declined, or not answered in 10 minutes, it is not sent and the model is told so. It needs no `tool_result`. A `tool_approval` no call waits for (answered already, stopped, or naming another `request_id` or `turn_id`) is answered with `tool_approval_ignored`: the `tool_call_id`, `request_id` and `turn_id` it was sent with, each left out when it was, and `reason`, a sentence saying why; the socket stays open. Every watcher is sent it. The call of a durable command answered with its `request_id` and no `turn_id` is answered so too, its `reason` naming the missing `turn_id`. A call outside a durable command waits for its `tool_result`, so an approval sent before it without a `request_id` gets no answer.
          *     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
          *     `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
          */
@@ -2243,7 +2251,7 @@ export type paths = {
          * Start voice on a session
          * @description The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
          *
-         *     Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+         *     Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: the socket was its call, and stopping voice hung it up, so open a new socket.
          */
         readonly post: operations["startSessionVoice"];
         /**
@@ -2471,7 +2479,7 @@ export type paths = {
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON objects carrying a `type`.
          *     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `call` are server-side only. A `call` is refused from a backend too, with an `error` frame carrying `code` and `error_type`: the socket carries the audio, so the session joins no Stream call.
          *     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away because the caller cut in. Tool calls and every other event go over the session's events socket, as they do for a call.
-         *     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with.
+         *     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with, and so does a session refused for money: `account_suspended` (`permission`), or `insufficient_credits`, `system_limit_reached` or `spend_limit_reached` (`payment_required`).
          *     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the conversation. A conversation that ends closes the socket.
          */
         readonly get: operations["openSocketSession"];
@@ -2523,7 +2531,7 @@ export type paths = {
         readonly post?: never;
         /**
          * Delete every connection of one user
-         * @description For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+         * @description For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. Where the connector's manifest says revoke_on_delete (Nessy), the provider is asked to revoke each grant once the connections are gone, and a refusal is logged; for every other connector it is not asked. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
          *
          *     It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
          *
@@ -2947,136 +2955,6 @@ export type paths = {
          *     A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
          */
         readonly post: operations["generateImage"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        /**
-         * Make Stream's own app a customer's provider app
-         * @description Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
-         *
-         *     When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly put: operations["setOperatorProviderApp"];
-        readonly post?: never;
-        /**
-         * Stop Stream's own app being a customer's provider app
-         * @description Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly delete: operations["deleteOperatorProviderApp"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/ops/customers/{customer_id}/telephony-suspension": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Get why an app's telephony is suspended
-         * @description The suspension an app is under, or 404 when it is not suspended.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly get: operations["getTelephonySuspension"];
-        /**
-         * Suspend an app's telephony
-         * @description Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly put: operations["suspendTelephony"];
-        readonly post?: never;
-        /**
-         * Lift an app's telephony suspension
-         * @description Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly delete: operations["liftTelephonySuspension"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/ops/use-cases": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * List use cases waiting on Stream
-         * @description Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly get: operations["listUseCasesForReview"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/ops/use-cases/{id}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Get a use case to review
-         * @description A use case with its app, profile and history.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly get: operations["getUseCaseForReview"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/ops/use-cases/{id}/review": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Review a submitted use case
-         * @description Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly post: operations["reviewUseCase"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3579,7 +3457,7 @@ export type paths = {
         };
         /**
          * The calling app's policy
-         * @description What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
+         * @description What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
          */
         readonly get: operations["getAppPolicy"];
         /**
@@ -3615,6 +3493,62 @@ export type paths = {
         readonly put: operations["updateOrganizationPolicy"];
         readonly post?: never;
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/policies/users": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the calling app's users with a policy of their own
+         * @description By user id, in byte order. A user with no policy of their own is held to the app's quota, the organization's, or the router's default, and is not listed.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listUserPolicies"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/policies/users/{user_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read one end user's quota
+         * @description The user's own quota, if they have one, the quota they are held to and who set each number of it, and what they spent today toward a quota the customer set. Any user id may be read, with a policy of their own or not.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getUserPolicy"];
+        /**
+         * Replace one end user's own quota
+         * @description The user's own quota wins over the app's, the organization's and the router's default, each number on its own, and counts the app's backend acting for the user as well as the user's devices. A quota left out, null, or setting neither number, removes the user's own. A user's policy holds a quota only, so any other field is a 400. The router that wrote it holds to it at once, every other within 5 s.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["updateUserPolicy"];
+        readonly post?: never;
+        /**
+         * Remove one end user's own quota
+         * @description The user falls back to the app's quota, the organization's, or the router's default. A user with none of their own answers 204 too.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteUserPolicy"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -3708,6 +3642,162 @@ export type paths = {
         readonly get: operations["getAppSettings"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the organization's spend limits
+         * @description Every limit of the caller's organization, by id, with what each can spend once its parents are counted.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly get: operations["listLimits"];
+        readonly put?: never;
+        /**
+         * Create a spend limit
+         * @description A limit on one subject, at one level, over one interval; a subject has one per level and interval, so a second answers 409 limit_exists naming the first. A limit above the limit, in the same interval, of a subject that contains it (the organization contains its apps and categories; an app its keys, users and categories; an organization's category the same category in each app) answers 400 limit_above_parent naming that parent. Lowering a parent below a child is allowed, and the child's effective_limit_micros shows it. A category starting team: answers 400 use_team.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly post: operations["createLimit"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/{limit_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a spend limit
+         * @description One limit of the caller's organization.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly get: operations["getLimit"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a spend limit
+         * @description The subject is no longer held to it; a default at a level above takes over where there is one.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly delete: operations["deleteLimit"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a spend limit's amount or note
+         * @description Only the amount and the note change. A higher amount is held to the parents' as a new limit is (400 limit_above_parent). The router that wrote it holds to it at once, every other within 5 s.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly patch: operations["updateLimit"];
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/grants": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the organization's grants
+         * @description Newest first, revoked, expired and used ones included, each with what it paid for and what it has left.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly get: operations["listLimitGrants"];
+        readonly put?: never;
+        /**
+         * Grant a subject a one-time amount past its limits
+         * @description Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly post: operations["createLimitGrant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/grants/{grant_id}/revoke": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Revoke a grant
+         * @description The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly post: operations["revokeLimitGrant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/usage": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read what a subject spent against its limits
+         * @description The subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and once for the organization the operator's spend hard limit, which is what admission refuses first. Spend is read from the usage records, so it is what admission counts within a few seconds.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly get: operations["getLimitUsage"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/usage/reset": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Reset a subject's spend for its limits
+         * @description From now until each window ends, the subject's limits count only what it spends after the reset. The usage records, the credit and the operator's spend hard limit are untouched, so usage and invoices still show everything. Work recorded just before the reset that reaches the usage records after it counts after it, which can refuse a few seconds of in-flight spend. A subject with no limit answers 404 no_limit.
+         *
+         *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
+         */
+        readonly post: operations["resetLimitUsage"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4167,6 +4257,8 @@ export type components = {
             readonly name: string;
             /** @description How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs. */
             readonly policy?: components["schemas"]["ConnectorBindingPolicy"];
+            /** @description Names or path.Match patterns of the binding's tools whose every call waits for a person to allow it before the router sends it, such as create_issue or delete_*. The step of the call asks the session's user in its conversation, who answers with the session socket's tool_approval. Declined, or not answered in 10 minutes, the call is not sent and the model is told so. A session with nobody to ask, such as an incognito one or one opened by an MCP event, refuses the call at once. Each entry must match a tool the binding grants, or one of its tool_patterns. Refused with sandbox, whose code calls the API with nobody asked. At most 128, the cap tools has. */
+            readonly require_approval?: readonly string[];
             /**
              * @description Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
              * @default false
@@ -4429,15 +4521,15 @@ export type components = {
             readonly limit?: number;
         };
         /**
-         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
          * @enum {string}
          */
-        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy";
+        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy" | "price_list" | "end_user" | "limit";
         /**
-         * @description Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+         * @description Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
          * @enum {string}
          */
-        readonly AuditSource: "dashboard" | "cli" | "sdk" | "api";
+        readonly AuditSource: "dashboard" | "cli" | "sdk" | "api" | "manage";
         /** @description A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser. */
         readonly Authorization: {
             /**
@@ -4485,31 +4577,6 @@ export type components = {
              */
             readonly vendor: string;
         };
-        /** @description A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time. */
-        readonly Budget: {
-            readonly interval: components["schemas"]["BudgetInterval"];
-            /**
-             * Format: int64
-             * @description The cap, in millionths of a dollar.
-             * @example 100000000
-             */
-            readonly limit_micros: number;
-            /**
-             * Format: date-time
-             * @description When the current interval ends.
-             */
-            readonly resets_at?: string;
-            /**
-             * Format: int64
-             * @description What has been spent in the current interval.
-             */
-            readonly spent_micros?: number;
-        };
-        /**
-         * @description How often a budget resets. A week starts on Monday.
-         * @enum {string}
-         */
-        readonly BudgetInterval: "hourly" | "daily" | "weekly" | "monthly";
         /** @description Who the app is, and the brand a vendor registered it as. */
         readonly BusinessProfile: {
             readonly authorized_contact_email?: string;
@@ -4771,6 +4838,8 @@ export type components = {
             readonly from_number: string;
             readonly id: string;
             readonly name: string;
+            /** @description Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it. */
+            readonly paused_reason?: string;
             /** Format: date-time */
             readonly started_at?: string;
             /** @enum {string} */
@@ -4793,6 +4862,10 @@ export type components = {
             readonly tags?: {
                 readonly [key: string]: string;
             };
+        };
+        readonly CancelPriceChangeInput: {
+            /** @description Why the change is called off. */
+            readonly reason: string;
         };
         readonly Candidate: {
             /** @description Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them. */
@@ -4953,6 +5026,11 @@ export type components = {
         };
         /** @description What the request read and wrote. The state's tokens are counted once however many questions shared them. */
         readonly ClassifyUsage: {
+            /**
+             * Format: int64
+             * @description What the request cost, in millionths of a dollar, as X-Stream-Cost-Micros says: absent when it recorded nothing. Only a server-side caller is told.
+             */
+            readonly cost_micros?: number;
             /** Format: int64 */
             readonly input_tokens: number;
             /** Format: int64 */
@@ -5050,7 +5128,7 @@ export type components = {
             };
         };
         /**
-         * @description current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
+         * @description current when the connection reads its connector's latest revision, or an earlier one that differs from it only in what a config is checked against (sensitive, and which tools only read or send data out), outdated when a later one changes what the connection reads, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
          * @enum {string}
          */
         readonly ConnectionDefinitionStatus: "current" | "outdated" | "broken";
@@ -5586,6 +5664,8 @@ export type components = {
         readonly CreateRunRequest: {
             /** @description The agent config to run. */
             readonly config_id: string;
+            /** @description Images that go with the input, in order, so the input can refer to them by their place in this list. At most 8. Each URL is fetched before the run, and one that cannot be fetched or is not a JPEG, PNG, WebP or GIF of at most 5 MB is a 400 image_unavailable. An agent with no vision skill and a conversation model that cannot see refuses them with a 400 invalid_config. */
+            readonly images?: readonly components["schemas"]["ImageSource"][];
             /** @description What the agent works on: a string, or any JSON value. It is handed to the agent as data, never as instructions. */
             readonly input: unknown;
             /** @description What the agent is told for this run alone, added to its config's instructions. */
@@ -6003,6 +6083,21 @@ export type components = {
          * @enum {string}
          */
         readonly DispatchSetting: "enabled" | "disabled";
+        /** @description The quota a user is held to: each number is the first set of the user's own, the app's, the organization's and the router's default. Both are 0 on a router that counts nothing. */
+        readonly EffectiveQuota: {
+            /**
+             * Format: int64
+             * @description Responses the user may ask for today. 0 is no cap.
+             */
+            readonly messages_per_user_per_day: number;
+            readonly messages_set_by: components["schemas"]["QuotaLevel"];
+            /**
+             * Format: int64
+             * @description Tokens the user's responses may cost today. 0 is no cap.
+             */
+            readonly tokens_per_user_per_day: number;
+            readonly tokens_set_by: components["schemas"]["QuotaLevel"];
+        };
         /**
          * @description What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
          * @enum {string}
@@ -6013,7 +6108,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -6029,10 +6124,10 @@ export type components = {
             readonly error: components["schemas"]["ErrorDetail"];
         };
         /**
-         * @description The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
+         * @description The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
          * @enum {string}
          */
-        readonly ErrorType: "invalid_request" | "authentication" | "permission" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable" | "timeout";
+        readonly ErrorType: "invalid_request" | "authentication" | "permission" | "payment_required" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable" | "timeout";
         /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
         readonly ForkSessionRequest: {
             readonly agent?: string;
@@ -6458,6 +6553,214 @@ export type components = {
             readonly unavailable?: readonly string[];
             readonly voices: readonly components["schemas"]["LibraryVoice"][];
         };
+        /** @description A spend limit: what one subject may spend in each window of its interval. Billable work for a subject with no room left under any of its limits is refused, 402 spend_limit_reached, or 429 user_limit_reached with Retry-After for an end user's. A subject is also held to every subject that contains it, so an app's work is refused once its organization's limit is spent. */
+        readonly Limit: {
+            /** @description The key, for a limit at api_key level. */
+            readonly api_key?: string;
+            /** @description The app, for a limit at app, api_key or user level, or on an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for a category's limit. */
+            readonly category?: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /**
+             * Format: int64
+             * @description The lowest of limit_micros and the limits, in the same interval, of every subject that contains this one: what the subject can spend before something refuses it.
+             */
+            readonly effective_limit_micros: number;
+            /** Format: int64 */
+            readonly id: number;
+            readonly interval: components["schemas"]["LimitInterval"];
+            readonly level: components["schemas"]["LimitLevel"];
+            /**
+             * Format: int64
+             * @description What the subject may spend in each window, in millionths of a dollar.
+             */
+            readonly limit_micros: number;
+            readonly note?: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for a team's limit. */
+            readonly team?: string;
+            /** Format: date-time */
+            readonly updated_at: string;
+            /** @description Who last wrote it, as the audit log names them. */
+            readonly updated_by: string;
+            /** @description The end user, for a limit at user level. */
+            readonly user_id?: string;
+        };
+        /** @description What changes about a spend limit: its amount and its note. A field left out keeps what is stored. */
+        readonly LimitChange: {
+            /** Format: int64 */
+            readonly limit_micros?: number;
+            readonly note?: string;
+        };
+        /** @description A one-time amount one subject may spend past its own limits once one of them is spent, until it is used up, expires or is revoked. It is not credit: the organization's balance still pays, and credit, the operator's spend hard limit and the limits of every subject that contains this one still refuse. Work admitted on it draws its whole cost from it, so the last request can take it a little past its amount. */
+        readonly LimitGrant: {
+            /** Format: int64 */
+            readonly amount_micros: number;
+            readonly api_key?: string;
+            readonly app_id?: string;
+            readonly category?: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description Who made it, as the audit log names them. */
+            readonly created_by: string;
+            /** Format: date-time */
+            readonly expires_at?: string;
+            /** Format: int64 */
+            readonly id: number;
+            readonly reason: string;
+            /**
+             * Format: int64
+             * @description amount_micros less used_micros, never below 0.
+             */
+            readonly remaining_micros: number;
+            /** Format: date-time */
+            readonly revoked_at?: string;
+            readonly revoked_by?: string;
+            readonly state: components["schemas"]["LimitGrantState"];
+            readonly subject: components["schemas"]["LimitSubject"];
+            readonly team?: string;
+            /**
+             * Format: int64
+             * @description What the work admitted on it has cost: the whole billable cost of every row drawn from it, as the usage records have them.
+             */
+            readonly used_micros: number;
+            readonly user_id?: string;
+        };
+        /** @description A one-time grant to one subject, which names the subject's own ids, never a default's. */
+        readonly LimitGrantInput: {
+            /** Format: int64 */
+            readonly amount_micros: number;
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /**
+             * Format: date-time
+             * @description When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+             */
+            readonly expires_at?: string;
+            /** @description Why it is made; more than spaces. */
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        readonly LimitGrantPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["LimitGrant"][] | null;
+            readonly next_cursor?: string;
+        };
+        /** @description Why a grant ends now. */
+        readonly LimitGrantRevocation: {
+            /** @description Why it ends; more than spaces. */
+            readonly reason: string;
+        };
+        /**
+         * @description Where a grant stands: live (it is drawn once a limit of its subject is spent), used (it paid for its amount), expired (past expires_at) or revoked.
+         * @enum {string}
+         */
+        readonly LimitGrantState: "live" | "used" | "expired" | "revoked";
+        readonly LimitInForce: {
+            /** Format: int64 */
+            readonly effective_limit_micros: number;
+            /** Format: int64 */
+            readonly id: number;
+            readonly level: components["schemas"]["LimitLevel"];
+            /** Format: int64 */
+            readonly limit_micros: number;
+        };
+        /** @description A spend limit to create. Every limit is the customer's; an unknown field is refused. */
+        readonly LimitInput: {
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            readonly interval: components["schemas"]["LimitInterval"];
+            /** @description Left out, the level of the most specific id given: api_key or user when it is named, else app when app_id is, else organization. */
+            readonly level?: components["schemas"]["LimitLevel"];
+            /**
+             * Format: int64
+             * @description What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+             */
+            readonly limit_micros: number;
+            readonly note?: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        /**
+         * @description The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
+         * @enum {string}
+         */
+        readonly LimitInterval: "daily" | "weekly" | "biweekly" | "monthly";
+        /**
+         * @description Whose ids a limit names. A key's or a user's limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.
+         * @enum {string}
+         */
+        readonly LimitLevel: "organization" | "app" | "api_key" | "user";
+        readonly LimitPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Limit"][] | null;
+            readonly next_cursor?: string;
+        };
+        /** @description A reset of one subject's spend for its limits, in the current windows of the intervals named. */
+        readonly LimitResetInput: {
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /** @description The windows to reset. Left out, every one. */
+            readonly intervals?: readonly components["schemas"]["LimitInterval"][] | null;
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        /**
+         * @description Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
+         * @enum {string}
+         */
+        readonly LimitSubject: "organization" | "app" | "api_key" | "user" | "category" | "app_category" | "team" | "app_team";
+        readonly LimitWindow: {
+            /**
+             * Format: int64
+             * @description What the subject had spent in the window when it was last reset; its limit counts spend past this.
+             */
+            readonly baseline_micros: number;
+            readonly interval: components["schemas"]["LimitInterval"];
+            /** @description The limit in force, absent when the subject has none in this interval. */
+            readonly limit?: components["schemas"]["LimitInForce"];
+            /** @description The limit is spent and the subject's work is admitted on one of its grants. */
+            readonly on_grant: boolean;
+            /**
+             * Format: int64
+             * @description What the subject may still spend under its own limit in the window: the limit less what it spent since its baseline. Absent with no limit.
+             */
+            readonly room_micros?: number;
+            /**
+             * Format: int64
+             * @description What the subject spent in the window, as the usage records count it.
+             */
+            readonly spent_micros: number;
+            /** Format: date-time */
+            readonly window_end: string;
+            /** Format: date-time */
+            readonly window_start: string;
+        };
         readonly LinkChannelRequest: {
             /** @description The agent whose channels the number is being claimed on. */
             readonly config_id: string;
@@ -6498,6 +6801,80 @@ export type components = {
             readonly tool_choice?: string;
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
+        };
+        /** @description A one-time grant staff make for an organization, for support. It is the customer's like any other. */
+        readonly ManageLimitGrantInput: {
+            /** Format: int64 */
+            readonly amount_micros: number;
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /**
+             * Format: date-time
+             * @description When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+             */
+            readonly expires_at?: string;
+            readonly organization_id: string;
+            /** @description Why it is made; more than spaces. */
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        /** @description A spend limit staff create for an organization, for support. It is the customer's like any other. */
+        readonly ManageLimitInput: {
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            readonly interval: components["schemas"]["LimitInterval"];
+            /** @description Left out, the level of the most specific id given: api_key or user when it is named, else app when app_id is, else organization. */
+            readonly level?: components["schemas"]["LimitLevel"];
+            /**
+             * Format: int64
+             * @description What the subject may spend in each window, in millionths of a dollar. 0 refuses every billable request.
+             */
+            readonly limit_micros: number;
+            readonly note?: string;
+            /** @description The organization the limit is for. */
+            readonly organization_id: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        /** @description A reset staff make of one subject's spend for its limits, for support. */
+        readonly ManageLimitResetInput: {
+            /** @description The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -. */
+            readonly api_key?: string;
+            /** @description The app. Required at app, api_key and user level, and for an app's category or team. */
+            readonly app_id?: string;
+            /** @description The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:. */
+            readonly category?: string;
+            /** @description The windows to reset. Left out, every one. */
+            readonly intervals?: readonly components["schemas"]["LimitInterval"][] | null;
+            readonly organization_id: string;
+            readonly reason: string;
+            readonly subject: components["schemas"]["LimitSubject"];
+            /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
+            readonly team?: string;
+            /** @description The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space. */
+            readonly user_id?: string;
+        };
+        /** @description Who a management call is recorded as made by: the actor and the name the call named, as the audit log keeps them. */
+        readonly ManageStatus: {
+            /** @description The X-Stream-Actor-Id the call named. */
+            readonly actor: string;
+            /** @description The X-Stream-Actor-Name it named, decoded from percent-encoding. Absent when it named none. */
+            readonly name?: string;
         };
         /** @description An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login. */
         readonly McpServer: {
@@ -6861,7 +7238,7 @@ export type components = {
             /** @description Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says. */
             readonly user?: boolean;
         };
-        /** @description What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. */
+        /** @description What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits. */
         readonly Policy: {
             /**
              * @description The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one.
@@ -6870,7 +7247,19 @@ export type components = {
              *     ]
              */
             readonly allowed_models?: readonly string[];
-            readonly budget?: components["schemas"]["Budget"];
+            /**
+             * Format: int64
+             * @description The organization's own warning threshold, in millionths of a dollar: at or below it, every answer to a backend says X-Stream-Balance-Warning: low, and the organization's stream event destinations get one account.balance_low. It wins over the tier's. Left out, the tier's applies. Only an organization's policy has one: an app's that sets it is refused.
+             * @example 20000000
+             */
+            readonly balance_warning_micros?: number;
+            /**
+             * @deprecated
+             * @description Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400 budget_moved, and none is read back.
+             */
+            readonly budget?: {
+                readonly [key: string]: unknown;
+            };
             readonly data_policy?: components["schemas"]["DataPolicy"];
             /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
             readonly prompt_injection?: boolean;
@@ -6887,6 +7276,11 @@ export type components = {
                 readonly [key: string]: string;
             };
         };
+        /**
+         * @description Whose policy: an organization's, an app's, or one end user's.
+         * @enum {string}
+         */
+        readonly PolicyScope: "organization" | "app" | "user";
         readonly PostalAddress: {
             readonly city?: string;
             /** @description ISO 3166-1 alpha-2. */
@@ -6905,6 +7299,280 @@ export type components = {
             readonly digits: string;
             /** @description Who is carrying the call, e.g. "telnyx". */
             readonly vendor: string;
+        };
+        readonly PriceChange: {
+            readonly cancel_reason?: string;
+            /** Format: date-time */
+            readonly cancelled_at?: string;
+            readonly cancelled_by?: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The actor that made it, or the router release that loaded it. */
+            readonly created_by: string;
+            /** Format: date-time */
+            readonly effective_at: string;
+            /** @description The entries it wrote. Absent from a list of changes. */
+            readonly entries?: readonly components["schemas"]["PriceChangeEntry"][] | null;
+            readonly kind: components["schemas"]["PriceChangeKind"];
+            /**
+             * Format: int64
+             * @description The list's markup from effective_at on. Absent left it as it was.
+             */
+            readonly markup_bps?: number;
+            /** @description <UTC yyyymmddhhmmss>_<the name it was given>: the price_version of every row its entries price. */
+            readonly name: string;
+            readonly reason: string;
+            readonly source: string;
+        };
+        readonly PriceChangeEntry: {
+            readonly free?: boolean;
+            /**
+             * Format: int64
+             * @description The entry's own markup in basis points. Absent takes the list's.
+             */
+            readonly markup_bps?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The vendor's rates, by meter. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+            /** @description The change stopped pricing the item under its when. */
+            readonly withdrawn?: boolean;
+        };
+        readonly PriceChangeInput: {
+            /** @description Required when the preview answers confirmation_required. */
+            readonly confirm?: boolean;
+            /**
+             * Format: date-time
+             * @description When the change takes effect. Absent is now; it may be up to two years ahead, but never more than 5 minutes in the past, and a time up to 5 minutes past is taken as now.
+             */
+            readonly effective_at?: string;
+            /** @description Each replaces its item's entry under its when whole: every rate, tier and markup it has. */
+            readonly entries?: readonly components["schemas"]["PriceEntryInput"][] | null;
+            /**
+             * Format: int64
+             * @description The list's markup in basis points from effective_at on. Absent leaves it.
+             */
+            readonly markup_bps?: number;
+            /** @description 1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it. */
+            readonly name: string;
+            /** @description What changed, from what to what. At least one sentence; trimmed, and refused when blank. */
+            readonly reason: string;
+            /** @description The vendor's page and the date it was read, or the operator's own decision. Trimmed, and refused when blank. */
+            readonly source: string;
+        };
+        /**
+         * @description What wrote the change: seed is a database's first load from the router's price files, release the items a release's price files had that the database lacked, and api a change made through the management API.
+         * @enum {string}
+         */
+        readonly PriceChangeKind: "seed" | "release" | "api";
+        readonly PriceChangePage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["PriceChange"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly PricedEntry: {
+            readonly charged_rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            readonly charged_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            readonly free?: boolean;
+            readonly local?: boolean;
+            /**
+             * Format: int64
+             * @description The markup it is sold at.
+             */
+            readonly markup_bps: number;
+            /** @description The vendor's rates. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description The change that wrote it. Absent for the change previewed. */
+            readonly version?: string;
+        };
+        readonly PriceEntry: {
+            /**
+             * Format: int64
+             * @description The markup the entry is sold at: its own, else the list's.
+             */
+            readonly charged_markup_bps: number;
+            /** @description What customers are charged: each rate with the markup added, to 12 significant digits. */
+            readonly charged_rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description What customers are charged for long prompts. */
+            readonly charged_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /**
+             * Format: date-time
+             * @description When the entry took effect, or takes effect.
+             */
+            readonly effective_at?: string;
+            /** @description The vendor charges nothing for it. */
+            readonly free?: boolean;
+            /** @description The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing. */
+            readonly local?: boolean;
+            /**
+             * Format: int64
+             * @description The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+             */
+            readonly markup_bps?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The vendor's rates, by meter. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description The vendor's rates for long prompts. */
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description The price change that wrote the entry, which every row it prices names as its price_version. */
+            readonly version?: string;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly PriceEntryInput: {
+            /** @description The vendor charges nothing for it. */
+            readonly free?: boolean;
+            /** @description Refused with invalid_price: a model is local when the routing config says so. */
+            readonly local?: boolean;
+            /**
+             * Format: int64
+             * @description The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
+             */
+            readonly markup_bps?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description Rates for long prompts. Each tier rates every meter the entry does. */
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description Refused with invalid_price: an entry's version is the change that writes it. */
+            readonly version?: string;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+            /** @description Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate. */
+            readonly withdrawn?: boolean;
+        };
+        readonly PriceItem: {
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly PriceList: {
+            /**
+             * Format: date-time
+             * @description The moment the list is read at.
+             */
+            readonly at: string;
+            readonly entries: readonly components["schemas"]["PriceEntry"][];
+            /**
+             * Format: int64
+             * @description The list's markup in basis points, added to every entry with none of its own.
+             */
+            readonly markup_bps: number;
+            /** @description The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free. */
+            readonly unpriced: readonly components["schemas"]["PriceItem"][];
+            /** @description The entries of the changes not cancelled that take effect after at, soonest first. */
+            readonly upcoming: readonly components["schemas"]["UpcomingPriceEntry"][];
+        };
+        readonly PricePreview: {
+            /** @description createPriceChange answers 409 confirmation_required without confirm: true. */
+            readonly confirmation_required: boolean;
+            /**
+             * Format: date-time
+             * @description When the change would take effect.
+             */
+            readonly effective_at: string;
+            readonly items: readonly components["schemas"]["PricePreviewItem"][];
+            /** Format: int64 */
+            readonly markup_bps_after: number;
+            /** Format: int64 */
+            readonly markup_bps_before: number;
+            /** @description The items that make it so. */
+            readonly needs_confirmation?: readonly components["schemas"]["PriceItem"][] | null;
+        };
+        readonly PricePreviewItem: {
+            /** @description How it is priced after. Absent when nothing will. */
+            readonly after?: components["schemas"]["PricedEntry"];
+            /** @description How it is priced before the change. Absent when nothing prices it. */
+            readonly before?: components["schemas"]["PricedEntry"];
+            /**
+             * Format: double
+             * @description The factor the markup it is sold at moves by. Absent when either is 0.
+             */
+            readonly markup_factor?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly needs_confirmation?: boolean;
+            readonly provider: string;
+            /** @description By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after. */
+            readonly rate_factors?: {
+                readonly [key: string]: number;
+            };
+            /** @description It is priced before the change and billable with no rate after. */
+            readonly unpriced?: boolean;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly PriceRate: {
+            /**
+             * Format: int64
+             * @description The quantity is rounded up to a multiple of this before it is priced, such as 60 for a call billed by the started minute.
+             */
+            readonly increment?: number;
+            /**
+             * Format: int64
+             * @description The least quantity billed once anything is used.
+             */
+            readonly minimum?: number;
+            /**
+             * Format: int64
+             * @description The units the rate is for: 1000000 for a rate per million tokens, 1 for one per image.
+             */
+            readonly per: number;
+            /**
+             * Format: double
+             * @description US dollars for every per units.
+             */
+            readonly usd: number;
+        };
+        readonly PriceTier: {
+            /**
+             * Format: int64
+             * @description A prompt longer than this many input tokens is priced at these rates, for the whole request.
+             */
+            readonly above_input_tokens: number;
+            /** @description By meter. */
+            readonly rates: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
         };
         readonly Provider: {
             readonly benchmark?: components["schemas"]["ProviderBenchmark"];
@@ -7008,21 +7676,26 @@ export type components = {
              */
             readonly per_million_output_tokens?: number;
         };
-        /** @description What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset. */
+        /** @description What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset. */
         readonly Quota: {
             /**
              * Format: int64
-             * @description How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+             * @description How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level's applies: the app's, then the organization's, then the router's default.
              * @example 20000
              */
             readonly messages_per_user_per_day?: number;
             /**
              * Format: int64
-             * @description How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+             * @description How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the next level's applies, as for messages.
              * @example 50000000
              */
             readonly tokens_per_user_per_day?: number;
         };
+        /**
+         * @description Who set a number of a quota: the user's own policy, the app's, the organization's, or the router's default. The router's default counts the user's devices only; every other counts the app's backend acting for the user too.
+         * @enum {string}
+         */
+        readonly QuotaLevel: "user" | "app" | "organization" | "default";
         readonly RCSProfile: {
             readonly agent_overview?: string;
             /** @description Hex, such as #1A73E8, with at least 4.5:1 contrast against white. */
@@ -7291,7 +7964,7 @@ export type components = {
             readonly attempts: number;
             /** @description Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands. */
             readonly delivered_to: string;
-            /** @description Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again); on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise. */
+            /** @description Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise. */
             readonly error: string | null;
             /** Format: date-time */
             readonly finished_at: string | null;
@@ -7442,6 +8115,7 @@ export type components = {
             readonly id: string;
             /** @description Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from. */
             readonly incognito?: boolean;
+            /** @description What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it. */
             readonly instructions?: string;
             /**
              * Format: date-time
@@ -7626,13 +8300,20 @@ export type components = {
              * @enum {string}
              */
             readonly executor?: "server" | "client";
+            /** @description Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes. */
+            readonly interruptible?: boolean;
             readonly name: string;
             /** @description A JSON Schema object describing the arguments. */
             readonly parameters?: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Format: int64
+             * @description How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's.
+             */
+            readonly timeout_ms?: number;
         };
-        /** @description Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. */
+        /** @description Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. On a voice call the router asks instead: it does not send the call, answers the model at once with the title, each {argument} in it filled in from the call, and offers the model confirm_tool_call. A cascade says the question as written; a speech-to-speech model is told to ask it in those words. Only a yes within 15 seconds of the question finishing sends the call, under its own id and with approved true, and the tool's timeout starts then. A no, or silence, declines it, and the call is never sent. */
         readonly SessionToolApproval: {
             /** @description The label of the button that allows the call. */
             readonly allow_title?: string;
@@ -7921,7 +8602,7 @@ export type components = {
             /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
             readonly config_id?: string;
             /**
-             * @description Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job.
+             * @description Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error, unless it was refused for money, which is answered 402 or 403 as any request is. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job.
              * @default false
              */
             readonly inline?: boolean;
@@ -7947,6 +8628,21 @@ export type components = {
              * @example support
              */
             readonly value: string;
+        };
+        /** @description The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit. */
+        readonly SpendHardLimitUsage: {
+            readonly daily?: components["schemas"]["SpendHardLimitWindow"];
+            readonly monthly?: components["schemas"]["SpendHardLimitWindow"];
+        };
+        readonly SpendHardLimitWindow: {
+            /** Format: int64 */
+            readonly limit_micros: number;
+            /** Format: int64 */
+            readonly room_micros: number;
+            /** Format: int64 */
+            readonly spent_micros: number;
+            /** Format: date-time */
+            readonly window_end: string;
         };
         readonly StartSessionVoiceRequest: {
             /** @description An existing Stream call for the agent to join, such as the default call the people are already on. Left out, the agent goes back to the call voice was last on, else joins agent:<session id>, which joining creates. Naming a call other than the one voice is on while it is started is refused with a 409: stop voice first to move. The session has to act in the customer's own Stream app: in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) a call is refused with a 403. The call has to be in the Stream app the session acts in, and the router does not ask Stream whether it exists. A phone or socket session takes no call. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Server-side only: a device sending it is refused with a 403. */
@@ -8180,6 +8876,19 @@ export type components = {
             readonly utterance_end_ms?: number;
             /** @description Word-level timestamps. Recording only. */
             readonly words?: boolean;
+        };
+        readonly SubjectUsage: {
+            readonly api_key?: string;
+            readonly app_id?: string;
+            readonly category?: string;
+            /** @description The subject's live grants, which its work is admitted on once one of its limits is spent. */
+            readonly grants: readonly components["schemas"]["LimitGrant"][] | null;
+            readonly spend_hard_limit?: components["schemas"]["SpendHardLimitUsage"];
+            readonly subject: components["schemas"]["LimitSubject"];
+            readonly team?: string;
+            readonly user_id?: string;
+            /** @description The current window of every interval, daily first. */
+            readonly windows: readonly components["schemas"]["LimitWindow"][] | null;
         };
         readonly SuspendTelephonyRequest: {
             /** @description Why the app is suspended. The app is never shown it. */
@@ -8448,14 +9157,15 @@ export type components = {
              */
             readonly $lt?: string;
         };
-        /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. */
+        /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out. */
         readonly ToolApprovalCommand: {
             readonly allowed: boolean;
             readonly request_id: string;
             /** @description Shown on the declined call, such as "Location not shared". */
             readonly summary?: string;
             readonly tool_call_id: string;
-            readonly turn_id: string;
+            /** @description The turn of the call. Required, except for a connector call whose binding sets require_approval. */
+            readonly turn_id?: string;
             /** @enum {string} */
             readonly type: "tool_approval";
         };
@@ -8547,7 +9257,7 @@ export type components = {
             /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
             readonly config_id?: string;
             /**
-             * @description Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+             * @description Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later; a request refused for money is answered 402 or 403 instead, as any request is. No database is required. Cancelling the request cancels the work. The audio goes in source.audio, at most 8 MiB, with no source.url and no callback, else a 400; deadline 90 seconds. Default false retains asynchronous stored jobs.
              * @default false
              */
             readonly inline?: boolean;
@@ -8705,6 +9415,53 @@ export type components = {
             readonly tts_ttfb_p95_ms?: number | null;
             /** Format: int64 */
             readonly turn_count: number;
+        };
+        readonly UpcomingPriceEntry: {
+            /**
+             * Format: int64
+             * @description The markup the entry is sold at: its own, else the list's.
+             */
+            readonly charged_markup_bps: number;
+            /** @description What customers are charged: each rate with the markup added, to 12 significant digits. */
+            readonly charged_rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description What customers are charged for long prompts. */
+            readonly charged_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /**
+             * Format: date-time
+             * @description When the entry took effect, or takes effect.
+             */
+            readonly effective_at?: string;
+            /** @description The vendor charges nothing for it. */
+            readonly free?: boolean;
+            /** @description The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing. */
+            readonly local?: boolean;
+            /**
+             * Format: int64
+             * @description The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+             */
+            readonly markup_bps?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The vendor's rates, by meter. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description The change's reason. */
+            readonly reason: string;
+            /** @description The vendor's rates for long prompts. */
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description The price change that wrote the entry, which every row it prices names as its price_version. */
+            readonly version?: string;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+            /** @description The item under its when stops being priced at effective_at. */
+            readonly withdrawn?: boolean;
         };
         readonly UpdateScheduledTaskRequest: {
             /** @description Replaces where an occurrence is delivered, in order. An empty list is the conversation alone. */
@@ -8914,6 +9671,44 @@ export type components = {
          * @enum {string}
          */
         readonly UseCaseStatus: "draft" | "submitted" | "changes_requested" | "rejected" | "vendor_pending" | "approved" | "vendor_rejected";
+        /** @description One end user of the calling app: their own quota, if any, the quota they are held to, and what they spent today. */
+        readonly UserPolicy: {
+            readonly effective: components["schemas"]["EffectiveQuota"];
+            /**
+             * Format: int64
+             * @description Responses counted today toward a quota the customer set, the app's backend acting for the user included. A day held only to the router's default counts the user's devices alone, which this leaves out.
+             */
+            readonly messages: number;
+            /** @description The user's own quota. Left out, the user has none of their own and is held to the defaults. */
+            readonly quota?: components["schemas"]["Quota"];
+            /**
+             * Format: date-time
+             * @description When the day ends and the count starts again: the next UTC midnight.
+             */
+            readonly resets_at: string;
+            /**
+             * Format: int64
+             * @description Tokens counted today toward a quota the customer set, counted as messages is.
+             */
+            readonly tokens: number;
+            readonly user_id: string;
+        };
+        readonly UserPolicyEntry: {
+            readonly quota?: components["schemas"]["Quota"];
+            /** Format: date-time */
+            readonly updated_at: string;
+            readonly user_id: string;
+        };
+        /** @description One end user's own policy, which holds a quota only. */
+        readonly UserPolicyInput: {
+            /** @description The user's own quota. Left out, null, or setting neither number, removes the user's own and the defaults apply. */
+            readonly quota?: components["schemas"]["Quota"];
+        };
+        readonly UserPolicyPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["UserPolicyEntry"][] | null;
+            readonly next_cursor?: string;
+        };
         readonly VideoSource: {
             /** @description How many frames to sample, evenly spaced across the clip. Default 8. */
             readonly max_frames?: number;
@@ -9030,7 +9825,7 @@ export type components = {
                 readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device. */
+        /** @description The caller is known and may not do this. Usually the operation is server-side only: it needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device. With code account_suspended, the organization is suspended, and every request is refused until it is restored; the message says to contact support. */
         readonly Forbidden: {
             headers: {
                 readonly [name: string]: unknown;
@@ -9057,8 +9852,28 @@ export type components = {
                 readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description The organization may not spend money now, so work that costs money is refused: its credit is spent (insufficient_credits), its spend hard limit for the day or the month is reached whatever its credit (system_limit_reached), or a budget is spent (spend_limit_reached). The message says which, and for a limit when it resets. Work on a model that costs nothing is still served. */
+        readonly PaymentRequired: {
+            headers: {
+                readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                readonly [name: string]: unknown;
+            };
+            content: {
+                readonly "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description The customer header is missing */
         readonly Unauthorized: {
+            headers: {
+                readonly [name: string]: unknown;
+            };
+            content: {
+                readonly "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description The request cannot be served now and may be retried. With code spend_check_unavailable, the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; Retry-After says when to try again, and work on a model that costs nothing is still served. */
+        readonly Unavailable: {
             headers: {
                 readonly [name: string]: unknown;
             };
@@ -9069,7 +9884,16 @@ export type components = {
     };
     parameters: never;
     requestBodies: never;
-    headers: never;
+    headers: {
+        /** @description The organization's credit left, in millionths of a dollar, less what its work under way holds: the figure admission refuses at. Sent on a success and on a refusal for money to a server-side caller once the router has read the organization's account, and never to an end user's device. A router that bills nobody sends none. */
+        readonly "X-Stream-Balance-Micros": number;
+        /** @description low when X-Stream-Balance-Micros is at or below the organization's warning threshold (its policy's balance_warning_micros, else its tier's), exhausted at or below 0. Absent while the balance is above the threshold. */
+        readonly "X-Stream-Balance-Warning": "low" | "exhausted";
+        /** @description true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise. */
+        readonly "X-Stream-Cost-Estimated": "true";
+        /** @description What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none. */
+        readonly "X-Stream-Cost-Micros": number;
+    };
     pathItems: never;
 };
 export type $defs = Record<string, never>;
@@ -9141,6 +9965,10 @@ export interface operations {
             /** @description The configured providers */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9149,9 +9977,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listRoutes: {
@@ -9169,6 +9999,10 @@ export interface operations {
             /** @description The offered shortcuts, default first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9177,9 +10011,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly resolveTarget: {
@@ -9202,6 +10038,10 @@ export interface operations {
             /** @description Candidates in preference order, best first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9210,9 +10050,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getStats: {
@@ -9238,6 +10080,10 @@ export interface operations {
             /** @description One row per bucket, provider and model */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9246,9 +10092,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getTagStats: {
@@ -9274,6 +10122,10 @@ export interface operations {
             /** @description One row per bucket and label value */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9282,9 +10134,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly streamModality: {
@@ -9338,6 +10192,10 @@ export interface operations {
             /** @description The customer's calls, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9346,8 +10204,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCall: {
@@ -9365,6 +10225,10 @@ export interface operations {
             /** @description The call */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9373,9 +10237,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCallEvents: {
@@ -9396,6 +10262,10 @@ export interface operations {
             /** @description The judgements, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9404,9 +10274,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCallTimeline: {
@@ -9424,6 +10296,10 @@ export interface operations {
             /** @description The exchanges, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9432,9 +10308,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createCallToken: {
@@ -9456,6 +10334,10 @@ export interface operations {
             /** @description The credentials, and the call they are for */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9464,9 +10346,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCallTokens: {
@@ -9484,6 +10368,10 @@ export interface operations {
             /** @description The call's tokens */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9492,9 +10380,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCallTranscript: {
@@ -9512,6 +10402,10 @@ export interface operations {
             /** @description The conversation, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9520,9 +10414,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly analyzeReviews: {
@@ -9541,6 +10437,10 @@ export interface operations {
             /** @description The causes, the one behind the most calls first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9549,17 +10449,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listCampaigns: {
@@ -9574,6 +10467,10 @@ export interface operations {
             /** @description The customer's campaigns, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9582,8 +10479,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createCampaign: {
@@ -9602,6 +10501,10 @@ export interface operations {
             /** @description The campaign was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9610,9 +10513,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCampaign: {
@@ -9630,6 +10535,10 @@ export interface operations {
             /** @description The campaign */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9638,9 +10547,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listCampaignContacts: {
@@ -9658,6 +10569,10 @@ export interface operations {
             /** @description The contacts, in the order they are rung */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9666,9 +10581,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly addCampaignContacts: {
@@ -9690,6 +10607,10 @@ export interface operations {
             /** @description The contacts, in the order they are rung */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9698,9 +10619,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly pauseCampaign: {
@@ -9718,6 +10641,10 @@ export interface operations {
             /** @description The campaign is paused */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9726,9 +10653,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly startCampaign: {
@@ -9746,6 +10675,10 @@ export interface operations {
             /** @description The campaign is running */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9754,9 +10687,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listChannelAccounts: {
@@ -9771,6 +10706,10 @@ export interface operations {
             /** @description The lines */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9779,8 +10718,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly connectChannel: {
@@ -9799,6 +10740,10 @@ export interface operations {
             /** @description The line, with where to deliver */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9807,8 +10752,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly disconnectChannel: {
@@ -9826,15 +10773,21 @@ export interface operations {
             /** @description Disconnected */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly verifyChannelHook: {
@@ -9943,6 +10896,10 @@ export interface operations {
             /** @description The code and when it stops working */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9951,9 +10908,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createChatToken: {
@@ -9972,6 +10931,10 @@ export interface operations {
             /** @description The credentials, and the channel they are for */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -9980,8 +10943,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listAgentConfigs: {
@@ -10001,6 +10966,10 @@ export interface operations {
             /** @description The customer's configs, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10009,8 +10978,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createAgentConfig: {
@@ -10029,6 +11000,10 @@ export interface operations {
             /** @description The config was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10037,6 +11012,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -10048,6 +11024,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAgentConfig: {
@@ -10065,6 +11042,10 @@ export interface operations {
             /** @description The config */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10073,9 +11054,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateAgentConfig: {
@@ -10097,6 +11080,10 @@ export interface operations {
             /** @description The config as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10105,6 +11092,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -10117,6 +11105,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteAgentConfig: {
@@ -10134,15 +11123,21 @@ export interface operations {
             /** @description The config is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly patchAgentConfig: {
@@ -10164,6 +11159,10 @@ export interface operations {
             /** @description The config as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10172,6 +11171,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -10184,6 +11184,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAgentChanges: {
@@ -10201,6 +11202,10 @@ export interface operations {
             /** @description The changes since the last sync */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10209,9 +11214,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConfigPlugins: {
@@ -10229,6 +11236,10 @@ export interface operations {
             /** @description The config's connections */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10237,9 +11248,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly disconnectPlugin: {
@@ -10259,15 +11272,21 @@ export interface operations {
             /** @description The login is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly authorizePlugin: {
@@ -10291,6 +11310,10 @@ export interface operations {
             /** @description The URL the browser should open */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10299,9 +11322,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setPluginClient: {
@@ -10325,6 +11350,10 @@ export interface operations {
             /** @description The client as stored, without its secret */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10333,9 +11362,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deletePluginClient: {
@@ -10355,15 +11386,21 @@ export interface operations {
             /** @description The client is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnections: {
@@ -10387,6 +11424,10 @@ export interface operations {
             /** @description A page of connections */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10395,8 +11436,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createConnection: {
@@ -10415,6 +11458,10 @@ export interface operations {
             /** @description The pending connection */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10423,8 +11470,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getConnection: {
@@ -10442,6 +11491,10 @@ export interface operations {
             /** @description The connection */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10450,9 +11503,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnection: {
@@ -10473,12 +11528,17 @@ export interface operations {
             /** @description The connection is deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -10491,6 +11551,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createAuthorization: {
@@ -10512,6 +11573,10 @@ export interface operations {
             /** @description The consent is waiting for its browser */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10520,9 +11585,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly putConnectionCredentials: {
@@ -10544,6 +11611,10 @@ export interface operations {
             /** @description The connection, connected */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10552,6 +11623,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -10564,6 +11636,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectionInvocations: {
@@ -10586,6 +11659,10 @@ export interface operations {
             /** @description A page of tool calls */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10594,9 +11671,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly proxyConnectionGet: {
@@ -10616,12 +11695,17 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -10685,12 +11769,17 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -10754,12 +11843,17 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -10818,12 +11912,17 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -10887,12 +11986,17 @@ export interface operations {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -10950,6 +12054,10 @@ export interface operations {
             readonly 200: {
                 headers: {
                     readonly "Cache-Control"?: string;
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -10958,6 +12066,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -10970,15 +12079,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectionTools: {
@@ -10996,6 +12097,10 @@ export interface operations {
             /** @description The connection's tools */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11004,9 +12109,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly approveConnectionTools: {
@@ -11028,6 +12135,10 @@ export interface operations {
             /** @description The tools approved */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11036,6 +12147,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11048,6 +12160,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly validateConnection: {
@@ -11069,6 +12182,10 @@ export interface operations {
             /** @description What the validate found */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11077,9 +12194,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectorAudit: {
@@ -11101,6 +12220,10 @@ export interface operations {
             /** @description A page of audit rows */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11109,8 +12232,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectors: {
@@ -11132,6 +12257,10 @@ export interface operations {
             /** @description A page of connectors */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11140,8 +12269,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createConnector: {
@@ -11160,6 +12291,10 @@ export interface operations {
             /** @description The connector as stored */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11168,8 +12303,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getConnector: {
@@ -11187,6 +12324,10 @@ export interface operations {
             /** @description The connector */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11195,9 +12336,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnector: {
@@ -11218,12 +12361,17 @@ export interface operations {
             /** @description The connector is deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11236,6 +12384,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listConnectorEventDestinations: {
@@ -11258,6 +12407,10 @@ export interface operations {
             /** @description A page of destinations */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11266,8 +12419,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createConnectorEventDestination: {
@@ -11275,7 +12430,7 @@ export interface operations {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                /** @description The connector, such as slack_bot. */
+                /** @description The connector, such as slack_bot, or stream for the router's own events. */
                 readonly id: string;
             };
             readonly cookie?: never;
@@ -11289,6 +12444,10 @@ export interface operations {
             /** @description The destination and its secret */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11297,6 +12456,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11309,6 +12469,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnectorEventDestination: {
@@ -11328,15 +12489,21 @@ export interface operations {
             /** @description The destination is removed */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly rotateConnectorEventDestinationSecret: {
@@ -11356,6 +12523,10 @@ export interface operations {
             /** @description The destination and its new secret */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11364,9 +12535,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getConnectorOAuthClient: {
@@ -11384,6 +12557,10 @@ export interface operations {
             /** @description The client */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11392,9 +12569,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setConnectorOAuthClient: {
@@ -11416,6 +12595,10 @@ export interface operations {
             /** @description The client was replaced */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11425,6 +12608,10 @@ export interface operations {
             /** @description The client was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11433,6 +12620,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11445,15 +12633,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnectorOAuthClient: {
@@ -11471,15 +12651,21 @@ export interface operations {
             /** @description The client is removed */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setConnectorProviderApp: {
@@ -11501,6 +12687,10 @@ export interface operations {
             /** @description The app exists; its manifest was applied again */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11510,6 +12700,10 @@ export interface operations {
             /** @description The app was created */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11518,6 +12712,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11539,15 +12734,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteConnectorProviderApp: {
@@ -11565,12 +12752,17 @@ export interface operations {
             /** @description The app is deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11592,15 +12784,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly receiveConnectorEvent: {
@@ -11752,6 +12936,10 @@ export interface operations {
             /** @description The command's current receipt */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11760,8 +12948,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getConversationMessages: {
@@ -11781,6 +12971,10 @@ export interface operations {
             /** @description Conversation messages, oldest first, with an older-page cursor */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11791,8 +12985,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createGuestUser: {
@@ -11811,6 +13007,10 @@ export interface operations {
             /** @description The guest and a token for them */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11819,6 +13019,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             /** @description This app does not admit guests */
             readonly 403: {
                 headers: {
@@ -11829,6 +13030,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly claimGuestUser: {
@@ -11847,6 +13049,10 @@ export interface operations {
             /** @description The conversations were moved */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11855,6 +13061,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description That guest was already claimed */
@@ -11867,6 +13074,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly ingestKnowledge: {
@@ -11885,6 +13093,10 @@ export interface operations {
             /** @description The passages were written */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11893,8 +13105,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listKnowledgeDocuments: {
@@ -11912,6 +13126,10 @@ export interface operations {
             /** @description The customer's documents, most recently written first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11920,8 +13138,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getKnowledgeDocument: {
@@ -11939,6 +13159,10 @@ export interface operations {
             /** @description The document */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -11947,9 +13171,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteKnowledgeDocument: {
@@ -11967,15 +13193,21 @@ export interface operations {
             /** @description The document and its passages are gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listKnowledgeDocumentPassages: {
@@ -11993,6 +13225,10 @@ export interface operations {
             /** @description The passages */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12001,9 +13237,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listKnowledgeUrls: {
@@ -12021,6 +13259,10 @@ export interface operations {
             /** @description The customer's pages, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12029,8 +13271,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly addKnowledgeUrl: {
@@ -12049,6 +13293,10 @@ export interface operations {
             /** @description The page was stored and its read queued */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12057,8 +13305,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getKnowledgeUrl: {
@@ -12076,6 +13326,10 @@ export interface operations {
             /** @description The page */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12084,9 +13338,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteKnowledgeUrl: {
@@ -12104,15 +13360,21 @@ export interface operations {
             /** @description The page and its passages are gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly indexKnowledgeUrl: {
@@ -12130,6 +13392,10 @@ export interface operations {
             /** @description The page as it is while the read is queued */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12138,9 +13404,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listKnowledgeUrlPassages: {
@@ -12158,6 +13426,10 @@ export interface operations {
             /** @description The passages */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12166,9 +13438,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listAgentLogs: {
@@ -12196,6 +13470,10 @@ export interface operations {
             /** @description Newest first; resume cursor marks the history/live handoff. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12204,6 +13482,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
@@ -12231,6 +13510,10 @@ export interface operations {
             /** @description One log with full safe metadata. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12238,6 +13521,7 @@ export interface operations {
                 };
             };
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12278,6 +13562,10 @@ export interface operations {
             /** @description SSE events logs, checkpoint and reset. */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12286,6 +13574,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
@@ -12316,6 +13605,10 @@ export interface operations {
             /** @description The customer's models, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12324,8 +13617,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createCustomModel: {
@@ -12344,6 +13639,10 @@ export interface operations {
             /** @description The model was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12352,6 +13651,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -12372,6 +13672,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getCustomModel: {
@@ -12389,6 +13690,10 @@ export interface operations {
             /** @description The model */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12397,9 +13702,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateCustomModel: {
@@ -12421,6 +13728,10 @@ export interface operations {
             /** @description The model as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12429,6 +13740,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -12450,6 +13762,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteCustomModel: {
@@ -12467,15 +13780,21 @@ export interface operations {
             /** @description The model is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listPlugins: {
@@ -12493,6 +13812,10 @@ export interface operations {
             /** @description Matching plugins, in catalog order */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12501,8 +13824,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getPluginLogo: {
@@ -12618,6 +13943,10 @@ export interface operations {
             /** @description What the agent said last, and what the run spent */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12626,6 +13955,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             /** @description Not the app's backend, or the app's or organization's budget is spent */
             readonly 403: {
                 headers: {
@@ -12689,6 +14019,10 @@ export interface operations {
             /** @description A page of scheduled tasks */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12697,6 +14031,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description Not Implemented */
@@ -12708,6 +14043,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createScheduledTask: {
@@ -12729,6 +14065,10 @@ export interface operations {
             /** @description The task was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12737,6 +14077,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The id is taken, or the user is at their active-task limit */
@@ -12758,6 +14099,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getScheduledTask: {
@@ -12775,6 +14117,10 @@ export interface operations {
             /** @description The task */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12783,9 +14129,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteScheduledTask: {
@@ -12803,15 +14151,21 @@ export interface operations {
             /** @description The task is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateScheduledTask: {
@@ -12833,6 +14187,10 @@ export interface operations {
             /** @description The task as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12841,9 +14199,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly pauseScheduledTask: {
@@ -12861,6 +14221,10 @@ export interface operations {
             /** @description The task, paused */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12869,9 +14233,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly resumeScheduledTask: {
@@ -12889,6 +14255,10 @@ export interface operations {
             /** @description The task, running again */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12905,6 +14275,7 @@ export interface operations {
                 };
             };
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The task is completed, or the user is at their active-task limit */
@@ -12917,6 +14288,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly runScheduledTask: {
@@ -12934,6 +14306,10 @@ export interface operations {
             /** @description The run that was set going */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12942,6 +14318,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12954,6 +14331,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listScheduledTaskRuns: {
@@ -12976,6 +14354,10 @@ export interface operations {
             /** @description A page of the task's runs */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -12984,9 +14366,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createSession: {
@@ -13005,6 +14389,10 @@ export interface operations {
             /** @description The agent is in the call */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13013,6 +14401,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description A session with that id already exists */
@@ -13025,6 +14414,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSession: {
@@ -13042,6 +14432,10 @@ export interface operations {
             /** @description The session */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13050,9 +14444,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSession: {
@@ -13070,14 +14466,20 @@ export interface operations {
             /** @description The session is deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateSession: {
@@ -13099,6 +14501,10 @@ export interface operations {
             /** @description The session as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13107,9 +14513,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSessionCommand: {
@@ -13129,6 +14537,10 @@ export interface operations {
             /** @description The command's current receipt */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13137,8 +14549,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly interruptSessionCommand: {
@@ -13158,6 +14572,10 @@ export interface operations {
             /** @description The command's terminal receipt */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13166,6 +14584,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
             /** @description The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same request id. */
@@ -13188,6 +14607,8 @@ export interface operations {
                 readonly interim?: boolean;
                 /** @description Replay pending live voice tool requests to a durable tool host. */
                 readonly replay_pending_tools?: boolean;
+                /** @description The session's tools this watcher runs, separated by commas; empty for none. Left out, it runs the session's tools when it is on the side that created the session. */
+                readonly tools?: string;
             };
             readonly header?: never;
             readonly path: {
@@ -13229,6 +14650,10 @@ export interface operations {
             /** @description The fork is running */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13237,9 +14662,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly interruptSession: {
@@ -13257,15 +14684,21 @@ export interface operations {
             /** @description The reply was abandoned, if there was one */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSessionMemories: {
@@ -13283,15 +14716,21 @@ export interface operations {
             /** @description The memories are deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly respondSession: {
@@ -13313,6 +14752,10 @@ export interface operations {
             /** @description Durable command accepted or replayed; only a new command starts inference */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13322,12 +14765,17 @@ export interface operations {
             /** @description The model is answering */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The request id was already accepted with different content */
@@ -13340,6 +14788,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listResponses: {
@@ -13362,6 +14811,10 @@ export interface operations {
             /** @description The session's turns, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13370,9 +14823,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createResponse: {
@@ -13394,6 +14849,10 @@ export interface operations {
             /** @description The agent is answering */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13402,6 +14861,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The request id was already accepted with different content */
@@ -13414,6 +14874,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listResponseItems: {
@@ -13438,6 +14899,10 @@ export interface operations {
             /** @description The items, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13446,9 +14911,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly rewindSession: {
@@ -13470,15 +14937,21 @@ export interface operations {
             /** @description The conversation carries on from the end of that response */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly saySession: {
@@ -13500,15 +14973,21 @@ export interface operations {
             /** @description The text is being spoken */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setSessionSettings: {
@@ -13530,6 +15009,10 @@ export interface operations {
             /** @description The session, on its new models */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13538,9 +15021,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly stopSession: {
@@ -13558,14 +15043,20 @@ export interface operations {
             /** @description The agent has left */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSessionTools: {
@@ -13583,6 +15074,10 @@ export interface operations {
             /** @description The tools */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13591,8 +15086,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly startSessionVoice: {
@@ -13614,6 +15111,10 @@ export interface operations {
             /** @description The agent is on the call */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13622,6 +15123,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Voice is on another call */
@@ -13634,6 +15136,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly stopSessionVoice: {
@@ -13651,6 +15154,10 @@ export interface operations {
             /** @description The agent has left the call */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13659,8 +15166,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly querySessions: {
@@ -13679,6 +15188,10 @@ export interface operations {
             /** @description A page of sessions */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13687,7 +15200,9 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSimulationRuns: {
@@ -13706,6 +15221,10 @@ export interface operations {
             /** @description The runs, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13714,8 +15233,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSimulationRun: {
@@ -13733,6 +15254,10 @@ export interface operations {
             /** @description The run and its conversations */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13741,9 +15266,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly cancelSimulationRun: {
@@ -13761,6 +15288,10 @@ export interface operations {
             /** @description The run is stopping */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13769,9 +15300,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSimulations: {
@@ -13786,6 +15319,10 @@ export interface operations {
             /** @description The customer's simulations, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13794,8 +15331,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createSimulation: {
@@ -13814,6 +15353,10 @@ export interface operations {
             /** @description The simulation was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13822,9 +15365,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSimulation: {
@@ -13842,6 +15387,10 @@ export interface operations {
             /** @description The simulation */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13850,9 +15399,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateSimulation: {
@@ -13874,6 +15425,10 @@ export interface operations {
             /** @description The simulation as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13882,9 +15437,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSimulation: {
@@ -13902,15 +15459,21 @@ export interface operations {
             /** @description The simulation is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly runSimulation: {
@@ -13928,6 +15491,10 @@ export interface operations {
             /** @description The run is going */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13936,9 +15503,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSkills: {
@@ -13956,6 +15525,10 @@ export interface operations {
             /** @description The customer's skills, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13964,8 +15537,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createSkill: {
@@ -13984,6 +15559,10 @@ export interface operations {
             /** @description The skill was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -13992,6 +15571,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -14004,6 +15584,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSkill: {
@@ -14021,6 +15602,10 @@ export interface operations {
             /** @description The skill */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14029,9 +15614,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateSkill: {
@@ -14053,6 +15640,10 @@ export interface operations {
             /** @description The skill as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14061,6 +15652,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -14073,6 +15665,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSkill: {
@@ -14090,15 +15683,21 @@ export interface operations {
             /** @description The skill is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly openSocketSession: {
@@ -14139,6 +15738,10 @@ export interface operations {
             /** @description The config as stored, or as it already was */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14147,6 +15750,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -14158,6 +15762,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteUserConnections: {
@@ -14175,14 +15780,20 @@ export interface operations {
             /** @description The user's connections are deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly truncateMemories: {
@@ -14200,14 +15811,20 @@ export interface operations {
             /** @description The memories are deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listVoices: {
@@ -14222,6 +15839,10 @@ export interface operations {
             /** @description The customer's voices, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14230,8 +15851,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createVoice: {
@@ -14250,6 +15873,10 @@ export interface operations {
             /** @description The voice was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14258,6 +15885,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -14269,6 +15897,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getVoice: {
@@ -14286,6 +15915,10 @@ export interface operations {
             /** @description The voice */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14294,9 +15927,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateVoice: {
@@ -14318,6 +15953,10 @@ export interface operations {
             /** @description The voice as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14326,6 +15965,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -14338,6 +15978,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteVoice: {
@@ -14355,15 +15996,21 @@ export interface operations {
             /** @description The voice is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly prepareVoice: {
@@ -14385,6 +16032,10 @@ export interface operations {
             /** @description The voice with a binding per provider */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14393,9 +16044,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly previewVoice: {
@@ -14417,6 +16070,10 @@ export interface operations {
             /** @description The line, spoken */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14425,9 +16082,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly addVoiceSample: {
@@ -14449,6 +16108,10 @@ export interface operations {
             /** @description The voice with the recording added */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14457,9 +16120,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listLibraryVoices: {
@@ -14477,6 +16142,10 @@ export interface operations {
             /** @description The voices, by provider and then name */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14485,8 +16154,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly previewLibraryVoice: {
@@ -14505,6 +16176,10 @@ export interface operations {
             /** @description The sample */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14513,9 +16188,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listVoiceProviders: {
@@ -14530,6 +16207,10 @@ export interface operations {
             /** @description The providers, sorted by name */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14538,8 +16219,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly queryAudit: {
@@ -14558,6 +16241,10 @@ export interface operations {
             /** @description A page of changes */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14566,8 +16253,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly classify: {
@@ -14586,6 +16275,10 @@ export interface operations {
             /** @description The answers, under the ids they were asked under */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14594,6 +16287,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The classifier is rate limiting. Ask again after a wait. */
             readonly 429: {
@@ -14782,6 +16476,10 @@ export interface operations {
             /** @description The changes since the cursor */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14790,6 +16488,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description The changes since that cursor are no longer kept, so export again. */
             readonly 410: {
@@ -14824,6 +16523,10 @@ export interface operations {
             /** @description The export, streamed */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14832,6 +16535,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description This deployment has no database to export from. */
@@ -14861,6 +16565,10 @@ export interface operations {
             /** @description What was written */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14869,6 +16577,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description This deployment has no database to import into. */
@@ -14898,6 +16607,10 @@ export interface operations {
             /** @description What was found, or why nothing was */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14906,9 +16619,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly dispatchCalls: {
@@ -14957,6 +16672,10 @@ export interface operations {
             /** @description What was drawn, or why nothing was */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -14965,298 +16684,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly setOperatorProviderApp: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The customer Stream's app serves. */
-                readonly customer_id: string;
-                /** @description The built-in connector, such as slack. */
-                readonly id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The record was replaced */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
-                };
-            };
-            /** @description The record was stored */
-            readonly 201: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 404: components["responses"]["NotFound"];
-            /** @description Conflict */
-            readonly 409: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    readonly deleteOperatorProviderApp: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The customer Stream's app serves. */
-                readonly customer_id: string;
-                /** @description The built-in connector, such as slack. */
-                readonly id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The record is removed */
-            readonly 204: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 404: components["responses"]["NotFound"];
-            /** @description Conflict */
-            readonly 409: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly getTelephonySuspension: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The app. */
-                readonly customer_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The suspension */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["TelephonySuspension"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 404: components["responses"]["NotFound"];
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly suspendTelephony: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The app. */
-                readonly customer_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SuspendTelephonyRequest"];
-            };
-        };
-        readonly responses: {
-            /** @description The suspension */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["TelephonySuspension"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 404: components["responses"]["NotFound"];
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly liftTelephonySuspension: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The app. */
-                readonly customer_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The suspension is lifted */
-            readonly 204: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 404: components["responses"]["NotFound"];
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly listUseCasesForReview: {
-        readonly parameters: {
-            readonly query?: {
-                /** @description The next_cursor of the previous page, sent with the same status. */
-                readonly cursor?: string;
-                /** @description Up to 200. Omitted is 50. */
-                readonly limit?: number;
-                /** @description Omitted is submitted: what waits on Stream. */
-                readonly status?: components["schemas"]["UseCaseStatus"];
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description A page of use cases */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ReviewQueue"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 404: components["responses"]["NotFound"];
-            /** @description Conflict */
-            readonly 409: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly getUseCaseForReview: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The use case */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["UseCaseForReview"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 404: components["responses"]["NotFound"];
-            /** @description Conflict */
-            readonly 409: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly reviewUseCase: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["ReviewUseCaseRequest"];
-            };
-        };
-        readonly responses: {
-            /** @description The use case as reviewed */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["UseCaseForReview"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 404: components["responses"]["NotFound"];
-            /** @description Conflict */
-            readonly 409: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getBusinessProfile: {
@@ -15271,6 +16703,10 @@ export interface operations {
             /** @description The profile */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15279,9 +16715,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly saveBusinessProfile: {
@@ -15300,6 +16738,10 @@ export interface operations {
             /** @description The profile as saved */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15308,8 +16750,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly placePhoneCall: {
@@ -15328,6 +16772,10 @@ export interface operations {
             /** @description The vendor is placing the call */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15336,9 +16784,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly pressPhoneDigits: {
@@ -15359,15 +16809,21 @@ export interface operations {
             /** @description The digits were pressed */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly transferPhoneCall: {
@@ -15386,6 +16842,10 @@ export interface operations {
             /** @description The vendor is dialling the human */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15394,9 +16854,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly receiveDLCReport: {
@@ -15496,6 +16958,10 @@ export interface operations {
             /** @description The customer's numbers, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15504,8 +16970,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly buyPhoneNumber: {
@@ -15524,6 +16992,10 @@ export interface operations {
             /** @description The number is bought and recorded */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15532,9 +17004,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly releasePhoneNumber: {
@@ -15552,15 +17026,21 @@ export interface operations {
             /** @description The number was released */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly attachPhoneNumber: {
@@ -15581,6 +17061,10 @@ export interface operations {
             /** @description The number now reaches a call */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15589,9 +17073,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly searchPhoneNumbers: {
@@ -15624,6 +17110,10 @@ export interface operations {
             /** @description What the vendors are offering, and which could not answer */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15632,9 +17122,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listOptOuts: {
@@ -15654,6 +17146,10 @@ export interface operations {
             /** @description A page of opt-outs */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15662,8 +17158,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createOptOut: {
@@ -15682,6 +17180,10 @@ export interface operations {
             /** @description The opt-out, or the one already recorded */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15690,8 +17192,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly revokeOptOut: {
@@ -15708,15 +17212,21 @@ export interface operations {
             /** @description Revoked */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getPhoneSandbox: {
@@ -15731,6 +17241,10 @@ export interface operations {
             /** @description The sandbox */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15739,8 +17253,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly setSandboxRecipients: {
@@ -15759,6 +17275,10 @@ export interface operations {
             /** @description The sandbox */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15767,8 +17287,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listSipTrunks: {
@@ -15783,6 +17305,10 @@ export interface operations {
             /** @description The customer's trunks, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15791,6 +17317,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15803,6 +17330,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createSipTrunk: {
@@ -15821,6 +17349,10 @@ export interface operations {
             /** @description The trunk is stored, its password sealed */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15829,6 +17361,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15841,6 +17374,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSipTrunk: {
@@ -15857,6 +17391,10 @@ export interface operations {
             /** @description The trunk */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15865,6 +17403,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15877,6 +17416,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteSipTrunk: {
@@ -15893,12 +17433,17 @@ export interface operations {
             /** @description The trunk was removed */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15911,6 +17456,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateSipTrunk: {
@@ -15931,6 +17477,10 @@ export interface operations {
             /** @description The trunk as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15939,6 +17489,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15951,6 +17502,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly addTrunkNumber: {
@@ -15971,6 +17523,10 @@ export interface operations {
             /** @description The number is on the trunk */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -15979,6 +17535,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15991,6 +17548,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listUseCases: {
@@ -16010,6 +17568,10 @@ export interface operations {
             /** @description A page of use cases */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16018,8 +17580,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createUseCase: {
@@ -16038,6 +17602,10 @@ export interface operations {
             /** @description The draft */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16046,8 +17614,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getUseCase: {
@@ -16064,6 +17634,10 @@ export interface operations {
             /** @description The use case */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16072,9 +17646,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateUseCase: {
@@ -16095,6 +17671,10 @@ export interface operations {
             /** @description The use case */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16103,6 +17683,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -16115,6 +17696,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteUseCase: {
@@ -16131,12 +17713,17 @@ export interface operations {
             /** @description Deleted */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -16149,6 +17736,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listUseCaseReviews: {
@@ -16170,6 +17758,10 @@ export interface operations {
             /** @description A page of moves */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16178,9 +17770,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly submitUseCase: {
@@ -16197,6 +17791,10 @@ export interface operations {
             /** @description The submitted use case */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16205,6 +17803,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -16217,6 +17816,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listPhoneVendors: {
@@ -16231,6 +17831,10 @@ export interface operations {
             /** @description The declared vendors */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16238,8 +17842,10 @@ export interface operations {
                 };
             };
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAppPolicy: {
@@ -16251,9 +17857,13 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The app's policy, with what its budget has spent so far */
+            /** @description The app's policy */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16262,8 +17872,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateAppPolicy: {
@@ -16282,6 +17894,10 @@ export interface operations {
             /** @description The policy was stored */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16290,8 +17906,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getOrganizationPolicy: {
@@ -16303,9 +17921,13 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The organization's policy, with what its budget has spent so far */
+            /** @description The organization's policy */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16314,8 +17936,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateOrganizationPolicy: {
@@ -16334,6 +17958,10 @@ export interface operations {
             /** @description The policy was stored */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16342,8 +17970,146 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly listUserPolicies: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. */
+                readonly cursor?: string;
+                /** @description Up to 100. Omitted is 100. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of users */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserPolicyPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly getUserPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The end user, by the id the app's tokens name them with. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The user's quota */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserPolicy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly updateUserPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The end user, by the id the app's tokens name them with. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UserPolicyInput"];
+            };
+        };
+        readonly responses: {
+            /** @description The user's quota as it now stands */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserPolicy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly deleteUserPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The end user, by the id the app's tokens name them with. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The user has no policy of their own */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly listRouterConfigs: {
@@ -16358,6 +18124,10 @@ export interface operations {
             /** @description The customer's router configs, newest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16366,8 +18136,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly createRouterConfig: {
@@ -16386,6 +18158,10 @@ export interface operations {
             /** @description The config was stored */
             readonly 201: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16394,6 +18170,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -16405,6 +18182,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getRouterConfig: {
@@ -16422,6 +18200,10 @@ export interface operations {
             /** @description The config */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16430,9 +18212,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly updateRouterConfig: {
@@ -16454,6 +18238,10 @@ export interface operations {
             /** @description The config as it now is */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16462,6 +18250,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -16474,6 +18263,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly deleteRouterConfig: {
@@ -16491,15 +18281,21 @@ export interface operations {
             /** @description The config is gone */
             readonly 204: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly search: {
@@ -16518,6 +18314,10 @@ export interface operations {
             /** @description What the provider found */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16526,8 +18326,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAppSettings: {
@@ -16542,6 +18344,10 @@ export interface operations {
             /** @description The app's settings */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16549,10 +18355,90 @@ export interface operations {
                 };
             };
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly listLimits: {
+        readonly parameters: {
+            readonly query?: {
+                readonly api_key?: string;
+                readonly app_id?: string;
+                readonly category?: string;
+                /** @description The next_cursor of the previous page, sent with the same filters. */
+                readonly cursor?: string;
+                readonly interval?: components["schemas"]["LimitInterval"];
+                readonly level?: components["schemas"]["LimitLevel"];
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+                /** @description Only limits on this subject. team lists the teams' limits, category every other category's. */
+                readonly subject?: components["schemas"]["LimitSubject"];
+                readonly team?: string;
+                readonly user_id?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly createLimit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitInput"];
+            };
+        };
+        readonly responses: {
+            /** @description The limit was created */
+            readonly 201: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Limit"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -16560,6 +18446,307 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly getLimit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly limit_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Limit"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly deleteLimit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly limit_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The limit was deleted */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly updateLimit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly limit_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitChange"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Limit"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly listLimitGrants: {
+        readonly parameters: {
+            readonly query?: {
+                readonly api_key?: string;
+                readonly app_id?: string;
+                readonly category?: string;
+                /** @description The next_cursor of the previous page, sent with the same filters. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+                /** @description Only grants in this state. Omitted is every one. */
+                readonly state?: components["schemas"]["LimitGrantState"];
+                readonly subject?: components["schemas"]["LimitSubject"];
+                readonly team?: string;
+                readonly user_id?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrantPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly createLimitGrant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitGrantInput"];
+            };
+        };
+        readonly responses: {
+            /** @description The grant was made */
+            readonly 201: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrant"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly revokeLimitGrant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitGrantRevocation"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrant"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly getLimitUsage: {
+        readonly parameters: {
+            readonly query: {
+                readonly api_key?: string;
+                readonly app_id?: string;
+                readonly category?: string;
+                readonly subject: components["schemas"]["LimitSubject"];
+                readonly team?: string;
+                readonly user_id?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SubjectUsage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly resetLimitUsage: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitResetInput"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SubjectUsage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getActivity: {
@@ -16580,6 +18767,10 @@ export interface operations {
             /** @description One row per bucket, oldest first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16588,8 +18779,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getAgentStats: {
@@ -16609,6 +18802,10 @@ export interface operations {
             /** @description The window's figures */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16617,8 +18814,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly runRollup: {
@@ -16637,6 +18836,10 @@ export interface operations {
             /** @description The rollup completed */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16645,13 +18848,19 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSpend: {
         readonly parameters: {
             readonly query: {
+                /** @description Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. */
+                readonly api_key?: string;
+                /** @description Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several. */
+                readonly category?: readonly string[];
                 /** @description Start of the window, inclusive. */
                 readonly from: string;
                 readonly granularity?: components["schemas"]["Granularity"];
@@ -16661,8 +18870,12 @@ export interface operations {
                 readonly limit?: number;
                 /** @description Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several. */
                 readonly tag?: readonly string[];
+                /** @description Only count usage for this team: its users' tokens name it in their team claim. */
+                readonly team?: string;
                 /** @description End of the window, exclusive. */
                 readonly to: string;
+                /** @description Only count usage for this end user of the app. */
+                readonly user_id?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -16673,6 +18886,10 @@ export interface operations {
             /** @description One row per bucket and group, oldest bucket first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16681,8 +18898,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getTagKeys: {
@@ -16704,6 +18923,10 @@ export interface operations {
             /** @description One row per label key, largest spend first */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16712,8 +18935,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly transcribeRecording: {
@@ -16732,6 +18957,10 @@ export interface operations {
             /** @description The job was accepted */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16740,9 +18969,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getTranscription: {
@@ -16760,6 +18991,10 @@ export interface operations {
             /** @description The job as it now stands */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16768,9 +19003,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly recordSpeech: {
@@ -16789,6 +19026,10 @@ export interface operations {
             /** @description The job was accepted */
             readonly 202: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16797,9 +19038,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getSpeech: {
@@ -16817,6 +19060,10 @@ export interface operations {
             /** @description The job as it now stands */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16825,9 +19072,11 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
     readonly getTurnStats: {
@@ -16850,6 +19099,10 @@ export interface operations {
             /** @description One row per bucket and agent */
             readonly 200: {
                 headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -16858,8 +19111,10 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
         };
     };
 }

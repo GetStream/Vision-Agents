@@ -26,11 +26,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // Provider is the little a router needs from a model provider: it can be opened, closed
@@ -129,10 +133,30 @@ type ModelResolver interface {
 var ErrModelNotAllowed = errors.New("routing: your policy does not allow this model")
 
 // Gate is what an organization's and an app's policies say about a customer's request
-// before anything is routed. Admit refuses a customer who has spent their budget, and
-// otherwise returns what every request of theirs is held to on top of its own.
+// before anything is routed. Admit refuses a customer who may do no work at all, and
+// otherwise returns what every request of theirs is held to on top of its own, money
+// included: Admission.Spend refuses only the work that costs something. The owner's key, user
+// and categories are what the customer's limits on them are checked against.
 type Gate interface {
-	Admit(ctx context.Context, customerID string) (Admission, error)
+	Admit(ctx context.Context, owner Owner) (Admission, error)
+}
+
+// Spender is a Gate that is told what a unit of work cost as soon as it is recorded, before
+// its row is written, so a customer spending fast is measured without waiting for the writer:
+// Settle sets the unit's hold, reserved before it started or not, to its cost. It answers the
+// grants the work is drawn from, past a spent limit, which its row names.
+type Spender interface {
+	Settle(owner Owner, usageID uuid.UUID, micros int64) []int64
+}
+
+// Reserver is a Gate that sets money aside for a unit of work before it starts, under the
+// usage id its row will carry, so a customer spending fast on several routers at once is
+// stopped before the work rather than after. A nil Reserve is the admission; a refusal is the
+// money error Admit would give, and nothing is held. Release lets go of a reservation whose
+// work never reached a vendor; the recorder settles the rest.
+type Reserver interface {
+	Reserve(owner Owner, usageID uuid.UUID, micros int64, ttl time.Duration) error
+	Release(usageID uuid.UUID)
 }
 
 // Admission is what a customer's policies hold every request of theirs to.
@@ -145,6 +169,25 @@ type Admission struct {
 	// Tags are laid over the request's own on every row its work records, so a request
 	// cannot relabel what its policies attribute.
 	Tags Tags
+	// OrganizationID is the organization the customer is in, who its work is billed to.
+	// Empty when it is not known yet.
+	OrganizationID string
+	// OrganizationTier is that organization's current tier, which replaces the one a row was
+	// opened with, so a session's later work carries a tier Stream changed. Empty when it is
+	// not known.
+	OrganizationTier string
+	// Spend is why the customer may not spend money now: no credit, or a spend limit reached.
+	// Nil when they may. Work that costs nothing is still admitted.
+	Spend error
+	// Grants are the customer's one-time grants the work is admitted on, past limits of its
+	// subjects that are spent. The row its work records names them.
+	Grants []int64
+	// Limits are the settings in force for the organization, its tier's with its overrides laid
+	// over them, as its standing last said, for the checks admission leaves to the work's own
+	// path, such as a channel's. LimitsTier names that tier. Nil with no organization, before
+	// its standing is first read, and with money not enforced. Read only: it is shared.
+	Limits     *usage.Limits
+	LimitsTier string
 }
 
 // Labelled returns the tags with the policies' laid over them, leaving the ones passed in
@@ -175,7 +218,13 @@ type Options[P Provider] struct {
 	// customer's own.
 	Models ModelResolver
 	// Gate enforces the customer's policies. Nil enforces nothing.
-	Gate   Gate
+	Gate Gate
+	// Pricer prices every row the router records. Nil prices them with Prices: Config's own
+	// rates, then the vendor list embedded in the binary.
+	Pricer pricing.Pricer
+	// Writer is the process's writer, shared by every recorder. Nil gives the router one of
+	// its own over Store and Live.
+	Writer *Writer
 	Logger *slog.Logger
 }
 
@@ -198,13 +247,19 @@ type Router[P Provider] struct {
 // backend does for itself, which is not limited.
 type Caller struct {
 	// UserID is who the customer's token named. It is only unique within the customer, so
-	// a limit keyed by it is keyed by the pair.
+	// a limit keyed by it is keyed by the pair. An anonymous caller's is the name it goes by,
+	// counted against but never recorded: the user a row records is Attribution.UserID.
 	UserID string
 	// IP is where the request came from, as far as the trusted proxies can tell.
 	IP string
 	// ServerSide is a customer's own process, trusted with its spend even when it names a
-	// user, so no daily limit is counted against it.
+	// user, so it is held only to the daily quotas the customer set for that user, never to
+	// the deployment's default.
 	ServerSide bool
+	// Verified is a UserID something vouched for: a token the app signed, the proxy's word,
+	// or a delivery the app's channel or plugin signed. An anonymous caller's name is not,
+	// so it is never held to that user's own quota nor spends their day.
+	Verified bool
 }
 
 // IsZero says nobody was named: a turn that was heard, not typed.
@@ -245,6 +300,9 @@ func ScheduledTurn(ctx context.Context) bool {
 type Request struct {
 	// CustomerID owns the request. It is what every statistic is keyed by.
 	CustomerID string
+	// Attribution is who beside the customer the work is billed to and asked for by. A
+	// router takes it from the context it is opened with (AttributionFrom).
+	Attribution
 	// Caller is the end user the work is for, when the request came from a device rather
 	// than from the customer's own backend. It is what daily limits are counted against.
 	Caller Caller
@@ -254,6 +312,9 @@ type Request struct {
 	CallID string
 	// Tags are the customer's own cost labels, recorded on every row the session writes.
 	Tags Tags
+	// Spent adds up what the session's rows cost for the request or socket that opened it. A
+	// router takes it from the context it is opened with (SpentFrom).
+	Spent *Spent
 	// Target is a "provider/model" name or a capability shortcut.
 	Target string
 	// Providers is a priority list of where to try, in the order given, and it wins over
@@ -307,11 +368,13 @@ type Request struct {
 // Owner returns who the request is billed to and how it is labelled.
 func (r Request) Owner() Owner {
 	return Owner{
-		CustomerID: r.CustomerID,
-		Caller:     r.Caller,
-		AgentID:    r.AgentID,
-		CallID:     r.CallID,
-		Tags:       r.Tags,
+		CustomerID:  r.CustomerID,
+		Attribution: r.Attribution,
+		Caller:      r.Caller,
+		AgentID:     r.AgentID,
+		CallID:      r.CallID,
+		Tags:        r.Tags,
+		Spent:       r.Spent,
 	}
 }
 
@@ -338,13 +401,21 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	pricer := options.Pricer
+	if pricer == nil {
+		list, err := Prices(Config{options.Modality: options.Config}, logger)
+		if err != nil {
+			return nil, err
+		}
+		pricer = list
+	}
 
 	return &Router[P]{
 		validate: options.Validate,
 		modality: options.Modality,
 		config:   options.Config,
 		registry: options.Registry,
-		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, logger),
+		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, options.Writer, pricer, logger),
 		live:     options.Live,
 		voices:   options.Voices,
 		models:   options.Models,
@@ -362,15 +433,22 @@ func (r *Router[P]) Config() ModalityConfig { return r.config }
 // Recorder is where a modality's session writes its stat rows.
 func (r *Router[P]) Recorder() *Recorder { return r.recorder }
 
+// Quote is what work on the provider that used that costs, priced as its row is.
+func (r *Router[P]) Quote(config ProviderConfig, used pricing.Quantities) pricing.Quote {
+	var stat Stat
+	stat.Use(used)
+	return r.recorder.QuoteStat(config, stat)
+}
+
 // Builds reports whether a provider has a factory registered here. It does not build
 // anything, so a provider whose factory would fail (a missing key) still reports true. A
-// candidate with no factory is one Select passes over.
+// candidate with no factory is one Select passes over, as is one Ready refuses.
 func (r *Router[P]) Builds(provider string) bool { return r.registry.Has(provider) }
 
 // Logger returns the router's logger.
 func (r *Router[P]) Logger() *slog.Logger { return r.logger }
 
-// Close stops the background stat writer.
+// Close writes what is queued and stops the stat writer, unless the router shares one.
 func (r *Router[P]) Close() { r.recorder.Close() }
 
 // Providers returns every configured provider with its live health, in config order.
@@ -463,7 +541,7 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 		return ProviderConfig{}, err
 	}
 
-	admission, err := r.Admit(ctx, request.CustomerID)
+	admission, err := r.Admit(ctx, request.Owner())
 	if err != nil {
 		return ProviderConfig{}, err
 	}
@@ -496,6 +574,12 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	candidates = slices.DeleteFunc(candidates, func(candidate Candidate) bool {
 		return slices.Contains(request.Exclude, candidate.Config.Name())
 	})
+	// Last of the filters, so a customer refused money is told so only when a paying one
+	// would have been served.
+	candidates, err = affordable(candidates, admission.Spend, r.recorder.Billable)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
 	untried(candidates, request.Failed)
 	candidates = r.vouched(ctx, request, candidates)
 	candidates, err = r.voiced(request, candidates)
@@ -526,6 +610,13 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 		}
 		if !r.registry.Has(candidate.Config.Provider) {
 			failures = append(failures, fmt.Errorf("%s: no factory registered", candidate.Config.Name()))
+			continue
+		}
+		// A model this deployment has no config for fails the same way for every caller, so
+		// it is passed over the way a missing factory is, with no stat to mark it down: its
+		// health is every customer's, and it was never tried.
+		if err := r.registry.Ready(candidate.Config.Provider, candidate.Config.Model); err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 			continue
 		}
 
@@ -576,12 +667,12 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 
 // Admit asks the customer's policies whether they may spend anything, and what their
 // requests are held to. A modality whose session serves many units of work asks it again
-// before each one, since a budget can run out mid-session.
-func (r *Router[P]) Admit(ctx context.Context, customerID string) (Admission, error) {
+// before each one, since a spend limit can run out mid-session.
+func (r *Router[P]) Admit(ctx context.Context, owner Owner) (Admission, error) {
 	if r.gate == nil {
 		return Admission{}, nil
 	}
-	return r.gate.Admit(ctx, customerID)
+	return r.gate.Admit(ctx, owner)
 }
 
 // Candidates is where a request may go, best first: a priority list where one was given,
@@ -718,6 +809,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		TTS:             request.TTS,
 		STS:             request.STS,
 		Search:          request.Search,
+		DataPolicy:      request.DataPolicy,
 		Overwrites:      r.overwrites(request, candidate.Config.Provider),
 		Endpoint:        candidate.endpoint,
 		Logger:          r.logger,
@@ -876,8 +968,12 @@ func (r *Router[P]) voice(ctx context.Context, request Request, provider string)
 }
 
 // health reads live health, treating a Redis failure as "no information" so a broken
-// stats path cannot take routing down with it.
+// stats path cannot take routing down with it. A model this deployment cannot build, for a
+// key or an endpoint it was never given, is unavailable whatever its history says.
 func (r *Router[P]) health(ctx context.Context, provider ProviderConfig) live.Health {
+	if r.registry.Ready(provider.Provider, provider.Model) != nil {
+		return live.Health{Provider: provider.Provider, Model: provider.Model}
+	}
 	if r.live == nil {
 		return live.Health{Provider: provider.Provider, Model: provider.Model, Available: true}
 	}
@@ -952,6 +1048,25 @@ func allowed(candidates []Candidate, models []string) ([]Candidate, error) {
 		return nil, stack.Wrap(fmt.Errorf("%w: it allows none of %s", ErrModelNotAllowed, strings.Join(asked, ", ")))
 	}
 	return kept, nil
+}
+
+// affordable keeps only work that costs nothing when the customer may not spend money, the
+// refusal saying why, and is refused with it when there is none: a customer with no credit
+// still gets a model the deployment runs itself or one that is free.
+func affordable(candidates []Candidate, refusal error, billable func(ProviderConfig) bool) ([]Candidate, error) {
+	if refusal == nil {
+		return candidates, nil
+	}
+	free := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !billable(candidate.Config) {
+			free = append(free, candidate)
+		}
+	}
+	if len(free) == 0 {
+		return nil, refusal
+	}
+	return free, nil
 }
 
 // permitted narrows candidates to the ones allowed to do this work at all.

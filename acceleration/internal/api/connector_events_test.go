@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -417,6 +419,19 @@ func (d *deliveries) Deliver(_ context.Context, _ store.ConnectorOAuthClient, me
 	defer d.mu.Unlock()
 	d.messages = append(d.messages, messages...)
 	return true, nil
+}
+
+// Reachable keeps no threads, so it reaches none, and neither holds nor sends a reply.
+func (d *deliveries) Reachable(context.Context, store.ChannelThread) error {
+	return errors.New("deliveries keeps no threads")
+}
+
+func (d *deliveries) Hold(string) (<-chan conversation.FinishedReply, func()) {
+	return nil, func() {}
+}
+
+func (d *deliveries) Send(conversation.FinishedReply) error {
+	return errors.New("deliveries keeps no threads")
 }
 
 // of is the messages delivered for one provider unit.

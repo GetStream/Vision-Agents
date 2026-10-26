@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -42,11 +43,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -54,6 +56,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -64,6 +67,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
 )
 
@@ -108,7 +112,14 @@ const clientAccessibleExtension = "x-client-accessible"
 type Options struct {
 	// Routers is the router serving each modality. A modality that is absent is a 404.
 	Routers map[routing.Modality]routing.Inspector
-	Store   *store.Store
+	// Pricer is what the providers' rates are read from. Nil is Prices when it is set, else
+	// routing.Prices of the routers' configs.
+	Pricer pricing.Pricer
+	// Prices is the price list in force, read from Store's price tables. With it, /health
+	// reports not ready until it is ready, and a price change made through the management API
+	// is read back at once. Nil serves the price list operations from Store alone.
+	Prices *pricing.Active
+	Store  *store.Store
 	// Configs reads and writes the tenant's configuration -- keys, policies, agent and
 	// router configs, voices -- through whatever cache is in front of Postgres. Built
 	// over Store when it is not given, in which case every read is a query.
@@ -169,10 +180,13 @@ type Options struct {
 	Gate *dlc.Gate
 	// OpsKey is what Stream staff's review paths are reached with. Empty turns them off.
 	OpsKey string
-	// Knowledge fills the bases a config's knowledge_namespace has an agent read from.
-	// Absent when the deployment has no knowledge provider, in which case there is nothing
-	// to fill and the path says so.
-	Knowledge knowledge.Writer
+	// ManageKey is what Stream staff's billing paths, under /v1/manage, are reached with.
+	// Empty turns them off: they answer 404 not_configured.
+	ManageKey string
+	// Knowledge fills the bases a config's knowledge_namespace has an agent read from, each
+	// call recorded for the customer and key that asked. Absent when the deployment has no
+	// knowledge provider, in which case there is nothing to fill and the path says so.
+	Knowledge *metered.Knowledge
 	// KnowledgeURLs keeps those bases filled from pages published elsewhere. Absent
 	// without a database or without something that can read a page, in which case the url
 	// paths say so rather than accepting a subscription nothing would honour.
@@ -262,6 +276,8 @@ type Options struct {
 	// RunsPerApp caps one app's headless runs in flight, counted in Live's Redis across every
 	// router (config runs.concurrent_per_app). 0 caps nothing, and neither does an absent Live.
 	RunsPerApp int64
+	// ImageHTTP fetches the images a run is handed by URL. Absent reaches only public hosts.
+	ImageHTTP *http.Client
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -301,6 +317,8 @@ type Options struct {
 // Server serves the router's HTTP API.
 type Server struct {
 	routers            map[routing.Modality]routing.Inspector
+	pricer             pricing.Pricer
+	prices             *pricing.Active
 	store              *store.Store
 	configs            *appconfig.Store
 	users              *users.Recorder
@@ -311,6 +329,7 @@ type Server struct {
 	directory          *node.Directory
 	workers            *node.Workers
 	forwarder          *node.Forwarder
+	peerCredentials    [][]byte // what a peer may present: one credential per key of the keyring
 	streams            *Streams
 	stream             *streamapp.Clients
 	proxyDeclaresKind  bool
@@ -319,7 +338,7 @@ type Server struct {
 	telnyxConnectionID string
 	campaigns          *campaign.Runner
 	simulations        *simulation.Runner
-	knowledge          knowledge.Writer
+	knowledge          *metered.Knowledge
 	pages              *urls.Service
 	voices             *voices.Service
 	library            *voices.Catalogue
@@ -335,6 +354,7 @@ type Server struct {
 	dlc                *dlc.Service
 	gate               *dlc.Gate
 	opsKey             string
+	manageKey          string
 	authenticator      auth.Authenticator
 	authMode           auth.Mode
 	dataRetention      time.Duration
@@ -357,6 +377,10 @@ type Server struct {
 	mcpEvents     *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
+	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
+	// Stream, and how long to wait before each read. Tests replace both.
+	readCallStats  readCallStats
+	callStatsWaits []time.Duration
 	// slackApps and operatorApps serve the provider app paths.
 	slackApps    *slackapps.Client
 	operatorApps OperatorAppLookup
@@ -371,6 +395,8 @@ type Server struct {
 	// runSlots counts each app's runs in flight against runsPerApp; nil counts none.
 	runSlots   *concurrency.Slots
 	runsPerApp int64
+	// imageHTTP fetches the images a run is handed by URL.
+	imageHTTP *http.Client
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -454,8 +480,25 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			return nil, err
 		}
 	}
+	pricer := options.Pricer
+	if pricer == nil && options.Prices != nil {
+		pricer = options.Prices
+	}
+	if pricer == nil {
+		capabilities := routing.Config{}
+		for modality, router := range options.Routers {
+			capabilities[modality] = router.Config()
+		}
+		list, err := routing.Prices(capabilities, logger)
+		if err != nil {
+			return nil, err
+		}
+		pricer = list
+	}
 	server := &Server{
 		routers:            options.Routers,
+		pricer:             pricer,
+		prices:             options.Prices,
 		store:              options.Store,
 		configs:            configs,
 		users:              recorder,
@@ -494,6 +537,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		eventForwarder:     options.EventForwarder,
 		mcpEvents:          options.MCPEvents,
 		episodes:           options.Episodes,
+		readCallStats:      streamCallStats,
+		callStatsWaits:     slices.Clone(defaultCallStatsWaits),
 		slackApps:          options.SlackApps,
 		operatorApps:       options.OperatorProviderApps,
 		trusted:            options.TrustedProxies,
@@ -509,6 +554,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		dlc:          options.DLC,
 		gate:         options.Gate,
 		opsKey:       options.OpsKey,
+		manageKey:    options.ManageKey,
 		popularity:   newPopularity(options.Store, logger),
 		logger:       logger,
 		draining:     make(chan struct{}),
@@ -525,6 +571,11 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	server.proxyCallsPerMinute = options.ProxyCallsPerMinute
 	if options.Live != nil {
 		server.runSlots, server.runsPerApp = concurrency.New(options.Live.Redis(), nil), options.RunsPerApp
+	}
+	server.imageHTTP = options.ImageHTTP
+	if server.imageHTTP == nil {
+		// No proxy, which would dial on the client's behalf where the check cannot see.
+		server.imageHTTP = &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: egress.DialPublic}}
 	}
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
@@ -544,7 +595,17 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 	}
 	if options.Directory != nil {
-		server.forwarder = node.NewForwarder(logger)
+		var credential []byte
+		if options.Secrets == nil {
+			// Peers prove they are this deployment's nodes with a credential the keyring
+			// derives, so without one no node can be let in and none of this node's
+			// requests is answered by another.
+			logger.Warn("peers cannot forward to or from this node without a key encryption key",
+				"setting", "ROUTER_AUTH_KEK")
+		} else {
+			credential, server.peerCredentials = options.Secrets.Derive(node.CredentialPurpose)
+		}
+		server.forwarder = node.NewForwarder(logger, credential)
 	}
 	return server, nil
 }
@@ -649,13 +710,13 @@ func (s *Server) Handler() http.Handler {
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
 	served := withSentry(withRequestID(withTrace(withTiming(withCORS(s.authMode,
-		s.onOwningNode(s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))))
+		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))))))))
 	if s.directory == nil {
 		return served
 	}
 	// Peers reach this node on the same port its callers do, so what they forward is
 	// served beside everything else rather than on a listener of its own.
-	return node.Serve(served)
+	return node.Serve(served, s.peerCredentials)
 }
 
 // withSentry reports what goes wrong serving a request to Sentry.
@@ -1033,6 +1094,13 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 				"requests from this level of user"))
 			return
 		}
+		// The categories are what the request's usage is counted under, so a request naming
+		// ones that break the rule is refused rather than counted under fewer.
+		if errors.Is(err, auth.ErrInvalidUsageCategories) {
+			writeError(w, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidUsageCategories,
+				Message: strings.TrimPrefix(err.Error(), "auth: ")})
+			return
+		}
 		if err == nil && principal.AppID != "" {
 			ctx := context.WithValue(r.Context(), customerContextKey{}, principal.AppID)
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
@@ -1042,16 +1110,45 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 				UserID:     principal.UserID,
 				IP:         s.callerIP(r, principal.UserID),
 				ServerSide: principal.ServerSide,
+				Verified:   principal.UserID != "" && principal.Kind.Verified(),
 			})
 			ctx = context.WithValue(ctx, actorContextKey{}, actorOf(r, principal.ServerSide))
+			ctx = routing.WithAttribution(ctx, attributionOf(principal))
 			r = r.WithContext(ctx)
-			s.policies.Join(principal.AppID, principal.OrganizationID)
+			s.policies.Join(principal.AppID, principal.OrganizationID, principal.OrganizationTier)
 			s.recordUser(ctx, principal)
 			s.recordEmail(ctx, principal)
 			s.keepServerToken(ctx, r, principal.AppID)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// attributionOf is who a request's usage is recorded as asked for by. The user is recorded as
+// given, a backend's included, since per-user usage and limits are counted by it, unless the
+// usage service would refuse its events for the id (routing.RecordedUser); an anonymous
+// caller's is a name nobody checked, so it is not, as recordUser does not keep it either.
+func attributionOf(principal auth.Principal) routing.Attribution {
+	attribution := routing.Attribution{
+		OrganizationID:   principal.OrganizationID,
+		OrganizationTier: principal.OrganizationTier,
+		APIKey:           principal.APIKey,
+		UsageCategories:  principal.UsageCategories,
+	}
+	switch principal.Kind {
+	case auth.KindServer:
+		attribution.CallerKind = routing.CallerServer
+	case auth.KindAuthenticated:
+		attribution.CallerKind = routing.CallerUser
+	case auth.KindGuest:
+		attribution.CallerKind = routing.CallerGuest
+	case auth.KindAnonymous:
+		attribution.CallerKind = routing.CallerAnonymous
+	}
+	if principal.Kind.Verified() {
+		attribution.UserID = principal.UserID
+	}
+	return attribution
 }
 
 // keepServerToken holds the server token the proxy forwarded for the caller's app. Only a
@@ -1100,14 +1197,14 @@ func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
 
 // recordEmail keeps the address a backend said its user signs in with (auth.EmailHeader),
 // which a consent for a connector whose manifest sets owner_email is checked against. Only a
-// server-side caller has one (auth.Principal.Email), and SetUserEmail does nothing without
-// one or without a user. A failure is logged, as recordUser's is:
-// the consent it would have served then finds no address and is refused.
+// server-side caller has one (auth.Principal.Email), and users.Recorder.Email does nothing
+// without one or without a user, nor for the address it last wrote. A failure is logged, as
+// recordUser's is: the consent it would have served then finds no address and is refused.
 func (s *Server) recordEmail(ctx context.Context, principal auth.Principal) {
-	if s.store == nil {
+	if s.users == nil {
 		return
 	}
-	if err := s.store.SetUserEmail(ctx, principal.AppID, principal.UserID, principal.Email); err != nil {
+	if err := s.users.Email(ctx, principal.AppID, principal.UserID, principal.Email); err != nil {
 		s.logger.Error("could not record an end user's email", "customer", principal.AppID, "user", principal.UserID, "error", err)
 	}
 }
@@ -1288,6 +1385,17 @@ func (s *Server) getHealth(ctx context.Context, _ *struct{}) (*healthResponse, e
 		dependencies[string(modality)] = "ok"
 	}
 
+	// A router reading its prices from the database is not ready until it has read them, so
+	// it never serves on the price files it carries, which have no markup.
+	if s.prices != nil {
+		if err := s.prices.Ready(); err != nil {
+			dependencies["prices"] = err.Error()
+			healthy = false
+		} else {
+			dependencies["prices"] = "ok"
+		}
+	}
+
 	if !healthy {
 		return &healthResponse{
 			Status: http.StatusServiceUnavailable,
@@ -1326,7 +1434,7 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 			Health:      providerHealth(candidate.Health),
 			UsageShare:  &share,
 			Benchmark:   providerBenchmark(candidate.Config.Benchmark),
-			Price:       providerPrice(candidate.Config.Price),
+			Price:       s.providerPrice(request.Modality, candidate.Config),
 		})
 	}
 	return &listProvidersResponse{Body: providers}, nil
@@ -1565,6 +1673,10 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	who, failure := usageFilterOf(request)
+	if failure != nil {
+		return nil, failure
+	}
 	if s.store == nil {
 		return nil, invalidRequest("statistics are not available: no database configured")
 	}
@@ -1579,7 +1691,7 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 	}
 
 	buckets, err := s.store.CustomerSpend(ctx, customerID, groupBy,
-		granularityOf(request.Granularity.ptr()), request.From, request.To, limit, tags)
+		granularityOf(request.Granularity.ptr()), request.From, request.To, limit, tags, who)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
@@ -1594,6 +1706,29 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 		})
 	}
 	return &getSpendResponse{Body: spend}, nil
+}
+
+// usageFilterOf is who a spend request narrows the usage to. A team is the category
+// team:<name>, which every row the team's users asked for carries.
+func usageFilterOf(request *getSpendRequest) (store.UsageFilter, error) {
+	var who store.UsageFilter
+	if key := request.APIKey.ptr(); key != nil {
+		who.APIKey = *key
+	}
+	if user := request.UserID.ptr(); user != nil {
+		who.UserID = *user
+	}
+	if categories := request.Category.ptr(); categories != nil {
+		who.Categories = append(who.Categories, *categories...)
+	}
+	if team := request.Team.ptr(); team != nil {
+		who.Categories = append(who.Categories, usage.TeamPrefix+*team)
+	}
+	if err := usage.CheckCategories(who.Categories); err != nil {
+		return store.UsageFilter{}, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidUsageCategories,
+			Message: strings.TrimPrefix(err.Error(), "usage: ")}
+	}
+	return who, nil
 }
 
 // getTagKeys returns which cost labels the calling customer's spend carries.
@@ -1834,16 +1969,25 @@ func providerBenchmark(benchmark routing.Benchmark) *ProviderBenchmark {
 	}
 }
 
-// providerPrice is the token rates a model is billed at, and nil for a model not billed
-// by the token.
-func providerPrice(price routing.Price) *ProviderPrice {
-	if price.PerMillionInputTokens == 0 && price.PerMillionOutputTokens == 0 {
+// providerPrice is the token rates a model is billed at, the markup in force included, and
+// nil for a model not billed by the token. A customer is shown what they are charged, never
+// the vendor's rates.
+func (s *Server) providerPrice(modality Modality, config routing.ProviderConfig) *ProviderPrice {
+	entry, _ := s.pricer.Charged(routing.ItemOf(routing.Modality(modality), config, nil))
+	input, output := perMillion(entry.Rates[pricing.InputTokens]), perMillion(entry.Rates[pricing.OutputTokens])
+	if input == 0 && output == 0 {
 		return nil
 	}
-	return &ProviderPrice{
-		PerMillionInputTokens:  &price.PerMillionInputTokens,
-		PerMillionOutputTokens: &price.PerMillionOutputTokens,
+	return &ProviderPrice{PerMillionInputTokens: &input, PerMillionOutputTokens: &output}
+}
+
+// perMillion is a rate in US dollars a million units, and zero for no rate. The factor is
+// worked out first so a rate already per million comes back exactly as it was written.
+func perMillion(rate pricing.Rate) float64 {
+	if rate.Per == 0 {
+		return 0
 	}
+	return rate.USD * (1_000_000 / float64(rate.Per))
 }
 
 var errMissingCustomer = APIError{
@@ -2082,6 +2226,10 @@ type getSpendRequest struct {
 	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
 	Limit       optionalParam[int]         `query:"limit" doc:"How many values keep a series of their own." minimum:"1" maximum:"50"`
 	Tag         optionalParam[[]string]    `query:"tag,explode" doc:"Only count requests carrying every one of these cost labels, each written \"key:value\". Repeat for several."`
+	APIKey      optionalParam[string]      `query:"api_key" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat." maxLength:"255"`
+	UserID      optionalParam[string]      `query:"user_id" doc:"Only count usage for this end user of the app." maxLength:"255"`
+	Team        optionalParam[string]      `query:"team" doc:"Only count usage for this team: its users' tokens name it in their team claim." pattern:"^[A-Za-z0-9_.-]{1,59}$"`
+	Category    optionalParam[[]string]    `query:"category,explode" doc:"Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several."`
 }
 
 type getSpendResponse struct {

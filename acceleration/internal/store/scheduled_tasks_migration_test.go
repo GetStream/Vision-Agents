@@ -131,3 +131,36 @@ func (s *ScheduledTasksMigrationSuite) TestTheWakeIndexAppliesComesOffAndApplies
 	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", wakeVersion))
 	s.Contains(s.indexes(), "scheduled_tasks_wake_idx")
 }
+
+// threadVersion is 20261106120000_scheduled_task_thread.sql; beforeThreadVersion is the one
+// before it, the release that is running while the migration applies.
+const (
+	threadVersion       int64 = 20261106120000
+	beforeThreadVersion int64 = 20261105150000
+)
+
+// A task made before the migration reads an empty channel_thread after it, and the previous
+// release, which does not name the column, still inserts tasks.
+func (s *ScheduledTasksMigrationSuite) TestTheThreadColumnKeepsTasksOfThePreviousRelease() {
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", beforeThreadVersion))
+	insert := `INSERT INTO scheduled_tasks (id, customer_id, user_id, title, instructions, start_local, timezone)
+VALUES (?, 'acme', 'alice', 'Stretch', 'Remind them.', '2026-11-06 10:00', 'Europe/Amsterdam')`
+	_, err := s.db.DB().ExecContext(s.ctx, insert, "before")
+	s.Require().NoError(err)
+
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", threadVersion))
+	_, err = s.db.DB().ExecContext(s.ctx, insert, "after")
+	s.Require().NoError(err, "the previous release inserts without channel_thread")
+
+	rows, err := s.db.DB().QueryContext(s.ctx, "SELECT id, channel_thread FROM scheduled_tasks ORDER BY id")
+	s.Require().NoError(err)
+	defer rows.Close()
+	threads := map[string]string{}
+	for rows.Next() {
+		var id, thread string
+		s.Require().NoError(rows.Scan(&id, &thread))
+		threads[id] = thread
+	}
+	s.Require().NoError(rows.Err())
+	s.Equal(map[string]string{"after": "", "before": ""}, threads)
+}

@@ -545,7 +545,6 @@ class TestSyncAgent:
             "search: search-fast\n"
             "greeting:\n  text: Hello.\n  mode: variation\n"
             "sandbox: daytona\n"
-            "plugins:\n  - gmail\n  - name: google_calendar\n    user: true\n"
             "keyterms:\n  - Vision Agents\n"
             "tags:\n  team: support\n"
         )
@@ -566,7 +565,6 @@ class TestSyncAgent:
         assert stored["search"] == "search-fast"
         assert stored["greeting"] == {"text": "Hello.", "mode": "variation"}
         assert stored["sandbox"] == "daytona"
-        assert stored["plugins"] == ["gmail", {"name": "google_calendar", "user": True}]
         assert stored["keyterms"] == ["Vision Agents"]
         assert stored["tags"] == {"team": "support"}
 
@@ -750,25 +748,18 @@ class TestSyncAgent:
 
         assert "channels" not in router.configs[result.config.id]
 
-    async def test_how_each_plugin_is_reached_is_sent(
-        self, router: Router, support_dir
+    @pytest.mark.parametrize("key", ["plugins", "plugin_events"])
+    async def test_a_directory_naming_plugins_is_refused_and_nothing_is_sent(
+        self, router: Router, support_dir, key: str
     ):
-        (support_dir / "agent.yaml").write_text(
-            "name: support\nplugins:\n"
-            "  - name: linear\n    user: true\n    readonly: true\n"
-            "  - google_calendar\n"
-            "  - name: calcom\n    toolsets: [bookings]\n    tools: [get_*]\n"
-        )
+        (support_dir / "agent.yaml").write_text(f"name: support\n{key}:\n  - linear\n")
 
-        result = await stream.sync_agent(
-            "support", path=str(support_dir), url=router.url, customer_id="acme"
-        )
+        with pytest.raises(ValueError, match=f"`{key}` is no longer supported"):
+            await stream.sync_agent(
+                "support", path=str(support_dir), url=router.url, customer_id="acme"
+            )
 
-        assert router.configs[result.config.id]["plugins"] == [
-            {"name": "linear", "user": True, "readonly": True},
-            "google_calendar",
-            {"name": "calcom", "toolsets": ["bookings"], "tools": ["get_*"]},
-        ]
+        assert router.bodies == []
 
     async def test_sts_can_be_selected_and_cleared(self, router: Router, support_dir):
         for target in ("openai/gpt-realtime-2", ""):
@@ -835,6 +826,42 @@ class TestSyncAgent:
 
         assert router.bodies[-1] == {
             "hash": "7c2ee5b1e886b6eb16792ffcdf426bc1",
+            "instructions": "Be helpful.",
+            "name": "support",
+        }
+
+    @pytest.mark.parametrize(
+        ("declared", "synced_hash"),
+        [
+            ("", "548ab79689e94718a07f61478044b49e"),
+            ("plugins: []\n", "51aa7948bde8d4bd3ca0cc1269080fd1"),
+            ("plugins:\n", "1360d920d071489b6b81deb496cf2c9f"),
+        ],
+    )
+    async def test_a_connectors_only_directory_syncs_the_body_it_synced_on_base(
+        self, router: Router, bare_dir, declared: str, synced_hash: str
+    ):
+        # Probed on 259da758b before plugins were refused: these files produced this
+        # body, an empty plugins key included.
+        (bare_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n  - linear\n" + declared
+        )
+
+        await stream.sync_agent(
+            "support", path=str(bare_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.bodies[-1] == {
+            "connectors": [
+                {
+                    "connection": {"type": "session"},
+                    "connector_id": "linear",
+                    "name": "linear",
+                    "tool_patterns": ["*"],
+                    "tools": [],
+                }
+            ],
+            "hash": synced_hash,
             "instructions": "Be helpful.",
             "name": "support",
         }
@@ -958,6 +985,68 @@ class TestSyncAgent:
                 "tools": [],
                 "tool_patterns": ["*"],
                 "required": False,
+            },
+        ]
+
+    async def test_sandbox_and_require_approval_are_sent_on_each_binding_that_sets_them(
+        self, router: Router, support_dir
+    ):
+        router.connection_pages = [[app_connection("co-1", "company", "github")]]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n"
+            "  - name: github\n    sandbox: true\n"
+            "  - name: code\n    connector: github\n    connection: company\n"
+            "    sandbox: true\n"
+            "  - name: issues\n    connector: linear\n"
+            "    require_approval: [create_*, update_issue]\n"
+            "  - name: mail\n    sandbox: false\n    require_approval: []\n"
+            "  - linear\n"
+        )
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        session = {"type": "session"}
+        assert router.bodies[-1]["connectors"] == [
+            {
+                "name": "github",
+                "connector_id": "github",
+                "connection": session,
+                "tools": [],
+                "tool_patterns": ["*"],
+                "sandbox": True,
+            },
+            {
+                "name": "code",
+                "connector_id": "github",
+                "connection": {"type": "fixed", "connection_id": "co-1"},
+                "tools": [],
+                "tool_patterns": ["*"],
+                "sandbox": True,
+            },
+            {
+                "name": "issues",
+                "connector_id": "linear",
+                "connection": session,
+                "tools": [],
+                "tool_patterns": ["*"],
+                "require_approval": ["create_*", "update_issue"],
+            },
+            {
+                "name": "mail",
+                "connector_id": "mail",
+                "connection": session,
+                "tools": [],
+                "tool_patterns": ["*"],
+                "require_approval": [],
+            },
+            {
+                "name": "linear",
+                "connector_id": "linear",
+                "connection": session,
+                "tools": [],
+                "tool_patterns": ["*"],
             },
         ]
 

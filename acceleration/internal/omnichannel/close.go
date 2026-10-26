@@ -16,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -170,6 +171,8 @@ func (c *Closer) Close() {
 // summary lease ran out, and summarizes each. It returns once their summaries are written or
 // have failed.
 func (c *Closer) Sweep(ctx context.Context) error {
+	// What a sweep summarizes, no key and no hook started.
+	ctx = routing.WithAttribution(ctx, routing.Attribution{APIKey: routing.JobOrigin("episode_summary")})
 	now := time.Now()
 	closed, err := c.store.CloseIdleEpisodes(ctx, now.Add(-c.idle), now, sweepBatch, now.Add(c.lease))
 	if err != nil {
@@ -193,10 +196,12 @@ func (c *Closer) EndCall(ctx context.Context, scope store.AppScope, callID strin
 	if err != nil || len(closed) == 0 {
 		return err
 	}
+	// The summaries are owned by whatever ended the call, as ctx says.
+	summarizing := routing.WithAttribution(c.ctx, routing.AttributionFrom(ctx))
 	c.running.Add(1)
 	go func() {
 		defer c.running.Done()
-		c.finish(c.ctx, closed, nil)
+		c.finish(summarizing, closed, nil)
 	}()
 	return nil
 }

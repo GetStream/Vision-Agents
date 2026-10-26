@@ -45,6 +45,9 @@ modules the host resolved. `main.release` is the version Sentry files events und
 workflow sets it. Repeat with
 `--platform linux/amd64`, which works under emulation.
 
+`GOPROXY=off` also means a module the host has not downloaded fails the build: after a
+`go.mod` change, run `go mod download` in `acceleration/` on the host first.
+
 Versions are `vX.Y.Z` or `vX.Y.Z-<prerelease>`, an unreleased build is named after its
 commit (`v0.6.9-dev-<short sha>`), and a published one is immutable. The build is
 reproducible, so the checksum a pod reports traces back to a commit.
@@ -101,11 +104,26 @@ A release is a tagged build, published once, then deployed per shard:
 - Prod runs with the overlap deploy on, so a restarted pod drains its calls (up to 1 h),
   but `rocky fastdeploy` does not reach the prod clusters yet: deploy with `launch deploy`.
 
+## The key encryption key
+
+A hosted router can unwrap its key encryption key with Cloud KMS at startup in place of holding
+it in `ROUTER_AUTH_KEK`: the steps (IAM role, the `gcloud kms encrypt` line, the two variables)
+are in `acceleration/README.md`, «The key encryption key in Cloud KMS». Ship the build first,
+with the values unchanged, then switch the values and restart: in that one change set
+`ROUTER_AUTH_KMS_KEY` and `ROUTER_AUTH_KEK_V1_WRAPPED` and remove `ROUTER_AUTH_KEK` (and
+`ROUTER_AUTH_KEK_V1`) from the router's environment, because a router with both forms of a
+version refuses to start. Keep a copy of the plain key outside the deployment for rollback,
+and check that the pods start and open an existing connection. To roll back, restore
+`ROUTER_AUTH_KEK` from that copy and unset `ROUTER_AUTH_KMS_KEY` and `ROUTER_AUTH_KEK_V1_WRAPPED`.
+
 ## Before and after
 
 - Commit and push first, and build from a clean tree: the version has to name a commit somebody else can check out.
 - Values and router are one deployment. Rolling the auth work also meant moving `ROUTER_AUTH_MODE` to `proxy`, because `noauth` had changed meaning underneath it. Render the chart, diff it against the live release, explain every line.
 - Migrations run on start. Additive is fine; anything else wants a plan first.
+- Never roll back below `accelerate-v0.6.135`, the first tag with f38926d2 (#1182): an older
+  router ignores `require_approval` on connector bindings, so their write tools run without
+  the person's approval.
 - The version is deliberately not in the pod spec. The fetch initContainer's log says which binary a pod started on; after a fastdeploy, ask `--status` instead.
 - A model with no key in that environment drops to the next candidate, and when a strict term like `diarize` leaves none the STT socket just closes on the caller. Check the key before reading that as a bug.
 - Verify from outside: `examples/routers/stt_realtime_example -staging` streams a file through the hosted router and prints which model answered.

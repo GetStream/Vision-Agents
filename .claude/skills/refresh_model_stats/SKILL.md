@@ -17,8 +17,9 @@ is how they change.
 | search | `search_index` (0 to 100), `cost_per_task` (USD) | [agents/search-api](https://artificialanalysis.ai/agents/search-api), Search Index and search plus model cost per task |
 | llm | `intelligence_index`, `output_tokens_per_second` | [leaderboards/models](https://artificialanalysis.ai/leaderboards/models), Intelligence Index; speed per host from `models/<slug>/providers` |
 
-The LLM table also shows input and output token prices. Those are the model's `price`, not a
-benchmark, so this skill leaves them alone.
+The LLM table also shows input and output token prices. Those come from the price list
+(`acceleration/prices/vendor.json`, then the database), not a benchmark, so this skill leaves
+them alone: the `check_prices` skill checks them.
 
 ## 1. Pull the numbers
 

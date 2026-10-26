@@ -30,7 +30,7 @@ func (s *ConnectorResolverSuite) SetupTest() {
 }
 
 func (s *ConnectorResolverSuite) TestWithConnectorsOffThereIsNoResolver() {
-	sealer, err := newSecretSealer(s.settings)
+	sealer, err := newSecretSealer(s.T().Context(), s.settings)
 	s.Require().NoError(err)
 	registry, err := newConnectorRegistry(s.settings, nil)
 	s.Require().NoError(err)

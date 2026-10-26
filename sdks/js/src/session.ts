@@ -2,7 +2,9 @@ import type { Client, Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
 import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
+import { Speech } from "./speech.js";
 import type { ChatClient, VideoClient } from "./stream.js";
+import { Holds, socketLine, toolCallOf } from "./tool_line.js";
 import type { ToolApproval, Tools } from "./tools.js";
 
 /**
@@ -42,12 +44,18 @@ export interface Participant {
  * One thing the conversation did.
  *
  * `kind` is the backend's own name for it: joined, hearing, heard, decision, responding,
- * response_delta, responded, blocked, spoke, turn, delegated, task_settled, task_cancelled,
- * tool_started, tool_ran, transferred, pressed, looked_up, backchannel, interrupted,
- * overlap_decided, conversation_compacted, conversation_updated, error and left, and
- * tool_call for a call waiting in `session.approvals`. The fields
+ * response_delta, responded, blocked, speaking, spoke, turn, delegated, task_settled,
+ * task_cancelled, tool_started, tool_ran, transferred, pressed, looked_up, backchannel,
+ * interrupted, overlap_decided, conversation_compacted, conversation_updated, error and left,
+ * and tool_call for a call waiting in `session.approvals`. The fields
  * below are filled from whichever of those carry them, and `frame` is the whole thing for
  * anything they do not cover.
+ *
+ * `speaking` is an utterance starting to be heard, and `text` is what the voice had been sent
+ * for it by then; its `frame` has `turn_id`, `synthesis_id` and `at`. The utterance's `spoke`
+ * follows with the same `synthesis_id`, its `characters` and `audio_duration_ms`, which is
+ * how a page reveals a reply as it is said rather than as it is written. `session.speech`
+ * does that sum, by turn, without a loop of its own.
  */
 export interface SessionEvent {
   readonly kind: string;
@@ -124,6 +132,16 @@ export class Session {
   readonly responses: Responses;
   /** Starts and stops the agent talking on the session's call. */
   readonly voice: Voice;
+  /**
+   * How much of each of the agent's replies has been heard on the call, by turn: what a
+   * page reveals a reply's Chat message by, as it is said rather than as it is written.
+   * Fed from the socket beside `events()`, so it needs no loop of its own and takes nothing
+   * from one. Empty for a conversation in writing, one not watched, or a router that does
+   * not send `speaking`. While the agent is on the call, a reply known to be coming is held
+   * at nothing heard until its voice starts, for up to `SPEECH_GRACE_MS`; `voice.stop()`,
+   * the agent leaving the call and the session ending stop that.
+   */
+  readonly speech = new Speech({ voice: () => this.voice.started });
 
   /**
    * Undefined for a conversation that is read and written to over HTTP rather than watched
@@ -139,6 +157,9 @@ export class Session {
   private readonly buffered: SessionEvent[] = [];
   private readonly waiting: ((next: IteratorResult<SessionEvent>) => void)[] = [];
   private readonly running = new Map<string, AbortController>();
+  private readonly holds = new Holds();
+  /** Aborts when the socket ends, which stops even a call that asked to be held. */
+  private readonly ending = new AbortController();
   private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
   private readonly finished: Promise<void>;
   private ended = false;
@@ -154,7 +175,9 @@ export class Session {
     this.socket = socket;
     this.tools = tools;
     this.responses = new Responses(client, created.id);
-    this.voice = new Voice(client, created.id, Boolean(created.call_id));
+    this.voice = new Voice(client, created.id, Boolean(created.call_id), (on) =>
+      this.speech.voiceChanged(on),
+    );
     this.finished = socket ? this.watch() : Promise.resolve();
   }
 
@@ -472,9 +495,18 @@ export class Session {
         if (message instanceof Uint8Array) {
           continue;
         }
+        // Read here rather than off events(), which is the caller's one stream.
+        this.speech.observe(message);
 
         if (message.type === "tool_call") {
-          const approval = this.tools?.approval(text(message, "name"));
+          // Every watcher is sent every call, and the router says which are to run it. One
+          // from before it said holds the same rule: answering a tool held elsewhere would
+          // beat whoever runs it, with an error.
+          if (message["run"] === false || !this.tools?.has(text(message, "name"))) {
+            continue;
+          }
+          // A caller who already said yes on a voice call is not asked again.
+          const approval = message.approved === true ? undefined : this.tools.approval(text(message, "name"));
           if (approval) {
             this.hold(message, approval);
             this.deliver(eventOf(message));
@@ -484,15 +516,24 @@ export class Session {
           continue;
         }
         if (message.type === "tool_cancel") {
-          this.running.get(text(message, "id"))?.abort();
-          this.asking.delete(text(message, "id"));
+          const id = text(message, "id");
+          this.holds.answer(id, false);
+          if (!this.holds.held(id)) {
+            this.running.get(id)?.abort();
+          }
+          this.asking.delete(id);
           continue;
+        }
+        if (message.type === "tool_held") {
+          this.holds.answer(text(message, "id"), true);
         }
         this.deliver(eventOf(message));
       }
     } finally {
       this.ended = true;
+      this.speech.close();
       this.asking.clear();
+      this.ending.abort();
       for (const cancel of this.running.values()) {
         cancel.abort();
       }
@@ -544,11 +585,14 @@ export class Session {
       if (!this.tools) {
         throw new Error(`${name} was asked for, and no tools are registered`);
       }
-      result["output"] = await this.tools.call(name, text(frame, "arguments"), cancel.signal);
+      const line = socketLine((sent) => this.socket?.open && this.socket.send(sent), this.holds);
+      const call = toolCallOf(frame, this.id, line, this.ending.signal);
+      result["output"] = await this.tools.call(name, text(frame, "arguments"), cancel.signal, call);
     } catch (cause) {
       result["error"] = cause instanceof Error ? cause.message : String(cause);
     } finally {
       this.running.delete(id);
+      this.holds.forget(id);
     }
 
     if (this.socket?.open) {
@@ -606,11 +650,14 @@ export class Voice {
   private readonly client: Client;
   private readonly sessionId: string;
   private on: boolean;
+  private readonly changed: ((on: boolean) => void) | undefined;
 
-  constructor(client: Client, sessionId: string, on: boolean) {
+  /** `changed` hears the agent being put on the call or taken off it from here. */
+  constructor(client: Client, sessionId: string, on: boolean, changed?: (on: boolean) => void) {
     this.client = client;
     this.sessionId = sessionId;
     this.on = on;
+    this.changed = changed;
   }
 
   /** Whether the agent is on the call, as far as this process knows. */
@@ -624,6 +671,7 @@ export class Voice {
       path: { id: this.sessionId },
     });
     this.on = true;
+    this.changed?.(true);
     return started;
   }
 
@@ -633,6 +681,7 @@ export class Voice {
       path: { id: this.sessionId },
     });
     this.on = false;
+    this.changed?.(false);
     return stopped;
   }
 }

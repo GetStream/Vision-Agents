@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -15,6 +16,10 @@ type InboundAudio struct {
 	// Whatever the transport carried is the edge's problem to convert.
 	Audio audio.PcmData
 }
+
+// ErrCallLeft is what an edge's PublishAudio returns once the call is over. The caller hanging
+// up mid-reply ends the reply, which is no failure of the agent's.
+var ErrCallLeft = errors.New("the call has been left")
 
 // Edge is where the conversation happens. It is deliberately four methods wide, so the
 // agent's flow can be exercised in-process against a loopback rather than only against a
@@ -114,4 +119,18 @@ type Roster interface {
 	// the edge joined. The channel closes when the edge leaves. Those already in the call
 	// must be queued on it before Join returns.
 	Attendance() <-chan Attendance
+}
+
+// SFU is the Stream SFU a call runs on, by the name of its edge and the host of its URL.
+type SFU struct {
+	Edge string
+	Host string
+}
+
+// SFUReporter is an edge that can say which SFU it is on.
+//
+// Separate from Edge rather than a fifth method on it, because only a transport that
+// connects to an SFU has one. An edge without it leaves the SFU unnamed.
+type SFUReporter interface {
+	SFU() SFU
 }

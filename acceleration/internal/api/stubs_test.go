@@ -68,6 +68,14 @@ func routableConfig() routing.ModalityConfig {
 	}
 }
 
+// searchConfig is routableConfig at a price per search, so what a search is billed can be
+// read off its row.
+func searchConfig() routing.ModalityConfig {
+	config := routableConfig()
+	config.Providers[0].Price = routing.Price{PerThousandRequests: 5}
+	return config
+}
+
 // recordingConfig adds the batch half a whole recording is served by, so a job sent to the
 // live shortcut can be told apart from one that reached the recorded one.
 func recordingConfig() routing.ModalityConfig {
@@ -107,6 +115,8 @@ func reasoningConfig() routing.ModalityConfig {
 	// Reached by name only: no shortcut asks for Latin.
 	config.Providers = append(config.Providers,
 		routing.ProviderConfig{Provider: "echo", Model: "echo-model", Languages: []string{"la"}},
+		// Run by the deployment itself with no price, so it costs nothing.
+		routing.ProviderConfig{Provider: "echo", Model: "local-model", Languages: []string{"la"}, Local: true},
 		routing.ProviderConfig{Provider: "noted", Model: "noted-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "tooling", Model: "tool-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}},
@@ -118,6 +128,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},
 			Price: routing.Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.5, PerMillionOutputTokens: 10}},
 		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "checking", Model: "checking-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "judging", Model: "judging-model", Languages: []string{"la"}},
@@ -145,6 +156,8 @@ type scriptedLLM struct {
 	mu    sync.Mutex
 	turns int
 	reply string
+	// then, when set, is what every turn after the first says instead of reply.
+	then  string
 	calls []llm.ToolCall
 	asked []llm.ResponseParams
 	sees  bool
@@ -181,6 +194,9 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	s.asked = append(s.asked, params)
 	first := s.turns == 1
 	reply := s.reply
+	if !first && s.then != "" {
+		reply = s.then
+	}
 	if s.echoes {
 		reply = params.Instructions
 	}
@@ -289,9 +305,17 @@ func (s *scriptedLLM) holds() {
 
 // quietSTT hears nothing, since these tests drive a session over HTTP rather than through
 // a microphone.
-type quietSTT struct{ emitter *stt.Emitter }
+type quietSTT struct {
+	emitter *stt.Emitter
+	// started is told when the router starts it, which a readiness probe never does.
+	started func(*quietSTT)
+}
 
-func (s *quietSTT) Start(context.Context) error                     { return nil }
+func (s *quietSTT) Start(context.Context) error {
+	s.started(s)
+	return nil
+}
+
 func (s *quietSTT) ProcessAudio(stt.PcmData, stt.Participant) error { return nil }
 func (s *quietSTT) Events() <-chan stt.Event                        { return s.emitter.Events() }
 func (s *quietSTT) Provider() string                                { return "stub" }
@@ -382,36 +406,41 @@ func (batchOnlySTT) Close() error                                    { return ni
 func (batchOnlySTT) Provider() string                                { return "batch" }
 func (batchOnlySTT) Model() string                                   { return batchModel }
 
-// recordingTTS keeps what it was asked to say.
+// unconfiguredModel is new each run, as refusingModel is: health is kept in a Redis other
+// runs share.
+var unconfiguredModel = fmt.Sprintf("unconfigured-%d", time.Now().UnixNano())
+
+// errUnconfigured is what a vendor's factory says on a deployment never given its key, as
+// microsoft.New says on one with no AZURE_MAI_API_KEY.
+var errUnconfigured = errors.New("unconfigured: api key is required (set UNCONFIGURED_API_KEY)")
+
+// recordingTTS keeps what it was asked to say, in a log the suite's voices share.
 type recordingTTS struct {
 	emitter *tts.Emitter
+	said    *saidLog
+	// voice is the one it was opened with.
+	voice string
+	// started is told when the router starts it, which a readiness probe never does.
+	started func(*recordingTTS)
+}
 
+// saidLog is what every voice it is handed to was told to say, in order.
+type saidLog struct {
 	mu   sync.Mutex
 	said []string
-	// voice is the one it was last opened with.
-	voice string
 }
 
-// opened is the voice opened again, in the voice asked.
-func (s *recordingTTS) opened(voice string) *recordingTTS {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.voice = voice
-	return s
-}
+func (s *recordingTTS) Voice() string { return s.voice }
 
-func (s *recordingTTS) Voice() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.voice
+func (s *recordingTTS) Start(context.Context) error {
+	s.started(s)
+	return nil
 }
-
-func (s *recordingTTS) Start(context.Context) error { return nil }
 
 func (s *recordingTTS) Synthesize(request tts.Request) error {
-	s.mu.Lock()
-	s.said = append(s.said, request.Text)
-	s.mu.Unlock()
+	s.said.mu.Lock()
+	s.said.said = append(s.said.said, request.Text)
+	s.said.mu.Unlock()
 
 	if request.Final {
 		s.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID})
@@ -432,11 +461,11 @@ func (s *recordingTTS) Close() error {
 	return nil
 }
 
-// spoken is everything this voice has been told to say.
-func (s *recordingTTS) spoken() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.said...)
+// spoken is everything the voices given this log have been told to say.
+func (l *saidLog) spoken() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.said...)
 }
 
 // recordedTranscriber transcribes whatever it is handed into the same transcript, so a job
@@ -755,6 +784,7 @@ type stubConversation struct {
 	typed        chan string
 	answers      chan string
 	interrupts   chan int
+	updates      chan sts.CallUpdate
 	closed       chan struct{}
 }
 
@@ -790,6 +820,7 @@ func newStubConversation(capabilities sts.Capabilities) *stubConversation {
 		typed:        make(chan string, 16),
 		answers:      make(chan string, 16),
 		interrupts:   make(chan int, 16),
+		updates:      make(chan sts.CallUpdate, 16),
 		closed:       make(chan struct{}),
 	}
 }
@@ -810,7 +841,12 @@ func (s *stubConversation) Answer(callID, output string, _ error) error {
 	s.answers <- callID + "=" + output
 	return nil
 }
-func (s *stubConversation) Prompt(string) error          { return nil }
+func (s *stubConversation) Prompt(string) error { return nil }
+func (s *stubConversation) UpdatesCalls() bool  { return true }
+func (s *stubConversation) UpdateCall(update sts.CallUpdate) error {
+	s.updates <- update
+	return nil
+}
 func (s *stubConversation) Interrupt(playedMs int) error { s.interrupts <- playedMs; return nil }
 func (s *stubConversation) Events() <-chan sts.Event     { return s.emitter.Events() }
 
@@ -842,39 +878,68 @@ func newKnowledgeBase() *knowledgeBase {
 	return &knowledgeBase{passages: map[string]knowledge.Document{}}
 }
 
-func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []knowledge.Document) error {
+// knowledgeQueried is what the stub bills a query as having searched: the least a small
+// namespace is billed at turbopuffer.
+const knowledgeQueried = 1_280_000_000
+
+// passageBytes is a passage's logical size, as turbopuffer bills it.
+func passageBytes(document knowledge.Document) int64 {
+	return int64(len(document.ID) + len(document.Text) + len(document.Source))
+}
+
+func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []knowledge.Document) (knowledge.Billed, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	b.namespace = namespace
+	billed := knowledge.Billed{Requests: 1}
 	for _, document := range documents {
 		b.passages[document.ID] = document
+		billed.BytesWritten += passageBytes(document)
 	}
-	return nil
+	return billed, nil
 }
 
-func (b *knowledgeBase) Delete(_ context.Context, _ string, ids []string) error {
+func (b *knowledgeBase) Delete(_ context.Context, _ string, ids []string) (knowledge.Billed, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	billed := knowledge.Billed{Requests: 1}
 	for _, id := range ids {
 		delete(b.passages, id)
+		billed.BytesWritten += int64(len(id))
 	}
-	return nil
+	return billed, nil
 }
 
-func (b *knowledgeBase) Fetch(_ context.Context, _ string, ids []string) ([]knowledge.Document, error) {
+func (b *knowledgeBase) Fetch(_ context.Context, _ string, ids []string) (knowledge.Found, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	var found []knowledge.Document
+	found := knowledge.Found{Billed: knowledge.Billed{Requests: 1, BytesQueried: knowledgeQueried}}
 	for _, id := range ids {
 		if document, ok := b.passages[id]; ok {
-			found = append(found, document)
+			found.Documents = append(found.Documents, document)
+			found.BytesReturned += passageBytes(document)
 		}
 	}
+	found.Results = int64(len(found.Documents))
 	return found, nil
 }
+
+func (b *knowledgeBase) Search(context.Context, knowledge.Query) (knowledge.Found, error) {
+	return knowledge.Found{Billed: knowledge.Billed{Requests: 1, BytesQueried: knowledgeQueried}}, nil
+}
+
+func (b *knowledgeBase) Namespaces(context.Context, string) ([]string, error) { return nil, nil }
+
+func (b *knowledgeBase) Stored(context.Context, string) (knowledge.Billed, error) {
+	return knowledge.Billed{}, knowledge.ErrNoNamespace
+}
+
+func (b *knowledgeBase) Provider() string { return "kept" }
+
+func (b *knowledgeBase) Close() error { return nil }
 
 // stored is the namespace last written to and the passages it holds.
 func (b *knowledgeBase) stored() (string, map[string]knowledge.Document) {
@@ -906,25 +971,25 @@ type keptMemories struct {
 	kept []memory.Scope
 }
 
-func (m *keptMemories) Recall(context.Context, memory.Query) ([]memory.Memory, error) {
-	return nil, nil
+func (m *keptMemories) Recall(context.Context, memory.Query) (memory.Recalled, error) {
+	return memory.Recalled{Billed: memory.Billed{Requests: 1}}, nil
 }
 
-func (m *keptMemories) Remember(_ context.Context, scope memory.Scope, _ []llm.Message) error {
+func (m *keptMemories) Remember(_ context.Context, scope memory.Scope, _ []llm.Message) (memory.Billed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.kept = append(m.kept, scope)
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
-func (m *keptMemories) Truncate(_ context.Context, appID, userID string) error {
+func (m *keptMemories) Truncate(_ context.Context, appID, userID string) (memory.Billed, error) {
 	m.forget(func(kept memory.Scope) bool { return kept.AppID == appID && kept.UserID == userID })
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
-func (m *keptMemories) ForgetRun(_ context.Context, appID, runID string) error {
+func (m *keptMemories) ForgetRun(_ context.Context, appID, runID string) (memory.Billed, error) {
 	m.forget(func(kept memory.Scope) bool { return kept.AppID == appID && kept.RunID == runID })
-	return nil
+	return memory.Billed{Requests: 1}, nil
 }
 
 func (m *keptMemories) Provider() string { return "kept" }

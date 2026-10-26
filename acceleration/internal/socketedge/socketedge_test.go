@@ -120,3 +120,124 @@ func (s *SocketEdgeSuite) TestLeavingEndsTheCallBothWays() {
 	s.ErrorIs(s.edge.Hear(make([]byte, 640)), ErrLeft)
 	s.ErrorIs(s.edge.PublishAudio(speech(20*time.Millisecond)), ErrLeft)
 }
+
+// The edge is one call, held once: joining it again after leaving would start a second
+// playout on a call already hung up.
+func (s *SocketEdgeSuite) TestAnEdgeThatHasLeftIsNotJoinedAgain() {
+	s.False(s.edge.Left())
+	s.Require().NoError(s.edge.Leave())
+
+	s.ErrorIs(s.edge.Join(context.Background()), ErrLeft)
+	s.True(s.edge.Left())
+	s.ErrorIs(s.edge.PublishAudio(speech(20*time.Millisecond)), ErrLeft)
+}
+
+// Joining a call already joined changes nothing: there is still one playout, and leaving
+// stops it once.
+func (s *SocketEdgeSuite) TestJoiningTwiceIsOneCall() {
+	s.Require().NoError(s.edge.Join(context.Background()))
+
+	s.NoError(s.edge.Leave())
+	s.True(s.edge.Left())
+}
+
+// An edge left before it was joined has no playout to wait for: leaving returns.
+func (s *SocketEdgeSuite) TestLeavingAnEdgeNeverJoinedReturns() {
+	edge := New(Options{Send: func([]byte) error { return nil }})
+	left := make(chan error, 1)
+
+	go func() { left <- edge.Leave() }()
+
+	select {
+	case err := <-left:
+		s.NoError(err)
+	case <-time.After(2 * time.Second):
+		s.Fail("Leave waits for a playout that never started")
+	}
+	s.ErrorIs(edge.Join(context.Background()), ErrLeft)
+}
+
+// A voice started while the same voice is stopped joins, asks and leaves the edge at once:
+// whichever wins, the call is held at most once and hung up once.
+func (s *SocketEdgeSuite) TestJoinRacingLeaveHangsUpOnce() {
+	for range 200 {
+		edge := New(Options{Send: func([]byte) error { return nil }})
+		left := make(chan error, 1)
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() { defer wg.Done(); _ = edge.Join(context.Background()) }()
+		go func() { defer wg.Done(); _ = edge.Join(context.Background()) }()
+		go func() { defer wg.Done(); _ = edge.Left() }()
+		go func() { left <- edge.Leave() }()
+		wg.Wait()
+
+		select {
+		case err := <-left:
+			s.Require().NoError(err)
+		case <-time.After(2 * time.Second):
+			s.Require().Fail("Leave hangs")
+		}
+		s.Require().True(edge.Left())
+		s.Require().ErrorIs(edge.Join(context.Background()), ErrLeft)
+	}
+}
+
+// The socket's read loop hears frames while a DELETE voice leaves on another goroutine: a
+// frame heard as the call ends is refused, never sent on the closed audio channel.
+func (s *SocketEdgeSuite) TestHearRacingLeaveNeverSendsOnAClosedChannel() {
+	for i := range 3000 {
+		edge := New(Options{Send: func([]byte) error { return nil }})
+		if i%2 == 0 {
+			s.Require().NoError(edge.Join(context.Background()))
+		}
+		drained := make(chan struct{})
+		go func() {
+			for range edge.Audio() {
+			}
+			close(drained)
+		}()
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for edge.Hear(make([]byte, 640)) == nil {
+				}
+			}()
+		}
+		s.Require().NoError(edge.Leave())
+		wg.Wait()
+		<-drained
+	}
+}
+
+// A frame waiting for room on the audio channel, which nothing reads, is released by leaving,
+// so Leave returns whether or not the edge was joined.
+func (s *SocketEdgeSuite) TestLeavingReleasesAHearWaitingToSend() {
+	for _, join := range []bool{true, false} {
+		edge := New(Options{Send: func([]byte) error { return nil }})
+		if join {
+			s.Require().NoError(edge.Join(context.Background()))
+		}
+		heard := make(chan error, 1)
+		go func() {
+			for {
+				if err := edge.Hear(make([]byte, 640)); err != nil {
+					heard <- err
+					return
+				}
+			}
+		}()
+		s.Require().Eventually(func() bool { return len(edge.inbound) == cap(edge.inbound) }, 2*time.Second, time.Millisecond)
+
+		left := make(chan error, 1)
+		go func() { left <- edge.Leave() }()
+		select {
+		case err := <-left:
+			s.Require().NoError(err)
+		case <-time.After(2 * time.Second):
+			s.Require().Fail("Leave waits for a Hear that is never released")
+		}
+		s.Require().ErrorIs(<-heard, ErrLeft)
+	}
+}

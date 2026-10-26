@@ -62,15 +62,6 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 // the directory says, and is part of the fingerprint, so changing either syncs again.
 func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithResponses) (*acceleration.AgentConfig, error) {
 	folder := a.folder
-	// Still sent as before, until the router stops taking them.
-	if len(folder.Settings.Plugins) > 0 || len(folder.Settings.PluginEvents) > 0 {
-		named := make([]string, 0, len(folder.Settings.Plugins))
-		for _, plugin := range folder.Settings.Plugins {
-			named = append(named, plugin.Name)
-		}
-		a.logger.Warn("agent.yaml plugins are deprecated: rename plugins to connectors",
-			"agent", a.options.Name, "plugins", named, "plugin_events", len(folder.Settings.PluginEvents))
-	}
 	skills := a.syncedSkills()
 	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
 		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations)
@@ -201,42 +192,6 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 
 // declareSettings carries what agent.yaml declared onto the sync request. Only what the file
 // names is sent, so the router leaves whatever is already stored for the rest.
-// pluginEntries are the plugins a declaration names as the router takes them: an id alone
-// for one with nothing else said about it, or nothing for none.
-func pluginEntries(named []PluginSettings) *[]acceleration.PluginEntry {
-	if len(named) == 0 {
-		return nil
-	}
-	entries := make([]acceleration.PluginEntry, 0, len(named))
-	for _, plugin := range named {
-		var entry acceleration.PluginEntry
-		if plugin.User == nil && !plugin.Readonly && len(plugin.Scopes) == 0 && len(plugin.Toolsets) == 0 && len(plugin.Tools) == 0 {
-			// A string always encodes.
-			_ = entry.FromPluginEntry0(plugin.Name)
-			entries = append(entries, entry)
-			continue
-		}
-		declared := acceleration.PluginWithOptions{Name: plugin.Name}
-		declared.User = plugin.User
-		if plugin.Readonly {
-			declared.Readonly = &plugin.Readonly
-		}
-		if len(plugin.Scopes) > 0 {
-			declared.Scopes = &plugin.Scopes
-		}
-		if len(plugin.Toolsets) > 0 {
-			declared.Toolsets = &plugin.Toolsets
-		}
-		if len(plugin.Tools) > 0 {
-			declared.Tools = &plugin.Tools
-		}
-		// Neither does a struct of strings and a bool.
-		_ = entry.FromPluginWithOptions(declared)
-		entries = append(entries, entry)
-	}
-	return &entries
-}
-
 func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	if settings.Role != "" {
 		role := acceleration.AgentRole(settings.Role)
@@ -287,22 +242,6 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 			Cpu: &cpu, MemoryGb: &memory, DiskGb: &disk, Network: &options.Network,
 			AllowedDomains: &options.AllowedDomains, NetworkAllowList: &options.NetworkAllowList,
 		}
-	}
-	body.Plugins = pluginEntries(settings.Plugins)
-	if len(settings.PluginEvents) > 0 {
-		events := make([]acceleration.PluginEvent, 0, len(settings.PluginEvents))
-		for _, event := range settings.PluginEvents {
-			declared := acceleration.PluginEvent{Plugin: event.Plugin, Event: event.Event}
-			if len(event.Arguments) > 0 {
-				arguments := event.Arguments
-				declared.Arguments = &arguments
-			}
-			if event.Instructions != "" {
-				declared.Instructions = &event.Instructions
-			}
-			events = append(events, declared)
-		}
-		body.PluginEvents = &events
 	}
 	if len(settings.MCPServers) > 0 {
 		servers := make([]acceleration.McpServer, 0, len(settings.MCPServers))
@@ -432,6 +371,10 @@ func connectorBinding(ctx context.Context, client *acceleration.ClientWithRespon
 		ToolPatterns: &patterns,
 		Required:     entry.Required,
 		Connection:   acceleration.AgentConnectorSelection{Type: acceleration.AgentConnectorSelectionTypeSession},
+	}
+	binding.RequireApproval = entry.RequireApproval
+	if entry.Sandbox {
+		binding.Sandbox = &entry.Sandbox
 	}
 	if entry.Connection == nil {
 		return binding, nil

@@ -41,7 +41,10 @@ func TestFlowAConnectsCustomerOfferToStream(t *testing.T) {
 	customer := &fakeLeg{inviteAnswer: customerOfferSDP}
 	stream := &fakeLeg{inviteAnswer: streamAnswerSDP}
 
-	require.NoError(t, flowA(t.Context(), flowConfig(), customer, stream))
+	media, err := flowA(t.Context(), flowConfig(), customer, stream)
+	require.NoError(t, err)
+
+	require.Equal(t, MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"}, media)
 
 	require.Equal(t, []string{"invite", "ack"}, customer.calls())
 	require.Nil(t, customer.body(0))
@@ -54,7 +57,7 @@ func TestFlowACustomerNotAnsweringNeverRingsStream(t *testing.T) {
 	customer := &fakeLeg{inviteErr: errBusy}
 	stream := &fakeLeg{}
 
-	err := flowA(t.Context(), flowConfig(), customer, stream)
+	_, err := flowA(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorIs(t, err, errBusy)
 	require.Empty(t, stream.calls())
@@ -64,7 +67,7 @@ func TestFlowARingTimeoutCancelsCustomer(t *testing.T) {
 	customer := &fakeLeg{inviteBlocks: true}
 	stream := &fakeLeg{}
 
-	err := flowA(t.Context(), flowConfig(), customer, stream)
+	_, err := flowA(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Equal(t, []string{"invite"}, customer.calls())
@@ -75,7 +78,7 @@ func TestFlowAStreamRejectingHangsUpAnsweredCustomer(t *testing.T) {
 	customer := &fakeLeg{inviteAnswer: customerOfferSDP}
 	stream := &fakeLeg{inviteErr: errors.New("404 Not Found")}
 
-	err := flowA(t.Context(), flowConfig(), customer, stream)
+	_, err := flowA(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorContains(t, err, "404 Not Found")
 	require.Equal(t, []string{"invite", "ack", "bye"}, customer.calls())
@@ -88,7 +91,7 @@ func TestFlowAFailedStreamAckHangsUpBoth(t *testing.T) {
 	customer := &fakeLeg{inviteAnswer: customerOfferSDP}
 	stream := &fakeLeg{inviteAnswer: streamAnswerSDP, ackErr: errors.New("broken pipe")}
 
-	err := flowA(t.Context(), flowConfig(), customer, stream)
+	_, err := flowA(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorContains(t, err, "broken pipe")
 	require.Equal(t, []string{"invite", "ack", "bye"}, customer.calls())
@@ -104,8 +107,10 @@ func TestFlowBSetsUpStreamFirstThenRetargets(t *testing.T) {
 	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP}
 	customer := &fakeLeg{inviteAnswer: customerPCMA}
 
-	require.NoError(t, flowB(t.Context(), flowConfig(), customer, stream))
+	media, err := flowB(t.Context(), flowConfig(), customer, stream)
+	require.NoError(t, err)
 
+	require.Equal(t, MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"}, media)
 	require.Equal(t, []string{"invite", "ack", "reinvite", "reinvite"}, stream.calls())
 	require.Equal(t, []string{"invite", "ack"}, customer.calls())
 
@@ -123,6 +128,17 @@ func TestFlowBSetsUpStreamFirstThenRetargets(t *testing.T) {
 		mediaOf(t, stream.body(3)))
 }
 
+func TestFlowBTakesStreamsAddressFromItsLastAnswer(t *testing.T) {
+	moved := buildSDP(Media{Addr: "203.0.113.20", Port: 20002, Codecs: []Codec{pcma, dtmfCodec}, Direction: DirSendRecv}, 6, 1)
+	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP, reinviteAnswer: moved}
+	customer := &fakeLeg{inviteAnswer: customerPCMA}
+
+	media, err := flowB(t.Context(), flowConfig(), customer, stream)
+	require.NoError(t, err)
+
+	require.Equal(t, "203.0.113.20", media.Stream)
+}
+
 func TestFlowBFirstStreamInviteUsesTheConfiguredPlaceholder(t *testing.T) {
 	cfg := flowConfig()
 	cfg.FlowB.PlaceholderAddr = "0.0.0.0"
@@ -130,7 +146,8 @@ func TestFlowBFirstStreamInviteUsesTheConfiguredPlaceholder(t *testing.T) {
 	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP}
 	customer := &fakeLeg{inviteAnswer: customerPCMA}
 
-	require.NoError(t, flowB(t.Context(), cfg, customer, stream))
+	_, err := flowB(t.Context(), cfg, customer, stream)
+	require.NoError(t, err)
 
 	first := mediaOf(t, stream.body(0))
 	require.Equal(t, "0.0.0.0", first.Addr)
@@ -141,7 +158,8 @@ func TestFlowBOffersToStreamShareOneSessionAndBumpTheVersion(t *testing.T) {
 	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP}
 	customer := &fakeLeg{inviteAnswer: customerPCMA}
 
-	require.NoError(t, flowB(t.Context(), flowConfig(), customer, stream))
+	_, err := flowB(t.Context(), flowConfig(), customer, stream)
+	require.NoError(t, err)
 
 	origin := regexp.MustCompile(`(?m)^o=- (\d+) (\d+) IN IP4 `)
 	var ids, versions []string
@@ -159,7 +177,7 @@ func TestFlowBUnansweredCustomerLeavesNothingInStream(t *testing.T) {
 	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP}
 	customer := &fakeLeg{inviteBlocks: true}
 
-	err := flowB(t.Context(), flowConfig(), customer, stream)
+	_, err := flowB(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Equal(t, "bye", stream.last())
@@ -170,7 +188,7 @@ func TestFlowBCustomerBusyHangsUpStream(t *testing.T) {
 	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP}
 	customer := &fakeLeg{inviteErr: errBusy}
 
-	err := flowB(t.Context(), flowConfig(), customer, stream)
+	_, err := flowB(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorIs(t, err, errBusy)
 	require.Equal(t, "bye", stream.last())
@@ -180,7 +198,7 @@ func TestFlowBCustomerAnsweringWithAnotherCodecHangsUpBoth(t *testing.T) {
 	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP}
 	customer := &fakeLeg{inviteAnswer: customerPCMU}
 
-	err := flowB(t.Context(), flowConfig(), customer, stream)
+	_, err := flowB(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorContains(t, err, "only PCMA was offered")
 	require.Equal(t, "bye", customer.last())
@@ -191,7 +209,7 @@ func TestFlowBStreamRejectingStopsBeforeRinging(t *testing.T) {
 	stream := &fakeLeg{inviteErr: errors.New("403 Forbidden")}
 	customer := &fakeLeg{}
 
-	err := flowB(t.Context(), flowConfig(), customer, stream)
+	_, err := flowB(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorContains(t, err, "403 Forbidden")
 	require.Equal(t, []string{"invite"}, stream.calls())
@@ -202,7 +220,7 @@ func TestFlowBHoldRefusedHangsUpStreamBeforeRinging(t *testing.T) {
 	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP, reinviteErr: errors.New("400 Bad Request")}
 	customer := &fakeLeg{}
 
-	err := flowB(t.Context(), flowConfig(), customer, stream)
+	_, err := flowB(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorContains(t, err, "400 Bad Request")
 	require.Equal(t, "bye", stream.last())
@@ -213,7 +231,7 @@ func TestFlowBStreamRejectingRetargetHangsUpBoth(t *testing.T) {
 	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP, reinviteErrs: []error{nil, errors.New("488 Not Acceptable Here")}}
 	customer := &fakeLeg{inviteAnswer: customerPCMA}
 
-	err := flowB(t.Context(), flowConfig(), customer, stream)
+	_, err := flowB(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorContains(t, err, "488 Not Acceptable Here")
 	require.Equal(t, "bye", customer.last())
@@ -224,7 +242,7 @@ func TestFlowBFailedCustomerAckHangsUpBoth(t *testing.T) {
 	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP}
 	customer := &fakeLeg{inviteAnswer: customerPCMA, ackErr: errors.New("network error")}
 
-	err := flowB(t.Context(), flowConfig(), customer, stream)
+	_, err := flowB(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorContains(t, err, "network error")
 	require.Equal(t, "bye", customer.last())
@@ -235,7 +253,7 @@ func TestFlowAFailedCustomerAckHangsUpBoth(t *testing.T) {
 	customer := &fakeLeg{inviteAnswer: customerOfferSDP, ackErr: errors.New("network error")}
 	stream := &fakeLeg{inviteAnswer: streamAnswerSDP}
 
-	err := flowA(t.Context(), flowConfig(), customer, stream)
+	_, err := flowA(t.Context(), flowConfig(), customer, stream)
 
 	require.ErrorContains(t, err, "network error")
 	require.Equal(t, "bye", customer.last())
@@ -252,11 +270,36 @@ func TestFlowBCancelWhileRingingStillHangsUpStream(t *testing.T) {
 		cancel()
 	}()
 
-	err := flowB(ctx, flowConfig(), customer, stream)
+	_, err := flowB(ctx, flowConfig(), customer, stream)
 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, "bye", stream.last())
 	// The BYE went out with a live cleanup context (nil error)
 	require.Len(t, stream.byeCtxErrs, 1)
 	require.Nil(t, stream.byeCtxErrs[0])
+}
+
+func sdpAt(addr string) []byte {
+	return buildSDP(Media{Addr: addr, Port: 40000, Codecs: []Codec{pcmu}, Direction: DirSendRecv}, 1, 1)
+}
+
+func TestMediaNamesTheSideAndTheAddress(t *testing.T) {
+	got := media(customerSide, sdpAt("203.0.113.10"))
+
+	require.Subset(t, got, []any{"side", "customer", "addr", "203.0.113.10", "port", 40000, "private", false})
+}
+
+func TestMediaFlagsAPrivateAddress(t *testing.T) {
+	for _, addr := range []string{"10.0.0.5", "100.64.1.1"} {
+		got := media(streamSide, sdpAt(addr))
+
+		require.Subset(t, got, []any{"private", true}, addr)
+	}
+}
+
+func TestMediaOfAnUnreadableBodySaysSo(t *testing.T) {
+	got := media(streamSide, []byte("garbage"))
+
+	require.Contains(t, got, "sdp_error")
+	require.Contains(t, got, "stream")
 }

@@ -120,10 +120,30 @@ func connectorDefinition(ctx context.Context, db bun.IDB, customerID, id string,
 
 // LatestConnectorDefinition returns the newest revision of a definition the customer can see.
 func (s *Store) LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error) {
+	return latestVisibleDefinition(ctx, s.db, customerID, id)
+}
+
+// Definitions reads the connector definitions a customer can see: a Store, on its pool, or
+// the one a config write hands its check, on the write's transaction.
+type Definitions interface {
+	LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error)
+}
+
+// txDefinitions reads definitions on a transaction. A check that runs under a write's row
+// lock reads on it, as a read on the pool waits for a second connection while the write
+// holds one, and with every connection held by such a write none comes.
+type txDefinitions struct{ tx bun.Tx }
+
+func (d txDefinitions) LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error) {
+	return latestVisibleDefinition(ctx, d.tx, customerID, id)
+}
+
+// latestVisibleDefinition is LatestConnectorDefinition read on db.
+func latestVisibleDefinition(ctx context.Context, db bun.IDB, customerID, id string) (ConnectorDefinition, error) {
 	if customerID == "" || id == "" {
 		return ConnectorDefinition{}, stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
-	definition, err := latestDefinition(ctx, s.db, visibleTo(customerID), id)
+	definition, err := latestDefinition(ctx, db, visibleTo(customerID), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id))
 	}
@@ -383,9 +403,11 @@ func (s *Store) BrokenConnectorRevision(ctx context.Context, connectorID string,
 
 // How a connection's pinned revision compares with its connector's (DefinitionStatus.Status).
 const (
-	// DefinitionCurrent: the connection reads its connector's latest revision.
+	// DefinitionCurrent: the connection reads its connector's latest revision, or one that
+	// differs from it only in what no connection reads (core.Manifest.ReadsAsConnection).
 	DefinitionCurrent = "current"
-	// DefinitionOutdated: a later revision exists, and the pinned one is not marked broken.
+	// DefinitionOutdated: a later revision changes what the connection reads, and the pinned
+	// one is not marked broken.
 	DefinitionOutdated = "outdated"
 	// DefinitionBroken: a later revision marked the pinned one broken.
 	DefinitionBroken = "broken"
@@ -399,8 +421,8 @@ type DefinitionStatus struct {
 }
 
 // ConnectorDefinitionStatuses is the DefinitionStatus of each of the customer's connections, by
-// connection id, in two reads whatever their number: the latest revision of each connector,
-// and the marks on them.
+// connection id, in at most three reads whatever their number: the latest revision of each
+// connector, the revisions the connections behind it pin, and the marks on them.
 func (s *Store) ConnectorDefinitionStatuses(ctx context.Context, customerID string, connections []ConnectorConnection) (map[string]DefinitionStatus, error) {
 	statuses := make(map[string]DefinitionStatus, len(connections))
 	if len(connections) == 0 {
@@ -412,32 +434,38 @@ func (s *Store) ConnectorDefinitionStatuses(ctx context.Context, customerID stri
 			ids = append(ids, connection.ConnectorID)
 		}
 	}
-	var latest []struct {
-		ID       string `bun:"id"`
-		Revision int    `bun:"revision"`
-	}
-	err := s.db.NewSelect().Model((*ConnectorDefinition)(nil)).
-		Column("id").ColumnExpr("max(revision) AS revision").
+	var latest []ConnectorDefinition
+	err := s.db.NewSelect().Model(&latest).
+		DistinctOn("cd.id").Column("id", "revision", "manifest").
 		Apply(visibleTo(customerID)).
-		Where("id IN (?)", bun.In(ids)).
-		Group("id").
-		Scan(ctx, &latest)
+		Where("cd.id IN (?)", bun.In(ids)).
+		OrderExpr("cd.id, cd.revision DESC").
+		Scan(ctx)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: latest connector revisions: %w", err))
+	}
+	newest := make(map[string]ConnectorDefinition, len(latest))
+	for _, definition := range latest {
+		newest[definition.ID] = definition
+	}
+	pinned, err := s.pinnedBehind(ctx, customerID, connections, newest)
+	if err != nil {
+		return nil, err
 	}
 	var marks []ConnectorBrokenRevision
 	err = s.db.NewSelect().Model(&marks).Where("connector_id IN (?)", bun.In(ids)).Scan(ctx)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: broken connector revisions: %w", err))
 	}
-	newest := make(map[string]int, len(latest))
-	for _, row := range latest {
-		newest[row.ID] = row.Revision
-	}
 	for _, connection := range connections {
 		status := DefinitionStatus{Status: DefinitionCurrent}
-		if connection.DefinitionRevision < newest[connection.ConnectorID] {
-			status.Status = DefinitionOutdated
+		if connection.DefinitionRevision < newest[connection.ConnectorID].Revision {
+			// A pinned revision the customer cannot read is the zero manifest here, which reads
+			// as no stored one does.
+			at := pinned[pinnedRevision{connection.ConnectorID, connection.DefinitionRevision}]
+			if !at.ReadsAsConnection(newest[connection.ConnectorID].Manifest) {
+				status.Status = DefinitionOutdated
+			}
 		}
 		for _, mark := range marks {
 			if mark.ConnectorID == connection.ConnectorID && mark.Revision == connection.DefinitionRevision {
@@ -447,6 +475,48 @@ func (s *Store) ConnectorDefinitionStatuses(ctx context.Context, customerID stri
 		statuses[connection.ID] = status
 	}
 	return statuses, nil
+}
+
+// pinnedRevision is one revision of one connector.
+type pinnedRevision struct {
+	connectorID string
+	revision    int
+}
+
+// pinnedBehind is the manifest of each revision a connection pins that is older than its
+// connector's newest, in one read, or none when no connection is behind.
+func (s *Store) pinnedBehind(ctx context.Context, customerID string, connections []ConnectorConnection, newest map[string]ConnectorDefinition) (map[pinnedRevision]core.Manifest, error) {
+	var ids []string
+	var revisions []int
+	for _, connection := range connections {
+		if connection.DefinitionRevision >= newest[connection.ConnectorID].Revision {
+			continue
+		}
+		if !slices.Contains(ids, connection.ConnectorID) {
+			ids = append(ids, connection.ConnectorID)
+		}
+		if !slices.Contains(revisions, connection.DefinitionRevision) {
+			revisions = append(revisions, connection.DefinitionRevision)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var definitions []ConnectorDefinition
+	err := s.db.NewSelect().Model(&definitions).
+		Column("id", "revision", "manifest").
+		Apply(visibleTo(customerID)).
+		Where("cd.id IN (?)", bun.In(ids)).
+		Where("cd.revision IN (?)", bun.In(revisions)).
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: pinned connector revisions: %w", err))
+	}
+	pinned := make(map[pinnedRevision]core.Manifest, len(definitions))
+	for _, definition := range definitions {
+		pinned[pinnedRevision{definition.ID, definition.Revision}] = definition.Manifest
+	}
+	return pinned, nil
 }
 
 // ErrConnectorDefinitionInUse says an unforced delete found a live connection made from the
@@ -631,11 +701,19 @@ func latestDefinition(ctx context.Context, db bun.IDB, scope func(*bun.SelectQue
 // ones unless the app's settings say internal_connectors. customer_id is the app's id, so the
 // flag is read in the same query. The JSON is compared as jsonb, so a setting that is not a
 // boolean hides the internal definitions rather than failing every read.
+//
+// A built-in is internal at every revision when its latest revision says so, so making a
+// public built-in internal hides the revisions before it too, and making it public shows them.
+// A custom definition is internal revision by revision, as it was before.
 func visibleTo(customerID string) func(*bun.SelectQuery) *bun.SelectQuery {
 	return func(q *bun.SelectQuery) *bun.SelectQuery {
 		return q.Where("cd.customer_id IN (?, ?)", BuiltinCustomer, customerID).
-			Where("(cd.manifest->'internal' IS DISTINCT FROM 'true'::jsonb OR EXISTS ("+
-				"SELECT 1 FROM apps AS ap WHERE ap.id = ? AND ap.settings->'internal_connectors' = 'true'::jsonb))", customerID)
+			Where("(CASE WHEN cd.customer_id = ? THEN ("+
+				"SELECT lr.manifest->'internal' FROM connector_definitions AS lr "+
+				"WHERE lr.customer_id = cd.customer_id AND lr.id = cd.id ORDER BY lr.revision DESC LIMIT 1"+
+				") ELSE cd.manifest->'internal' END IS DISTINCT FROM 'true'::jsonb OR EXISTS ("+
+				"SELECT 1 FROM apps AS ap WHERE ap.id = ? AND ap.settings->'internal_connectors' = 'true'::jsonb))",
+				BuiltinCustomer, customerID)
 	}
 }
 
@@ -740,6 +818,28 @@ func (s *Store) ConnectorConnectionClients(ctx context.Context, connectionIDs []
 		byConnection[client.ConnectionID] = client
 	}
 	return byConnection, nil
+}
+
+// GrantedConnectorConnectionsOfClient is every live connection of the customer's to the
+// connector that holds credentials its consent got from the client of registration with
+// clientID (ConnectorConnectionClient), oldest first: the grants that client's secret revokes.
+func (s *Store) GrantedConnectorConnectionsOfClient(ctx context.Context, customerID, connectorID string,
+	registration core.ClientRegistrationMethod, clientID string) ([]ConnectorConnection, error) {
+	var connections []ConnectorConnection
+	err := s.db.NewSelect().Model(&connections).
+		Join("JOIN connector_connection_clients AS ccc ON ccc.connection_id = cc.id").
+		Where("cc.customer_id = ?", customerID).
+		Where("cc.connector_id = ?", connectorID).
+		Where("cc.deleted_at IS NULL").
+		Where("cc.credentials_sealed <> ''::bytea").
+		Where("ccc.registration = ?", registration).
+		Where("ccc.client_id = ?", clientID).
+		Order("cc.created_at", "cc.id").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: list a client's granted connector connections: %w", err))
+	}
+	return connections, nil
 }
 
 // ConnectorConnectionValidation is the last validate of a connection (AI-1052), kept in

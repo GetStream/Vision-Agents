@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,4 +170,147 @@ func (s *UsersSuite) TestADeploymentWithNoRedisStillWritesItsUsersDown() {
 	kind, found := s.recorded(app, "jlahey")
 	s.True(found)
 	s.Equal(store.UserKindAuthenticated, kind)
+}
+
+// email is the address a user's row holds.
+func (s *UsersSuite) email(customerID, userID string) string {
+	email, err := s.db.UserEmail(s.ctx, customerID, userID)
+	s.Require().NoError(err)
+	return email
+}
+
+// plain is a recorder with no Redis, holding an email for emailTTL.
+func (s *UsersSuite) plain(emailTTL time.Duration) *Recorder {
+	recorder, err := New(Options{Store: s.db, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(recorder.Close)
+	recorder.emailTTL = emailTTL
+	return recorder
+}
+
+// TestAnEmailIsWrittenAgainOnceItsTTLEnds changes the row behind the recorder's back, so a
+// later Email putting the address back is evidence that it went to Postgres.
+func (s *UsersSuite) TestAnEmailIsWrittenAgainOnceItsTTLEnds() {
+	recorder, app := s.plain(500*time.Millisecond), s.app()
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	s.Require().NoError(s.db.SetUserEmail(s.ctx, app, "jlahey", "behind@fake.example"))
+
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	s.Equal("behind@fake.example", s.email(app, "jlahey"), "an address just written costs no write")
+
+	s.Eventually(func() bool {
+		return recorder.Email(s.ctx, app, "jlahey", "jim@fake.example") == nil &&
+			s.email(app, "jlahey") == "jim@fake.example"
+	}, settleFor, 10*time.Millisecond, "the hold outlived its ttl")
+}
+
+// TestAnEmailIsHeldForAMinuteWhateverTheTTL: the row an email hold may leave stale is what
+// a first owner_email consent is checked against, so the hold is a minute even where the
+// users' Redis key lives an hour.
+func (s *UsersSuite) TestAnEmailIsHeldForAMinuteWhateverTheTTL() {
+	recorder, err := New(Options{Store: s.db, TTL: time.Hour, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	defer recorder.Close()
+	app, start := s.app(), time.Now()
+
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+
+	s.True(recorder.emails.Holds(app, "jlahey", "jim@fake.example", start))
+	s.False(recorder.emails.Holds(app, "jlahey", "jim@fake.example", time.Now().Add(time.Minute)))
+}
+
+// TestAnAddressAnotherReplicaReplacedIsPutBackOnceTheHoldEnds is the reviewer's probe
+// (R1.1): one replica writes A, the other writes B, the first hears A again. Until the hold
+// ends the row stays B, which the first consent would admit; after it, A is written again.
+func (s *UsersSuite) TestAnAddressAnotherReplicaReplacedIsPutBackOnceTheHoldEnds() {
+	first, other, app := s.plain(500*time.Millisecond), s.plain(500*time.Millisecond), s.app()
+	s.Require().NoError(first.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	s.Require().NoError(other.Email(s.ctx, app, "jlahey", "randy@fake.example"))
+
+	s.Require().NoError(first.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+	s.Equal("randy@fake.example", s.email(app, "jlahey"), "the window the hold leaves")
+
+	s.Eventually(func() bool {
+		return first.Email(s.ctx, app, "jlahey", "jim@fake.example") == nil &&
+			s.email(app, "jlahey") == "jim@fake.example"
+	}, settleFor, 10*time.Millisecond, "the replaced address outlived the hold")
+}
+
+func (s *UsersSuite) TestTheSameUserAndEmailUnderTwoAppsIsWrittenForEach() {
+	recorder, app := s.plain(time.Hour), s.app()
+	one, two := app+"-one", app+"-two"
+
+	s.Require().NoError(recorder.Email(s.ctx, one, "jlahey", "jim@fake.example"))
+	s.Require().NoError(recorder.Email(s.ctx, two, "jlahey", "jim@fake.example"))
+
+	s.Equal("jim@fake.example", s.email(one, "jlahey"))
+	s.Equal("jim@fake.example", s.email(two, "jlahey"), "the same id under two apps is two people")
+}
+
+func (s *UsersSuite) TestAnEmailForNoUserIsNotHeld() {
+	recorder, app := s.plain(time.Hour), s.app()
+
+	s.Require().NoError(recorder.Email(s.ctx, app, "", "jim@fake.example"))
+	s.Require().NoError(recorder.Email(s.ctx, "", "jlahey", "jim@fake.example"))
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", ""))
+
+	s.Zero(recorder.emails.Len())
+}
+
+func (s *UsersSuite) TestAnEmailThatFailedToBeWrittenIsTriedAgain() {
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	recorder, app := s.plain(time.Hour), s.app()
+	recorder.db = closed
+	s.Require().Error(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+
+	recorder.db = s.db
+	s.Require().NoError(recorder.Email(s.ctx, app, "jlahey", "jim@fake.example"))
+
+	s.Equal("jim@fake.example", s.email(app, "jlahey"))
+}
+
+// TestTwoAddressesSaidAtOnceLeaveTheHeldOneTheRows: requests saying A and B for one user at
+// the same time end with the row and the hold on the same address, whichever it is, so a
+// later request for the row's address is not written while one for the other is. Many
+// users at once give the scheduler room to pause one request between its write and its
+// hold.
+func (s *UsersSuite) TestTwoAddressesSaidAtOnceLeaveTheHeldOneTheRows() {
+	recorder, app := s.plain(time.Hour), s.app()
+	addresses := []string{"jim@fake.example", "randy@fake.example"}
+	for round := range 10 {
+		var group sync.WaitGroup
+		for user := range 50 {
+			for _, address := range addresses {
+				group.Go(func() { s.NoError(recorder.Email(s.ctx, app, fmt.Sprintf("user-%d-%d", round, user), address)) })
+			}
+		}
+		group.Wait()
+
+		for user := range 50 {
+			name := fmt.Sprintf("user-%d-%d", round, user)
+			row := s.email(app, name)
+			s.Require().True(recorder.emails.Holds(app, name, row, time.Now()),
+				"%s: the row holds %s and the cache does not", name, row)
+		}
+	}
+}
+
+// TestAnEmailWaitsForAWriteInFlightForTheSameUser holds the lock a write in flight holds,
+// which is what makes the interleaving above certain rather than likely: a request seen
+// while it is held writes nothing until it is let go.
+func (s *UsersSuite) TestAnEmailWaitsForAWriteInFlightForTheSameUser() {
+	recorder, app := s.plain(time.Hour), s.app()
+	lock := recorder.emailLock(app, "jlahey")
+	lock.Lock()
+	done := make(chan error)
+	go func() { done <- recorder.Email(s.ctx, app, "jlahey", "jim@fake.example") }()
+
+	s.Never(func() bool { return s.email(app, "jlahey") != "" }, 200*time.Millisecond, 10*time.Millisecond,
+		"written while another write held the lock")
+	lock.Unlock()
+
+	s.Require().NoError(<-done)
+	s.Equal("jim@fake.example", s.email(app, "jlahey"))
 }

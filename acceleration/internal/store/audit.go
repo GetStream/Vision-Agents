@@ -24,14 +24,28 @@ const (
 	AuditRouterConfig = "router_config"
 	AuditPlugin       = "plugin"
 	AuditPolicy       = "policy"
+	// AuditResourcePriceList is the deployment's price list, which is no customer's: its rows
+	// have no customer_id, so no app's audit query lists them
+	// (20261110120000_audit_log_manage.sql).
+	AuditResourcePriceList = "price_list"
+	// AuditEndUser is an app's end user whose id was forgotten in the usage records, named by
+	// the id that replaced it, never by the one forgotten (20261111120000_usage_identity.sql).
+	AuditEndUser = "end_user"
+	// AuditSpendLimit is one of the organization's spend limits, named by its id, or a grant or
+	// a reset, named grant:<id> and reset:<id> (20261112120000_limits.sql).
+	AuditSpendLimit = "limit"
 )
 
 // auditResourceTypes is every resource a change may be recorded against, which is the
 // migration's CHECK as Go can read it.
 var auditResourceTypes = []string{
 	AuditAgentConfig, AuditSkill, AuditKnowledge, AuditKnowledgeURL,
-	AuditRouterConfig, AuditPlugin, AuditPolicy,
+	AuditRouterConfig, AuditPlugin, AuditPolicy, AuditResourcePriceList, AuditEndUser, AuditSpendLimit,
 }
+
+// deploymentResources are the resources that belong to the deployment rather than to one
+// customer, recorded with no customer.
+var deploymentResources = []string{AuditResourcePriceList}
 
 // What happened to it (AuditEntry.Action). A sync is kept apart from an update because it
 // is the one change a directory made rather than a person: it is what a later sync measures
@@ -41,9 +55,12 @@ const (
 	AuditUpdated = "updated"
 	AuditDeleted = "deleted"
 	AuditSynced  = "synced"
+	// AuditCancelled is a scheduled price change called off before it took effect
+	// (20261110140000_audit_log_cancelled.sql).
+	AuditCancelled = "cancelled"
 )
 
-var auditActions = []string{AuditCreated, AuditUpdated, AuditDeleted, AuditSynced}
+var auditActions = []string{AuditCreated, AuditUpdated, AuditDeleted, AuditSynced, AuditCancelled}
 
 // Which client made it (AuditEntry.Source), from X-Stream-Client.
 const (
@@ -53,14 +70,23 @@ const (
 	// AuditSourceAPI is a caller that named no client. It reached the API directly, which
 	// is all that can be said about it.
 	AuditSourceAPI = "api"
+	// AuditSourceManage is the management API, called with the manage key by Stream's staff
+	// or a self-hosted router's operator. It is never read from X-Stream-Client: only the
+	// key proves it.
+	AuditSourceManage = "manage"
 )
 
-var auditSources = []string{AuditSourceDashboard, AuditSourceCLI, AuditSourceSDK, AuditSourceAPI}
+// auditClients are the sources a client may name itself as.
+var auditClients = []string{AuditSourceDashboard, AuditSourceCLI, AuditSourceSDK, AuditSourceAPI}
+
+// auditSources is every source a change may be recorded from, which is the migration's
+// CHECK as Go can read it.
+var auditSources = []string{AuditSourceDashboard, AuditSourceCLI, AuditSourceSDK, AuditSourceAPI, AuditSourceManage}
 
 // AuditSource reads a client's name into a source, falling back to the API for one that
-// named nothing or named something nobody knows.
+// named nothing or named something nobody knows, manage among them.
 func AuditSource(client string) string {
-	if slices.Contains(auditSources, client) {
+	if slices.Contains(auditClients, client) {
 		return client
 	}
 	return AuditSourceAPI
@@ -127,13 +153,21 @@ func AuditEntryLimit(asked int) int {
 	return clampLimit(asked, defaultAuditEntryLimit, maxAuditEntryLimit)
 }
 
-// RecordAuditEntry stores one change, at now.
+// RecordAuditEntry stores one change, at now. An entry for a deployment's resource, such as
+// the price list, has no customer; every other one needs its customer.
 func (s *Store) RecordAuditEntry(ctx context.Context, entry *AuditEntry) error {
-	if entry.CustomerID == "" || entry.ResourceID == "" {
-		return stack.Wrap(errors.New("store: an audit entry needs a customer and a resource"))
-	}
+	return recordAuditEntry(ctx, s.db, entry)
+}
+
+// recordAuditEntry is RecordAuditEntry on db, which may be the transaction the change was
+// written in, so the change and its record commit together.
+func recordAuditEntry(ctx context.Context, db bun.IDB, entry *AuditEntry) error {
 	if !slices.Contains(auditResourceTypes, entry.ResourceType) {
 		return stack.Wrap(fmt.Errorf("store: %q is not an audited resource", entry.ResourceType))
+	}
+	deployment := slices.Contains(deploymentResources, entry.ResourceType)
+	if entry.ResourceID == "" || (entry.CustomerID == "") != deployment {
+		return stack.Wrap(errors.New("store: an audit entry needs a resource, and a customer unless the resource is the deployment's"))
 	}
 	if !slices.Contains(auditActions, entry.Action) {
 		return stack.Wrap(fmt.Errorf("store: %q is not an audit action", entry.Action))
@@ -149,9 +183,11 @@ func (s *Store) RecordAuditEntry(ctx context.Context, entry *AuditEntry) error {
 		entry.Changes = []AuditChange{}
 	}
 	entry.ID = newID()
-	entry.Source = AuditSource(entry.Source)
+	if !slices.Contains(auditSources, entry.Source) {
+		entry.Source = AuditSourceAPI
+	}
 	entry.CreatedAt = time.Now().UTC().Truncate(time.Microsecond)
-	if _, err := s.db.NewInsert().Model(entry).Exec(ctx); err != nil {
+	if _, err := db.NewInsert().Model(entry).Exec(ctx); err != nil {
 		return stack.Wrap(fmt.Errorf("store: record audit entry: %w", err))
 	}
 	return nil

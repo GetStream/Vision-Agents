@@ -9,10 +9,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"maps"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
@@ -112,7 +115,8 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAlone() {
 	s.Len(s.platform.requests(), len(cases))
 	bundle := "/tmp/va-egress-ca-bundle.pem"
 	runEnv := map[string]any{"SSL_CERT_FILE": bundle, "REQUESTS_CA_BUNDLE": bundle, "CURL_CA_BUNDLE": bundle, "GIT_SSL_CAINFO": bundle,
-		"NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem", "NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1"}
+		"NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem", "NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1",
+		"GIT_HTTP_PROXY_AUTHMETHOD": "basic"}
 	withProxy := func(env map[string]any) map[string]any {
 		proxied := maps.Clone(runEnv)
 		for _, name := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
@@ -144,6 +148,51 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAlone() {
 		s.Regexp(`^sh -c '.*> /tmp/va-egress-ca-bundle\.pem.*' after `+strconv.Itoa(2*i)+` runs$`, s.platform.commands[2*i],
 			"once per sandbox, after the CA file")
 	}
+}
+
+// TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRun: the tunnel starts with the
+// setup, after its file is written, and is checked before each run, whose clients it serves;
+// a check that fails runs no code. The sandbox still reaches the proxy's address alone.
+func (s *ProxySuite) TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRun() {
+	box := s.proxied(sandbox.Config{}, "https://203.0.113.7:8091")
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	_, err = box.Run(s.ctx, "print(2)", nil)
+	s.Require().NoError(err)
+
+	s.Equal("203.0.113.7/32", s.platform.requests()[0]["networkAllowList"])
+	s.Contains(s.platform.uploads, "/tmp/va-egress-tunnel.py after 0 runs")
+	start := "sh -c " + quoted(box.mount.EachRun[0])
+	s.Equal([]string{"sh -c " + quoted(box.mount.Setup[0]) + " after 0 runs", start + " after 0 runs", start + " after 0 runs",
+		start + " after 1 runs"}, s.platform.commands)
+	for _, ran := range s.platform.executed() {
+		s.Regexp(`^http://sbx:[A-Z2-7]{26}@127\.0\.0\.1:3128$`, ran["envs"].(map[string]any)["HTTPS_PROXY"])
+	}
+	s.platform.mu.Lock()
+	s.platform.commandExit = 1
+	s.platform.commandOutput = "the TLS tunnel to the proxy did not start: OSError"
+	s.platform.mu.Unlock()
+	_, err = box.Run(s.ctx, "print(3)", nil)
+	s.ErrorContains(err, "readying the sandbox for a run: exit code 1: the TLS tunnel to the proxy did not start: OSError")
+	s.Len(s.platform.executed(), 2)
+}
+
+// TestRunCodeTellsTheModelGitTakesThePlaceholder: the proxy takes it as Basic auth's password.
+// The grant's env var is not GITHUB_TOKEN, so the sentence names the grant's own, and only a
+// grant that reaches github.com gets it.
+func (s *ProxySuite) TestRunCodeTellsTheModelGitTakesThePlaceholder() {
+	git := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-3"},
+		Binding: "github-pat", Env: "GH_PAT", Hosts: []string{"api.github.com", "github.com"}}
+
+	description := sandbox.Tool(s.proxied(sandbox.Config{}, "http://203.0.113.7:8091", git)).Description
+
+	s.Contains(description, " git over HTTPS takes it as the password in the remote's URL, such as "+
+		"https://x-access-token:$GH_PAT@github.com/<owner>/<repo>.git.")
+	s.Equal(1, strings.Count(description, "git over HTTPS"), "the grant with no git host gets none")
+	s.Contains(description, "Code may call api.github.com with $GH_PAT: send it over HTTPS as `Authorization: Bearer $GH_PAT`; "+
+		"the value is a placeholder that works only for api.github.com, github.com")
+	s.NotContains(description, "cannot use")
 }
 
 // TestAGrantTheBrokerLeavesOutHasNoEnvVar: the sandbox still reaches the proxy alone.
@@ -212,6 +261,31 @@ func (s *ProxySuite) TestClosingTheSandboxEndsItsProxyCredential() {
 
 	s.Require().NoError(box.Close())
 
+	s.Zero(s.exists(key))
+}
+
+// TestACloseARunOutlastsStillEndsItsProxyCredential: Close waits for the run until its timeout,
+// and the record goes then, not at its expiry, so the proxy refuses the running code.
+func (s *ProxySuite) TestACloseARunOutlastsStillEndsItsProxyCredential() {
+	box := s.proxied(sandbox.Config{}, "http://203.0.113.7:8091")
+	box.timeout = time.Second
+	ran, release := s.platform.outlasting(s.T(), box)
+	s.platform.mu.Lock()
+	var setup struct{ Envs map[string]string }
+	s.Require().NoError(json.Unmarshal([]byte(s.platform.rawCommands[0]), &setup))
+	s.platform.mu.Unlock()
+	proxy, err := url.Parse(setup.Envs["HTTPS_PROXY"])
+	s.Require().NoError(err)
+	credential, _ := proxy.User.Password()
+	sum := sha256.Sum256([]byte(credential))
+	key := "sandbox:egress:" + hex.EncodeToString(sum[:])
+	s.Require().EqualValues(1, s.exists(key))
+
+	s.ErrorIs(box.Close(), context.DeadlineExceeded)
+
+	s.Zero(s.exists(key))
+	release()
+	s.NoError(<-ran)
 	s.Zero(s.exists(key))
 }
 

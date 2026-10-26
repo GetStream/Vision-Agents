@@ -801,7 +801,7 @@ type Session struct {
 	ForkedFrom       *string                 `json:"forked_from,omitempty" doc:"The session this one continued from, empty for one opened fresh."`
 	Id               string                  `json:"id"`
 	Incognito        *bool                   `json:"incognito,omitempty" doc:"Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from."`
-	Instructions     *string                 `json:"instructions,omitempty"`
+	Instructions     *string                 `json:"instructions,omitempty" doc:"What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it."`
 	LastResponseAt   *time.Time              `json:"last_response_at,omitempty" doc:"When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent."`
 	Llm              *string                 `json:"llm,omitempty" doc:"The provider and model answering, once routing has picked one."`
 	Modality         SessionModality         `json:"modality"`
@@ -1026,8 +1026,11 @@ type SessionTool struct {
 	Description  string                  `json:"description" doc:"What the model is told the tool does, which is the whole of how it decides when to reach for one."`
 	DisplayTitle *string                 `json:"display_title,omitempty" doc:"What a call is doing, in words for the people in the conversation, such as \"Checking your location\". Shown on the reply's ai_tool_call attachment." maxLength:"80"`
 	Executor     *SessionToolExecutor    `json:"executor,omitempty" doc:"Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server." enum:"server,client"`
-	Name         string                  `json:"name"`
-	Parameters   *map[string]interface{} `json:"parameters,omitempty" doc:"A JSON Schema object describing the arguments."`
+	// Interruptible and TimeoutMs are the tool's own, beside the session's.
+	Interruptible *bool                   `json:"interruptible,omitempty" doc:"Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes."`
+	Name          string                  `json:"name"`
+	Parameters    *map[string]interface{} `json:"parameters,omitempty" doc:"A JSON Schema object describing the arguments."`
+	TimeoutMs     *int                    `json:"timeout_ms,omitempty" doc:"How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's." minimum:"0" maximum:"1800000"`
 }
 
 func (*SessionTool) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -1057,7 +1060,7 @@ func (e SessionToolExecutor) Valid() bool {
 	}
 }
 
-// SessionToolApproval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+// SessionToolApproval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. On a voice call the router asks instead: it does not send the call, answers the model at once with the title, each {argument} in it filled in from the call, and offers the model confirm_tool_call. A cascade says the question as written; a speech-to-speech model is told to ask it in those words. Only a yes within 15 seconds of the question finishing sends the call, under its own id and with approved true, and the tool's timeout starts then. A no, or silence, declines it, and the call is never sent.
 type SessionToolApproval struct {
 	AllowTitle     *string `json:"allow_title,omitempty" doc:"The label of the button that allows the call." maxLength:"40"`
 	DeclineTitle   *string `json:"decline_title,omitempty" doc:"The label of the button that declines it." maxLength:"40"`
@@ -1067,7 +1070,7 @@ type SessionToolApproval struct {
 }
 
 func (*SessionToolApproval) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question."
+	schema.Description = "Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. On a voice call the router asks instead: it does not send the call, answers the model at once with the title, each {argument} in it filled in from the call, and offers the model confirm_tool_call. A cascade says the question as written; a speech-to-speech model is told to ask it in those words. Only a yes within 15 seconds of the question finishing sends the call, under its own id and with approved true, and the tool's timeout starts then. A no, or silence, declines it, and the call is never sent."
 	return schema
 }
 
@@ -1292,18 +1295,18 @@ func (e TextContentPartType) Valid() bool {
 	}
 }
 
-// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result.
+// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out.
 type ToolApprovalCommand struct {
 	Allowed    bool                    `json:"allowed"`
 	RequestId  string                  `json:"request_id"`
 	Summary    *string                 `json:"summary,omitempty" doc:"Shown on the declined call, such as \"Location not shared\"." maxLength:"120"`
 	ToolCallId string                  `json:"tool_call_id"`
-	TurnId     string                  `json:"turn_id"`
+	TurnId     *string                 `json:"turn_id,omitempty" doc:"The turn of the call. Required, except for a connector call whose binding sets require_approval."`
 	Type       ToolApprovalCommandType `json:"type" enum:"tool_approval"`
 }
 
 func (*ToolApprovalCommand) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result."
+	schema.Description = "A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out."
 	return schema
 }
 

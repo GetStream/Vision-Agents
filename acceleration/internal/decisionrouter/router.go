@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -28,7 +29,10 @@ type Options struct {
 	Store    *store.Store
 	Live     *live.Client
 	Gate     routing.Gate
-	Logger   *slog.Logger
+	Writer   *routing.Writer
+	// Pricer prices every row recorded. Nil is routing.Prices of Config.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
 }
 
 // Request is what a caller wants a classifier for.
@@ -63,6 +67,8 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -85,11 +91,13 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	}
 
 	core := routing.Request{
-		CustomerID: request.CustomerID,
-		AgentID:    request.AgentID,
-		CallID:     request.CallID,
-		Tags:       request.Tags,
-		Target:     target,
+		CustomerID:  request.CustomerID,
+		Attribution: routing.AttributionFrom(ctx),
+		Spent:       routing.SpentFrom(ctx),
+		AgentID:     request.AgentID,
+		CallID:      request.CallID,
+		Tags:        request.Tags,
+		Target:      target,
 	}
 	provider, config, err := r.Select(ctx, core)
 	if err != nil {

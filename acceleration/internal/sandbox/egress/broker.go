@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -51,6 +53,15 @@ var bundleEnv = []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"
 // sandbox reaches the proxy alone and has no DNS, so a client that ignores them reaches nothing.
 var proxyEnv = []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}
 
+// gitEnv has git send the proxy credential on its first CONNECT. By default it sends none,
+// waits for the 407 and connects again (http.proxyAuthMethod «anyauth»: «It is assumed that
+// the proxy answers an unauthenticated request with a 407»); basic saves that round trip
+// (tunnel probe 2, 2026-10-22: one CONNECT without auth before each authenticated one).
+// GIT_HTTP_PROXY_AUTHMETHOD overrides http.proxyAuthMethod, and a user's own GIT_CONFIG_* does not
+// replace it: git-config(1), http.proxyAuthMethod,
+// https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpproxyAuthMethod.
+var gitEnv = map[string]string{"GIT_HTTP_PROXY_AUTHMETHOD": "basic"}
+
 // noProxy keeps the sandbox's own loopback off the proxy, as Daytona's netleash does (live probe,
 // 2026-10-21).
 const noProxy = "localhost,127.0.0.1,::1"
@@ -58,8 +69,8 @@ const noProxy = "localhost,127.0.0.1,::1"
 // BrokerOptions are what Broker needs: the proxy and its store, and the session's tokens.
 type BrokerOptions struct {
 	Store *Store
-	// URL is the proxy as a sandbox reaches it, code_sandbox.proxy_public_url: http, an IPv4
-	// address and a port.
+	// URL is the proxy as a sandbox reaches it, code_sandbox.proxy_public_url: http or https, an
+	// IPv4 address and a port. With https the sandbox's clients reach it through its TLS tunnel.
 	URL string
 	// CACert is the PEM certificate of the CA the proxy signs each host's certificate with,
 	// which the sandbox trusts. Never its key.
@@ -69,7 +80,9 @@ type BrokerOptions struct {
 	Session string
 	Allowed []string
 	Tokens  sandbox.Tokens
-	Logger  *slog.Logger
+	// Bind gives a late grant its connection before each run. A late grant needs it.
+	Bind   sandbox.Bind
+	Logger *slog.Logger
 }
 
 // Broker is the sandbox.CredentialBroker over the router's egress proxy: the sandbox holds a
@@ -103,7 +116,7 @@ func NewBroker(o BrokerOptions) (*Broker, error) {
 	}
 	proxy, ok := config.ProxyURL(o.URL)
 	if !ok {
-		return nil, stack.Wrap(errors.New("egress: the proxy's public URL is http://<public IPv4 address>:port, with no user, path, query or fragment"))
+		return nil, stack.Wrap(errors.New("egress: the proxy's public URL is http or https://<public IPv4 address>:port, with no user, path, query or fragment"))
 	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -141,11 +154,22 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 	env := map[string]string{}
 	var prepared []held
 	for _, grant := range grants {
-		// A provider's refresh error may quote its answer, so only its class is logged.
-		_, err := b.options.Tokens(ctx, grant)
+		if grant.Late && b.options.Bind == nil {
+			return sandbox.Mount{}, stack.Wrap(fmt.Errorf("egress: connector %q is bound late, and the broker has no Bind", grant.Binding))
+		}
+		if grant.Late && grant.Required {
+			return sandbox.Mount{}, stack.Wrap(fmt.Errorf("egress: connector %q is bound late, so it cannot be required", grant.Binding))
+		}
+		// A provider's refresh error may quote its answer, so only its class is logged, and a
+		// required grant's error carries none of it. A late grant has no connection to ask yet:
+		// the proxy refuses its placeholder until BeforeRun binds it.
+		var err error
+		if !grant.Late {
+			_, err = b.options.Tokens(ctx, grant)
+		}
 		if errors.Is(err, sandbox.ErrNoCredential) {
 			if grant.Required {
-				return sandbox.Mount{}, fmt.Errorf("egress: required connector %q gives the sandbox no credential: %w", grant.Binding, err)
+				return sandbox.Mount{}, fmt.Errorf("egress: required connector %q gives the sandbox no credential: %w", grant.Binding, sandbox.ErrNoCredential)
 			}
 			b.options.Logger.Warn("the sandbox is created without a connector's credential", "connector", grant.Binding,
 				"connection", grant.Connection.ConnectionID, "class", errorClass(err))
@@ -156,8 +180,13 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 				"connector", grant.Binding, "connection", grant.Connection.ConnectionID, "class", errorClass(err))
 		}
 		placeholder := "va_ph_" + rand.Text()
-		prepared = append(prepared, held{grant: grant, entry: Grant{Connection: grant.Connection, Binding: grant.Binding,
-			Scheme: grant.Scheme, Placeholder: placeholder, Hosts: grant.Hosts}})
+		entry := Grant{Connection: grant.Connection, Binding: grant.Binding, Config: grant.Config, Connector: grant.Connector,
+			Selection: grant.Selection, Scheme: grant.Scheme, Placeholder: placeholder, Hosts: grant.Hosts}
+		if grant.Late {
+			// Whatever connection the caller gave it: the proxy gives no token until a bind.
+			entry.Connection, entry.Scheme = core.ConnectionRef{}, ""
+		}
+		prepared = append(prepared, held{grant: grant, entry: entry})
 		env[grant.Env] = placeholder
 	}
 	if len(prepared) == 0 {
@@ -172,18 +201,32 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 	proxy := *b.proxy
 	proxy.User = url.UserPassword("sbx", credential)
 	run := map[string]string{"NODE_EXTRA_CA_CERTS": caPath, "NO_PROXY": noProxy, "no_proxy": noProxy}
+	maps.Copy(run, gitEnv)
 	for _, name := range bundleEnv {
 		run[name] = bundlePath
 	}
-	for _, name := range proxyEnv {
-		run[name] = proxy.String()
+	mount := sandbox.Mount{Env: env, RunEnv: run, Proxy: &proxy, Files: map[string][]byte{caPath: b.options.CACert}, Setup: []string{bundle}}
+	clients := proxy
+	if proxy.Scheme == "https" {
+		clients = url.URL{Scheme: "http", User: proxy.User, Host: "127.0.0.1:" + tunnelPort}
+		start := startTunnel(b.proxy)
+		mount.Files[tunnelPath] = forwarder
+		mount.Setup = append(mount.Setup, start)
+		mount.EachRun = []string{start}
+		// Node's fetch and https ignore the proxy env vars without it
+		// (https://nodejs.org/api/cli.html#node_use_env_proxy1; live probe, 2026-10-22).
+		run["NODE_USE_ENV_PROXY"] = "1"
 	}
-	return sandbox.Mount{Env: env, RunEnv: run, Proxy: &proxy, Files: map[string][]byte{caPath: b.options.CACert}, Setup: []string{bundle}}, nil
+	for _, name := range proxyEnv {
+		run[name] = clients.String()
+	}
+	return mount, nil
 }
 
-// BeforeRun withdraws a grant whose connection gives sandbox.ErrNoCredential and stores the
-// record again, so it outlives the run whatever time passed since the last one. A newer
-// revision needs nothing: the proxy asks for the token on every request.
+// BeforeRun binds each late grant Bind has a connection for, withdraws a grant whose connection
+// gives sandbox.ErrNoCredential, and stores the record again, so the proxy sends a bound grant's
+// token from the next request on, and the record outlives the run whatever time passed since the
+// last one. A newer revision needs nothing: the proxy asks for the token on every request.
 func (b *Broker) BeforeRun(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -195,6 +238,15 @@ func (b *Broker) BeforeRun(ctx context.Context) error {
 	}
 	var kept []held
 	for _, h := range b.held {
+		if h.grant.Late {
+			bound, ok := b.options.Bind(ctx, h.grant)
+			if !ok || !h.grant.Binds(bound) {
+				kept = append(kept, h)
+				continue
+			}
+			h.grant = h.grant.Bound(bound)
+			h.entry.Connection, h.entry.Scheme = h.grant.Connection, h.grant.Scheme
+		}
 		_, err := b.options.Tokens(ctx, h.grant)
 		if errors.Is(err, sandbox.ErrNoCredential) {
 			b.options.Logger.Warn("a connector's credential is withdrawn from the sandbox", "connector", h.grant.Binding,

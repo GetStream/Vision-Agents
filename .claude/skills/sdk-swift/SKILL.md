@@ -9,7 +9,7 @@ The per-language half of [sdk](../sdk/SKILL.md). It records the decisions the pa
 [`sdks/swift`](../../../sdks/swift) already follow, so a change lands consistently rather than
 re-litigating them. Where a rule has an exception, the exception is written down.
 
-Assume Swift 6 language mode with complete strict concurrency, iOS 17, SPM only.
+Assume Swift 6 language mode with complete strict concurrency, iOS 15, SPM only.
 
 ## The package
 
@@ -24,8 +24,10 @@ That is the price of one artifact; do not split it back up without being asked.
   same `stream-chat-swift`, which the app adds itself; see [Views](#views).
 - Stream's types cross the public API only where an app uses Stream's own SDK: the app's
   `StreamVideo` or `ChatClient` in `use`, `chat()` answering a `ChatChannelController`,
-  `VoiceSession.call`, and `LiveReasoning.read(_:)` taking a `ChatMessage`. Nothing generated
-  crosses.
+  `VoiceSession.call`, and `LiveReasoning.read(_:)` taking a `ChatMessage`. The exception is
+  StreamCore, which Chat and Video both stand on: its `User` is who `setUser` acts for and its
+  `RawJSON` is every open-ended value, and core `@_exported import`s it as they do. Do not
+  write a second `User` or JSON enum beside them. Nothing generated crosses.
 - iOS only, because Stream Video is and Stream Chat's macOS build does not compile under
   Swift 6. `stream-chat-swift` is required from 5.13, the first with `StreamChatAI`, so an app
   adding the views resolves the version core does; `StreamChat` alone would build from 5.3
@@ -36,18 +38,21 @@ That is the price of one artifact; do not split it back up without being asked.
 - Declare `platforms:`. An unspecified platform makes consumers discover availability
   failures inside generated code.
 
-**Publishing is not solved by the monorepo.** SwiftPM has no `url + subdirectory` version
-dependency, so the examples' path reference cannot survive publication. When it ships, either
-subtree-split `core` into its own repository from CI, or use a package registry. Do not make
-`Package.swift` branch on an environment variable between `path:` and `url:` — resolution stops
-being reproducible and development paths leak into releases.
+**Published from this repository.** SwiftPM reads a manifest and version tags only at a
+repository's root, so the manifest is the root `Package.swift`, its targets reaching into
+`sdks/swift/core` with `path:`, and the examples reference the root by path. A release is a `v`
+tag, shared with the Python packages: there is nothing to upload, and SwiftPM has no tag prefix
+that would give Swift versions of its own. Never move or delete a released tag. An app clones
+the whole repository once (`git clone --mirror`, about 300 MB); that is the price of one
+repository. Do not make `Package.swift` branch on an environment variable between `path:` and
+`url:` — resolution stops being reproducible and development paths leak into releases.
 
 A library's `Package.resolved` is not a promise to consumers; it is gitignored for the package
 and committed for the demo apps.
 
 ## Concurrency
 
-The conversation state is `@MainActor @Observable`; the socket is an `actor`. Not an actor
+The conversation state is a `@MainActor` `ObservableObject`; the socket is an `actor`. Not an actor
 holding the state with a main-actor projection beside it: that is two truths and a window in
 which they disagree.
 
@@ -85,9 +90,12 @@ task owns the object that owns the task, and `deinit` never runs to cancel it.
 
 ## Observation
 
-`@Observable`, which is why the floor is iOS 17. The alternative was an `ObservableObject`
-path beside it; two state systems in one SDK diverge. Presenting `@Observable` as the API
-while claiming iOS 15 would be a lie, since the type does not exist there.
+`ObservableObject` with `@Published`, which is why the floor can be iOS 15: `@Observable` is
+iOS 17. Do not add an `@Observable` path beside it; two state systems in one SDK diverge.
+`VoiceSession` passes its `AgentSession`'s `objectWillChange` on as its own, so a view
+observing the voice session follows `voice.session` too, as nested reads did under
+`@Observable`. An app holding a session it does not have yet keeps it in an `ObservableObject`
+of its own, the shape of StreamVideo's `CallViewModel`; the demos' `CurrentVoice` is one.
 
 If a public stream of events is ever added, it must be a `func events()` handing each caller
 its own bounded continuation — never one stored `AsyncStream` property. A single stream is not
@@ -121,7 +129,7 @@ background streaming, and do not hold a chat socket open with repeated backgroun
 Distinct types per direction: `AgentEvent` in, `Command` out. Never one bidirectional type
 with invalid combinations.
 
-Decoding is forward compatible by keeping the whole frame as `JSONValue` and exposing `type`
+Decoding is forward compatible by keeping the whole frame as `RawJSON` and exposing `type`
 plus a `kind` that is nil for anything unknown. An event added to the router after this SDK
 shipped still reaches the caller whole. A frame that cannot be decoded at all is skipped rather
 than closing the socket, which is what the router does with a command it cannot read.
@@ -141,20 +149,34 @@ Committed, generated by `sdks/swift/generate.py`, never hand-edited. Committed r
 build-tool plugin because an SDK's generated source should be reviewable and diffable, needs no
 generator on a consumer's machine, and needs no plugin trusted in Xcode.
 
+The generator is Stream's own, the one Stream Chat and Stream Video use: `tools/openapi` in the
+`chat` repository, checked out beside this one and run with `go run`. Its `DefaultAPI` and
+models run on StreamCore (`Request`, `DefaultAPITransport`, `DefaultAPIClientMiddleware`,
+`APIHelper`, `RawJSON`), so `Backend.swift` supplies a transport and two middlewares rather
+than a client of its own. It is run with Stream Chat's options: internal, immutable models,
+enums as `RawRepresentable` classes that keep a value the router added, shared coding keys.
+`generate.py` hands it a copy of the spec in terms it reads: an integer enum is a plain
+integer, a reference to a string-or-object union (`Equals`) is its string shorthand, since the
+generator would drop the field, and a model whose name a hand-written type has is renamed
+(`RENAMED`: `Session` is `SessionPayload`). A collision `RENAMED` misses fails the build.
+`DefaultEndpoints.swift` is discarded: it is Stream Chat's request path, written against its
+internals.
+
 **Generated code is `internal`.** Every type crossing the public API is hand-written in
 `Models.swift`. Leaking one generated type couples the SDK's semantic version to the schema and
-to the generator. Never return `Components.Schemas.*`, an operation `Input`/`Output`, or an
-OpenAPIRuntime wrapper.
+to the generator. Never return a generated model or `DefaultAPI`.
 
 Rewrap deliberately:
 
 - **Enums** get an `unknown(String)`-style case or a raw-value fallback. Never `fatalError` on a
   value the server added.
-- **Dates** go through one configured `DateTranscoder`. `RouterDates` exists because Go writes
-  as many fractional digits as a value needs and none when it needs none, and the generator's
-  default reads only the second. Test fractional seconds, no fractional seconds, offsets and
-  malformed input.
-- **Open-ended objects** become `JSONValue`.
+- **Dates** go through `RouterDates`, which `JSONDecoder.default`, the decoder `DefaultAPI` is
+  built with, reads every timestamp with. It exists because Go writes as many fractional digits
+  as a value needs and none when it needs none. Before iOS 26, a format style that includes
+  fractional seconds refuses a timestamp without them, so `RouterDates` reads twice. Test
+  fractional seconds, no fractional seconds, offsets and malformed input, on the oldest
+  simulator runtime there is as well as the newest: Foundation parses differently across them.
+- **Open-ended objects** are StreamCore's `RawJSON`, which the generator already emits.
 
 `generate.py` carries an explicit allowlist of operation ids and **fails if any of them is
 marked `x-server-side-only`**. That is how the server-side/client-side split is enforced at the
@@ -181,9 +203,10 @@ a decoded error body; a socket close code. Never classify by parsing `localizedD
 `docURL`, and `requestID` from `X-Request-Id`, which is what a user quotes for a 500. `type` and
 `code` are strings, so a value the router adds later still reads, and a body that is not the
 envelope keeps its trimmed text as `message` with the rest empty. `FailureMiddleware` throws every
-non-2xx, documented or not, before the generated client decodes it, so a switch over an
-operation's output handles its success and nothing else. That is why `generate.py` hands the
-generator the spec with only each operation's 2xx responses: an error case would be unreachable.
+non-2xx, documented or not, before the generated client decodes it, which is why `generate.py`
+hands the generator the spec with only each operation's 2xx responses. It also hands a 204 on as
+`{}`, since `DefaultAPI` decodes `EmptyResponse` from every success. `Backend.call` reports a
+`DecodingError` as `unreadable` and anything else the transport threw as `transport`.
 A refused socket upgrade is an `http` too, with only the status and request id: URLSession never
 hands over its body.
 
@@ -261,6 +284,14 @@ working. What the router writes is what it renders:
 - A call that asks first is `awaiting_approval` with an `approval`: `AIToolApprovalView`, with
   an `AIToolApprover` whose `decide` is `session.decide`. On a call there is no channel; show
   `session.approvals` with `AIToolApprovalCard`.
+- A connector call that waits for the person to sign in is `awaiting_authorization` with an
+  `authorization`, which `AIToolAuthorizationView` shows when the `AIToolApprover` has an
+  `AIToolAuthorizer`. Its `callbackScheme` is the scheme of the session's
+  `SessionOptions.returnURL` (the app's own, in reverse domain form), and its `decline` is
+  `session.declineLogin`. The view opens `authorization.launchURL`, the page with the handoff
+  token in its fragment, in a web authentication sheet. The router updates the step once the
+  provider has answered, and the call runs in the same reply. A session made without a
+  `returnURL` sends the sign-in back to the dashboard, and the sheet never comes back.
 - `ai_indicator.update` and `.clear` say what the agent is doing before the answer starts:
   `AITypingIndicatorView`. Read them from `chatClient.eventsController()`; a channel's events
   controller never sees them.
@@ -294,16 +325,16 @@ Three layers, in order of how much they cost to run:
    views; build them for the simulator. What they share is in `Backend` and tested there
    (`StreamCredentialsTests`).
 
-The package is iOS only, so the tests run on a simulator: `xcodebuild test -scheme
-vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 18 Pro'`, with
-`TEST_RUNNER_VISION_AGENTS_URL` for the live tests and `TEST_RUNNER_INTEGRATION_ROUTER_KEY`
-and `_SECRET` for the keyed posture checks.
+The package is iOS only, so the tests run on a simulator, from the root of the repository:
+`xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone
+18 Pro'`, with `TEST_RUNNER_VISION_AGENTS_URL` for the live tests and
+`TEST_RUNNER_INTEGRATION_ROUTER_KEY` and `_SECRET` for the keyed posture checks.
 
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,
-on any change under `sdks/swift`, the demo's app or the spec. It builds
-`swift-openapi-generator` (cached), runs `generate.py` again and fails if the generated client
-differs from what is committed, runs the core tests on the first iPhone simulator the runner
-has, and builds `swift_demo`.
+on any change under `sdks/swift`, the demo's app or the spec. It runs `generate.py --check`
+(the generator is in the `chat` repository, which CI does not check out, so it cannot
+regenerate), runs the core tests on the first iPhone simulator the runner has, and builds
+`swift_demo`. Regenerate locally after a spec change.
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
 

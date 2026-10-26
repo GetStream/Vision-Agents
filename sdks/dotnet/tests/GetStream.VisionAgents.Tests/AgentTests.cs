@@ -112,6 +112,29 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
+    public async Task AReviewGuideIsPatchedAndReadBack()
+    {
+        const string guide = "Score how fast the refund was settled.";
+        await using var router = await TestRouter.StartAsync();
+        router.On("GET", "/v1/agents/configs", 200, new[] { Fixtures.Config("support", "cfg-9") });
+        router.On("PATCH", "/v1/agents/configs/cfg-9", 200, new
+        {
+            id = "cfg-9",
+            name = "support",
+            mode = "voice",
+            created_at = "2026-09-24T10:00:00Z",
+            updated_at = "2026-09-24T10:00:00Z",
+            review = new { instructions = guide },
+        });
+        using var client = Fixtures.Client(router);
+
+        var config = await client.Agent("support").UpdateConfigAsync(new AgentConfigPatch { Review = new AgentReview { Instructions = guide } }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("""{"review":{"instructions":"Score how fast the refund was settled."}}""", router.Only("PATCH", "/v1/agents/configs/cfg-9").Body!.ToJsonString());
+        Assert.Equal(guide, config.Review?.Instructions);
+    }
+
+    [Fact]
     public void AnIncognitoConversationAsksForNoTranscript()
     {
         using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
@@ -246,7 +269,10 @@ public sealed class AgentTests : IDisposable
             results.Add(await peer.ReceiveAsync("tool_result"));
             await peer.SendAsync(new { type = "tool_call", id = "t2", name = "broken", arguments = "{}", request_id = "c2", turn_id = "u1" });
             results.Add(await peer.ReceiveAsync("tool_result"));
+            // Every watcher is sent every call and the first answer wins, so a call for a tool
+            // held elsewhere is left for whoever holds it: the next answer is t4's.
             await peer.SendAsync(new { type = "tool_call", id = "t3", name = "missing", arguments = "", request_id = "c3", turn_id = "u1" });
+            await peer.SendAsync(new { type = "tool_call", id = "t4", name = "weather", arguments = """{"name":"Oslo"}""", request_id = "c4", turn_id = "u1" });
             results.Add(await peer.ReceiveAsync("tool_result"));
             await peer.SendAsync(new { type = "responded", text = "Sunny.", turn_id = "u1", pending_work = false });
             await peer.ReceiveAsync("close");
@@ -266,7 +292,7 @@ public sealed class AgentTests : IDisposable
         Assert.Equal(("t1", "c1", "u1"), (results[0].Text("tool_call_id"), results[0].Text("request_id"), results[0].Text("turn_id")));
         Assert.Equal("""{"summary":"sunny in Paris"}""", results[0].Text("output"));
         Assert.Equal("the forecast is down", results[1].Text("error"));
-        Assert.Contains("missing", results[2].Text("error"));
+        Assert.Equal("t4", results[2].Text("tool_call_id"));
         var declared = router.Only("POST", "/v1/agents/sessions").Body!["tools"]!.AsArray();
         Assert.Equal(["weather", "broken"], declared.Select(tool => tool.Text("name")));
         Assert.Equal("string", declared[0]!["parameters"]!["properties"]!["name"]!.Text("type"));
@@ -436,7 +462,9 @@ public sealed class AgentTests : IDisposable
         using var client = Fixtures.Client(router);
         await using var agent = new Agent(new AgentOptions
         {
-            Name = "jean", Client = client, CostTracking = new Dictionary<string, string> { ["team"] = "sales" },
+            Name = "jean",
+            Client = client,
+            CostTracking = new Dictionary<string, string> { ["team"] = "sales" },
         });
 
         await agent.OutboundCallAsync("+15550001111", "+15552223333", cancellationToken: TestContext.Current.CancellationToken);
@@ -459,8 +487,13 @@ public sealed class AgentTests : IDisposable
         {
             await peer.SendAsync(new
             {
-                type = "call", work_id = "w1", call_id = "rung-1", call_type = "agent", session_id = "rung-1",
-                called_number = "+15552223333", caller_number = "+15550001111",
+                type = "call",
+                work_id = "w1",
+                call_id = "rung-1",
+                call_type = "agent",
+                session_id = "rung-1",
+                called_number = "+15552223333",
+                caller_number = "+15550001111",
             });
             await peer.Closed;
         });
@@ -713,7 +746,8 @@ public sealed class AgentTests : IDisposable
         // Guard: asked.Add(cursor) returns false when "next" is already in the set → exits after 2 GETs
         await using var router = await TestRouter.StartAsync();
         var gets = 0;
-        router.On("GET", "/v1/agents/connections", seen => {
+        router.On("GET", "/v1/agents/connections", seen =>
+        {
             gets++;
             // Cap at 4 to make the test fail fast when the guard is removed (while true)
             if (gets > 3) return new Reply(500, new { message = "too many pages" });
@@ -851,8 +885,13 @@ public sealed class AgentTests : IDisposable
 
     private static object Page(string state, int passages) => new
     {
-        id = "k1", @namespace = "support", url = "https://example.com/plans", state, passages,
-        created_at = "2026-09-24T10:00:00Z", updated_at = "2026-09-24T10:00:00Z",
+        id = "k1",
+        @namespace = "support",
+        url = "https://example.com/plans",
+        state,
+        passages,
+        created_at = "2026-09-24T10:00:00Z",
+        updated_at = "2026-09-24T10:00:00Z",
     };
 
     private static async Task<SessionEvent> FirstAsync(Session session)

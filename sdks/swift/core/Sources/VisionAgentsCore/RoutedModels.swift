@@ -33,10 +33,10 @@ public struct SearchOptions: Sendable, Hashable {
 }
 
 extension SearchOptions {
-    var schema: Components.Schemas.SearchOptions {
+    var schema: SearchOptionsPayload {
         .init(
             category: category,
-            depth: depth.flatMap { .init(rawValue: $0.rawValue) },
+            depth: depth.map { .init(rawValue: $0.rawValue) },
             excludeDomains: excludeDomains.isEmpty ? nil : excludeDomains,
             includeDomains: includeDomains.isEmpty ? nil : includeDomains,
             location: location,
@@ -56,7 +56,7 @@ public struct SearchAnswer: Sendable, Hashable {
     /// The sources behind it, most relevant first.
     public let results: [SearchHit]
 
-    init(_ schema: Components.Schemas.SearchAnswer) {
+    init(_ schema: SearchAnswerPayload) {
         provider = schema.provider
         model = schema.model
         answer = schema.answer ?? ""
@@ -72,10 +72,10 @@ public struct SearchHit: Sendable, Hashable {
     public let text: String
     public let score: Double
 
-    init(_ schema: Components.Schemas.SearchResult) {
+    init(_ schema: SearchResult) {
         title = schema.title ?? ""
         url = schema.url
         text = schema.text ?? ""
-        score = Double(schema.score ?? 0)
+        score = schema.score ?? 0
     }
 }

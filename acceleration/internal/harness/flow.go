@@ -86,6 +86,10 @@ type FlowTurn struct {
 	Waited bool
 	// Ended says the transcriber marked the end of the turn, or is one that never does.
 	Ended bool
+	// InParts says the speaker went on talking before hearing any of the agent's reply to
+	// what they had said, so they are giving one thought in parts and a part that sounds
+	// complete may not be the end of it.
+	InParts bool
 }
 
 type flow struct {
@@ -160,6 +164,9 @@ Choose wait when the words are probably incomplete, especially when they end on 
 member ID, phone number, or clock time that may still be growing.
 Once the caller has said they will give everything at once, choose wait at each pause until
 they ask something or plainly finish; a detail that sounds complete is not the end of the list.
+The same holds when you are told the caller is giving one thought in parts: choose wait while
+the new words only add to it, such as one more statement of a puzzle or one more item of a
+list, and respond once they ask something, correct or change something, or plainly finish.
 Choose ignore only when the words are clearly background speech or addressed to somebody else.
 A caller asking the agent anything is talking to it, however far the question is from what the
 agent is for: choose respond, and the other model says what it cannot help with. Being off-topic
@@ -292,7 +299,7 @@ func (f *flow) run(asked *candidate) {
 
 	stopExpiry := context.AfterFunc(asked.ctx, func() { _ = stream.Close() })
 	defer stopExpiry()
-	f.consume(asked, stream, model.LLM())
+	f.consume(asked, stream, model)
 }
 
 // advance starts the newest waiting turn, or marks the controller idle.
@@ -375,8 +382,13 @@ func flowQuestion(turn FlowTurn) string {
 			state, participant, voice, turn.Text)
 		return asked.String()
 	}
-	fmt.Fprintf(&asked, "\nThe agent %s.\n%s has just said%s: %q\n\nReturn the JSON object.",
-		state, participant, voice, turn.Text)
+	parts := ""
+	if turn.InParts {
+		parts = " They went on talking before hearing any of the agent's reply to what they " +
+			"said before it, so they are giving one thought in parts."
+	}
+	fmt.Fprintf(&asked, "\nThe agent %s.\n%s has just said%s: %q%s\n\nReturn the JSON object.",
+		state, participant, voice, turn.Text, parts)
 	return asked.String()
 }
 
@@ -451,7 +463,7 @@ func (f *flow) setModel(model *llmrouter.Session) {
 }
 
 // consume waits for one decision and reports it.
-func (f *flow) consume(asked *candidate, stream *llm.Stream, primary llm.LLM) {
+func (f *flow) consume(asked *candidate, stream *llm.Stream, primary *llmrouter.Session) {
 	candidateID := asked.turn.ID
 	response, err := llm.Collect(stream)
 	if f.forget(candidateID) == nil {
@@ -499,7 +511,7 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream, primary llm.LLM) {
 		// A stream is stamped by the provider that wrote it, and a hedge or a failover is
 		// another provider or model behind the same session.
 		ruler = Primary
-		if response.Provider != primary.Provider() || response.Model != primary.Model() {
+		if !primary.Wrote(response) {
 			ruler = Fallback
 		}
 	}

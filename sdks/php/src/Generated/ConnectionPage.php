@@ -14,7 +14,7 @@ final readonly class ConnectionPage
         public bool $hasMore,
         /** @var list<Connection> */
         public array $items,
-        // Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
+        // Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app)...
         public ?string $nextCursor = null,
     ) {
     }

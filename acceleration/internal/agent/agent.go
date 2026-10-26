@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
@@ -33,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -82,6 +84,10 @@ type Options struct {
 	Instructions string
 	// CustomerID owns every request the agent makes. It is what the usage is billed to.
 	CustomerID string
+	// Attribution is who beside the customer every request the agent makes is billed to and
+	// asked for by: the key and the usage categories the session was opened with, its user
+	// and its id.
+	Attribution routing.Attribution
 	// Caller is the end user who asked for this conversation, which is who its daily
 	// limits are counted against. Empty for one a customer's own backend started, which is
 	// not limited.
@@ -142,6 +148,9 @@ type Options struct {
 	// ToolPolicy is what the tool named asks of the agent (its connector binding's policy).
 	// Nil, or the zero ToolPolicy for a tool, is how every tool has always run.
 	ToolPolicy func(tool string) ToolPolicy
+	// ApprovalWait is how long a voice caller has to answer a tool's approval question,
+	// counted from when it finished playing. Zero is approvalWait, 15 seconds.
+	ApprovalWait time.Duration
 	// Tools are what the voice model may do rather than say. Each is only offered when
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
@@ -185,9 +194,10 @@ type Options struct {
 	// randomness, verbosity -- because instructions and tools belong to the agent and a
 	// caller able to rewrite those could make a session impersonate a different agent.
 	Overwrites options.LLM
-	// Memory carries what earlier conversations established into this one. Without it
-	// the agent starts every call knowing nothing but its instructions.
-	Memory memory.Store
+	// Memory carries what earlier conversations established into this one, each call
+	// recorded for the agent's owner. Without it the agent starts every call knowing nothing
+	// but its instructions.
+	Memory *metered.Memory
 	// AppID narrows memories within the customer, so two deployments of one customer do
 	// not read each other's. It is kept as a label rather than as the app id, which is
 	// always the customer, so it can never reach another customer's.
@@ -206,10 +216,11 @@ type Options struct {
 	// RecallLimit caps how many memories are recalled on joining. Zero leaves the
 	// store's own default.
 	RecallLimit int
-	// Knowledge is what the agent may look up mid-conversation. Without it, or without a
-	// namespace to read, the lookup tool is not offered: a model told it can search and
-	// then refused would promise the caller an answer it cannot get.
-	Knowledge knowledge.Store
+	// Knowledge is what the agent may look up mid-conversation, each lookup recorded for the
+	// agent's owner. Without it, or without a namespace to read, the lookup tool is not
+	// offered: a model told it can search and then refused would promise the caller an answer
+	// it cannot get.
+	Knowledge *metered.Knowledge
 	// KnowledgeNamespace is which body of knowledge this agent reads.
 	KnowledgeNamespace string
 	// KnowledgeLimit caps how many passages one lookup returns. Zero leaves the store's
@@ -261,6 +272,22 @@ type Agent struct {
 	// the event loop and the floor until Cerebras answered.
 	generatingCancel map[string]context.CancelFunc
 	toolCancels      map[string]context.CancelFunc
+	// toolContexts is each running call's context, which says whether it was cancelled.
+	toolContexts map[string]context.Context
+	// toolTurns is the turn each running call belongs to.
+	toolTurns map[string]string
+	// toolUpdates is what whoever runs a call last said about it, waiting for the line.
+	toolUpdates map[string]toolUpdate
+	// approvals are the calls waiting for a voice caller's yes, by call id (approval.go).
+	approvals map[string]*approval
+	// lapsedApprovals names the tool of each call silence declined, by call id, so a late
+	// yes is told to ask again.
+	lapsedApprovals map[string]string
+	// approvalQuestions are what a cascade owes the caller as written, in place of a reply
+	// to the calls that asked them.
+	approvalQuestions []string
+	// approvedRuns is the confirmation each approved call runs under, by the call's own id.
+	approvedRuns map[string]approvedRun
 	// toolsRunning names each tool still running, by call, so a caller left waiting can
 	// be told what on.
 	toolsRunning map[string]string
@@ -269,12 +296,16 @@ type Agent struct {
 	toolHolds map[string]*toolHold
 	// skillFiles are the files of each skill a written conversation loaded, by skill, and
 	// writtenFiles the ones already put in the sandbox, so run_code writes a skill's
-	// scripts once and again only when the skill has changed.
-	skillFiles   map[string]map[string]string
-	writtenFiles map[string]map[string]string
+	// scripts once and again only when the skill has changed, or the sandbox has: they were
+	// written into sandboxGeneration.
+	skillFiles        map[string]map[string]string
+	writtenFiles      map[string]map[string]string
+	sandboxGeneration int
 	// speculations are replies started before the flow controller ruled on their words,
-	// held until it does, by candidate.
+	// held until it does, by candidate. speculating is the id their rows share, kept from the
+	// first speculative reply to a turn of the caller's until the turn is answered.
 	speculations map[string]*speculation
+	speculating  string
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -329,6 +360,10 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// compactedAway is what compaction took out of history, oldest first. The model reads
+	// a summary of it instead, but what the caller said and the tools returned are still
+	// facts of the call, and the checks on a tool call's arguments are made against them.
+	compactedAway []llm.Message
 	// opened is the line the agent opened the conversation with before anybody spoke, told
 	// to the model in its instructions rather than kept as a turn (Say).
 	opened string
@@ -377,6 +412,9 @@ type Agent struct {
 	// a provider is still sending. It holds one entry per interruption and lives only as
 	// long as the call.
 	abandoned map[string]struct{}
+	// leftNoted is the reply whose audio for a left call was last logged, so a reply logs
+	// it once rather than once per chunk. Only the speech-to-speech consumer touches it.
+	leftNoted string
 	// unheard is the caller turn being answered while none of its reply has gone out, which
 	// the same caller saying more makes stale.
 	unheard unheardReply
@@ -388,6 +426,13 @@ type Agent struct {
 	// utterances counts syntheses that have not settled, so Finish knows when the agent
 	// has stopped talking.
 	utterances int
+	// heard is each synthesis that has not settled, with what the voice was sent for it,
+	// for reporting when it starts being heard.
+	heard map[string]*utterance
+	// finished is the syntheses that settled lately, oldest first in finishedOrder, so a
+	// delta sent for one after it settled does not open it again.
+	finished      map[string]struct{}
+	finishedOrder []string
 	// interrupting holds off new replies until the voice, edge and old model stream have
 	// all finished the interruption cleanup.
 	interrupting bool
@@ -488,6 +533,10 @@ type Agent struct {
 
 	// chunk assembles model deltas into sentences. Only the model consumer touches it.
 	chunk chunker
+	// performed is what the chunker has been given of the reply for a voice that acts
+	// directions, which the reply's message has none of: where a sentence is in the
+	// message is found from it.
+	performed []rune
 	// directions takes the voice's stage directions out of the reply. They are meant for
 	// the provider that can act them, so they never reach a reader or the history.
 	directions tts.Directions
@@ -600,11 +649,12 @@ func New(options Options) (*Agent, error) {
 
 	logger := options.Logger.With("customer", options.CustomerID, "session", options.SessionID, "call", options.CallID)
 	owner := routing.Owner{
-		CustomerID: options.CustomerID,
-		Caller:     options.Caller,
-		AgentID:    options.AgentID,
-		CallID:     options.CallID,
-		Tags:       options.Tags,
+		CustomerID:  options.CustomerID,
+		Attribution: options.Attribution,
+		Caller:      options.Caller,
+		AgentID:     options.AgentID,
+		CallID:      options.CallID,
+		Tags:        options.Tags,
 	}
 
 	settling := newCadence(cadenceGapFromEnv(logger), 0, 0, logger)
@@ -622,6 +672,8 @@ func New(options Options) (*Agent, error) {
 		voices:           map[string]string{},
 		speakers:         map[string]nameTag{},
 		abandoned:        map[string]struct{}{},
+		heard:            map[string]*utterance{},
+		finished:         map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
 		speculations:     map[string]*speculation{},
@@ -646,28 +698,18 @@ func New(options Options) (*Agent, error) {
 	agent.nativeMode.Store(native)
 
 	if options.Memory != nil {
-		// Memory is recorded as a modality of its own so what remembering costs is
-		// reported alongside what the models cost.
-		agent.memory = newMemoryWriter(
-			options.Memory,
-			scope,
-			options.Incognito,
-			owner,
-			routing.NewRecorder(routing.Memory, options.Store, options.Live, logger),
-			logger,
-		)
+		// Each call is recorded as a memory row of the agent's owner, so what remembering
+		// costs is reported alongside what the models cost.
+		agent.memory = newMemoryWriter(options.Memory.For(owner), scope, options.Incognito, logger)
 	}
 
 	// A knowledge store without a namespace reads nothing, so the agent is treated as
 	// having none rather than being offered a search that would always fail.
 	if options.Knowledge != nil && options.KnowledgeNamespace != "" {
 		agent.knowledge = newKnowledgeReader(
-			options.Knowledge,
+			options.Knowledge.For(owner),
 			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
 			options.KnowledgeLimit,
-			owner,
-			routing.NewRecorder(routing.Knowledge, options.Store, options.Live, logger),
-			logger,
 		)
 	}
 
@@ -707,7 +749,9 @@ func (a *Agent) Join(ctx context.Context) error {
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: already joined"))
 	}
-	a.ctx, a.cancel = context.WithCancel(ctx)
+	// Everything the agent opens from here on is owned by the session's attribution, whoever's
+	// context it joined with.
+	a.ctx, a.cancel = context.WithCancel(routing.WithAttribution(ctx, a.options.Attribution))
 	a.joined = true
 	a.mu.Unlock()
 
@@ -767,7 +811,11 @@ func (a *Agent) Join(ctx context.Context) error {
 
 	changed := a.modelsChanged()
 	a.logger.Info("joined", "llm", changed.LLM, "tts", changed.TTS, "sts", changed.STS)
-	a.emitter.Send(Joined{At: time.Now()})
+	var sfu SFU
+	if reporter, ok := a.options.Edge.(SFUReporter); ok {
+		sfu = reporter.SFU()
+	}
+	a.emitter.Send(Joined{At: time.Now(), SFU: sfu})
 	return nil
 }
 
@@ -848,17 +896,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender, scheduled)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender, scheduled, "")
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender, scheduled)
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender, scheduled, "")
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -1187,6 +1235,16 @@ func (a *Agent) History() []llm.Message {
 	return append([]llm.Message(nil), a.history...)
 }
 
+// record returns the whole call: what compaction took out of the history as well as the
+// history itself. Whether a caller said a value or a tool returned it does not stop being
+// true when the model is handed a summary instead. Before this, an ID a tool returned was
+// refused as made up once the result had been summarised away.
+func (a *Agent) record() []llm.Message {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append(append([]llm.Message(nil), a.compactedAway...), a.history...)
+}
+
 // Finish waits for the agent to stop talking, so a caller can hang up without cutting off
 // the last sentence. Work still running counts as talking: the caller was told an answer
 // was coming. It returns the context's error if the wait outlasts it.
@@ -1248,6 +1306,9 @@ func (a *Agent) close() error {
 		p.running.Wait()
 	}
 	a.running.Wait()
+	a.mu.Lock()
+	a.forgetUtterancesLocked()
+	a.mu.Unlock()
 	a.logHeardFromEveryone("end")
 
 	// The writers are drained after the consumers have stopped, so a turn that finished
@@ -1260,9 +1321,6 @@ func (a *Agent) close() error {
 	}
 	if a.memory != nil {
 		a.memory.Close()
-	}
-	if a.knowledge != nil {
-		a.knowledge.Close()
 	}
 	if a.searcher != nil {
 		failures = append(failures, a.searcher.Close())
@@ -1571,6 +1629,8 @@ func (a *Agent) consumePresence(p *pipeline) {
 			// with no TTS complete to pick it up.
 			a.respondQueued()
 			a.followUp()
+			a.sayToolUpdate()
+			a.tickApprovals()
 		case <-p.ctx.Done():
 			return
 		}
@@ -1674,10 +1734,11 @@ func (a *Agent) perform(action Action) {
 			decidedAt: time.Now(), said: newestWords(strings.TrimSpace(missed+" "+action.Candidate.Said()), missedWords)}
 		a.mu.Unlock()
 		note := joinNotes(action.Clarify, missedNote(missed))
-		if a.adoptSpeculation(action.Candidate, note) {
+		adopted, speculated := a.adoptSpeculation(action.Candidate, note)
+		if adopted {
 			return
 		}
-		if err := a.respondCandidate(action.Candidate, note); err != nil {
+		if err := a.respondCandidate(action.Candidate, note, speculated); err != nil {
 			a.fail(err, "llm")
 		}
 
@@ -1730,6 +1791,7 @@ func (a *Agent) ask(ready candidate) {
 		AnotherVoice: anotherVoice,
 		Waited:       a.converse.waitedOn(ready),
 		Ended:        ready.Ended,
+		InParts:      a.converse.inParts(ready.Participant.ID),
 	}); err != nil {
 		a.dropSpeculation(ready.ID)
 		a.converse.Unasked(ready.ID)
@@ -1830,18 +1892,19 @@ func turnStamp() string { return strconv.FormatInt(time.Now().UnixNano(), 10) }
 
 // respond asks the harness to reply to a turn.
 func (a *Agent) respond(participant stt.Participant, text string, listened heard, images []llm.ImagePart) error {
-	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{}, routing.Caller{}, false)
+	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{}, routing.Caller{}, false, "")
 }
 
 // respondCandidate answers a settled turn. The note is what the conversation decided the
 // model should know beyond the words, and is empty on a turn that is simply answered.
-func (a *Agent) respondCandidate(ready candidate, note string) error {
+// speculated is respondTurn's.
+func (a *Agent) respondCandidate(ready candidate, note, speculated string) error {
 	return a.respondTurn(ready.ID, ready.Participant, ready.Said(), heard{
 		at:           ready.ReadyAt,
 		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
 		confidence:   ready.Confidence,
-	}, note, nil, options.LLM{}, routing.Caller{}, false)
+	}, note, nil, options.LLM{}, routing.Caller{}, false, speculated)
 }
 
 // noteToolDone records that one of the tools the current turn asked for has returned. A
@@ -1890,6 +1953,9 @@ func (a *Agent) respondAfterTool(turnID string) error {
 		a.mu.Unlock()
 		return nil
 	}
+	if question := a.takeApprovalQuestionsLocked(); question != "" {
+		return a.askLocked(turnID, question)
+	}
 	history := a.replayLocked()
 	participant := a.lastParticipant
 	a.speakingTurn = turnID
@@ -1917,6 +1983,9 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	}, "")
 }
 
+// respondTurn answers a turn of the caller's. speculated is the id of the speculative replies
+// to the turn that were thrown away, which this answer is kept in place of, and empty when
+// there were none.
 func (a *Agent) respondTurn(
 	turnID string,
 	participant stt.Participant,
@@ -1927,6 +1996,7 @@ func (a *Agent) respondTurn(
 	asked options.LLM,
 	sender routing.Caller,
 	scheduled bool,
+	speculated string,
 ) error {
 	a.mu.Lock()
 	if a.harness == nil {
@@ -1935,6 +2005,9 @@ func (a *Agent) respondTurn(
 	}
 	a.keepTurnLocked(participant, text)
 	history := a.replayLocked()
+	// This turn is answered, however it was asked, so what is speculated on next is a turn
+	// of its own.
+	a.speculating = ""
 
 	a.speakingTurn = turnID
 	a.generating = true
@@ -1964,7 +2037,7 @@ func (a *Agent) respondTurn(
 	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 
-	return a.generate(harness.Turn{
+	turn := harness.Turn{
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
@@ -1972,7 +2045,12 @@ func (a *Agent) respondTurn(
 		Images:       images,
 		Asked:        asked,
 		NoTools:      noTools,
-	}, text)
+	}
+	if speculated != "" {
+		kept := map[string]string{routing.AttributeSpeculation: speculated, routing.AttributeKept: "true"}
+		turn.Attributes = func() map[string]string { return kept }
+	}
+	return a.generate(turn, text)
 }
 
 // typedCaller is the participant RespondTo answers as. Typed words are the caller's own,
@@ -2221,7 +2299,7 @@ func composedFor(purpose string) string {
 	switch purpose {
 	case idlePurpose:
 		return PurposeCheckIn
-	case updatePurpose:
+	case updatePurpose, statusPurpose, toolSaidPurpose:
 		return PurposeUpdate
 	}
 	return ""
@@ -2232,7 +2310,7 @@ func composedKind(purpose string) string {
 	switch purpose {
 	case holdPurpose:
 		return kindHold
-	case updatePurpose:
+	case updatePurpose, statusPurpose, toolSaidPurpose:
 		return kindUpdate
 	}
 	return kindCheckIn
@@ -2538,7 +2616,7 @@ func (a *Agent) say(turnID, delta string) {
 	// text -- a markdown link, an array literal -- and taking it out corrupts the reply.
 	plain := speech
 	if !a.options.Text {
-		plain = a.directions.Add(speech)
+		plain = a.messageText(a.directions.Add(speech))
 	}
 	if plain != "" {
 		a.spoken.WriteString(plain)
@@ -2559,11 +2637,11 @@ func (a *Agent) say(turnID, delta string) {
 		return
 	}
 
-	for _, sentence := range a.chunk.Add(speech) {
-		if a.withhold(sentence) {
+	for _, sentence := range a.sentencesOf(speech) {
+		if a.withhold(sentence.text) {
 			continue
 		}
-		if err := a.speakSentence(turnID, sentence); err != nil {
+		if err := a.speakSentence(turnID, sentence.text, a.inMessage(sentence)); err != nil {
 			a.fail(err, "tts")
 		}
 	}
@@ -2690,7 +2768,7 @@ func (a *Agent) finish(response llm.Response) {
 	// was only ever text. In writing the stripper never ran, so there is nothing held.
 	plain := tail
 	if !a.options.Text {
-		plain = a.directions.Add(tail) + a.directions.Flush()
+		plain = a.messageText(a.directions.Add(tail) + a.directions.Flush())
 	}
 	a.spoken.WriteString(plain)
 	if !a.performs {
@@ -2709,17 +2787,17 @@ func (a *Agent) finish(response llm.Response) {
 			a.emitter.Send(ResponseDelta{TurnID: response.ID, Text: plain})
 		}
 	} else {
-		for _, sentence := range a.chunk.Add(tail) {
-			if a.withhold(sentence) {
+		for _, sentence := range a.sentencesOf(tail) {
+			if a.withhold(sentence.text) {
 				continue
 			}
-			if err := a.speakSentence(response.ID, sentence); err != nil {
+			if err := a.speakSentence(response.ID, sentence.text, a.inMessage(sentence)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
 		// Whatever did not end in punctuation is still worth saying.
-		if remainder := a.chunk.Flush(); remainder != "" && !a.withhold(remainder) {
-			if err := a.speakSentence(response.ID, remainder); err != nil {
+		if remainder := a.chunk.Flush(); remainder.text != "" && !a.withhold(remainder.text) {
+			if err := a.speakSentence(response.ID, remainder.text, a.inMessage(remainder)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
@@ -2731,8 +2809,7 @@ func (a *Agent) finish(response llm.Response) {
 		// once the work is handed over.
 		if a.fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
 			if filler := a.preSpeech(calls); filler != "" {
-				a.spoken.WriteString(filler)
-				if err := a.speakSentence(response.ID, filler); err != nil {
+				if err := a.speakSentence(response.ID, filler, a.appendSpoken(filler)); err != nil {
 					a.fail(err, "tts")
 				}
 			} else {
@@ -2742,8 +2819,7 @@ func (a *Agent) finish(response llm.Response) {
 		// A reply that failed before a word of it was said leaves the caller waiting for
 		// one that is not coming, and after "one moment" that silence is the answer lost.
 		if response.Status == llm.StatusFailed && strings.TrimSpace(a.spoken.String()) == "" {
-			a.spoken.WriteString(lostReply)
-			if err := a.speakSentence(response.ID, lostReply); err != nil {
+			if err := a.speakSentence(response.ID, lostReply, a.appendSpoken(lostReply)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
@@ -3076,7 +3152,7 @@ func calledInCall(history []llm.Message, tool string) bool {
 		}
 	}
 	return slices.ContainsFunc(history, func(message llm.Message) bool {
-		return message.Role == llm.ToolResult && names[message.ToolCallID] == tool && !failedResult(message.Content)
+		return message.Role == llm.ToolResult && names[message.ToolCallID] == tool && !failedResult(message.Content) && !undoneResult(message.Content)
 	})
 }
 
@@ -3368,7 +3444,7 @@ func changedSinceCaller(history []llm.Message, counts func(tool string) bool) bo
 		switch history[i].Role {
 		case llm.ToolResult:
 			name := names[history[i].ToolCallID]
-			if !failedResult(history[i].Content) && !readsOnly(name) && counts(name) {
+			if !failedResult(history[i].Content) && !undoneResult(history[i].Content) && !readsOnly(name) && counts(name) {
 				return true
 			}
 		case llm.User:
@@ -3397,7 +3473,7 @@ func toolRanSinceCaller(history []llm.Message) bool {
 	for i := len(history) - 1; i >= 0; i-- {
 		switch history[i].Role {
 		case llm.ToolResult:
-			if !failedResult(history[i].Content) {
+			if !failedResult(history[i].Content) && !undoneResult(history[i].Content) {
 				return true
 			}
 		case llm.User:
@@ -3486,6 +3562,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	leveller := audio.NewLeveller()
 	overlapping := newOverlap(voice.Provider(), a.abandonedTurn, a.logger)
 	queue := newPlayout(a.options.Edge, voice.Provider())
+	marked, marks := a.options.Edge.(MarkedPlayout)
+	// The utterance the last chunk was of. A synthesis arrives as a run of chunks, so it is
+	// looked up once per run rather than once per chunk.
+	var heard *utterance
+	heardID := ""
 
 	for event := range voice.Events() {
 		switch typed := event.(type) {
@@ -3497,7 +3578,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			// to say what a tool returned or what delegated work came back with, does not:
 			// treating it as one would throw away the tail of the sentence being spoken
 			// and cut the agent off mid-word.
-			publish, first := a.publishing(turnOf(typed.SynthesisID))
+			lookup := typed.SynthesisID != heardID
+			publish, first, found := a.publishing(turnOf(typed.SynthesisID), typed.SynthesisID, lookup)
+			if lookup {
+				heard, heardID = found, typed.SynthesisID
+			}
 			if !publish {
 				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
 				if dropping != typed.SynthesisID {
@@ -3509,15 +3594,27 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			}
 			speech := leveller.Level(typed.Audio)
 			var err error
-			if marked, ok := a.options.Edge.(MarkedPlayout); ok {
+			if marks {
 				// Publishing returns once the chunk is queued, which for a long one is well
 				// after the participants could have heard it begin, so the edge says when.
-				err = marked.PublishAudioMarked(speech, a.turns.marksFor(turnOf(typed.SynthesisID)))
+				err = marked.PublishAudioMarked(speech, withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard))
 			} else {
 				err = a.options.Edge.PublishAudio(speech)
 			}
+			if errors.Is(err, ErrCallLeft) {
+				if dropping != typed.SynthesisID {
+					dropping = typed.SynthesisID
+					a.logger.Debug("dropping audio for a call that has been left", "synthesis", typed.SynthesisID)
+				}
+				continue
+			}
 			if err != nil {
 				a.fail(err, "edge")
+			}
+			// An edge that cannot say when its track took the audio is taken at its word,
+			// like firstAudio below.
+			if heard.sent(typed.Audio.DurationMs()) && !marks {
+				heard.FirstAudiblePulled(time.Now())
 			}
 			overlapping.published(typed.SynthesisID, typed.Audio.DurationMs())
 			a.mu.Lock()
@@ -3539,6 +3636,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"caller_talking", a.converse.Listening())
 
 		case tts.SynthesisComplete:
+			done := a.takeUtterance(typed.SynthesisID)
+			if heardID == typed.SynthesisID {
+				heard, heardID = nil, ""
+			}
 			overlapping.finished(typed.SynthesisID)
 			a.settleVoice(voice)
 			a.logger.Info("finished speaking", append([]any{
@@ -3552,8 +3653,13 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			if !typed.Interrupted {
 				// An interrupted utterance was not heard in full, so it must not be
 				// recorded as a finished spoken reply.
+				// All of it is queued at the edge, behind whatever is still to play.
+				a.heardBefore(done, func() float64 { return queue.ahead(typed.AudioDurationMs) })
 				a.emitter.Send(Spoke{
 					TurnID:            turnOf(typed.SynthesisID),
+					SynthesisID:       typed.SynthesisID,
+					Characters:        typed.Characters,
+					Message:           done.span(),
 					AudioDurationMs:   typed.AudioDurationMs,
 					TimeToFirstByteMs: typed.TimeToFirstByteMs,
 				})
@@ -3614,6 +3720,9 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 			// An answer took the reply started for these words; any other ruling leaves it
 			// unwanted.
 			a.dropSpeculation(typed.CandidateID)
+			if typed.Disposition == harness.Ignore {
+				a.stopSpeculating()
+			}
 
 		case harness.Compacted:
 			a.applyCompaction(typed)
@@ -3684,6 +3793,7 @@ func (a *Agent) applyCompaction(compacted harness.Compacted) {
 		return
 	}
 	before := len(a.history)
+	a.compactedAway = append(a.compactedAway, a.history[:len(compacted.Prefix)]...)
 	tail := append([]llm.Message(nil), a.history[len(compacted.Prefix):]...)
 	a.history = append([]llm.Message{{
 		Role:    llm.System,
@@ -3846,12 +3956,13 @@ func pauseCounted(text string) string {
 	return countedDigits.ReplaceAllString(text, "$1 $2 digits, $3")
 }
 
-// speakSentence sends one sentence of a reply to the voice.
+// speakSentence sends one sentence of a reply to the voice, from where it is in the reply's
+// message.
 //
 // A streaming provider takes a turn's sentences as deltas of one utterance, which keeps a
 // turn to a single billed synthesis. A provider that cannot take deltas gets each sentence
 // as its own final request instead.
-func (a *Agent) speakSentence(turnID, text string) error {
+func (a *Agent) speakSentence(turnID, text string, message MessageSpan) error {
 	voice := a.voice()
 	if voice == nil {
 		return errors.New("agent: not joined")
@@ -3868,17 +3979,18 @@ func (a *Agent) speakSentence(turnID, text string) error {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
 		a.begin()
-		return voice.Synthesize(tts.Request{ID: id, Text: text, Final: true})
+		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message)
 	}
 
 	if a.openTurn != turnID {
 		a.openTurn = turnID
 		a.begin()
 	}
-	return voice.Synthesize(tts.Request{ID: turnID, Text: text})
+	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text}, message)
 }
 
-// speakWhole says a piece of text that is already complete, as one utterance.
+// speakWhole says a piece of text that is already complete, as one utterance. Its message,
+// if it has one, is the text.
 func (a *Agent) speakWhole(turnID, text string) error {
 	voice := a.voice()
 	if voice == nil {
@@ -3886,7 +3998,8 @@ func (a *Agent) speakWhole(turnID, text string) error {
 	}
 	a.turns.ttsStarted(turnID, time.Now())
 	a.begin()
-	if err := voice.Synthesize(tts.Request{ID: turnID, Text: text, Final: true}); err != nil {
+	whole := MessageSpan{End: utf8.RuneCountInString(text)}
+	if err := a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text, Final: true}, whole); err != nil {
 		// Refused, it is never said, so it is not counted as being said either.
 		a.settle()
 		return err
@@ -3931,6 +4044,7 @@ func (a *Agent) claimReply(turnID string) {
 // finished or was interrupted.
 func (a *Agent) resetTurn() {
 	a.chunk.Reset()
+	a.performed = a.performed[:0]
 	a.harness.Reset()
 	a.directions.Reset()
 	a.spoken.Reset()
@@ -4032,6 +4146,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		return false
 	}
 	heard, played := a.voiced == turnID, time.Since(a.voicedAt)
+	cut := a.cutShortLocked(turnID, time.Now())
 	a.abandoned[turnID] = struct{}{}
 	a.interrupting = true
 	a.speakingTurn = ""
@@ -4078,7 +4193,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	}
 
 	a.turns.interrupt(turnID)
-	a.emitter.Send(Interrupted{TurnID: turnID, Participant: participant})
+	a.emitter.Send(cut.cut(Interrupted{TurnID: turnID, Participant: participant}))
 	a.mu.Lock()
 	a.interrupting = false
 	a.mu.Unlock()
@@ -4136,20 +4251,26 @@ func (a *Agent) speaking(turnID string) bool {
 // publishing reports whether audio of a turn goes out (not once it was abandoned), and whether
 // it is the turn's first, which makes a caller's reply heard. Interleaved turns count a first
 // at each switch, which is the agent talking over itself (speechOverlaps).
-func (a *Agent) publishing(turnID string) (publish, first bool) {
+//
+// With lookup it also returns the utterance the synthesis is, under the same lock, so that
+// finding it costs the voice's goroutine nothing more than the check it makes anyway.
+func (a *Agent) publishing(turnID, synthesisID string, lookup bool) (publish, first bool, heard *utterance) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if lookup {
+		heard = a.utteranceLocked(synthesisID)
+	}
 	if _, gone := a.abandoned[turnID]; gone {
-		return false, false
+		return false, false, heard
 	}
 	if a.unheard.turnID == turnID {
 		a.unheard = unheardReply{}
 	}
 	if a.voiced == turnID {
-		return true, false
+		return true, false, heard
 	}
 	a.voiced, a.voicedAt = turnID, time.Now()
-	return true, true
+	return true, true, heard
 }
 
 // abandonedTurn reports whether an interruption gave up on a turn, which is what stops
@@ -4233,6 +4354,7 @@ func turnOf(synthesisID string) string {
 func (a *Agent) Continue(previous *Agent) {
 	previous.mu.Lock()
 	history := append([]llm.Message(nil), previous.history...)
+	compactedAway := append([]llm.Message(nil), previous.compactedAway...)
 	// A copy: the old agent can still keep a turn between this and its Close, and would
 	// write to a map the new agent reads.
 	speakers := maps.Clone(previous.speakers)
@@ -4241,6 +4363,7 @@ func (a *Agent) Continue(previous *Agent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = history
+	a.compactedAway = compactedAway
 	a.speakers = speakers
 	a.opened = opened
 }
@@ -4266,7 +4389,7 @@ func (a *Agent) openSubagent(target string) func(context.Context) (*llmrouter.Se
 		}
 	}
 	return func(ctx context.Context) (*llmrouter.Session, error) {
-		return a.options.LLM.Start(ctx, llmrouter.Request{
+		return a.options.LLM.Start(routing.WithAttribution(ctx, a.options.Attribution), llmrouter.Request{
 			CustomerID: a.options.CustomerID, Caller: a.options.Caller,
 			AgentID: a.options.AgentID, CallID: a.options.CallID,
 			Tags: a.options.Tags, Target: target,

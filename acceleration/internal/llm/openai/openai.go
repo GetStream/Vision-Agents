@@ -400,6 +400,7 @@ func (p *puller) settle(w *llm.ResponseWriter, response responses.Response) {
 		},
 		TotalTokens: response.Usage.TotalTokens,
 	})
+	w.ServiceTier(string(response.ServiceTier))
 
 	switch response.Status {
 	case "incomplete":
@@ -417,11 +418,17 @@ func (p *puller) settle(w *llm.ResponseWriter, response responses.Response) {
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
 
-	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		p.err = err
-	} else if err != nil {
+	switch err := p.upstream.Err(); {
+	case err == nil:
+	case errors.Is(err, context.Canceled):
 		// A cancelled stream is barge-in or shutdown, not a provider failure.
 		w.Cancelled()
+	case errors.Is(err, context.DeadlineExceeded):
+		// Ours or the caller's: the provider billed what it generated until then.
+		w.TimedOut()
+		p.err = err
+	default:
+		p.err = err
 	}
 
 	p.upstream.Close()
@@ -497,9 +504,14 @@ func (l *LLM) params(request llm.ResponseParams) responses.ResponseNewParams {
 // field, because that is the only place a cache breakpoint can be put: the boundary the
 // whole agent shares is the end of what it was told to be, and a breakpoint attaches to a
 // content part.
+//
+// A response that continues a stored one sends no instructions: the developer message is an
+// input item like any other, so the stored response already holds it, and sending it again
+// appends another copy to the chain on every turn. A voice call with a 5k-token prompt grew
+// by 5k tokens a turn, to 48k after ten, with the model reading ten copies of the prompt.
 func (l *LLM) input(request llm.ResponseParams) responses.ResponseInputParam {
 	items := make(responses.ResponseInputParam, 0, len(request.Input)+1)
-	if request.Instructions != "" {
+	if request.Instructions != "" && request.PreviousResponseID == "" {
 		items = append(items, l.instructions(request))
 	}
 
@@ -523,7 +535,9 @@ func (l *LLM) input(request llm.ResponseParams) responses.ResponseInputParam {
 func (l *LLM) instructions(request llm.ResponseParams) responses.ResponseInputItemUnionParam {
 	text := responses.ResponseInputTextParam{Text: request.Instructions}
 	if request.PromptCacheOptions.Mode == llm.CacheExplicit {
-		text.PromptCacheBreakpoint = responses.ResponseInputTextPromptCacheBreakpointParam{}
+		// The constructor sets mode; the zero value is dropped by the field's omitzero tag,
+		// and an explicit-mode request with no breakpoint caches nothing.
+		text.PromptCacheBreakpoint = responses.NewResponseInputTextPromptCacheBreakpointParam()
 	}
 	return responses.ResponseInputItemParamOfInputMessage(
 		responses.ResponseInputMessageContentListParam{{OfInputText: &text}},

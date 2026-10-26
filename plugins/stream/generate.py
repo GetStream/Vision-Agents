@@ -13,7 +13,8 @@ is what keeps the two in step.
 WebSockets are not generated. OpenAPI cannot describe a socket past the upgrade, so the
 events and modality streams are hand-written in ``_ws.py``. SSE operations are also
 excluded: the generated HTTP client buffers entire responses and cannot consume an
-open-ended event stream. The dashboard consumes agent logs using EventSource.
+open-ended event stream. The dashboard consumes agent logs using EventSource. Operations
+tagged ``Staff`` are Stream's own and are left out as well.
 
 Usage:
     uv run plugins/stream/generate.py
@@ -30,6 +31,7 @@ PLUGIN = Path(__file__).parent
 SPEC = PLUGIN.parents[1] / "acceleration" / "api" / "openapi.yaml"
 PACKAGE = PLUGIN / "vision_agents" / "plugins" / "stream"
 GENERATED = PACKAGE / "_generated"
+STAFF_TAG = "Staff"
 
 CONFIG = """
 project_name_override: _generated
@@ -48,12 +50,14 @@ def main() -> int:
 
     # The generator treats text/event-stream as a finite string response, which
     # would buffer indefinitely. Keep streaming endpoints out of the REST client.
+    # Operations tagged Staff (/v1/ops/*, /v1/manage/*) are Stream's own, reached
+    # with a staff key and never by a customer, so they stay out too.
     document = yaml.safe_load(SPEC.read_text())
     for path, item in list(document["paths"].items()):
         for method, operation in list(item.items()):
             if not isinstance(operation, dict):
                 continue
-            if any(
+            if STAFF_TAG in operation.get("tags", []) or any(
                 "text/event-stream" in response.get("content", {})
                 for response in operation.get("responses", {}).values()
             ):

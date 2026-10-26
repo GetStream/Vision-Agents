@@ -124,6 +124,8 @@ type commandRecord struct {
 	// Reply is what a follow-up's reply said when it finished, for the follow-up delivered
 	// again to carry rather than run twice (FollowUpReply).
 	Reply string `json:",omitempty"`
+	// Files are that reply's files, which a reply carried again carries too (FollowUpFinished).
+	Files []sandbox.Attachment `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
@@ -327,6 +329,8 @@ type FinishedReply struct {
 	Customer  string
 	CID       string
 	MessageID string
+	// CommandID is the command or follow-up the reply answers, if any (Message.CommandID).
+	CommandID string
 	Text      string
 	// Files are what the agent's own code made for the reply (Message.Files), stored in
 	// Stream Chat, which the bridge sends on as links (T62a, AI-921).
@@ -849,6 +853,7 @@ func commandsIn(messages []Message) map[string]commandRecord {
 			commands[m.CommandID] = commandRecord{
 				CommandReceipt: CommandReceipt{CommandID: m.CommandID, AssistantMessageID: m.ID, State: m.State},
 				Reply:          m.Text,
+				Files:          m.Files,
 			}
 			continue
 		}
@@ -857,7 +862,7 @@ func commandsIn(messages []Message) map[string]commandRecord {
 		// Only a follow-up, which has no message of a person's, is read back; its
 		// latest message is the one a retry after an abandoned turn answered with.
 		if record.UserMessageID == "" {
-			record.Reply = m.Text
+			record.Reply, record.Files = m.Text, m.Files
 		}
 		commands[m.CommandID] = record
 	}
@@ -1459,6 +1464,10 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		unsaved = true
+	case agent.ToolUpdated:
+		if e.Verbatim || !c.acceptTurn(e.TurnID, false) || !reported(m, e.ID, e.Text) {
+			return
+		}
 	case agent.ToolRan:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -1488,7 +1497,9 @@ func (c *Conversation) Observe(event agent.Event) {
 				switch r.Status {
 				case "answered":
 					t.Summary = fmt.Sprintf("Verified %d source citations", len(r.Citations))
-				case "unavailable", "research_failed", "insufficient_evidence":
+				// A held connector call that was declined or stopped was never sent
+				// (session.holdForApproval).
+				case "unavailable", "declined", "stopped", "research_failed", "insufficient_evidence":
 					t.Status = "failed"
 					t.Summary = strings.TrimSpace(strings.ReplaceAll(r.Status+" "+r.Code, "_", " "))
 				}
@@ -1704,7 +1715,7 @@ func (c *Conversation) finish(state string) {
 	c.state(state)
 	// Only a follow-up, which has no message of a person's, is read back this way.
 	if record, ok := c.data.Commands[m.CommandID]; ok && record.UserMessageID == "" {
-		record.Reply = m.Text
+		record.Reply, record.Files = m.Text, append([]sandbox.Attachment(nil), m.Files...)
 		c.data.Commands[m.CommandID] = record
 	}
 	c.stopParts(m, now)
@@ -1933,8 +1944,8 @@ func (c *Conversation) finishedReply(op operation) (FinishedReply, bool) {
 		!c.thread {
 		return FinishedReply{}, false
 	}
-	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, Text: m.Text,
-		Files: append([]sandbox.Attachment(nil), m.Files...)}, true
+	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, CommandID: m.CommandID,
+		Text: m.Text, Files: append([]sandbox.Attachment(nil), m.Files...)}, true
 }
 
 // retire takes a conversation released retireAfter ago, with nothing left to write, out of
@@ -2115,12 +2126,7 @@ func (c *Conversation) indicate(next indication) {
 
 // sendIndicator sends ai_indicator.update with state, or ai_indicator.clear without one.
 func (c *Conversation) sendIndicator(messageID, state string) {
-	event := getstream.EventRequest{Type: "ai_indicator.clear", UserID: &c.data.Agent,
-		Custom: map[string]any{"message_id": messageID}}
-	if state != "" {
-		event.Type = "ai_indicator.update"
-		event.Custom["ai_state"] = state
-	}
+	event := IndicatorEvent(c.data.Agent, messageID, state)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	client, err := c.chat(ctx)
@@ -2137,18 +2143,45 @@ func (c *Conversation) sendIndicator(messageID, state string) {
 	}
 }
 
+// Stream's AI indicator states, as ai_state carries them.
+const (
+	AIStateThinking        = "AI_STATE_THINKING"
+	AIStateGenerating      = "AI_STATE_GENERATING"
+	AIStateExternalSources = "AI_STATE_EXTERNAL_SOURCES"
+)
+
+// IndicatorEvent is ai_indicator.update with state, or ai_indicator.clear without one, sent
+// as user. messageID is the reply it is about, left out while there is no message yet: a
+// client reads only ai_state.
+func IndicatorEvent(user, messageID, state string) getstream.EventRequest {
+	event := getstream.EventRequest{Type: "ai_indicator.clear", UserID: &user, Custom: map[string]any{}}
+	if messageID != "" {
+		event.Custom["message_id"] = messageID
+	}
+	if state != "" {
+		event.Type = "ai_indicator.update"
+		event.Custom["ai_state"] = state
+	}
+	return event
+}
+
+// SearchTool reports whether a tool, while it runs, is the agent checking external sources.
+func SearchTool(name string) bool {
+	return strings.Contains(name, "search")
+}
+
 // aiState maps a live reply to Stream's AI indicator states: generating once the answer
 // streams, checking external sources while a search runs, thinking otherwise.
 func aiState(m Message) string {
 	if m.State == "writing" {
-		return "AI_STATE_GENERATING"
+		return AIStateGenerating
 	}
 	for _, t := range m.Tools {
-		if t.Status == "running" && strings.Contains(t.Name, "search") {
-			return "AI_STATE_EXTERNAL_SOURCES"
+		if t.Status == "running" && SearchTool(t.Name) {
+			return AIStateExternalSources
 		}
 	}
-	return "AI_STATE_THINKING"
+	return AIStateThinking
 }
 
 func sameMemoryScope(a, b memory.Scope) bool {

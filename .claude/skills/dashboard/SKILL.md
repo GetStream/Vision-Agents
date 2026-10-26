@@ -39,7 +39,8 @@ CORS origin. Rebuild the router after pulling router changes.
 
 Set `ROUTER_AUTH_KEK` (single-quoted) and `ROUTER_PUBLIC_URL=http://localhost:8080` in the
 repo-root `.env`, which compose hands the router. Without the KEK no plugin client secret can be
-saved, and changing it leaves the stored ones unreadable.
+saved, and changing it leaves the stored ones unreadable. Local dev keeps the plain KEK: Cloud KMS
+(`ROUTER_AUTH_KMS_KEY`) is for hosted deployments.
 
 ## How Agents is wired
 

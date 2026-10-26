@@ -4,6 +4,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 )
 
 // useCase creates a draft use case for a customer.
@@ -56,8 +57,8 @@ func (s *StoreSuite) TestTheDefaultUseCaseSendsForEveryNumberNotAssignedElsewher
 	fallback := s.useCase(customerID, "support")
 	reminders := s.useCase(customerID, "reminders")
 	var numbers []string
-	for range 2 {
-		number := PhoneNumber{CustomerID: customerID, E164: "+1555" + newID()[:7], Vendor: "telnyx"}
+	for i := range 2 {
+		number := PhoneNumber{CustomerID: customerID, E164: fmt.Sprintf("+15550001%03d", i), Vendor: "telnyx"}
 		s.Require().NoError(s.store.RecordNumber(s.ctx, &number))
 		numbers = append(numbers, number.E164)
 	}

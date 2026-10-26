@@ -349,6 +349,9 @@ func (s *Server) createConnector(ctx context.Context, request *createConnectorRe
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	if manifest.ID == store.StreamSource {
+		return nil, invalidRequest(store.StreamSource + " is the source of the router's own events, which no connector may be named")
+	}
 	// Every refusal a caller can cause is above, so what the store refuses here is a bug.
 	definition, err := s.store.CreateConnectorDefinition(ctx, customerID, manifest)
 	if err != nil {

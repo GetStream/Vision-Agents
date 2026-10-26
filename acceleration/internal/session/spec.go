@@ -52,7 +52,16 @@ type Spec struct {
 	// Thread holds ConversationID on a thread channel (internal/channelbridge), which only
 	// the Router sets once it found the channel's channel_threads row (api.threadSession,
 	// api.threadConversation). No request sets it.
-	Thread           bool
+	Thread bool
+	// ThreadPerson is the person a thread on a line of one person answers (SMS, WhatsApp): the
+	// Stream user the channel bridge writes their messages as. The scheduling tools are offered
+	// for them, and ThreadChannel is the thread channel their tasks keep.
+	// Only the Router sets them (api.threadSession); a Slack or Linq thread has neither.
+	ThreadPerson  string
+	ThreadChannel string
+	// ThreadDelivery is the channel the thread reaches its person on, sms or whatsapp: where
+	// the tasks they schedule there are delivered (api.personalThreads).
+	ThreadDelivery   string
 	ContextTruncated bool
 	// CallID is the call the agent is on while voice is started: agent:<ID>, which joining
 	// creates, unless the caller named a call of its own. Empty while the conversation is
@@ -102,6 +111,11 @@ type Spec struct {
 	// anonymous caller may go by any name, so the name alone cannot be what one person's
 	// conversation is kept from another by. The API fills it in from the credential.
 	CallerKind auth.Kind
+	// Attribution is who every row the session writes is billed to and asked for by: the key
+	// it was opened with, its user and its usage categories, kept for its whole life, and its
+	// own id. Create takes it from the context it is given when the spec names no key, which
+	// is the request's (routing.AttributionFrom).
+	Attribution routing.Attribution
 	// ConfigID names the agent config this session was created from, so a call can later
 	// say what the agent was configured as. Empty for a session that spelled itself out.
 	ConfigID string

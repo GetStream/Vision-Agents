@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -21,62 +22,33 @@ const (
 	ScopeOrganization PolicyScope = "organization"
 	// ScopeApp is one app.
 	ScopeApp PolicyScope = "app"
+	// ScopeUser is one end user of one app, by UserScopeID. Its document holds a quota only.
+	ScopeUser PolicyScope = "user"
 )
 
-// BudgetInterval is how often a spend cap resets. Every interval starts on a UTC boundary,
-// so a new interval is a new window and nothing has to be reset.
-type BudgetInterval string
+// UserScopeID is the scope id of one app's end user. A user id is the app's own name for
+// somebody, so the same id in two apps is two users.
+func UserScopeID(appID, userID string) string { return appID + "/" + userID }
 
-const (
-	BudgetHourly  BudgetInterval = "hourly"
-	BudgetDaily   BudgetInterval = "daily"
-	BudgetWeekly  BudgetInterval = "weekly"
-	BudgetMonthly BudgetInterval = "monthly"
-)
-
-// Valid reports whether the interval is one a budget can reset on.
-func (i BudgetInterval) Valid() bool {
-	switch i {
-	case BudgetHourly, BudgetDaily, BudgetWeekly, BudgetMonthly:
-		return true
+// SplitUserScopeID is the app and the user a UserScopeID names. A user id holds no '/', so
+// the last one splits them.
+func SplitUserScopeID(id string) (appID, userID string, ok bool) {
+	slash := strings.LastIndexByte(id, '/')
+	if slash <= 0 || slash == len(id)-1 {
+		return "", "", false
 	}
-	return false
+	return id[:slash], id[slash+1:], true
 }
 
-// Window returns the interval containing now: where it started and where the next one
-// starts. A week starts on Monday.
-func (i BudgetInterval) Window(now time.Time) (start, end time.Time) {
-	now = now.UTC()
-	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	switch i {
-	case BudgetHourly:
-		start = now.Truncate(time.Hour)
-		return start, start.Add(time.Hour)
-	case BudgetWeekly:
-		start = day.AddDate(0, 0, -((int(day.Weekday()) + 6) % 7))
-		return start, start.AddDate(0, 0, 7)
-	case BudgetMonthly:
-		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		return start, start.AddDate(0, 1, 0)
-	default:
-		return day, day.AddDate(0, 0, 1)
-	}
-}
-
-// Budget caps what a scope may spend in one interval.
-type Budget struct {
-	LimitMicros int64          `json:"limit_micros"`
-	Interval    BudgetInterval `json:"interval"`
-}
-
-// PolicyDocument is what an organization or an app has decided.
+// PolicyDocument is what an organization, an app or one end user has decided. Spend limits
+// are not here: they are rows of their own (Limit), at every level.
 //
 // Every field is optional, and absent means "no opinion" rather than "off": an app that
 // says nothing about training inherits whatever its organization said.
 type PolicyDocument struct {
-	Budget *Budget `json:"budget,omitempty"`
-	// Quota is what one end user of the app may spend in a UTC day, on an app's document
-	// only.
+	// Quota is what one end user may spend in a UTC day: on an organization's document the
+	// default for every user of its apps, on an app's the default for its users, and on a
+	// user's their own.
 	Quota *Quota `json:"quota,omitempty"`
 	// DataPolicy is the floor every routed request is held to, on top of whatever the
 	// request itself asked for.
@@ -92,10 +64,13 @@ type PolicyDocument struct {
 	// written there for want of one of its own, and what it wrote there before can only be
 	// read. An organization's is set only by the operator.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
+	// BalanceWarningMicros is the balance, in micros, at or below which the organization is
+	// warned, over its tier's; on an organization's document only.
+	BalanceWarningMicros *int64 `json:"balance_warning_micros,omitempty"`
 }
 
-// Quota is what one end user of an app may spend in a UTC day. A nil field is no
-// opinion, so the deployment's number shows through; zero is no cap.
+// Quota is what one end user may spend in a UTC day. A nil field is no opinion, so the
+// next level's number shows through, and the deployment's below them all; zero is no cap.
 type Quota struct {
 	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty"`
 	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty"`
@@ -118,6 +93,51 @@ type AppOrganization struct {
 	AppID          string    `bun:"app_id,pk"`
 	OrganizationID string    `bun:"organization_id,notnull"`
 	SeenAt         time.Time `bun:"seen_at,notnull"`
+}
+
+// OrganizationTier is the tier Stream last sent for an organization, an opaque string, kept for
+// work no request carried.
+type OrganizationTier struct {
+	bun.BaseModel `bun:"table:organization_tiers,alias:ot"`
+
+	OrganizationID string    `bun:"organization_id,pk"`
+	Tier           string    `bun:"tier,notnull"`
+	SeenAt         time.Time `bun:"seen_at,notnull"`
+}
+
+// SetOrganizationTier records the tier an organization was seen with at seenAt. A tier seen
+// earlier than the one recorded changes nothing: routers write what they saw in the background,
+// and two writes may land in either order. Earlier is by each writing router's clock, so
+// routers whose clocks disagree by more than the gap between two tiers may keep the older.
+func (s *Store) SetOrganizationTier(ctx context.Context, organizationID, tier string, seenAt time.Time) error {
+	if organizationID == "" || tier == "" {
+		return errors.New("store: an organization's tier needs an organization and a tier")
+	}
+	seen := &OrganizationTier{OrganizationID: organizationID, Tier: tier, SeenAt: seenAt.UTC()}
+	_, err := s.db.NewInsert().Model(seen).
+		On("CONFLICT (organization_id) DO UPDATE").
+		Set("tier = EXCLUDED.tier").
+		Set("seen_at = EXCLUDED.seen_at").
+		Where("ot.seen_at < EXCLUDED.seen_at").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set organization tier: %w", err))
+	}
+	return nil
+}
+
+// TierOf returns the tier an organization was last seen with, or nothing for one never seen
+// with any.
+func (s *Store) TierOf(ctx context.Context, organizationID string) (string, error) {
+	var seen OrganizationTier
+	err := s.db.NewSelect().Model(&seen).Where("organization_id = ?", organizationID).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("store: tier of: %w", err))
+	}
+	return seen.Tier, nil
 }
 
 // Policy returns a scope's document. A scope nobody has written a policy for gets the
@@ -166,6 +186,94 @@ func (s *Store) SavePolicy(ctx context.Context, scope PolicyScope, id string, do
 	return nil
 }
 
+// DeletePolicy removes a scope's document, and reports whether there was one.
+func (s *Store) DeletePolicy(ctx context.Context, scope PolicyScope, id string) (bool, error) {
+	if id == "" {
+		return false, stack.Wrap(errors.New("store: a policy needs a scope id"))
+	}
+	result, err := s.db.NewDelete().Model((*Policy)(nil)).
+		Where("scope = ?", scope).
+		Where("scope_id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: delete policy: %w", err))
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: delete policy: %w", err))
+	}
+	return deleted > 0, nil
+}
+
+// UserPolicyLimit is the default and the most users UserPolicies answers in one page.
+const UserPolicyLimit = 100
+
+// UserPolicies is a page of an app's users with a policy of their own, by user id in byte
+// order, after the user id after when it is not empty. It reads limit+1 rows, so a caller
+// can tell whether there is more.
+func (s *Store) UserPolicies(ctx context.Context, appID, after string, limit int) ([]Policy, error) {
+	if appID == "" {
+		return nil, stack.Wrap(errors.New("store: an app's users need an app"))
+	}
+	if limit <= 0 || limit > UserPolicyLimit {
+		limit = UserPolicyLimit
+	}
+	var policies []Policy
+	query := s.db.NewSelect().Model(&policies).
+		Where("scope = ?", ScopeUser).
+		Where(`(scope_id COLLATE "C") LIKE ? ESCAPE '\'`, likePrefix(UserScopeID(appID, ""))).
+		OrderExpr(`scope_id COLLATE "C"`).
+		Limit(limit + 1)
+	if after != "" {
+		query = query.Where(`(scope_id COLLATE "C") > ?`, UserScopeID(appID, after))
+	}
+	if err := query.Scan(ctx); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: user policies: %w", err))
+	}
+	return policies, nil
+}
+
+// HasUserPolicies reports whether any user of an app has a policy of their own.
+func (s *Store) HasUserPolicies(ctx context.Context, appID string) (bool, error) {
+	exists, err := s.db.NewSelect().Model((*Policy)(nil)).
+		Where("scope = ?", ScopeUser).
+		Where(`(scope_id COLLATE "C") LIKE ? ESCAPE '\'`, likePrefix(UserScopeID(appID, ""))).
+		Exists(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: has user policies: %w", err))
+	}
+	return exists, nil
+}
+
+// likePrefix is a LIKE pattern matching what starts with prefix, its own % and _ taken as
+// themselves.
+func likePrefix(prefix string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix) + "%"
+}
+
+// AppInOrganization reports whether an app is the organization's: registered under it, or
+// last seen under it by a request.
+func (s *Store) AppInOrganization(ctx context.Context, appID, organizationID string) (bool, error) {
+	if appID == "" || organizationID == "" {
+		return false, nil
+	}
+	seen, err := s.OrganizationOf(ctx, appID)
+	if err != nil {
+		return false, err
+	}
+	if seen != "" {
+		return seen == organizationID, nil
+	}
+	registered, err := s.db.NewSelect().Model((*App)(nil)).
+		Where("id = ?", appID).
+		Where("organization_id = ?", organizationID).
+		Exists(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: app in organization: %w", err))
+	}
+	return registered, nil
+}
+
 // JoinOrganization records that an app was seen under an organization.
 func (s *Store) JoinOrganization(ctx context.Context, appID, organizationID string) error {
 	if appID == "" || organizationID == "" {
@@ -197,31 +305,33 @@ func (s *Store) OrganizationOf(ctx context.Context, appID string) (string, error
 	return membership.OrganizationID, nil
 }
 
+// KnownApps is which of ids this deployment knows: an app registered here, or one a request
+// named with its organization. An id it has never seen is another deployment's.
+func (s *Store) KnownApps(ctx context.Context, ids []string) (map[string]bool, error) {
+	known := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return known, nil
+	}
+	var registered, seen []string
+	if err := s.db.NewSelect().Model((*App)(nil)).Column("id").Where("id IN (?)", bun.In(ids)).
+		Scan(ctx, &registered); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: known apps: %w", err))
+	}
+	if err := s.db.NewSelect().Model((*AppOrganization)(nil)).Column("app_id").Where("app_id IN (?)", bun.In(ids)).
+		Scan(ctx, &seen); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: known apps: %w", err))
+	}
+	for _, id := range append(registered, seen...) {
+		known[id] = true
+	}
+	return known, nil
+}
+
 // SpendSince returns what one customer has spent since a moment, across every modality.
 func (s *Store) SpendSince(ctx context.Context, customerID string, since time.Time) (int64, error) {
 	spent, err := spendOf(ctx, s, []string{customerID}, since)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: spend since: %w", err))
-	}
-	return spent, nil
-}
-
-// OrganizationSpendSince returns what every app seen under an organization has spent since
-// a moment.
-func (s *Store) OrganizationSpendSince(ctx context.Context, organizationID string, since time.Time) (int64, error) {
-	var apps []string
-	err := s.db.NewSelect().Model((*AppOrganization)(nil)).
-		Column("app_id").Where("organization_id = ?", organizationID).
-		Scan(ctx, &apps)
-	if err != nil {
-		return 0, stack.Wrap(fmt.Errorf("store: organization spend since: %w", err))
-	}
-	if len(apps) == 0 {
-		return 0, nil
-	}
-	spent, err := spendOf(ctx, s, apps, since)
-	if err != nil {
-		return 0, stack.Wrap(fmt.Errorf("store: organization spend since: %w", err))
 	}
 	return spent, nil
 }

@@ -2,6 +2,7 @@ package pluginmigrate_test
 
 import (
 	"bytes"
+	"context"
 	"io/fs"
 	"regexp"
 	"slices"
@@ -109,4 +110,21 @@ func (s *CatalogSuite) manifest(id string) core.Manifest {
 	manifest, err := core.ParseManifest(raw)
 	s.Require().NoError(err)
 	return manifest
+}
+
+// RunSuite is the run's refusals before it reads a row.
+type RunSuite struct {
+	suite.Suite
+}
+
+func TestRunSuite(t *testing.T) {
+	suite.Run(t, new(RunSuite))
+}
+
+// TestARunWithoutTheComplaintRuleIsRefused: without the API's rule a binding could land beside
+// a sensitive connector, so Run returns an error rather than panicking when it adds one.
+func (s *RunSuite) TestARunWithoutTheComplaintRuleIsRefused() {
+	_, err := pluginmigrate.Run(context.Background(), pluginmigrate.Options{}, true)
+
+	s.ErrorContains(err, "Options.Complaint is required")
 }

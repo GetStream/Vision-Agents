@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -40,6 +41,30 @@ func TestSessionToolsSuite(t *testing.T) {
 
 func (s *SessionToolsSuite) SetupTest() {
 	s.useApp(s.data.createApp())
+}
+
+func (s *SessionToolsSuite) TestADeclaredToolsPoliciesReachTheSpec() {
+	interruptible, timeout := true, 5000
+	tools := []SessionTool{
+		{Name: "search_flights", Description: "Search for flights", Interruptible: &interruptible, TimeoutMs: &timeout},
+		{Name: "book_flight", Description: "Book a flight"},
+	}
+
+	spec := specOf(CreateSessionRequest{Tools: &tools}, "acme", nil)
+
+	s.Require().Len(spec.Tools, 2)
+	s.True(spec.Tools[0].Interruptible)
+	s.Equal(5*time.Second, spec.Tools[0].Timeout)
+	s.False(spec.Tools[1].Interruptible, "a tool outlives an interruption unless it says otherwise")
+	s.Zero(spec.Tools[1].Timeout, "a tool naming no timeout takes the session's")
+}
+
+func (s *SessionToolsSuite) TestANegativeToolTimeoutIsRefused() {
+	request := textSession(nil)
+	timeout := -1
+	request.Tools = &[]SessionTool{{Name: "search_flights", Description: "Search for flights", TimeoutMs: &timeout}}
+
+	s.Equal(http.StatusBadRequest, s.serverClient.do(http.MethodPost, "/v1/agents/sessions", request, nil))
 }
 
 func (s *SessionToolsSuite) TestASessionSaysWhatItsModelIsOffered() {

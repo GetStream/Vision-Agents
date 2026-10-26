@@ -19,6 +19,8 @@ final readonly class Campaign
         public string $name,
         public string $state,
         public ?\DateTimeImmutable $finishedAt = null,
+        // Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended,...
+        public ?string $pausedReason = null,
         public ?\DateTimeImmutable $startedAt = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
@@ -39,6 +41,7 @@ final readonly class Campaign
             name: Json::string($data, 'name'),
             state: Json::string($data, 'state'),
             finishedAt: array_key_exists('finished_at', $data) && $data['finished_at'] !== null ? Json::date($data, 'finished_at') : null,
+            pausedReason: array_key_exists('paused_reason', $data) && $data['paused_reason'] !== null ? Json::string($data, 'paused_reason') : null,
             startedAt: array_key_exists('started_at', $data) && $data['started_at'] !== null ? Json::date($data, 'started_at') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
@@ -61,6 +64,9 @@ final readonly class Campaign
         $out['state'] = $this->state;
         if ($this->finishedAt !== null) {
             $out['finished_at'] = Json::dateValue($this->finishedAt);
+        }
+        if ($this->pausedReason !== null) {
+            $out['paused_reason'] = $this->pausedReason;
         }
         if ($this->startedAt !== null) {
             $out['started_at'] = Json::dateValue($this->startedAt);

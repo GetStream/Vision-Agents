@@ -67,6 +67,10 @@ func (s *Server) generateImage(ctx context.Context, request *generateImageReques
 		Providers:  value(sent.Providers),
 		Image:      drawing,
 	})
+	// Every candidate refused for money is a refusal, not a picture that failed.
+	if answer, refused := moneyError(err); refused {
+		return nil, answer
+	}
 	var failure *imagegen.Error
 	if err != nil && !errors.As(err, &failure) {
 		return nil, invalidRequest(err.Error())

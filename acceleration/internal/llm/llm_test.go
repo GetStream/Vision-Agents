@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 var errUnauthorized = errors.New("unauthorized")
@@ -300,6 +302,49 @@ func (s *LLMSuite) TestClosingAStreamAbandonsTheResponseButStillReportsWhatItCos
 	s.Equal(StatusCancelled, response.Status)
 	s.Equal("this will be cut ", response.OutputText, "the text that did arrive still counts")
 	s.EqualValues(4, response.Usage.OutputTokens, "the tokens already generated are still billed")
+	s.True(response.UsageReported, "a count that arrived before the cut is the provider's")
+}
+
+func (s *LLMSuite) TestAResponseSaysWhetherItsProviderReportedUsage() {
+	silent := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") })
+	zero := s.stream(func(w *ResponseWriter) {
+		w.OutputText("Hi")
+		w.Usage(Usage{})
+	})
+	s.drain(silent)
+	s.drain(zero)
+
+	s.False(silent.Response().UsageReported)
+	s.True(zero.Response().UsageReported, "a provider that said nothing was used has said")
+}
+
+func (s *LLMSuite) TestAResponseIsPricedByItsFreshCachedAndWrittenTokens() {
+	response := Response{Usage: Usage{
+		InputTokens:        2_400,
+		InputTokensDetails: InputTokensDetails{CachedTokens: 11, CacheWriteTokens: 2_386},
+		OutputTokens:       22,
+	}}
+
+	s.Equal(pricing.Quantities{
+		pricing.InputTokens:           3,
+		pricing.CachedInputTokens:     11,
+		pricing.CacheWriteInputTokens: 2_386,
+		pricing.OutputTokens:          22,
+	}, response.Used())
+}
+
+func (s *LLMSuite) TestAnEstimateCountsThePromptAndEverythingThatCameBack() {
+	params := ResponseParams{
+		Instructions: "Be brief.",                                          // 3 tokens
+		Input:        []Message{{Role: User, Content: "Weather in Rome?"}}, // 4
+	}
+	response := Response{
+		OutputText:    "Sunny.",                                                    // 2
+		ReasoningText: "The user wants the weather.",                               // 7
+		ToolCalls:     []ToolCall{{Name: "weather", Arguments: `{"city":"Rome"}`}}, // 2 and 4
+	}
+
+	s.Equal(pricing.Quantities{pricing.InputTokens: 7, pricing.OutputTokens: 15}, Estimate(params, response))
 }
 
 func (s *LLMSuite) TestStreamReportsWhyTheModelStoppedEarly() {

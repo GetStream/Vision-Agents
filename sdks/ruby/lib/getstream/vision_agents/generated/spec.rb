@@ -68,6 +68,12 @@ module GetStream
           body: "BuyNumberRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "cancelPriceChange" => {
+          method: :post, path: "/v1/manage/price-lists/changes/{name}/cancel",
+          path_params: %w[name].freeze, query: [].freeze,
+          body: "CancelPriceChangeInput", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "cancelSimulationRun" => {
           method: :post, path: "/v1/agents/simulation-runs/{id}/cancel",
           path_params: %w[id].freeze, query: [].freeze,
@@ -152,10 +158,28 @@ module GetStream
           body: "GuestUserRequest", body_required: false,
           socket: false, client_accessible: true
         }.freeze,
+        "createLimit" => {
+          method: :post, path: "/v1/spend/limits",
+          path_params: [].freeze, query: [].freeze,
+          body: "LimitInput", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "createLimitGrant" => {
+          method: :post, path: "/v1/spend/limits/grants",
+          path_params: [].freeze, query: [].freeze,
+          body: "LimitGrantInput", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "createOptOut" => {
           method: :post, path: "/v1/phone/opt-outs",
           path_params: [].freeze, query: [].freeze,
           body: "CreateOptOutRequest", body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "createPriceChange" => {
+          method: :post, path: "/v1/manage/price-lists/changes",
+          path_params: [].freeze, query: [].freeze,
+          body: "PriceChangeInput", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "createResponse" => {
@@ -168,6 +192,18 @@ module GetStream
           method: :post, path: "/v1/router/configs",
           path_params: [].freeze, query: [].freeze,
           body: "RouterConfigRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "createRun" => {
+          method: :post, path: "/v1/agents/runs",
+          path_params: [].freeze, query: [].freeze,
+          body: "CreateRunRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "createScheduledTask" => {
+          method: :post, path: "/v1/agents/scheduled-tasks",
+          path_params: [].freeze, query: [].freeze,
+          body: "CreateScheduledTaskRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "createSession" => {
@@ -260,6 +296,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteLimit" => {
+          method: :delete, path: "/v1/spend/limits/{limit_id}",
+          path_params: %w[limit_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteOperatorProviderApp" => {
           method: :delete, path: "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app",
           path_params: %w[customer_id id].freeze, query: [].freeze,
@@ -277,6 +319,12 @@ module GetStream
           path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
+        }.freeze,
+        "deleteScheduledTask" => {
+          method: :delete, path: "/v1/agents/scheduled-tasks/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
         }.freeze,
         "deleteSession" => {
           method: :delete, path: "/v1/agents/sessions/{id}",
@@ -316,6 +364,12 @@ module GetStream
         }.freeze,
         "deleteUserConnections" => {
           method: :delete, path: "/v1/agents/users/{user_id}/connections",
+          path_params: %w[user_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "deleteUserPolicy" => {
+          method: :delete, path: "/v1/policies/users/{user_id}",
           path_params: %w[user_id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
@@ -378,6 +432,12 @@ module GetStream
           method: :post, path: "/v1/image/generations",
           path_params: [].freeze, query: [].freeze,
           body: "ImageGenerationRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getActivePriceList" => {
+          method: :get, path: "/v1/manage/price-lists/active",
+          path_params: [].freeze, query: %w[at].freeze,
+          body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "getActivity" => {
@@ -512,6 +572,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getCustomerPolicy" => {
+          method: :get, path: "/v1/manage/organizations/{organization_id}/policies/{scope}/{id}",
+          path_params: %w[organization_id scope id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getHealth" => {
           method: :get, path: "/health",
           path_params: [].freeze, query: [].freeze,
@@ -527,6 +593,24 @@ module GetStream
         "getKnowledgeUrl" => {
           method: :get, path: "/v1/agents/knowledge/urls/{id}",
           path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getLimit" => {
+          method: :get, path: "/v1/spend/limits/{limit_id}",
+          path_params: %w[limit_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getLimitUsage" => {
+          method: :get, path: "/v1/spend/limits/usage",
+          path_params: [].freeze, query: %w[subject app_id api_key user_id team category].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getManageStatus" => {
+          method: :get, path: "/v1/manage/status",
+          path_params: [].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -548,11 +632,23 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getPriceChange" => {
+          method: :get, path: "/v1/manage/price-lists/changes/{name}",
+          path_params: %w[name].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getRouterConfig" => {
           method: :get, path: "/v1/router/configs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
+        }.freeze,
+        "getScheduledTask" => {
+          method: :get, path: "/v1/agents/scheduled-tasks/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
         }.freeze,
         "getSession" => {
           method: :get, path: "/v1/agents/sessions/{id}",
@@ -598,7 +694,7 @@ module GetStream
         }.freeze,
         "getSpend" => {
           method: :get, path: "/v1/stats/spend",
-          path_params: [].freeze, query: %w[group_by limit granularity from to tag].freeze,
+          path_params: [].freeze, query: %w[group_by limit granularity from to tag api_key user_id team category].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -647,6 +743,12 @@ module GetStream
         "getUseCaseForReview" => {
           method: :get, path: "/v1/ops/use-cases/{id}",
           path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getUserPolicy" => {
+          method: :get, path: "/v1/policies/users/{user_id}",
+          path_params: %w[user_id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -706,7 +808,7 @@ module GetStream
         }.freeze,
         "listAgentConfigs" => {
           method: :get, path: "/v1/agents/configs",
-          path_params: [].freeze, query: %w[name].freeze,
+          path_params: [].freeze, query: %w[name role].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -824,6 +926,18 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "listLimitGrants" => {
+          method: :get, path: "/v1/spend/limits/grants",
+          path_params: [].freeze, query: %w[subject app_id api_key user_id team category state limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "listLimits" => {
+          method: :get, path: "/v1/spend/limits",
+          path_params: [].freeze, query: %w[subject level app_id api_key user_id team category interval limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "listOptOuts" => {
           method: :get, path: "/v1/phone/opt-outs",
           path_params: [].freeze, query: %w[limit cursor].freeze,
@@ -845,6 +959,12 @@ module GetStream
         "listPlugins" => {
           method: :get, path: "/v1/agents/plugins",
           path_params: [].freeze, query: %w[q].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "listPriceChanges" => {
+          method: :get, path: "/v1/manage/price-lists/changes",
+          path_params: [].freeze, query: %w[kind limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -877,6 +997,18 @@ module GetStream
           path_params: %w[modality].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
+        }.freeze,
+        "listScheduledTaskRuns" => {
+          method: :get, path: "/v1/agents/scheduled-tasks/{id}/runs",
+          path_params: %w[id].freeze, query: %w[limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
+        "listScheduledTasks" => {
+          method: :get, path: "/v1/agents/scheduled-tasks",
+          path_params: [].freeze, query: %w[limit cursor state config_id session_id].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
         }.freeze,
         "listSessionTools" => {
           method: :get, path: "/v1/agents/sessions/{id}/tools",
@@ -926,6 +1058,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "listUserPolicies" => {
+          method: :get, path: "/v1/policies/users",
+          path_params: [].freeze, query: %w[limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "listVoiceProviders" => {
           method: :get, path: "/v1/agents/voices/providers",
           path_params: [].freeze, query: [].freeze,
@@ -936,6 +1074,66 @@ module GetStream
           method: :get, path: "/v1/agents/voices",
           path_params: [].freeze, query: [].freeze,
           body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageCreateLimit" => {
+          method: :post, path: "/v1/manage/spend/limits",
+          path_params: [].freeze, query: [].freeze,
+          body: "ManageLimitInput", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageCreateLimitGrant" => {
+          method: :post, path: "/v1/manage/spend/limits/grants",
+          path_params: [].freeze, query: [].freeze,
+          body: "ManageLimitGrantInput", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageDeleteLimit" => {
+          method: :delete, path: "/v1/manage/spend/limits/{limit_id}",
+          path_params: %w[limit_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageGetLimit" => {
+          method: :get, path: "/v1/manage/spend/limits/{limit_id}",
+          path_params: %w[limit_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageGetLimitUsage" => {
+          method: :get, path: "/v1/manage/spend/limits/usage",
+          path_params: [].freeze, query: %w[subject app_id api_key user_id team category organization_id].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageListLimitGrants" => {
+          method: :get, path: "/v1/manage/spend/limits/grants",
+          path_params: [].freeze, query: %w[subject app_id api_key user_id team category state limit cursor organization_id].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageListLimits" => {
+          method: :get, path: "/v1/manage/spend/limits",
+          path_params: [].freeze, query: %w[subject level app_id api_key user_id team category interval limit cursor organization_id].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageResetLimitUsage" => {
+          method: :post, path: "/v1/manage/spend/limits/usage/reset",
+          path_params: [].freeze, query: [].freeze,
+          body: "ManageLimitResetInput", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageRevokeLimitGrant" => {
+          method: :post, path: "/v1/manage/spend/limits/grants/{grant_id}/revoke",
+          path_params: %w[grant_id].freeze, query: [].freeze,
+          body: "LimitGrantRevocation", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "manageUpdateLimit" => {
+          method: :patch, path: "/v1/manage/spend/limits/{limit_id}",
+          path_params: %w[limit_id].freeze, query: [].freeze,
+          body: "LimitChange", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "openSocketSession" => {
@@ -955,6 +1153,12 @@ module GetStream
           path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
+        }.freeze,
+        "pauseScheduledTask" => {
+          method: :post, path: "/v1/agents/scheduled-tasks/{id}/pause",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
         }.freeze,
         "placePhoneCall" => {
           method: :post, path: "/v1/phone/calls",
@@ -984,6 +1188,12 @@ module GetStream
           method: :get, path: "/v1/agents/voices/library/{provider}/{voice}/preview",
           path_params: %w[provider voice].freeze, query: [].freeze,
           body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "previewPriceChange" => {
+          method: :post, path: "/v1/manage/price-lists/changes/preview",
+          path_params: [].freeze, query: [].freeze,
+          body: "PriceChangeInput", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "previewVoice" => {
@@ -1094,6 +1304,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "resetLimitUsage" => {
+          method: :post, path: "/v1/spend/limits/usage/reset",
+          path_params: [].freeze, query: [].freeze,
+          body: "LimitResetInput", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "resolveTarget" => {
           method: :get, path: "/v1/{modality}/routes/{target}",
           path_params: %w[modality target].freeze, query: %w[language].freeze,
@@ -1106,10 +1322,22 @@ module GetStream
           body: "RespondRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "resumeScheduledTask" => {
+          method: :post, path: "/v1/agents/scheduled-tasks/{id}/resume",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
         "reviewUseCase" => {
           method: :post, path: "/v1/ops/use-cases/{id}/review",
           path_params: %w[id].freeze, query: [].freeze,
           body: "ReviewUseCaseRequest", body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "revokeLimitGrant" => {
+          method: :post, path: "/v1/spend/limits/grants/{grant_id}/revoke",
+          path_params: %w[grant_id].freeze, query: [].freeze,
+          body: "LimitGrantRevocation", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "revokeOptOut" => {
@@ -1134,6 +1362,12 @@ module GetStream
           method: :post, path: "/v1/stats/rollup",
           path_params: [].freeze, query: [].freeze,
           body: "RollupRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "runScheduledTask" => {
+          method: :post, path: "/v1/agents/scheduled-tasks/{id}/run",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "runSimulation" => {
@@ -1292,6 +1526,18 @@ module GetStream
           body: "CustomModelRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "updateCustomerPolicy" => {
+          method: :put, path: "/v1/manage/organizations/{organization_id}/policies/{scope}/{id}",
+          path_params: %w[organization_id scope id].freeze, query: [].freeze,
+          body: "Policy", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "updateLimit" => {
+          method: :patch, path: "/v1/spend/limits/{limit_id}",
+          path_params: %w[limit_id].freeze, query: [].freeze,
+          body: "LimitChange", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "updateOrganizationPolicy" => {
           method: :put, path: "/v1/policies/organization",
           path_params: [].freeze, query: [].freeze,
@@ -1303,6 +1549,12 @@ module GetStream
           path_params: %w[id].freeze, query: [].freeze,
           body: "RouterConfigRequest", body_required: true,
           socket: false, client_accessible: false
+        }.freeze,
+        "updateScheduledTask" => {
+          method: :patch, path: "/v1/agents/scheduled-tasks/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: "UpdateScheduledTaskRequest", body_required: true,
+          socket: false, client_accessible: true
         }.freeze,
         "updateSession" => {
           method: :patch, path: "/v1/agents/sessions/{id}",
@@ -1334,6 +1586,12 @@ module GetStream
           body: "UseCaseRequest", body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "updateUserPolicy" => {
+          method: :put, path: "/v1/policies/users/{user_id}",
+          path_params: %w[user_id].freeze, query: [].freeze,
+          body: "UserPolicyInput", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "updateVoice" => {
           method: :put, path: "/v1/agents/voices/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1354,7 +1612,7 @@ module GetStream
         }.freeze,
         "watchSession" => {
           method: :get, path: "/v1/agents/sessions/{id}/events",
-          path_params: %w[id].freeze, query: %w[interim decisions replay_pending_tools].freeze,
+          path_params: %w[id].freeze, query: %w[interim decisions replay_pending_tools tools].freeze,
           body: nil, body_required: false,
           socket: true, client_accessible: true
         }.freeze,
@@ -1378,19 +1636,19 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mcp_servers mode name plugin_events plugins review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
           required: %w[created_at id mode name updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
-          properties: %w[connection connector_id events name policy required timeout_ms tool_patterns tools].freeze,
+          properties: %w[connection connector_id events name policy require_approval required sandbox timeout_ms tool_patterns tools].freeze,
           required: %w[name connector_id connection tools].freeze, open: false
         }.freeze,
         "AgentConnectorSelection" => {
@@ -1424,6 +1682,14 @@ module GetStream
         "AgentResponsePage" => {
           properties: %w[has_more items next_cursor].freeze,
           required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "AgentReview" => {
+          properties: %w[instructions].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "AgentScheduling" => {
+          properties: %w[default_timezone enabled max_tasks_per_user].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "AgentStats" => {
           properties: %w[peak_at peak_concurrent_sessions tool_calls tools].freeze,
@@ -1493,10 +1759,6 @@ module GetStream
           properties: %w[capabilities country e164 locality monthly_cost_micros number_type region vendor].freeze,
           required: %w[capabilities country e164 vendor].freeze, open: false
         }.freeze,
-        "Budget" => {
-          properties: %w[interval limit_micros resets_at spent_micros].freeze,
-          required: %w[limit_micros interval].freeze, open: false
-        }.freeze,
         "BusinessProfile" => {
           properties: %w[authorized_contact_email authorized_contact_first_name authorized_contact_last_name authorized_contact_phone authorized_contact_title brand_id brand_name brand_status business_registration_country business_verification_documents created_at industry legal_business_name legal_entity_type organization_type privacy_policy_url registered_address stock_exchange stock_symbol tax_id tax_id_issuing_country terms_and_conditions_url updated_at website_url].freeze,
           required: %w[created_at updated_at].freeze, open: false
@@ -1534,12 +1796,16 @@ module GetStream
           required: %w[cached_input_tokens cost_micros input_tokens output_tokens requests].freeze, open: false
         }.freeze,
         "Campaign" => {
-          properties: %w[concurrency config_id created_at finished_at from_number id name started_at state tags].freeze,
+          properties: %w[concurrency config_id created_at finished_at from_number id name paused_reason started_at state tags].freeze,
           required: %w[concurrency config_id created_at from_number id name state].freeze, open: false
         }.freeze,
         "CampaignRequest" => {
           properties: %w[concurrency config_id from_number name tags].freeze,
           required: %w[config_id from_number name].freeze, open: false
+        }.freeze,
+        "CancelPriceChangeInput" => {
+          properties: %w[reason].freeze,
+          required: %w[reason].freeze, open: false
         }.freeze,
         "Candidate" => {
           properties: %w[can_record health model provider].freeze,
@@ -1590,7 +1856,7 @@ module GetStream
           required: %w[answers model provider usage].freeze, open: false
         }.freeze,
         "ClassifyUsage" => {
-          properties: %w[input_tokens output_tokens].freeze,
+          properties: %w[cost_micros input_tokens output_tokens].freeze,
           required: %w[input_tokens output_tokens].freeze, open: false
         }.freeze,
         "CommandReceipt" => {
@@ -1614,7 +1880,7 @@ module GetStream
           required: %w[expected_revision].freeze, open: false
         }.freeze,
         "ConnectionInvocation" => {
-          properties: %w[arguments binding config_id connection_id connector_id error_type id latency_ms session_id started_at tool].freeze,
+          properties: %w[arguments binding config_id connection_id connector_id error_message error_type id latency_ms provider_status session_id started_at tool].freeze,
           required: %w[id connection_id connector_id config_id binding tool started_at latency_ms].freeze, open: false
         }.freeze,
         "ConnectionInvocationPage" => {
@@ -1670,7 +1936,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "Connector" => {
-          properties: %w[category channel client created_at custom description id inputs name redirect_uri revision schemes scopes setup].freeze,
+          properties: %w[category channel client created_at custom description id inputs name redirect_uri revision sandbox schemes scopes setup].freeze,
           required: %w[id revision name custom schemes inputs scopes client channel created_at].freeze, open: false
         }.freeze,
         "ConnectorAuditCredential" => {
@@ -1737,6 +2003,10 @@ module GetStream
           properties: %w[allowed_ip_address_ranges config_refresh_token name].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
+        "ConnectorSandbox" => {
+          properties: %w[env hosts].freeze,
+          required: %w[env hosts].freeze, open: false
+        }.freeze,
         "ConnectorSetup" => {
           properties: %w[steps url].freeze,
           required: %w[steps].freeze, open: false
@@ -1769,8 +2039,16 @@ module GetStream
           properties: %w[images max_output_tokens reasoning_effort request_id text videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
+        "CreateRunRequest" => {
+          properties: %w[config_id images input instructions tags timeout_ms].freeze,
+          required: %w[config_id input].freeze, open: false
+        }.freeze,
+        "CreateScheduledTaskRequest" => {
+          properties: %w[agent config_id custom deliver_to id instructions quiet_hours schedule session_id title].freeze,
+          required: %w[title instructions schedule].freeze, open: false
+        }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id return_url search start_voice sts stt tags title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id return_url search start_voice sts stt tags timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {
@@ -1828,6 +2106,10 @@ module GetStream
         "DetectionResult" => {
           properties: %w[cost_micros detections error error_code id model provider status].freeze,
           required: %w[cost_micros detections id status].freeze, open: false
+        }.freeze,
+        "EffectiveQuota" => {
+          properties: %w[messages_per_user_per_day messages_set_by tokens_per_user_per_day tokens_set_by].freeze,
+          required: %w[messages_per_user_per_day messages_set_by tokens_per_user_per_day tokens_set_by].freeze, open: false
         }.freeze,
         "ErrorDetail" => {
           properties: %w[code doc_url message type].freeze,
@@ -1929,6 +2211,10 @@ module GetStream
           properties: %w[description namespace refresh_hours title url].freeze,
           required: %w[namespace url].freeze, open: false
         }.freeze,
+        "LeftOutConnector" => {
+          properties: %w[connection connector_id name].freeze,
+          required: %w[name connector_id connection].freeze, open: false
+        }.freeze,
         "LibraryVoice" => {
           properties: %w[accent description gender id language name own preview provider tags].freeze,
           required: %w[id name provider].freeze, open: false
@@ -1937,6 +2223,50 @@ module GetStream
           properties: %w[providers unavailable voices].freeze,
           required: %w[providers voices].freeze, open: false
         }.freeze,
+        "Limit" => {
+          properties: %w[api_key app_id category created_at effective_limit_micros id interval level limit_micros note subject team updated_at updated_by user_id].freeze,
+          required: %w[id subject level interval limit_micros effective_limit_micros updated_by created_at updated_at].freeze, open: false
+        }.freeze,
+        "LimitChange" => {
+          properties: %w[limit_micros note].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "LimitGrant" => {
+          properties: %w[amount_micros api_key app_id category created_at created_by expires_at id reason remaining_micros revoked_at revoked_by state subject team used_micros user_id].freeze,
+          required: %w[id subject amount_micros used_micros remaining_micros state reason created_by created_at].freeze, open: false
+        }.freeze,
+        "LimitGrantInput" => {
+          properties: %w[amount_micros api_key app_id category expires_at reason subject team user_id].freeze,
+          required: %w[amount_micros reason subject].freeze, open: false
+        }.freeze,
+        "LimitGrantPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[items has_more].freeze, open: false
+        }.freeze,
+        "LimitGrantRevocation" => {
+          properties: %w[reason].freeze,
+          required: %w[reason].freeze, open: false
+        }.freeze,
+        "LimitInForce" => {
+          properties: %w[effective_limit_micros id level limit_micros].freeze,
+          required: %w[id level limit_micros effective_limit_micros].freeze, open: false
+        }.freeze,
+        "LimitInput" => {
+          properties: %w[api_key app_id category interval level limit_micros note subject team user_id].freeze,
+          required: %w[interval limit_micros subject].freeze, open: false
+        }.freeze,
+        "LimitPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[items has_more].freeze, open: false
+        }.freeze,
+        "LimitResetInput" => {
+          properties: %w[api_key app_id category intervals reason subject team user_id].freeze,
+          required: %w[reason subject].freeze, open: false
+        }.freeze,
+        "LimitWindow" => {
+          properties: %w[baseline_micros interval limit on_grant room_micros spent_micros window_end window_start].freeze,
+          required: %w[interval window_start window_end spent_micros baseline_micros on_grant].freeze, open: false
+        }.freeze,
         "LinkChannelRequest" => {
           properties: %w[config_id user_id].freeze,
           required: %w[config_id user_id].freeze, open: false
@@ -1944,6 +2274,22 @@ module GetStream
         "LlmOptions" => {
           properties: %w[format max_output_tokens metadata prompt_cache_key providers reasoning_effort store target temperature tool_choice verbosity].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "ManageLimitGrantInput" => {
+          properties: %w[amount_micros api_key app_id category expires_at organization_id reason subject team user_id].freeze,
+          required: %w[organization_id amount_micros reason subject].freeze, open: false
+        }.freeze,
+        "ManageLimitInput" => {
+          properties: %w[api_key app_id category interval level limit_micros note organization_id subject team user_id].freeze,
+          required: %w[organization_id interval limit_micros subject].freeze, open: false
+        }.freeze,
+        "ManageLimitResetInput" => {
+          properties: %w[api_key app_id category intervals organization_id reason subject team user_id].freeze,
+          required: %w[organization_id reason subject].freeze, open: false
+        }.freeze,
+        "ManageStatus" => {
+          properties: %w[actor name].freeze,
+          required: %w[actor].freeze, open: false
         }.freeze,
         "McpServer" => {
           properties: %w[branding name needs_login scopes tools url user].freeze,
@@ -1954,7 +2300,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "ModelCallTiming" => {
-          properties: %w[duration_ms input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
+          properties: %w[duration_ms error_code input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
           required: %w[model provider started_at success].freeze, open: false
         }.freeze,
         "ModelOverwrites" => {
@@ -2034,7 +2380,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "Policy" => {
-          properties: %w[allowed_models budget data_policy prompt_injection require_own_stream_app tags].freeze,
+          properties: %w[allowed_models balance_warning_micros budget data_policy prompt_injection quota require_own_stream_app tags].freeze,
           required: [].freeze, open: false
         }.freeze,
         "PostalAddress" => {
@@ -2049,8 +2395,60 @@ module GetStream
           properties: %w[digits vendor].freeze,
           required: %w[digits vendor].freeze, open: false
         }.freeze,
+        "PriceChange" => {
+          properties: %w[cancel_reason cancelled_at cancelled_by created_at created_by effective_at entries kind markup_bps name reason source].freeze,
+          required: %w[name kind reason source effective_at created_by created_at].freeze, open: false
+        }.freeze,
+        "PriceChangeEntry" => {
+          properties: %w[free markup_bps modality model provider rates tiers when withdrawn].freeze,
+          required: %w[modality provider model].freeze, open: false
+        }.freeze,
+        "PriceChangeInput" => {
+          properties: %w[confirm effective_at entries markup_bps name reason source].freeze,
+          required: %w[name reason source].freeze, open: false
+        }.freeze,
+        "PriceChangePage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[items has_more].freeze, open: false
+        }.freeze,
+        "PriceEntry" => {
+          properties: %w[charged_markup_bps charged_rates charged_tiers effective_at free local markup_bps modality model provider rates tiers version when].freeze,
+          required: %w[charged_markup_bps modality provider model].freeze, open: false
+        }.freeze,
+        "PriceEntryInput" => {
+          properties: %w[free local markup_bps modality model provider rates tiers version when withdrawn].freeze,
+          required: %w[modality provider model].freeze, open: false
+        }.freeze,
+        "PriceItem" => {
+          properties: %w[modality model provider when].freeze,
+          required: %w[modality provider model].freeze, open: false
+        }.freeze,
+        "PriceList" => {
+          properties: %w[at entries markup_bps unpriced upcoming].freeze,
+          required: %w[at markup_bps entries unpriced upcoming].freeze, open: false
+        }.freeze,
+        "PricePreview" => {
+          properties: %w[confirmation_required effective_at items markup_bps_after markup_bps_before needs_confirmation].freeze,
+          required: %w[effective_at markup_bps_before markup_bps_after items confirmation_required].freeze, open: false
+        }.freeze,
+        "PricePreviewItem" => {
+          properties: %w[after before markup_factor modality model needs_confirmation provider rate_factors unpriced when].freeze,
+          required: %w[modality provider model].freeze, open: false
+        }.freeze,
+        "PriceRate" => {
+          properties: %w[increment minimum per usd].freeze,
+          required: %w[usd per].freeze, open: false
+        }.freeze,
+        "PriceTier" => {
+          properties: %w[above_input_tokens rates].freeze,
+          required: %w[above_input_tokens rates].freeze, open: false
+        }.freeze,
+        "PricedEntry" => {
+          properties: %w[charged_rates charged_tiers free local markup_bps rates tiers version].freeze,
+          required: %w[markup_bps].freeze, open: false
+        }.freeze,
         "Provider" => {
-          properties: %w[benchmark description health languages model price provider realtime tier usage_share].freeze,
+          properties: %w[benchmark description health languages model price provider realtime supports tier usage_share].freeze,
           required: %w[health languages model provider realtime tier].freeze, open: false
         }.freeze,
         "ProviderBenchmark" => {
@@ -2063,6 +2461,10 @@ module GetStream
         }.freeze,
         "ProviderPrice" => {
           properties: %w[per_million_input_tokens per_million_output_tokens].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "Quota" => {
+          properties: %w[messages_per_user_per_day tokens_per_user_per_day].freeze,
           required: [].freeze, open: false
         }.freeze,
         "RCSProfile" => {
@@ -2121,6 +2523,10 @@ module GetStream
           properties: %w[llm name search sts stt tts].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
+        "Run" => {
+          properties: %w[final_text model_route session_id usage].freeze,
+          required: %w[final_text model_route session_id usage].freeze, open: false
+        }.freeze,
         "SandboxOptions" => {
           properties: %w[allowed_domains cpu disk_gb image memory_gb network network_allow_list setup timeout_ms].freeze,
           required: [].freeze, open: false
@@ -2128,6 +2534,34 @@ module GetStream
         "SayRequest" => {
           properties: %w[text].freeze,
           required: %w[text].freeze, open: false
+        }.freeze,
+        "ScheduledTask" => {
+          properties: %w[config_id consecutive_failures created_at created_by custom deliver_to id instructions last_run_at next_run_at quiet_hours schedule session_id state title upcoming updated_at user_id].freeze,
+          required: %w[id user_id config_id session_id title instructions schedule deliver_to state next_run_at upcoming last_run_at consecutive_failures created_by created_at updated_at].freeze, open: false
+        }.freeze,
+        "ScheduledTaskNext" => {
+          properties: %w[at in].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "ScheduledTaskPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "ScheduledTaskQuietHours" => {
+          properties: %w[end start].freeze,
+          required: %w[start end].freeze, open: false
+        }.freeze,
+        "ScheduledTaskRun" => {
+          properties: %w[attempts delivered_to error finished_at id scheduled_for session_id started_at state task_id trigger].freeze,
+          required: %w[id task_id scheduled_for trigger state delivered_to session_id attempts started_at finished_at error].freeze, open: false
+        }.freeze,
+        "ScheduledTaskRunPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "ScheduledTaskSchedule" => {
+          properties: %w[at description in repeat timezone until].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "SearchAnswer" => {
           properties: %w[answer model provider results].freeze,
@@ -2190,7 +2624,7 @@ module GetStream
           required: %w[field].freeze, open: false
         }.freeze,
         "SessionTool" => {
-          properties: %w[approval description display_title executor name parameters].freeze,
+          properties: %w[approval description display_title executor interruptible name parameters timeout_ms].freeze,
           required: %w[description name].freeze, open: false
         }.freeze,
         "SessionToolApproval" => {
@@ -2250,7 +2684,7 @@ module GetStream
           required: %w[reason vendor].freeze, open: false
         }.freeze,
         "Speech" => {
-          properties: %w[audio audio_duration_ms characters completed_at created_at error format id model provider status updated_at url].freeze,
+          properties: %w[audio audio_duration_ms characters completed_at created_at error format id model provider status updated_at url voice].freeze,
           required: %w[created_at id status updated_at].freeze, open: false
         }.freeze,
         "SpeechRequest" => {
@@ -2260,6 +2694,14 @@ module GetStream
         "SpendBucket" => {
           properties: %w[bucket cost_micros_total request_count value].freeze,
           required: %w[bucket cost_micros_total request_count value].freeze, open: false
+        }.freeze,
+        "SpendHardLimitUsage" => {
+          properties: %w[daily monthly].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "SpendHardLimitWindow" => {
+          properties: %w[limit_micros room_micros spent_micros window_end].freeze,
+          required: %w[limit_micros spent_micros room_micros window_end].freeze, open: false
         }.freeze,
         "StartSessionVoiceRequest" => {
           properties: %w[call].freeze,
@@ -2285,12 +2727,16 @@ module GetStream
           properties: %w[channels data_policy detect_language diarize eager_end_of_turn endpointing entities events format interim keyterms languages max_speakers mode output overwrites profanity_filter providers redact sample_rate silence_ms summary target utterance_end_ms words].freeze,
           required: [].freeze, open: false
         }.freeze,
+        "SubjectUsage" => {
+          properties: %w[api_key app_id category grants spend_hard_limit subject team user_id windows].freeze,
+          required: %w[subject windows grants].freeze, open: false
+        }.freeze,
         "SuspendTelephonyRequest" => {
           properties: %w[reason suspended_by].freeze,
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search simulations skills sts stt subagent tags tools tts video voice].freeze,
+          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
@@ -2331,7 +2777,7 @@ module GetStream
         }.freeze,
         "ToolApprovalCommand" => {
           properties: %w[allowed request_id summary tool_call_id turn_id type].freeze,
-          required: %w[allowed request_id tool_call_id turn_id type].freeze, open: false
+          required: %w[allowed request_id tool_call_id type].freeze, open: false
         }.freeze,
         "ToolResultCommand" => {
           properties: %w[error output request_id tool_call_id turn_id type].freeze,
@@ -2346,8 +2792,8 @@ module GetStream
           required: %w[text type].freeze, open: false
         }.freeze,
         "TranscriptMessage" => {
-          properties: %w[agent created_at name speaker text].freeze,
-          required: %w[created_at speaker text].freeze, open: false
+          properties: %w[agent created_at generating id interrupted name purpose speaker text turn_id].freeze,
+          required: %w[created_at id speaker text].freeze, open: false
         }.freeze,
         "TranscriptWord" => {
           properties: %w[confidence end_ms speaker start_ms text].freeze,
@@ -2372,6 +2818,14 @@ module GetStream
         "TurnStatsBucket" => {
           properties: %w[agent_id audio_out_ms_total bucket interrupted_count llm_ttft_p50_ms llm_ttft_p95_ms roundtrip_p50_ms roundtrip_p95_ms roundtrip_p99_ms stt_latency_p50_ms stt_latency_p95_ms tts_ttfb_p50_ms tts_ttfb_p95_ms turn_count].freeze,
           required: %w[agent_id audio_out_ms_total bucket interrupted_count turn_count].freeze, open: false
+        }.freeze,
+        "UpcomingPriceEntry" => {
+          properties: %w[charged_markup_bps charged_rates charged_tiers effective_at free local markup_bps modality model provider rates reason tiers version when withdrawn].freeze,
+          required: %w[reason charged_markup_bps modality provider model].freeze, open: false
+        }.freeze,
+        "UpdateScheduledTaskRequest" => {
+          properties: %w[deliver_to instructions next quiet_hours schedule title].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "UpdateSessionRequest" => {
           properties: %w[custom description llm max_output_tokens sts stt temperature thinking title tts verbosity voice].freeze,
@@ -2404,6 +2858,22 @@ module GetStream
         "UseCaseReview" => {
           properties: %w[actor actor_name approved_at created_at from_status id notes submitted_at to_status vendor_payload].freeze,
           required: %w[id actor from_status to_status created_at].freeze, open: false
+        }.freeze,
+        "UserPolicy" => {
+          properties: %w[effective messages quota resets_at tokens user_id].freeze,
+          required: %w[user_id effective messages tokens resets_at].freeze, open: false
+        }.freeze,
+        "UserPolicyEntry" => {
+          properties: %w[quota updated_at user_id].freeze,
+          required: %w[user_id updated_at].freeze, open: false
+        }.freeze,
+        "UserPolicyInput" => {
+          properties: %w[quota].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "UserPolicyPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[items has_more].freeze, open: false
         }.freeze,
         "VideoSource" => {
           properties: %w[max_frames url].freeze,

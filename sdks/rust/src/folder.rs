@@ -136,6 +136,9 @@ pub struct Settings {
     pub tts: String,
     /// `None` when the declaration says nothing, and empty when it turns it off.
     pub sts: Option<String>,
+    /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+    /// the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent
+    /// takes the vendor's own voice name instead.
     pub voice: String,
     pub llm: String,
     pub harness: Option<types::Harness>,

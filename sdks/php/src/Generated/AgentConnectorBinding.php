@@ -31,8 +31,13 @@ final readonly class AgentConnectorBinding
         public ?array $events = null,
         // How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the pr...
         public ?ConnectorBindingPolicy $policy = null,
+        // Names or path.Match patterns of the binding's tools whose every call waits for a person to allow it before...
+        /** @var list<string>|null */
+        public ?array $requireApproval = null,
         // Whether a session needs this connector. A required one that cannot be opened fails the session; an optional...
         public ?bool $required = null,
+        // Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandb...
+        public ?bool $sandbox = null,
         // How long one tool call may take, in milliseconds. Omitted, the session's default applies.
         public ?int $timeoutMs = null,
         // Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are th...
@@ -53,7 +58,9 @@ final readonly class AgentConnectorBinding
             tools: array_map(ConnectorToolGrant::fromArray(...), Json::objects($data, 'tools')),
             events: array_key_exists('events', $data) && $data['events'] !== null ? array_map(ConnectorBindingEvent::fromArray(...), Json::objects($data, 'events')) : null,
             policy: array_key_exists('policy', $data) && $data['policy'] !== null ? ConnectorBindingPolicy::fromArray(Json::object($data, 'policy')) : null,
+            requireApproval: array_key_exists('require_approval', $data) && $data['require_approval'] !== null ? Json::strings($data, 'require_approval') : null,
             required: array_key_exists('required', $data) && $data['required'] !== null ? Json::bool($data, 'required') : null,
+            sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::bool($data, 'sandbox') : null,
             timeoutMs: array_key_exists('timeout_ms', $data) && $data['timeout_ms'] !== null ? Json::int($data, 'timeout_ms') : null,
             toolPatterns: array_key_exists('tool_patterns', $data) && $data['tool_patterns'] !== null ? Json::strings($data, 'tool_patterns') : null,
         );
@@ -77,8 +84,14 @@ final readonly class AgentConnectorBinding
         if ($this->policy !== null) {
             $out['policy'] = $this->policy->toArray();
         }
+        if ($this->requireApproval !== null) {
+            $out['require_approval'] = $this->requireApproval;
+        }
         if ($this->required !== null) {
             $out['required'] = $this->required;
+        }
+        if ($this->sandbox !== null) {
+            $out['sandbox'] = $this->sandbox;
         }
         if ($this->timeoutMs !== null) {
             $out['timeout_ms'] = $this->timeoutMs;

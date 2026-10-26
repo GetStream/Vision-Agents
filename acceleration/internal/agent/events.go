@@ -18,9 +18,11 @@ type Event interface {
 }
 
 // Joined means the agent is in the call and listening. Everyone already in the call when it
-// joined has been reported before it (ParticipantJoined).
+// joined has been reported before it (ParticipantJoined). SFU is zero when the edge cannot
+// say which one it is on.
 type Joined struct {
-	At time.Time
+	At  time.Time
+	SFU SFU
 }
 
 func (Joined) isAgentEvent() {}
@@ -205,9 +207,44 @@ type Blocked struct {
 
 func (Blocked) isAgentEvent() {}
 
+// Speaking means an utterance of the agent's started being heard: the call's track took
+// its first audible frame or, from an edge that cannot say, publishing its first chunk
+// returned. It comes before the utterance's Spoke, and is sent for one the caller then
+// talks over too, whose cut is Interrupted.
+type Speaking struct {
+	TurnID string
+	// SynthesisID is the utterance, as on its Spoke.
+	SynthesisID string
+	// Text is what the voice had been sent for the utterance by then: all of a line said
+	// as written or of a sentence a voice took on its own, and the start of a reply a
+	// streaming voice is still being sent. A speech-to-speech model's transcript so far.
+	Text string
+	// Message is where that text is in the reply's Chat message, which is not the text: a
+	// streaming voice's grows as it is sent more. Nil from an agent with no record of it.
+	Message *MessageSpan
+	// At is when the track took its first audible frame, or for an utterance reported
+	// before the track got to it (one that finished being made behind speech still queued),
+	// when it was reported.
+	At time.Time
+	// DelayMs is how long after At the utterance is expected to be heard: the speech queued
+	// ahead of it at the edge, for one reported before the track got to it. Zero otherwise,
+	// and for an edge that does not count its queue.
+	DelayMs float64
+}
+
+func (Speaking) isAgentEvent() {}
+
 // Spoke means a piece of the reply finished being synthesised and published.
 type Spoke struct {
 	TurnID string
+	// SynthesisID is the utterance, as on its Speaking.
+	SynthesisID string
+	// Characters is how much text was synthesised, or for a speech-to-speech model how long
+	// its transcript is, in Unicode code points.
+	Characters int64
+	// Message is where all of it is in the reply's Chat message, as on its Speaking. Nil
+	// for a synthesis the agent has no record of.
+	Message *MessageSpan
 	// AudioDurationMs is how much speech was published.
 	AudioDurationMs float64
 	// TimeToFirstByteMs is how long the participant waited to hear anything.
@@ -327,6 +364,18 @@ type ToolStarted struct {
 
 func (ToolStarted) isAgentEvent() {}
 
+// ToolUpdated is what whoever runs a call said about it while it runs (ToolUpdate): a
+// status the agent says in its own words, or Verbatim words it says as written.
+type ToolUpdated struct {
+	ID       string
+	TurnID   string
+	Tool     string
+	Text     string
+	Verbatim bool
+}
+
+func (ToolUpdated) isAgentEvent() {}
+
 // ToolApprovalDecided is a person's answer to a call that waited for their approval. It
 // changes how the call is shown; the call itself is still answered by its result.
 type ToolApprovalDecided struct {
@@ -413,6 +462,14 @@ func (Backchannel) isAgentEvent() {}
 type Interrupted struct {
 	TurnID      string
 	Participant stt.Participant
+	// SynthesisID is the utterance the track was playing when it was cut, and HeardMs how
+	// much of it had been heard: from the track taking its first audible frame, never more
+	// than was published. Empty when none of the turn's open utterances had been heard.
+	SynthesisID string
+	HeardMs     float64
+	// Message is where all that utterance had been sent is in the reply's Chat message, for
+	// a reader to take HeardMs of it. Nil with SynthesisID empty.
+	Message *MessageSpan
 }
 
 func (Interrupted) isAgentEvent() {}

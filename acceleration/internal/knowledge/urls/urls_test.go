@@ -5,6 +5,7 @@ package urls
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"slices"
 	"sort"
@@ -17,6 +18,9 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -65,7 +69,8 @@ func (c *crawler) serve(text string, err error) {
 	c.err = err
 }
 
-// base is a knowledge base kept in memory, keyed the way a real one is.
+// base is a knowledge base kept in memory, keyed the way a real one is, billing each write
+// one request of the bytes it was given.
 type base struct {
 	mu       sync.Mutex
 	passages map[string]knowledge.Document
@@ -75,38 +80,56 @@ func newBase() *base {
 	return &base{passages: map[string]knowledge.Document{}}
 }
 
-func (b *base) Upsert(_ context.Context, _ string, documents []knowledge.Document) error {
+func (b *base) Upsert(_ context.Context, _ string, documents []knowledge.Document) (knowledge.Billed, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	billed := knowledge.Billed{Requests: 1}
 	for _, document := range documents {
 		b.passages[document.ID] = document
+		billed.BytesWritten += int64(len(document.ID) + len(document.Text) + len(document.Source))
 	}
-	return nil
+	return billed, nil
 }
 
-func (b *base) Delete(_ context.Context, _ string, ids []string) error {
+func (b *base) Delete(_ context.Context, _ string, ids []string) (knowledge.Billed, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	billed := knowledge.Billed{Requests: 1}
 	for _, id := range ids {
 		delete(b.passages, id)
+		billed.BytesWritten += int64(len(id))
 	}
-	return nil
+	return billed, nil
 }
 
-func (b *base) Fetch(_ context.Context, _ string, ids []string) ([]knowledge.Document, error) {
+func (b *base) Fetch(_ context.Context, _ string, ids []string) (knowledge.Found, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	var found []knowledge.Document
+	found := knowledge.Found{Billed: knowledge.Billed{Requests: 1}}
 	for _, id := range ids {
 		if document, ok := b.passages[id]; ok {
-			found = append(found, document)
+			found.Documents = append(found.Documents, document)
 		}
 	}
 	return found, nil
 }
+
+func (b *base) Search(context.Context, knowledge.Query) (knowledge.Found, error) {
+	return knowledge.Found{}, errors.New("the crawler does not search")
+}
+
+func (b *base) Namespaces(context.Context, string) ([]string, error) { return nil, nil }
+
+func (b *base) Stored(context.Context, string) (knowledge.Billed, error) {
+	return knowledge.Billed{}, knowledge.ErrNoNamespace
+}
+
+func (b *base) Provider() string { return "kept" }
+
+func (b *base) Close() error { return nil }
 
 // ids is what is currently findable, sorted so assertions read the same way twice.
 func (b *base) ids() []string {
@@ -129,6 +152,8 @@ type URLsSuite struct {
 	reader  *crawler
 	base    *base
 	service *Service
+	// recorder records the knowledge rows the service writes, into the suite's database.
+	recorder *routing.Recorder
 }
 
 func TestURLsSuite(t *testing.T) {
@@ -161,6 +186,9 @@ func (s *URLsSuite) TearDownSuite() {
 func (s *URLsSuite) SetupTest() {
 	_, err := s.store.DB().ExecContext(s.ctx, "TRUNCATE knowledge_urls CASCADE")
 	s.Require().NoError(err)
+	_, err = s.store.ShardDB().ExecContext(s.ctx, "DELETE FROM requests WHERE modality = 'knowledge'")
+	s.Require().NoError(err)
+	s.recorder = routing.NewRecorder(routing.Knowledge, s.store, nil, nil, slog.New(slog.DiscardHandler))
 
 	s.reader = &crawler{page: search.Page{
 		Title: "Pricing",
@@ -176,7 +204,7 @@ func (s *URLsSuite) SetupTest() {
 	// A small chunk so a page cuts into several passages without needing a long fixture,
 	// which is what the tests about orphans and removal depend on.
 	service, err := New(Options{
-		Store: s.store, Redis: s.redis, Reader: s.reader, Writer: s.base,
+		Store: s.store, Redis: s.redis, Reader: s.reader, Knowledge: metered.NewKnowledge(s.base, s.recorder),
 		ChunkSize: 200, CheckInterval: 10 * time.Millisecond, RefreshInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)
@@ -185,7 +213,22 @@ func (s *URLsSuite) SetupTest() {
 }
 
 func (s *URLsSuite) TearDownTest() {
+	if s.service != nil {
+		s.Require().NoError(s.service.Close())
+	}
+	s.recorder.Close()
+}
+
+// written is the knowledge rows the service recorded, oldest first. It stops the service and
+// drains the recorder, so it comes last in a test.
+func (s *URLsSuite) written() []store.Request {
 	s.Require().NoError(s.service.Close())
+	s.service = nil
+	s.recorder.Close()
+	var rows []store.Request
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&rows).
+		Where("modality = ?", string(routing.Knowledge)).Order("started_at").Scan(s.ctx))
+	return rows
 }
 
 // drained waits for the worker to be done with a page, retries and all. The task is gone
@@ -335,7 +378,8 @@ func (s *URLsSuite) TestRemovingAPageTakesItsPassagesWithIt() {
 func (s *URLsSuite) TestAPageRemovedBeforeItWasReadWritesNothing() {
 	// Nothing is reading until the page is gone, so the read finds nothing to read into.
 	s.Require().NoError(s.service.Close())
-	service, err := New(Options{Store: s.store, Redis: s.redis, Reader: s.reader, Writer: s.base, CheckInterval: 10 * time.Millisecond})
+	service, err := New(Options{Store: s.store, Redis: s.redis, Reader: s.reader,
+		Knowledge: metered.NewKnowledge(s.base, s.recorder), CheckInterval: 10 * time.Millisecond})
 	s.Require().NoError(err)
 	s.service = service
 
@@ -489,4 +533,41 @@ func (s *URLsSuite) TestAPageWithALongURLIsIndexedTrimmedAndRemoved() {
 
 	s.Require().NoError(s.service.Remove(s.ctx, "acme", page.ID))
 	s.Empty(s.base.ids())
+}
+
+func (s *URLsSuite) TestAReadAKeyAskedForIsRecordedUnderThatKey() {
+	asked := routing.WithAttribution(s.ctx, routing.Attribution{APIKey: "key-a", UserID: "ada"})
+	page, err := s.service.Add(asked, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
+	s.Require().NoError(err)
+	s.settled(page)
+	s.Require().NoError(s.service.Remove(asked, "acme", page.ID))
+
+	rows := s.written()
+	s.Require().Len(rows, 2, "the read's upsert and the removal's delete; a read past nothing deletes nothing")
+	for _, row := range rows {
+		s.Equal("acme", row.CustomerID)
+		s.Equal("key-a", row.APIKey, "the key that asked for the page pays for reading it")
+		s.Equal("ada", row.UserID)
+		s.Equal(metered.KnowledgeWrite, row.Model)
+		s.True(row.Success)
+		s.EqualValues(1, row.Meters[pricing.Requests])
+		s.Positive(row.Meters[pricing.BytesWritten])
+	}
+}
+
+func (s *URLsSuite) TestARefreshIsTheCrawlersOwnWork() {
+	page := s.added(Subscription{Namespace: "docs", URL: "https://example.com/pricing", RefreshHours: 24})
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE knowledge_urls SET updated_at = now() - interval '48 hours'")
+	s.Require().NoError(err)
+	s.reader.serve("# Pricing\n\nA call costs a penny.\n\n# Support\n\nWe answer within a day.\n\n# Refunds\n\nWithin a month.\n", nil)
+	s.Eventually(func() bool {
+		current, err := s.service.Get(s.ctx, "acme", page.ID)
+		return err == nil && current.Passages == 3
+	}, 10*time.Second, 10*time.Millisecond, "the page was never read again")
+
+	rows := s.written()
+	s.Require().Len(rows, 2, "the first read and the refresh")
+	for _, row := range rows {
+		s.Equal(routing.JobOrigin("crawler"), row.APIKey, "nobody asked for either, so the crawler's origin is the key")
+	}
 }

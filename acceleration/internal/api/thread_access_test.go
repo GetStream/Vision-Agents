@@ -446,6 +446,45 @@ draining:
 	s.Equal("shared_session", reason)
 }
 
+func (s *SlackChannelSuite) TestAHookStartedReplyIsMarkedHookChat() {
+	// No key opened the thread channel's session: the message hook did, for its sender.
+	organization := s.RouterSuite.app.organization.ID
+	s.Require().NoError(s.store.JoinOrganization(context.Background(), s.customerID(), organization))
+	s.Require().NoError(s.store.SetOrganizationTier(context.Background(), organization, "tier-a", time.Now()))
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	data, foundChannel := s.chat.Channel(channel)
+	s.Require().True(foundChannel)
+	custom, _ := data["custom"].(map[string]any)
+	thread, err := s.store.ChannelThread(context.Background(), channel)
+	s.Require().NoError(err)
+	event := messageEvent{ChannelType: chatlog.ChannelType, ChannelID: channel, ChannelCustom: custom}
+	event.Message.Text = "is the build green?"
+	event.Message.User.ID = "slack-alice"
+
+	created, err := s.router.threadSession(context.Background(), hookOrigin{
+		customer: s.customerID(), app: thread.StreamAppPK,
+	}, thread, event)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_, _ = s.manager.Close(created.ID(), session.OwnerOf(created.Spec()))
+	})
+	_, err = created.Ask(context.Background(), "is the build green?")
+	s.Require().NoError(err)
+
+	var rows []store.Request
+	s.Require().Eventually(func() bool {
+		rows = nil
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("session_id = ?", created.ID()).Scan(context.Background())
+		return err == nil && len(rows) > 0
+	}, settleFor, 25*time.Millisecond, "the reply recorded nothing")
+	for _, row := range rows {
+		s.Equal("hook:chat", row.APIKey)
+		s.Equal("slack-alice", row.UserID, "the message's sender")
+		s.Equal("tier-a", row.OrganizationTier, "the organization's last tier, which no request named")
+		s.Equal("user", row.Attributes["caller"])
+	}
+}
+
 // answeredFor is what a created session says of itself that does not differ by its ids: the
 // agent id it was asked for, the sort of conversation it keeps, its state and modality.
 func answeredFor(opened Session, agentID string) []any {

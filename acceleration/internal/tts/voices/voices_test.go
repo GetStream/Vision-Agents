@@ -3,6 +3,7 @@ package voices
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -99,7 +100,7 @@ func (s *ClonerSuite) TestElevenLabsSendsEveryRecordingAndKeepsTheVoiceItIsGiven
 	id, err := cloner.Prepare(s.ctx, s.request())
 	s.Require().NoError(err)
 
-	s.Equal("el-77", id)
+	s.Equal(Prepared{ExternalID: "el-77", Clones: 1}, id)
 	s.Equal("/v1/voices/add", s.seen.path)
 	s.Equal("secret", s.seen.header.Get("xi-api-key"))
 	s.Equal([]string{"first", "second"}, s.seen.files["files"],
@@ -115,7 +116,7 @@ func (s *ClonerSuite) TestCartesiaClonesFromTheFirstRecordingOnly() {
 	id, err := cloner.Prepare(s.ctx, s.request())
 	s.Require().NoError(err)
 
-	s.Equal("ct-42", id)
+	s.Equal(Prepared{ExternalID: "ct-42", Clones: 1}, id)
 	s.Equal("/voices/clone", s.seen.path)
 	s.Equal("Bearer secret", s.seen.header.Get("Authorization"))
 	s.Equal([]string{"first"}, s.seen.files["clip"],
@@ -131,7 +132,7 @@ func (s *ClonerSuite) TestFishSendsATranscriptForEveryRecordingInOrder() {
 	id, err := cloner.Prepare(s.ctx, s.request())
 	s.Require().NoError(err)
 
-	s.Equal("fish-9", id)
+	s.Equal(Prepared{ExternalID: "fish-9", Clones: 1}, id)
 	s.Equal("/model", s.seen.path)
 	s.Equal([]string{"first", "second"}, s.seen.files["voices"])
 	s.Equal([]string{"hello", "again"}, s.seen.fields["texts"],
@@ -226,6 +227,23 @@ func (s *ClonerSuite) TestAProviderThatWillNotSpeakSaysWhy() {
 	_, err = cloner.Speak(s.ctx, "el-77", "hello")
 	s.Require().Error(err)
 	s.Contains(err.Error(), "voice not found")
+}
+
+// Speaking names a voice, so a 401 or 403 on it is still the voice refused rather than the
+// key unable to list voices, which is what listRefused says.
+func (s *ClonerSuite) TestASpeakTheKeyIsRefusedStillRefusesTheVoice() {
+	s.reply = `{"detail":"nope"}`
+	cloner, err := NewElevenLabs(ElevenLabsOptions{APIKey: "secret", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		s.status = status
+
+		_, err = cloner.Speak(s.ctx, "el-77", "hello")
+
+		// As the base answered it (291f2e34c).
+		s.EqualError(err, fmt.Sprintf(`voices: elevenlabs refused the voice (http %d): {"detail":"nope"}`, status))
+	}
 }
 
 func (s *ClonerSuite) TestAVoiceWithNoRecordingsIsNeverSent() {

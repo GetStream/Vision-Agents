@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -60,7 +61,7 @@ func newJudge(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) 
 		target = "llm-fast"
 	}
 
-	session, err := deps.LLM.Start(ctx, llmrouter.Request{
+	session, err := deps.LLM.Start(routing.WithAttribution(ctx, deps.Owner.Attribution), llmrouter.Request{
 		CustomerID: deps.Owner.CustomerID,
 		AgentID:    deps.Owner.AgentID,
 		CallID:     deps.Owner.CallID,

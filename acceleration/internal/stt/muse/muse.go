@@ -358,6 +358,10 @@ func (s *STT) Provider() string { return ProviderName }
 // Model implements stt.STT.
 func (s *STT) Model() string { return s.options.Model }
 
+// Metering is the router's count of the audio it streams: Meta bills Muse by the minute of
+// audio, where a turn reports only its own length.
+func (s *STT) Metering() stt.Metering { return stt.MeteredByRouter }
+
 // Client exposes the underlying WebSocket so callers can use the API directly.
 func (s *STT) Client() *websocket.Conn { return s.conn }
 

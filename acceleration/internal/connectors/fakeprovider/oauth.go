@@ -310,6 +310,10 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		s.tokenError(w, http.StatusUnauthorized, "invalid_client", "invalid_client_id")
 		return
 	}
+	if s.is(EchoedErrorCode) {
+		s.echoError(w, r, c, "code", "code_verifier", "refresh_token")
+		return
+	}
 	switch r.PostForm.Get("grant_type") {
 	case "authorization_code":
 		s.exchange(w, r, c)
@@ -609,11 +613,16 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c, _ := s.authenticate(r); c == nil {
+	c, _ := s.authenticate(r)
+	if c == nil {
 		s.tokenError(w, http.StatusUnauthorized, "invalid_client", "")
 		return
 	}
 	token := r.PostForm.Get("token")
+	if s.is(EchoedErrorCode) {
+		s.echoError(w, r, c, "token")
+		return
+	}
 	switch {
 	case s.refresh[token] != nil:
 		s.revoked = append(s.revoked, "refresh_token")
@@ -633,6 +642,18 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		rt.grant.revoked = true
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// echoError answers 400 with an error member made of the form's fields and c's secret
+// (EchoedErrorCode).
+func (s *Server) echoError(w http.ResponseWriter, r *http.Request, c *client, fields ...string) {
+	var echoed []string
+	for _, field := range fields {
+		if value := r.PostForm.Get(field); value != "" {
+			echoed = append(echoed, value)
+		}
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": strings.Join(append(echoed, c.secret), " ")})
 }
 
 // tokenError answers a token request with an RFC 6749 §5.2 error, or under CommaScopes as

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -33,7 +34,7 @@ const providerAppEventsPath = "/v1/connectors/events/"
 // maxConnectorEventBytes caps the body read before it is verified. Slack's pages name no
 // largest event (the Events API and request verification pages, opened October 6, 2026), so
 // this is the cap the router's other provider webhooks already use, channels.MaxDeliveryBytes
-// and plugins.MaxEventBytes (256 KiB). Unverified against Slack's largest event.
+// and webhook.MaxEventBytes (256 KiB). Unverified against Slack's largest event.
 const maxConnectorEventBytes = 256 << 10
 
 // signingSecretSuffix follows client.env in the variable that holds the operator's signing
@@ -85,9 +86,15 @@ func ConnectorEventSecrets(getenv func(string) string) EventSecretLookup {
 // when not nil, is called once, off the request, when that write fails, so the delivery goes
 // on to the destinations of unhandled events then. Replies do not pass here: the conversation
 // on a thread channel hands its finished replies to the bridge itself
-// (conversation.Service.OnFinishedReply).
+// (conversation.Service.OnFinishedReply). Reachable says whether a reply on a thread would go
+// out now, before a turn nobody in the thread asked for, such as a scheduled task's, is run.
+// Hold keeps the reply to a command from being sent, for the caller to Send and learn whether
+// it went out.
 type ChannelBridge interface {
 	Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage, unanswered func()) (answered bool, err error)
+	Reachable(ctx context.Context, thread store.ChannelThread) error
+	Hold(commandID string) (<-chan conversation.FinishedReply, func())
+	Send(reply conversation.FinishedReply) error
 }
 
 // droppingBridge is the bridge of a deployment without one: it logs that messages came and
@@ -102,6 +109,18 @@ func (b droppingBridge) Deliver(_ context.Context, _ store.ConnectorOAuthClient,
 			"connector", messages[0].ConnectorID, "messages", len(messages))
 	}
 	return false, nil
+}
+
+func (b droppingBridge) Reachable(context.Context, store.ChannelThread) error {
+	return errors.New("this router has no channel bridge to reply on a thread with")
+}
+
+func (b droppingBridge) Hold(string) (<-chan conversation.FinishedReply, func()) {
+	return nil, func() {}
+}
+
+func (b droppingBridge) Send(conversation.FinishedReply) error {
+	return errors.New("this router has no channel bridge to reply on a thread with")
 }
 
 // receiveConnectorEvent is the inbound handler for a built-in connector's provider events,

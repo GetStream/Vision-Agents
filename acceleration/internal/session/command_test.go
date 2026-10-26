@@ -120,6 +120,62 @@ func (s *SessionSuite) TestPersistentToolResultsStayBoundToTheirCommandAndTurn()
 	s.Require().NoError(<-resolved)
 }
 
+// An approval is recorded only for a call still waiting on the turn it names, and a waiting
+// call is a durable command's only when its turn is bound to one. With no caller a call needs
+// no command, so one may wait on a turn of none.
+func (s *SessionSuite) TestAnApprovalIsRecordedOnlyForACallWaitingOnItsTurn() {
+	s.persists()
+	running, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency",
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = running.Close() })
+	first, err := running.persisted.BeginCommand("command-a", "Question", "")
+	s.Require().NoError(err)
+	running.persisted.BindTurn(first.CommandID, "turn-a")
+	events, detach := running.Watch()
+	defer detach()
+
+	resolved := make(chan error, 2)
+	for _, call := range []llm.ToolCall{{ID: "call-a", TurnID: "turn-a", Name: "lookup_record"},
+		{ID: "call-free", TurnID: "turn-of-no-command", Name: "lookup_record"}} {
+		go func() {
+			_, err := running.tools.Run(context.Background(), call)
+			resolved <- err
+		}()
+		s.Require().NotNil(awaitToolCall(events))
+	}
+	// The command goes on to a later turn; its call still waits on the first.
+	running.persisted.BindTurn(first.CommandID, "turn-a2")
+
+	s.False(running.DecideCommandTool("call-a", "command-a", "turn-a2", true, ""), "the call waits on turn-a")
+	s.False(running.DecideCommandTool("call-nobody-made", "command-a", "turn-a", true, ""), "no such call waits")
+	s.True(running.WaitsOnCommand("call-a"))
+	s.False(running.WaitsOnCommand("call-free"), "its turn is bound to no command")
+	s.False(running.WaitsOnCommand("call-nobody-made"))
+	s.True(running.ResolveCommandTool("call-a", "command-a", "turn-a", llm.TextParts("done"), ""))
+	s.True(running.tools.Resolve("call-free", "turn-of-no-command", llm.TextParts("done"), ""))
+	s.Require().NoError(<-resolved)
+	s.Require().NoError(<-resolved)
+	s.False(running.DecideCommandTool("call-a", "command-a", "turn-a", true, ""), "the call was answered already")
+}
+
+// A call whose result came in, or that stopped, waits for nothing, though it is not yet gone.
+func (s *SessionSuite) TestAResolvedCallWaitsOnNoTurn() {
+	tools := newBridge(time.Second, nil, func(ToolCall) error { return nil })
+	tools.pending["call-one"] = pendingTool{turnID: "turn-one", ctx: context.Background()}
+	s.True(tools.waitsOn("call-one", "turn-one"))
+	s.False(tools.waitsOn("call-one", "turn-two"))
+
+	tools.pending["call-one"] = pendingTool{turnID: "turn-one", ctx: context.Background(), resolved: true}
+	s.False(tools.waitsOn("call-one", "turn-one"))
+
+	stopped, stop := context.WithCancel(context.Background())
+	stop()
+	tools.pending["call-one"] = pendingTool{turnID: "turn-one", ctx: stopped}
+	s.False(tools.waitsOn("call-one", "turn-one"), "a call that stopped waits for nothing")
+}
+
 // asked waits for the question the model was handed.
 func (s *SessionSuite) asked() string {
 	select {
@@ -141,9 +197,9 @@ func (s *SessionSuite) stored(running *Session) []persistent.Message {
 
 func (s *SessionSuite) TestACommandNamesTheResponseItIsRecordedAs() {
 	s.persists()
-	running := s.commands()
 	held := &heldRecorder{}
-	running.records = held
+	s.manager.records = held
+	running := s.commands()
 
 	_, responseID, err := running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
 	s.Require().NoError(err)

@@ -183,16 +183,16 @@ class TestDispatch < LocalRouterTest
       peer.send_frame(type: "tool_call", id: "t1", session_id: "s1", name: "slow", arguments: "{}")
       peer.send_frame(type: "tool_call", id: "t2", session_id: "s1", name: "weather_lookup",
                       arguments: '{"location":"Colorado"}')
-      assert_equal({ "type" => "tool_result", "id" => "t2", "output" => '{"location":"Colorado","sky":"sunny"}' },
+      assert_equal({ "type" => "tool_result", "tool_call_id" => "t2", "id" => "t2", "output" => '{"location":"Colorado","sky":"sunny"}' },
                    peer.receive_type("tool_result"))
       eventually { dispatch.active == 1 }
       release << "done"
-      assert_equal({ "type" => "tool_result", "id" => "t1", "output" => "done" }, peer.receive_type("tool_result"))
+      assert_equal({ "type" => "tool_result", "tool_call_id" => "t1", "id" => "t1", "output" => "done" }, peer.receive_type("tool_result"))
 
       peer.send_frame(type: "tool_call", id: "t3", name: "broken", arguments: "")
-      assert_equal({ "type" => "tool_result", "id" => "t3", "error" => "no sky today" }, peer.receive_type("tool_result"))
+      assert_equal({ "type" => "tool_result", "tool_call_id" => "t3", "id" => "t3", "error" => "no sky today" }, peer.receive_type("tool_result"))
       peer.send_frame(type: "tool_call", id: "t4", name: "missing", arguments: "{}")
-      assert_equal({ "type" => "tool_result", "id" => "t4", "error" => "this worker does not run missing" },
+      assert_equal({ "type" => "tool_result", "tool_call_id" => "t4", "id" => "t4", "error" => "this worker does not run missing" },
                    peer.receive_type("tool_result"))
 
       peer.send_frame(type: "hosting", agent_id: "my-agent", tools: %w[weather_lookup slow broken])
@@ -200,6 +200,58 @@ class TestDispatch < LocalRouterTest
       assert_equal "my-agent", peer.receive_type("host_tools")["agent_id"]
     end
     assert_equal "w2", dispatch.worker_id
+  end
+
+  def test_a_hosted_tools_policies_call_and_updates_go_over_the_dispatch_socket
+    seen = Thread::Queue.new
+    agent = client.agent("travel")
+    agent.tools.register("book_flight", description: "Book a flight",
+                                        parameters: { type: "object", properties: { flight_id: { type: "string" } } },
+                                        interruptible: true, timeout: 90, approval: "Book flight {flight_id}?") do |_args, call|
+      seen << call
+      call.update("checking seats")
+      "booked"
+    end
+    dispatch.host(agent)
+
+    run_until_closed do |peer|
+      peer.send_frame(type: "ready", worker_id: "w1")
+      tool = peer.receive_type("host_tools")["tools"].first
+      assert_equal [true, 90_000, { "title" => "Book flight {flight_id}?" }],
+                   tool.values_at("interruptible", "timeout_ms", "approval")
+
+      peer.send_frame(type: "tool_call", id: "t1", session_id: "s1", turn_id: "turn_3", name: "book_flight",
+                      arguments: "{}", user: { id: "sam" })
+      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "text" => "checking seats", "verbatim" => false },
+                   peer.receive_type("tool_update"))
+      assert_equal "booked", peer.receive_type("tool_result")["output"]
+    end
+    call = seen.pop(timeout: 1)
+    assert_equal %w[t1 s1 turn_3 sam], [call.id, call.session_id, call.turn_id, call.user.id]
+  end
+
+  def test_a_hosted_call_the_router_cancels_is_not_answered
+    release = Thread::Queue.new
+    stopped = Thread::Queue.new
+    agent = client.agent("support")
+    agent.tools.register("investigate", description: "Investigate for a while") do |_args, call|
+      release.pop(timeout: 5)
+      stopped << call.cancelled?
+      "found it"
+    end
+    agent.tools.register("ping", description: "Answer at once") { "pong" }
+    dispatch.host(agent)
+
+    run_until_closed do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", session_id: "s1", name: "investigate", arguments: "{}")
+      peer.send_frame(type: "tool_cancel", id: "t1", session_id: "s2")
+      peer.send_frame(type: "tool_cancel", id: "t1", session_id: "s1")
+      sleep 0.05
+      release << true
+      assert_equal true, stopped.pop(timeout: 5)
+      peer.send_frame(type: "tool_call", id: "t2", session_id: "s1", name: "ping", arguments: "{}")
+      assert_equal "t2", peer.receive_type("tool_result")["tool_call_id"], "the cancelled call was not answered"
+    end
   end
 
   def test_a_worker_whose_tools_are_refused_stops_with_the_reason
