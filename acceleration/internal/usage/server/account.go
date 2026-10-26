@@ -15,7 +15,8 @@ import (
 // customerNote ends every operation of the customer view.
 const customerNote = "\n\nThe customer view: what an organization's own dashboard reads through its router, with the " +
 	"ingest token, never the manage key. It writes nothing, and leaves out what only the operator reads: why an " +
-	"organization is suspended, and who wrote each credit entry and why."
+	"organization is suspended, who wrote each credit entry and why, and each usage event's tier, cost at the " +
+	"vendor's rates, price version and producer."
 
 // registerAccounts declares the customer view of the accounts.
 func (s *Server) registerAccounts(api huma.API) {
@@ -46,6 +47,32 @@ func (s *Server) registerAccounts(api huma.API) {
 			"each app whose work carried it this month. A window nobody spent in is at zero." + customerNote,
 		Tags: []string{tag}, Security: security, Errors: failures,
 	}, s.readAccountTeams)
+	huma.Register(api, huma.Operation{
+		OperationID: "readAccountUsage", Method: http.MethodGet, Path: usage.PathAccounts + "/{organization_id}/usage",
+		Summary: "List an organization's usage events, as the organization may",
+		Description: "The events `listUsage` answers, with its filters, order (newest first) and cursor, without " +
+			"`organization_id`, `organization_tier`, `base_cost_micros`, `price_version` or `source`. `team` is the " +
+			"category `team:<name>`, so it cannot be given with `category`; `user_id` needs `app_id`, since a user id " +
+			"is only unique within its app." + customerNote,
+		Tags: []string{tag}, Security: security, Errors: failures,
+	}, s.readAccountUsage)
+}
+
+type readAccountUsageOutput struct {
+	Body usage.CustomerUsagePage
+}
+
+func (s *Server) readAccountUsage(ctx context.Context, input *listUsageInput) (*readAccountUsageOutput, error) {
+	listed, err := s.listUsage(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	page := usage.CustomerUsagePage{Items: make([]usage.CustomerUsageEvent, 0, len(listed.Body.Items)),
+		HasMore: listed.Body.HasMore, NextCursor: listed.Body.NextCursor}
+	for _, event := range listed.Body.Items {
+		page.Items = append(page.Items, usage.CustomerUsageEventOf(event))
+	}
+	return &readAccountUsageOutput{Body: page}, nil
 }
 
 type readAccountInput struct {

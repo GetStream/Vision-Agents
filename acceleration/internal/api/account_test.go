@@ -97,8 +97,8 @@ func (s *AccountSuite) credit(actor string, entry map[string]any) {
 }
 
 // spend records billable work of the app that cost micros, as the router ships it.
-func (s *AccountSuite) spend(micros int64, change func(*usage.Event)) {
-	s.usage.Spend(s.T(), s.organization(), micros, func(event *usage.Event) {
+func (s *AccountSuite) spend(micros int64, change func(*usage.Event)) usage.Event {
+	return s.usage.Spend(s.T(), s.organization(), micros, func(event *usage.Event) {
 		event.AppID = s.customerID()
 		if change != nil {
 			change(event)
@@ -115,8 +115,27 @@ func (s *AccountSuite) teams(client *testClient, path string) []Team {
 	return teams
 }
 
+// events lists the usage events as the app's backend, with query.
+func (s *AccountSuite) events(query string) UsageEventPage {
+	var page UsageEventPage
+	status, payload := s.serverClient.call(http.MethodGet, "/v1/usage/events?"+query, nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	s.Require().NoError(json.Unmarshal(payload, &page))
+	s.Require().NotNil(page.Items)
+	return page
+}
+
+// usageIDs are the usage ids of the page's events, in its order.
+func usageIDs(page UsageEventPage) []string {
+	listed := make([]string, 0, len(page.Items))
+	for _, event := range page.Items {
+		listed = append(listed, event.UsageId)
+	}
+	return listed
+}
+
 func (s *AccountSuite) TestTheAccountIsServerSideOnly() {
-	for _, path := range []string{"/v1/account", "/v1/account/credits", "/v1/teams"} {
+	for _, path := range []string{"/v1/account", "/v1/account/credits", "/v1/teams", "/v1/usage/events"} {
 		s.assertPosture(serverOnly, func(as *testClient) int {
 			return as.do(http.MethodGet, path, nil, nil)
 		})
@@ -227,6 +246,122 @@ func (s *AccountSuite) TestCreditsPage() {
 	s.Equal(http.StatusBadRequest, status, failure)
 }
 
+func (s *AccountSuite) TestUsageEventsAreTheAppsOwnAsTheCustomerMaySeeThem() {
+	sibling := store.App{OrganizationID: s.organization(), Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &sibling))
+	at := time.Now().UTC().Truncate(time.Second)
+	own := s.spend(1_500_000, func(event *usage.Event) {
+		event.OccurredAt, event.UserID, event.UsageCategories = at, "u1", []string{"support", "team:finance"}
+		event.PriceVersion, event.Tags = "prices-v7", map[string]string{"project": "alpha"}
+	})
+	older := s.spend(500_000, func(event *usage.Event) { event.OccurredAt = at.Add(-time.Minute) })
+	theirs := s.spend(2_000_000, func(event *usage.Event) { event.AppID, event.OccurredAt = sibling.ID, at.Add(-time.Second) })
+
+	status, payload := s.serverClient.call(http.MethodGet, "/v1/usage/events", nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	var page UsageEventPage
+	s.Require().NoError(json.Unmarshal(payload, &page))
+
+	s.Equal([]string{own.UsageID.String(), older.UsageID.String()}, usageIDs(page), "the calling app's, newest first")
+	s.False(page.HasMore)
+	s.Nil(page.NextCursor)
+	event := page.Items[0]
+	s.Equal(s.customerID(), event.AppId)
+	s.Equal("u1", event.UserId)
+	s.Equal("finance", event.Team)
+	s.Equal([]string{"support", "team:finance"}, event.UsageCategories)
+	s.Equal(int64(1_500_000), event.CostMicros)
+	s.True(event.OccurredAt.Equal(at))
+	s.Equal(own.Quantities, event.Quantities)
+	s.Equal(map[string]string{"project": "alpha"}, event.Tags)
+	s.True(event.Billable)
+	s.Empty(page.Items[1].Team)
+	s.Equal([]string{}, page.Items[1].UsageCategories)
+	for _, hidden := range []string{"organization_tier", "base_cost_micros", "price_version", "prices-v7", "source", "router/test/pod"} {
+		s.NotContains(string(payload), hidden)
+	}
+
+	s.Equal([]string{own.UsageID.String(), theirs.UsageID.String(), older.UsageID.String()},
+		usageIDs(s.events("scope=organization")), "every app of the organization")
+	s.Equal([]string{theirs.UsageID.String()}, usageIDs(s.events("scope=organization&app_id="+url.QueryEscape(sibling.ID))))
+	s.Equal([]string{own.UsageID.String()}, usageIDs(s.events("scope=organization&app_id="+url.QueryEscape(s.customerID())+"&user_id=u1")))
+	s.Equal(usageIDs(page), usageIDs(s.events("app_id="+url.QueryEscape(s.customerID()))), "the calling app named is the default")
+}
+
+func (s *AccountSuite) TestUsageEventsFilter() {
+	at := time.Now().UTC().Truncate(time.Second)
+	finance := s.spend(1_000, func(event *usage.Event) {
+		event.OccurredAt, event.UsageCategories, event.Meter = at, []string{"team:finance"}, "runtime"
+	})
+	support := s.spend(1_000, func(event *usage.Event) {
+		event.OccurredAt, event.UsageCategories = at.Add(-time.Hour), []string{"support"}
+	})
+	s.spend(1_000, func(event *usage.Event) { event.OccurredAt = at.Add(-2 * time.Hour) })
+
+	s.Equal([]string{finance.UsageID.String()}, usageIDs(s.events("team=finance")))
+	s.Equal([]string{support.UsageID.String()}, usageIDs(s.events("category=support")))
+	s.Equal([]string{finance.UsageID.String()}, usageIDs(s.events("meter=runtime")))
+	window := url.Values{"from": {at.Add(-90 * time.Minute).Format(time.RFC3339)}, "to": {at.Format(time.RFC3339)}}
+	s.Equal([]string{support.UsageID.String()}, usageIDs(s.events(window.Encode())), "from inclusive, to exclusive")
+}
+
+// The dashboard sends its own key in the X-Api-Key header and its server token, so api_key and
+// user_id in the query are only filters: the key is read from the query only when no header
+// names one, and a server-side caller's user_id names who it acts for, which no account read
+// looks at.
+func (s *AccountSuite) TestUsageEventsFilterByAnotherKeyAndAUserInTheQuery() {
+	other := "key-other-" + s.utils.uuid()
+	wanted := s.spend(1_000, func(event *usage.Event) { event.APIKey, event.UserID = other, "u1" })
+	s.spend(1_000, func(event *usage.Event) { event.APIKey, event.UserID = other, "u2" })
+	s.spend(1_000, func(event *usage.Event) { event.APIKey, event.UserID = s.app.key, "u1" })
+	s.spend(1_000, func(event *usage.Event) { event.APIKey = "hook:chat" })
+
+	page := s.events("api_key=" + url.QueryEscape(other) + "&user_id=u1")
+
+	s.Equal([]string{wanted.UsageID.String()}, usageIDs(page))
+	s.Equal(other, page.Items[0].ApiKey)
+	s.Len(s.events("api_key=hook%3Achat").Items, 1, "an origin no key started")
+	s.Len(s.events("user_id=u1").Items, 2)
+}
+
+func (s *AccountSuite) TestUsageEventsPage() {
+	at := time.Now().UTC().Truncate(time.Second)
+	var spent []usage.Event
+	for i := range 3 {
+		spent = append(spent, s.spend(1_000, func(event *usage.Event) { event.OccurredAt = at.Add(-time.Duration(i) * time.Second) }))
+	}
+
+	first := s.events("limit=2")
+	s.Require().Len(first.Items, 2)
+	s.True(first.HasMore)
+	s.Require().NotNil(first.NextCursor)
+	second := s.events("limit=2&cursor=" + url.QueryEscape(*first.NextCursor))
+
+	s.Equal([]string{spent[0].UsageID.String(), spent[1].UsageID.String(), spent[2].UsageID.String()}, append(usageIDs(first), usageIDs(second)...))
+	s.False(second.HasMore)
+	s.Nil(second.NextCursor)
+	status, failure := s.serverClient.failure(http.MethodGet, "/v1/usage/events?cursor=nonsense", nil)
+	s.Equal(http.StatusBadRequest, status, failure)
+	s.Contains(failure, "cursor")
+}
+
+func (s *AccountSuite) TestUsageEventsRefuseWhatTheyCannotAnswer() {
+	for query, says := range map[string]string{
+		"app_id=another-app":                                "another app",
+		"scope=organization&user_id=u1":                     "user_id needs app_id",
+		"team=finance&category=support":                     "team or category",
+		"from=2026-10-02T00:00:00Z&to=2026-10-01T00:00:00Z": "to must be after from",
+	} {
+		status, failure := s.serverClient.failure(http.MethodGet, "/v1/usage/events?"+query, nil)
+		s.Equal(http.StatusBadRequest, status, "%s: %s", query, failure)
+		s.Contains(failure, says, query)
+	}
+	for _, query := range []string{"team=fin:ance", "limit=201", "limit=0", "scope=everyone", "category=" + url.QueryEscape("no spaces")} {
+		status, failure := s.serverClient.failure(http.MethodGet, "/v1/usage/events?"+query, nil)
+		s.Equal(http.StatusBadRequest, status, "%s: %s", query, failure)
+	}
+}
+
 func (s *AccountSuite) TestTheThresholdComesFromThePolicyFirst() {
 	s.usage.SetTier(s.T(), usage.Tier{Name: usage.DefaultTier, FailMode: usage.FailClosed, Limits: usage.Limits{LowBalanceMicros: pointerTo(int64(1_000_000))}})
 	s.T().Cleanup(func() { s.usage.SetTier(s.T(), usage.Tier{Name: usage.DefaultTier, FailMode: usage.FailClosed}) })
@@ -323,7 +458,7 @@ func (s *SelfHostedAccountSuite) SetupTest() {
 }
 
 func (s *SelfHostedAccountSuite) TestNoUsageServiceAnswersNotEnabled() {
-	for _, path := range []string{"/v1/account", "/v1/account/credits"} {
+	for _, path := range []string{"/v1/account", "/v1/account/credits", "/v1/usage/events"} {
 		status, payload := s.serverClient.call(http.MethodGet, path, nil)
 		s.Equal(http.StatusNotFound, status, path)
 		var answered ErrorResponse

@@ -2236,7 +2236,7 @@ type getTurnStatsResponse struct {
 	Body []TurnStatsBucket `nullable:"false"`
 }
 
-// SpendScope is whose spend a spend read counts.
+// SpendScope is whose spend a spend read counts, and whose events a usage read lists.
 type SpendScope string
 
 const (
@@ -2245,8 +2245,8 @@ const (
 )
 
 func (SpendScope) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "SpendScope", "Whose spend is counted: the calling app's, or every app's of its "+
-		"organization. organization is server-side only.", string(spendScopeApp), string(spendScopeOrganization))
+	return namedEnum(registry, "SpendScope", "Whose spend is counted, or whose usage events are listed: the calling "+
+		"app's, or every app's of its organization. organization is server-side only.", string(spendScopeApp), string(spendScopeOrganization))
 }
 
 type getSpendRequest struct {
