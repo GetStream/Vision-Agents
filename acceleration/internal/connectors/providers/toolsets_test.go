@@ -123,10 +123,13 @@ func (s *ToolsetSuite) TestAGrantOfDriveMeetsWhatGoogleWriteToolsNeed() {
 	for _, c := range []struct {
 		id, needed string
 		read       []string
+		narrower   string
 	}{
-		{"google_drive", "https://www.googleapis.com/auth/drive.file", []string{"https://www.googleapis.com/auth/drive.readonly"}},
+		{"google_drive", "https://www.googleapis.com/auth/drive.file", []string{"https://www.googleapis.com/auth/drive.readonly"},
+			"https://www.googleapis.com/auth/drive.appdata"},
 		{"google_docs", "https://www.googleapis.com/auth/documents",
-			[]string{"https://www.googleapis.com/auth/documents.readonly", "https://www.googleapis.com/auth/drive.readonly"}},
+			[]string{"https://www.googleapis.com/auth/documents.readonly", "https://www.googleapis.com/auth/drive.readonly"},
+			"https://www.googleapis.com/auth/drive.file"},
 	} {
 		s.Run(c.id, func() {
 			resolved, err := s.manifest(c.id).Resolve(oauth2code.Name, nil, nil)
@@ -134,6 +137,7 @@ func (s *ToolsetSuite) TestAGrantOfDriveMeetsWhatGoogleWriteToolsNeed() {
 
 			s.True(resolved.Scopes.Meets([]string{drive}, c.needed))
 			s.False(resolved.Scopes.Meets(c.read, c.needed))
+			s.False(resolved.Scopes.Meets([]string{c.narrower}, c.needed), "a narrower scope than drive does not cover it")
 			s.NotContains(resolved.Scopes.List, drive, "the consent still asks for the narrower scope")
 		})
 	}

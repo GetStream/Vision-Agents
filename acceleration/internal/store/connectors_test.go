@@ -146,6 +146,25 @@ func (s *StoreSuite) TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBefor
 	s.False(broken)
 }
 
+// TestGoogleDriveRevisionFiveSeedsOverTheRevisionFourTheBuildBeforeStored: revision 5 takes a
+// grant of drive in place of drive.file (AI-1935). testdata/google_drive-revision-4.yaml is the
+// file a database already holds.
+func (s *StoreSuite) TestGoogleDriveRevisionFiveSeedsOverTheRevisionFourTheBuildBeforeStored() {
+	four, err := os.ReadFile("testdata/google_drive-revision-4.yaml")
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"google_drive.yaml": &fstest.MapFile{Data: four}}))
+	was, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, "google_drive")
+	s.Require().NoError(err)
+	s.Require().Equal(4, was.Revision)
+
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+
+	now, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, "google_drive")
+	s.Require().NoError(err)
+	s.Equal(5, now.Revision)
+	s.NotEmpty(now.Manifest.Scopes.CoveredBy)
+}
+
 // AI-816: slack.yaml at revision 5 reads the user from $.user_id. A router that ships it,
 // starting on a database the build before it seeded with revision 4, stores 5 as the latest,
 // keeps 4 for the connections pinned to it, and moves no other built-in.
