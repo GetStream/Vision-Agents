@@ -28,6 +28,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ## Bug Fixes
 
+### Scheduled calls ring only SMS numbers, and say why they ended
+
+A scheduled call rings only a number the user texts the agent from, from the agent's SMS line; a WhatsApp-only number is not rung (`no_phone_number`, `no_agent_number`). A call with less than its ring and call limit left in the occurrence, or a run by hand over 15 min late, is `missed`. A run taken over after its call keeps the call's reason, such as `not_answered`, and an edited one-shot whose call was placed is completed rather than rung again. A text channel's own failure, such as a store or line credential error, is `delivery_failed`, not `channel_unreachable`.
+
 ### Code run again after the user connects a connector runs, instead of returning the old 401
 
 When sandbox code got a 401 because the user had not connected a connector, its result tells the model to run the code again once they connect. The agent's repeat-call guard answered that identical second `run_code` from the first result, so the turn ended on the old 401 although the connection was live. A `run_code` result that says a connector was just connected, or that it is not connected and the user has connected it since, no longer answers a repeat; while the user has not connected it, the repeat is still answered from that result. Every other repeated call is still answered from its earlier result (AI-1987).

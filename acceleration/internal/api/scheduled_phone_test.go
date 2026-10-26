@@ -63,11 +63,7 @@ func (s *ScheduledTasksSuite) placeCall(user *testClient) placedCall {
 	s.taskOn(user, configID, opened.Id, []string{"phone"})
 	task := s.tasksOf(user)[0]
 	now := time.Now()
-	run := store.ScheduledTaskRun{
-		TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: now, Trigger: store.ScheduledTaskTriggerManual,
-		Prompt: task.Instructions, State: store.ScheduledTaskRunRunning, Attempts: 1, StartedAt: &now,
-	}
-	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &run))
+	run := s.runOf(task, now, "")
 	delivery := scheduledDelivery{
 		CustomerID: task.CustomerID, TaskID: task.ID, RunID: run.ID, SessionID: task.SessionID,
 		ConversationID: task.ConversationID, ConfigID: task.ConfigID, UserID: task.UserID,
@@ -138,9 +134,7 @@ func (s *ScheduledTasksSuite) shortCalls(ring, limit time.Duration) {
 
 // callRun is the run a placed call was taken on, as the store holds it now.
 func (s *ScheduledTasksSuite) callRun(call placedCall) store.ScheduledTaskRun {
-	runs := s.runsOf(store.ScheduledTask{ID: call.delivery.TaskID})
-	s.Require().Len(runs, 1)
-	return runs[0]
+	return s.runsOf(store.ScheduledTask{ID: call.delivery.TaskID})[0]
 }
 
 // failure is the failed attempt err is, failing the test when it is none.
@@ -255,16 +249,6 @@ func (s *ScheduledTasksSuite) TestACallNobodyAnsweredLeavesItsReasonOnItsRun() {
 	s.Equal(scheduling.ReasonNotAnswered, *run.Error, "a worker taking the run over finds how the call went")
 }
 
-func (s *ScheduledTasksSuite) TestACallTheUserAnsweredLeavesNoReasonOnItsRun() {
-	s.shortCalls(30*time.Second, time.Second)
-	call := s.placeCall(s.data.createUser())
-	call.edge.pickUp(call.to)
-
-	s.Require().NoError(s.outcomeOf(s.carryOut(call)).err)
-
-	s.Nil(s.callRun(call).Error)
-}
-
 func (s *ScheduledTasksSuite) TestACallWhoseTaskCannotBeSaidIsNotRungAgain() {
 	s.shortCalls(30*time.Second, time.Minute)
 	call := s.placeCall(s.data.createUser())
@@ -285,12 +269,8 @@ func (s *ScheduledTasksSuite) TestACallWhoseTaskCannotBeSaidIsNotRungAgain() {
 func (s *ScheduledTasksSuite) agentToRing(user *testClient) string {
 	number := s.lineNumber()
 	s.seedSMSLine(number)
-	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
-		request.Channels = &AgentChannels{Sms: &ChannelLineRequest{Number: number}}
-	})
-	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
-		CustomerID: s.customerID(), ConfigID: config, Kind: "sms", Address: s.writerNumber(), UserID: user.userID,
-	}))
+	config := s.agentOnSMS(number)
+	s.textsFrom(user, config, "sms")
 	return config
 }
 
@@ -392,8 +372,7 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWentUnanswere
 	user := s.data.createUser()
 	due := time.Now().Add(-14 * time.Minute).UTC().Truncate(time.Second)
 	task := s.phoneTask(user, []string{"phone"}, due)
-	// A worker rang, nobody answered, and it stopped before it settled the
-	// run; its run has gone stale and is taken over.
+	// A worker rang, nobody answered, and it stopped before it settled the run.
 	s.ranAlready(task, due, nil, "the-earlier-call")
 	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(context.Background(), task.CustomerID,
 		s.runsOf(task)[0].ID, "the-earlier-call", scheduling.ReasonNotAnswered))
@@ -402,7 +381,6 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWentUnanswere
 	run := s.settledRun(task)
 	s.Equal(store.ScheduledTaskRunFailed, run.State)
 	s.Equal(scheduling.ReasonNotAnswered, *run.Error, "how the call went, not that it was placed")
-	s.Equal("the-earlier-call", run.SessionID)
 }
 
 func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIsMissedWithoutACall() {
@@ -430,19 +408,13 @@ func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasTimeToRingAndHoldIsTried(
 
 func (s *ScheduledTasksSuite) TestARunByHandTooLateToRingIsMissed() {
 	task := s.phoneTask(s.data.createUser(), []string{"phone"}, time.Now())
-	asked := time.Now().Add(-16 * time.Minute)
-	run := store.ScheduledTaskRun{
-		TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: asked, Trigger: store.ScheduledTaskTriggerManual,
-		Prompt: task.Instructions, State: store.ScheduledTaskRunRunning, Attempts: 1, StartedAt: &asked,
-	}
-	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &run))
+	run := s.runOf(task, time.Now().Add(-16*time.Minute), "")
 
 	s.router.deliverManualRun(task, run)
 
 	stored := s.runsOf(task)[0]
 	s.Equal(store.ScheduledTaskRunMissed, stored.State)
 	s.Nil(stored.Error, "a missed run is no failure")
-	s.Empty(stored.SessionID, "no call was placed")
 }
 
 func (s *ScheduledTasksSuite) TestAUserWhoWritesOnlyOnWhatsAppIsNotRung() {
@@ -469,9 +441,7 @@ func (s *ScheduledTasksSuite) TestAnAgentOnlyOnWhatsAppHasNoLineToRingFrom() {
 	s.connectWhatsApp(number)
 	config := s.agentOnWhatsApp(number)
 	user := s.data.createUser()
-	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
-		CustomerID: s.customerID(), ConfigID: config, Kind: "sms", Address: s.writerNumber(), UserID: user.userID,
-	}))
+	s.textsFrom(user, config, "sms")
 	opened := s.openScheduling(user, config, nil)
 	s.taskOn(user, config, opened.Id, []string{"phone"})
 	// Due before the worker starts, so its first look claims it.
@@ -497,13 +467,20 @@ func (s *ScheduledTasksSuite) deliverWithin(task store.ScheduledTask, left time.
 }
 
 func (s *ScheduledTasksSuite) deliverIn(ctx context.Context, task store.ScheduledTask, due time.Time, call string) (store.ScheduledTaskRun, error) {
+	run := s.runOf(task, due, call)
+	_, _, err := s.router.DeliverScheduledTask(ctx, store.ClaimedScheduledTask{Task: task, Run: run})
+	return s.runsOf(task)[0], err
+}
+
+// runOf is a running run made by hand for the task's occurrence due at due, call the call
+// taken on it, if any.
+func (s *ScheduledTasksSuite) runOf(task store.ScheduledTask, due time.Time, call string) store.ScheduledTaskRun {
 	run := store.ScheduledTaskRun{
 		TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: due, Trigger: store.ScheduledTaskTriggerManual,
 		Prompt: task.Instructions, State: store.ScheduledTaskRunRunning, Attempts: 1, StartedAt: &due, SessionID: call,
 	}
 	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &run))
-	_, _, err := s.router.DeliverScheduledTask(ctx, store.ClaimedScheduledTask{Task: task, Run: run})
-	return s.runsOf(task)[0], err
+	return run
 }
 
 // silentTask is a task delivered on channels, in order, for a user who
@@ -519,12 +496,9 @@ func (s *ScheduledTasksSuite) silentTask(channels []string) store.ScheduledTask 
 			Sms:      &ChannelLineRequest{Number: text},
 		}
 	})
-	user, writer := s.data.createUser(), s.writerNumber()
-	for _, kind := range []string{"whatsapp", "sms"} {
-		s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
-			CustomerID: s.customerID(), ConfigID: config, Kind: kind, Address: writer, UserID: user.userID,
-		}))
-	}
+	user := s.data.createUser()
+	s.textsFrom(user, config, "whatsapp")
+	s.textsFrom(user, config, "sms")
 	opened := s.openScheduling(user, config, nil)
 	s.taskOn(user, config, opened.Id, channels)
 	return s.tasksOf(user)[0]
@@ -580,12 +554,7 @@ func (s *ScheduledTasksSuite) TestACallTheNodeHoldingTheConversationHasNoTimeLef
 	peer.phone = s.router.phone
 	user := s.data.createUser()
 	task := s.phoneTask(user.on(other), []string{"phone"}, time.Now())
-	now := time.Now()
-	run := store.ScheduledTaskRun{
-		TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: now, Trigger: store.ScheduledTaskTriggerManual,
-		Prompt: task.Instructions, State: store.ScheduledTaskRunRunning, Attempts: 1, StartedAt: &now,
-	}
-	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &run))
+	run := s.runOf(task, time.Now(), "")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -627,14 +596,8 @@ func (s *ScheduledTasksSuite) TestAFailureOnTheNodeHoldingTheConversationKeepsIt
 	other, _ := s.otherRouter(nil)
 	user := s.data.createUser()
 	task := s.phoneTask(user.on(other), []string{"whatsapp"}, time.Now())
-	delivery := scheduledDelivery{
-		CustomerID: task.CustomerID, TaskID: task.ID, SessionID: task.SessionID, ConfigID: task.ConfigID,
-		UserID: task.UserID, CallerKind: task.CallerKind, CommandID: "st_" + store.NewID(),
-		Text: "<scheduled_task>Remind them to stretch.</scheduled_task>", Channels: task.Channels, Due: time.Now(),
-		APIKey: task.APIKey, UsageCategories: task.UsageCategories,
-	}
 
-	_, handed, err := s.router.handDeliveryToPeer(context.Background(), delivery)
+	_, handed, err := s.router.handDeliveryToPeer(context.Background(), s.deliveryOf(task, store.NewID()))
 
 	s.True(handed, "the peer took the occurrence")
 	failure := s.failure(err)

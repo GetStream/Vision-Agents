@@ -170,7 +170,7 @@ Read the task, then its runs, then the logs, in that order.
 | `schedule.timezone` | same | Resolved at create from the call, the session, `users.timezone`, then `default_timezone`. A session opened with a zone moves `users.timezone` (`internal/api/session_create.go:76`) |
 | `quiet_hours` | same | An occurrence due inside them is held to their end: its run stays `running` with nothing sent. A run by hand is never held |
 | The runs | `GET /v1/agents/scheduled-tasks/{id}/runs` | No run at all: the occurrence was never claimed (worker logs). `running` long after `scheduled_for`: held, or a worker is on it |
-| Run `state` `missed` | same | Too late: a one-shot over 24 h, a repeat over 1 h (`scheduler.go:51`), a call over 15 min. Or `error` `task_paused`: a one-shot resumed after its time |
+| Run `state` `missed` | same | Too late: a one-shot over 24 h, a repeat over 1 h (`scheduler.go:51`), a call over 15 min (a run by hand too), or with under 11.5 min of the occurrence left. Or `error` `task_paused`: a one-shot resumed after its time |
 | Run `error` | same | See the reason table below |
 | Limit | create answers 409 `too_many_tasks` | The user holds `max_tasks_per_user` active tasks on this config |
 | The tools | the model never calls `schedule_task` | `scheduling.enabled` off, incognito, a guest or anonymous caller, or a `noauth` router |
@@ -190,8 +190,8 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `connection_removed` | A thread task's line (its connection) was removed | no |
 | `no_reply` | The agent said nothing and made no file to carry | yes |
 | `reply_failed` | The reply was cancelled, interrupted or failed | yes |
-| `no_phone_number` | The user never texted this agent, so there is no number to ring | yes |
-| `no_agent_number` | The config has no SMS or WhatsApp line to ring from | yes |
+| `no_phone_number` | The user never texted this agent by SMS; a number used only on WhatsApp is not rung | yes |
+| `no_agent_number` | The config has no SMS line to ring from | yes |
 | `not_answered` | Nobody picked up within the 90 s ring | no |
 | `already_called` | A call was placed for this occurrence already | no |
 | `task_paused` | On a `missed` run: a one-shot whose time came while it was paused | — |

@@ -111,8 +111,8 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestSchedulerSuite/TestAHeldOccurrenceIsCountedFromTheHoldAndNotFromWhenItCameDue`,
   `TestScheduledTasksSuite/TestAQuietTaskIsHeldUntilItsQuietHoursEnd`.
 - **A pause or edit writes a running run `missed`, held or in flight (S4).** An edited active
-  one-shot comes due again as it now reads. Only an edit that leaves a one-shot active while
-  it is delivered keeps its claim and run.
+  one-shot comes due again as it now reads, unless its run placed a call: then it is completed.
+  Only an edit that leaves a one-shot active while it is delivered keeps its claim and run.
   `TestStoreSuite/TestPausingATaskWritesItsHeldOccurrenceMissed`,
   `TestScheduledTasksSuite/TestPausingATaskWritesTheOccurrenceItHeldMissed`,
   `TestStoreSuite/TestAnEditedOneShotWhoseOccurrenceWasHeldComesDueAgainAsItNowReads`,
@@ -134,8 +134,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksSuite/TestAOneShotPausedAfterItsOccurrenceFailedIsRefusedOnResume`,
   `TestScheduledTasksSuite/TestATaskWithNoOccurrenceLeftIsRefusedBeforeItsLimitOrItsConfigIsAsked`,
   `TestScheduledTasksSuite/TestTheAgentCannotResumeAFailedOneShotPastItsTime`.
-- **A call rings once, and never more than 15 min late (S5).** Too late is `missed` without a
-  call; nobody answering is `not_answered`, final.
+- **A call rings once, on an SMS number, never more than 15 min late, and only with ring and
+  call limit left in the occurrence (S5).** Too late is `missed` without a call; nobody
+  answering is `not_answered`, final, kept on the run for a worker that takes it over.
   `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered`,
   `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`.

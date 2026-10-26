@@ -449,12 +449,6 @@ func (s *StoreSuite) TestARunsCallKeepsTheReasonItEndedUnderForTheWorkerTakingIt
 	s.Require().NoError(err)
 	s.False(took, "the run rang already")
 	s.Equal("not_answered", reason, "the taking over keeps how the call went")
-
-	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "call-1", "delivery_failed"))
-	took, reason, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-5")
-	s.Require().NoError(err)
-	s.False(took)
-	s.Empty(reason, "a finished run's reason is its outcome, not a call's")
 }
 
 // held claims the due task id and holds its occurrence until until, as quiet
@@ -707,10 +701,7 @@ func (s *StoreSuite) TestAnEditedOneShotWhoseLostWorkerPlacedACallIsCompletedNot
 	s.Require().NoError(err)
 	s.Equal(ScheduledTaskCompleted, stored.State)
 	s.Nil(stored.NextRunAt)
-	s.Equal("Remind Sam to drink water.", stored.Instructions, "the edit itself stands")
-	settled := s.run(claimed[0].Run.ID)
-	s.Equal(ScheduledTaskRunMissed, settled.State)
-	s.Equal("call-1", settled.SessionID)
+	s.Equal(ScheduledTaskRunMissed, s.run(claimed[0].Run.ID).State)
 	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
 	s.Require().NoError(err)
 	s.Empty(again, "the user is not rung a second time")

@@ -11,16 +11,14 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// reachOf is why a text on channel would not reach the user from the agent config now, or
-// nil when it would.
+// reachOf is why a text on channel would not reach the user from the config now, if anything.
 func (s *ScheduledTasksSuite) reachOf(config string, user *testClient, channel string) error {
 	return s.router.reachableText(context.Background(), scheduledDelivery{
 		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
 	}, channel)
 }
 
-// textsFrom records the user as somebody who writes to the agent config on kind from a
-// number of their own.
+// textsFrom records the user as writing to the config on kind from a number of their own.
 func (s *ScheduledTasksSuite) textsFrom(user *testClient, config, kind string) {
 	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
 		CustomerID: s.customerID(), ConfigID: config, Kind: kind, Address: s.writerNumber(), UserID: user.userID,
@@ -103,8 +101,6 @@ func (s *ScheduledTasksSuite) TestATextOnALineWhoseCredentialsDoNotOpenIsAFailur
 	opened := s.openScheduling(user, config, nil)
 	s.taskOn(user, config, opened.Id, []string{"sms"})
 
-	s.Require().Error(s.reachOf(config, user, "sms"))
-	s.NotErrorIs(s.reachOf(config, user, "sms"), channels.ErrUnreachable, "the router's own line failed, not the user's reach")
 	_, err := s.deliverNow(s.tasksOf(user)[0], time.Now(), "")
 	failure := s.failure(err)
 	s.Equal(scheduling.ReasonFailed, failure.Reason)

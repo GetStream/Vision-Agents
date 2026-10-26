@@ -344,13 +344,13 @@ func (s *Store) ScheduledTasks(ctx context.Context, customerID string, filter Sc
 // later with the instructions it had before the change. An active one-shot
 // whose occurrence that was is due again at the save, so it is delivered as
 // it now reads (and held again if quiet hours still hold); a repeating task
-// goes on to its next occurrence. An active one-shot whose settled occurrence
-// placed a call is completed instead: ringing the user a second time is worse
-// than an edit missed. An active one-shot whose occurrence a
+// goes on to its next occurrence. An active one-shot whose occurrence a
 // worker is delivering under a live lease, not held, keeps that claim and
 // run: the delivery under way completes with the text it has, since bringing
 // the one-shot forward would deliver it a second time. The caller reads the
-// task, changes it, and saves it back.
+// task, changes it, and saves it back. An active one-shot whose settled
+// occurrence placed a call is completed instead: a second call is worse than
+// an edit missed.
 func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	if task.CustomerID == "" || task.ID == "" {
 		return stack.Wrap(errors.New("store: a customer and a task id are required"))
@@ -897,7 +897,6 @@ func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID,
 		ColumnExpr("coalesce(error, '')").
 		Where("customer_id = ?", customerID).
 		Where("id = ?", runID).
-		Where("state = ?", ScheduledTaskRunRunning).
 		Where("session_id <> ''").
 		Scan(ctx, &reason)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
