@@ -1017,6 +1017,30 @@ func (s *ScheduledTasksSuite) TestATaskWithNoSessionYetOpensOneAtItsFirstOccurre
 	s.True(s.model().heard("Remind them to stretch."), "the model was never sent the instructions")
 }
 
+func (s *ScheduledTasksSuite) TestAReduedOneShotInAFallBackSecondPassIsDueAtThatPass() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	// 02:20 CET on 26 Oct 2025, 01:20 UTC, is the second pass of Berlin's
+	// fall-back hour. Its run was settled by an edit, which re-dued it now.
+	second := time.Date(2025, 10, 26, 1, 20, 0, 0, time.UTC)
+	again := time.Now().Add(-time.Minute)
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
+		CallerKind: "authenticated", Title: "Pills", Instructions: "Remind them to take the pills.",
+		StartLocal: time.Date(2025, 10, 26, 2, 20, 0, 0, time.UTC), Timezone: "Europe/Berlin",
+		NextRunAt: &again, State: store.ScheduledTaskActive, CreatedBy: "api",
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 25))
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &store.ScheduledTaskRun{
+		CustomerID: s.customerID(), TaskID: task.ID, ScheduledFor: second,
+		State: store.ScheduledTaskRunMissed, CreatedAt: second,
+	}))
+	s.runWorker()
+
+	s.delivered(task)
+	s.True(s.model().heard(`due="Sun 26 Oct 2025 02:20 CET"`), "the prompt named the first pass, an hour early")
+}
+
 func (s *ScheduledTasksSuite) TestATaskThatComesDueOnACallWaitsForTheCallToEnd() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()

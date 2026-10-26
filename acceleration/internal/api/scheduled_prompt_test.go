@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"strings"
 	"testing"
 	"time"
@@ -41,11 +42,32 @@ func TestARedueOneShotStatesTheTimeItWasDue(t *testing.T) {
 	due := time.Date(2026, 10, 20, 23, 0, 0, 0, time.UTC)
 	edited := time.Date(2026, 10, 21, 1, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 10, 21, 7, 0, 0, 0, time.UTC)
+	// 02:20 CET on 25 Oct 2026 is the second pass of Berlin's fall-back hour,
+	// 01:20 UTC: held, edited at 04:00 UTC, delivered at 06:00 UTC.
+	berlin := time.Date(2026, 10, 25, 2, 20, 0, 0, time.UTC)
+	second := time.Date(2026, 10, 25, 1, 20, 0, 0, time.UTC)
+	berlinEdited := time.Date(2026, 10, 25, 4, 0, 0, 0, time.UTC)
+	berlinNow := time.Date(2026, 10, 25, 6, 0, 0, 0, time.UTC)
 	for name, test := range map[string]struct {
 		task store.ScheduledTask
 		run  store.ScheduledTaskRun
+		runs []store.ScheduledTaskRun // the task's earlier runs, newest first
+		now  time.Time
 		head string
 	}{
+		"a held second-pass one-shot is due at its second pass": {
+			task: store.ScheduledTask{ID: "task", Title: "Pills", Timezone: "Europe/Berlin", StartLocal: berlin, NextRunAt: &second},
+			run:  store.ScheduledTaskRun{ScheduledFor: second, Trigger: store.ScheduledTaskTriggerSchedule},
+			now:  berlinNow,
+			head: `due="Sun 25 Oct 2026 02:20 CET" now="Sun 25 Oct 2026 07:00 CET" late="4 hours 40 minutes">`,
+		},
+		"a re-dued second-pass one-shot is due at its second pass": {
+			task: store.ScheduledTask{ID: "task", Title: "Pills", Timezone: "Europe/Berlin", StartLocal: berlin, NextRunAt: &berlinEdited},
+			run:  store.ScheduledTaskRun{ScheduledFor: berlinEdited, Trigger: store.ScheduledTaskTriggerSchedule},
+			runs: []store.ScheduledTaskRun{{ScheduledFor: second, Trigger: store.ScheduledTaskTriggerSchedule, State: store.ScheduledTaskRunMissed}},
+			now:  berlinNow,
+			head: `due="Sun 25 Oct 2026 02:20 CET" now="Sun 25 Oct 2026 07:00 CET" late="4 hours 40 minutes">`,
+		},
 		"a re-dued one-shot": {
 			task: store.ScheduledTask{ID: "task", Title: "Pills", Timezone: "UTC", StartLocal: due, NextRunAt: &edited},
 			run:  store.ScheduledTaskRun{ScheduledFor: edited, Trigger: store.ScheduledTaskTriggerSchedule},
@@ -65,7 +87,8 @@ func TestARedueOneShotStatesTheTimeItWasDue(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			test.run.Prompt = "Take the pills."
-			prompt := scheduledPrompt(store.ClaimedScheduledTask{Task: test.task, Run: test.run}, now)
+			at := cmp.Or(test.now, now)
+			prompt := scheduledPrompt(store.ClaimedScheduledTask{Task: occurrenceOf(test.task, test.runs), Run: test.run}, at)
 			require.Contains(t, prompt, test.head)
 		})
 	}
