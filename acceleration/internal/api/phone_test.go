@@ -228,3 +228,45 @@ func (s *PhoneSuite) TestANumberThatOnlyPlacedCallsIsNotListedAsAttached() {
 	s.Require().Len(numbers, 1)
 	s.Nil(numbers[0].StreamTrunkId, "its callers reach no agent")
 }
+
+func (s *PhoneSuite) attachedNumber(customerID string) string {
+	ctx := context.Background()
+	number := s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: number, Vendor: "bics", Country: "US", CustomerID: customerID, PurchasedAt: time.Now().UTC(),
+	}))
+	s.Require().NoError(s.store.AttachNumber(ctx, customerID, number, store.NumberAttachment{
+		TrunkID: "trunk-" + s.utils.uuid(), RouteID: "route-" + s.utils.uuid(), CallType: "default", CallID: "call-" + s.utils.uuid(),
+	}))
+	return number
+}
+
+func (s *PhoneSuite) TestADetachedNumberIsKeptButReachesNoAgent() {
+	s.useApp(s.data.createApp())
+	number := s.attachedNumber(s.customerID())
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/phone/numbers/"+number+"/attach", nil, nil))
+
+	var numbers []PhoneNumber
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/phone/numbers", nil, &numbers))
+	s.Require().Len(numbers, 1)
+	s.Equal(number, numbers[0].E164)
+	s.Nil(numbers[0].StreamTrunkId)
+}
+
+func (s *PhoneSuite) TestDetachingANumberTwiceChangesNothing() {
+	s.useApp(s.data.createApp())
+	number := s.attachedNumber(s.customerID())
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/phone/numbers/"+number+"/attach", nil, nil))
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/phone/numbers/"+number+"/attach", nil, nil))
+}
+
+func (s *PhoneSuite) TestAnotherCustomersNumberCannotBeDetached() {
+	s.useApp(s.data.createApp())
+	theirs := s.attachedNumber(s.data.createApp().app.ID)
+
+	status, _ := s.serverClient.failure(http.MethodDelete, "/v1/phone/numbers/"+theirs+"/attach", nil)
+
+	s.Equal(http.StatusNotFound, status)
+}

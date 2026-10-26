@@ -380,6 +380,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "detachPhoneNumber" => {
+          method: :delete, path: "/v1/phone/numbers/{e164}/attach",
+          path_params: %w[e164].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "detect" => {
           method: :post, path: "/v1/detection",
           path_params: [].freeze, query: [].freeze,

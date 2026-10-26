@@ -13065,6 +13065,13 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DetachPhoneNumber Stop a number taking calls, keeping it
+	//
+	// Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
+	//
+	// Corresponds with DELETE /v1/phone/numbers/{e164}/attach (the `DetachPhoneNumber` operationId).
+	DetachPhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// AttachPhoneNumberWithBody Point a number at a Stream call
 	//
 	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
@@ -18383,6 +18390,23 @@ func (c *Client) SearchPhoneNumbers(ctx context.Context, params *SearchPhoneNumb
 // Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 func (c *Client) ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReleasePhoneNumberRequest(c.Server, e164)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DetachPhoneNumber Stop a number taking calls, keeping it
+//
+// Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
+//
+// Corresponds with DELETE /v1/phone/numbers/{e164}/attach (the `DetachPhoneNumber` operationId).
+func (c *Client) DetachPhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDetachPhoneNumberRequest(c.Server, e164)
 	if err != nil {
 		return nil, err
 	}
@@ -28229,6 +28253,40 @@ func NewReleasePhoneNumberRequest(server string, e164 string) (*http.Request, er
 	return req, nil
 }
 
+// NewDetachPhoneNumberRequest constructs an http.Request for the DetachPhoneNumber method
+func NewDetachPhoneNumberRequest(server string, e164 string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "e164", e164, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/numbers/%s/attach", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAttachPhoneNumberRequest calls the generic AttachPhoneNumber builder with application/json body
 func NewAttachPhoneNumberRequest(server string, e164 string, body AttachPhoneNumberJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -34036,6 +34094,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumberWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*ReleasePhoneNumberResponse, error)
+
+	// DetachPhoneNumberWithResponse Stop a number taking calls, keeping it
+	//
+	// Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/phone/numbers/{e164}/attach (the `DetachPhoneNumber` operationId).
+	DetachPhoneNumberWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*DetachPhoneNumberResponse, error)
 
 	// AttachPhoneNumberWithBodyWithResponse Point a number at a Stream call
 	//
@@ -53008,6 +53075,107 @@ func (r ReleasePhoneNumberResponse) ContentType() string {
 	return ""
 }
 
+// DetachPhoneNumberResponse204Headers the declared response headers of an HTTP 204 response for DetachPhoneNumber
+type DetachPhoneNumberResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// DetachPhoneNumberResponse402Headers the declared response headers of an HTTP 402 response for DetachPhoneNumber
+type DetachPhoneNumberResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type DetachPhoneNumberResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *DetachPhoneNumberResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *DetachPhoneNumberResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DetachPhoneNumberResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DetachPhoneNumberResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DetachPhoneNumberResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DetachPhoneNumberResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DetachPhoneNumberResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DetachPhoneNumberResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DetachPhoneNumberResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DetachPhoneNumberResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DetachPhoneNumberResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DetachPhoneNumberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DetachPhoneNumberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // AttachPhoneNumberResponse200Headers the declared response headers of an HTTP 200 response for AttachPhoneNumber
 type AttachPhoneNumberResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -63521,6 +63689,21 @@ func (c *ClientWithResponses) ReleasePhoneNumberWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseReleasePhoneNumberResponse(rsp)
+}
+
+// DetachPhoneNumberWithResponse Stop a number taking calls, keeping it
+//
+// Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/phone/numbers/{e164}/attach (the `DetachPhoneNumber` operationId).
+func (c *ClientWithResponses) DetachPhoneNumberWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*DetachPhoneNumberResponse, error) {
+	rsp, err := c.DetachPhoneNumber(ctx, e164, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDetachPhoneNumberResponse(rsp)
 }
 
 // AttachPhoneNumberWithBodyWithResponse Point a number at a Stream call
@@ -85956,6 +86139,128 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 		response.Headers204 = &headers
 	case rsp.StatusCode == 402:
 		var headers ReleasePhoneNumberResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDetachPhoneNumberResponse parses an HTTP response from a DetachPhoneNumberWithResponse call
+func ParseDetachPhoneNumberResponse(rsp *http.Response) (*DetachPhoneNumberResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DetachPhoneNumberResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers DetachPhoneNumberResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers DetachPhoneNumberResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

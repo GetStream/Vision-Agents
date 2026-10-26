@@ -172,6 +172,19 @@ func (p *Phone) Attach(ctx context.Context, number string) (acceleration.Attache
 	return *result, nil
 }
 
+// Detach stops a number taking calls and keeps it: it is still charged and still places calls.
+// Attach turns calls back on.
+func (p *Phone) Detach(ctx context.Context, number string) error {
+	detached, err := p.client.DetachPhoneNumberWithResponse(ctx, number)
+	if err != nil {
+		return fmt.Errorf("stream: detaching %s: %w", number, err)
+	}
+	if detached.StatusCode() != http.StatusNoContent {
+		return refusal(detached.HTTPResponse, detached.Body)
+	}
+	return nil
+}
+
 // OutboundCall is the terms a call is placed on.
 type OutboundCall struct {
 	// From is one of the customer's own numbers, which is what the person sees.

@@ -88,6 +88,15 @@ template. That detail matters: it makes the SIP caller a participant with a stab
 what per-participant transcription keys on. Without it the caller would be anonymous to the
 agent and every call would look like the same speaker.
 
+Detaching a number (`DELETE /v1/phone/numbers/{e164}/attach`, server-side only) stops callers
+reaching the agent and keeps the number. It stays held and billed, stays on its shared trunk
+with its routing rule, and keeps placing calls. Calls already live are not ended. At Twilio the
+number's voice URL is cleared, as on a freshly bought number, and the trunk password goes with
+it. At Telnyx nothing changes at the vendor: the inbound hook hangs up on a number that is not
+attached. A `sip_trunk` number has nothing to change at the vendor. Attaching again turns
+calls back on. Detaching a number that is not attached answers 204. The Go SDK has
+`Phone.Detach` and the Python plugin has `phone.detach`.
+
 Placing a call at Twilio, Telnyx or a customer's `sip_trunk` makes no trunk or rule of its own.
 It dials through the number's line on a shared trunk, with the session id in the
 `x-stream-call-id` header, so the answered leg lands in the call where an agent is waiting. See

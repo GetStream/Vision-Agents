@@ -3666,15 +3666,15 @@ func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
 		{Role: llm.User, Content: "yes, please go ahead"},
 	}
 	again := llm.ToolCall{ID: "c2", Name: "create_reservation", Arguments: `{"time": "7:30", "name": "Alvarez"}`}
-	earlier, repeated := answeredSinceCaller(history, again)
+	earlier, repeated := answeredSinceCaller(history, again, nil)
 	s.True(repeated)
 	s.Contains(earlier, "Alvarez")
 
-	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "check_availability", Arguments: booking.Arguments})
+	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "check_availability", Arguments: booking.Arguments}, nil)
 	s.False(repeated, "a lookup is free to run again once the caller has spoken")
 
 	history[2].Content = `{"error":"no table at 7:30"}`
-	_, repeated = answeredSinceCaller(history, again)
+	_, repeated = answeredSinceCaller(history, again, nil)
 	s.False(repeated, "a booking that failed may be tried again")
 }
 
@@ -4614,7 +4614,7 @@ func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke()
 		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"time": "7:30"}`},
 		{Role: llm.User, Content: "Thanks."},
 	}
-	_, repeated := answeredSinceCaller(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"time":"7:30"}`})
+	_, repeated := answeredSinceCaller(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"time":"7:30"}`}, nil)
 	s.True(repeated)
 
 	failed := []llm.Message{
@@ -4622,7 +4622,7 @@ func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke()
 		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"error": "identity not verified"}`},
 		{Role: llm.User, Content: "My member ID is ABC123456."},
 	}
-	_, repeated = answeredSinceCaller(failed, llm.ToolCall{Name: "lookup_appointment", Arguments: `{}`})
+	_, repeated = answeredSinceCaller(failed, llm.ToolCall{Name: "lookup_appointment", Arguments: `{}`}, nil)
 	s.False(repeated, "a call that failed may be tried again")
 }
 
@@ -4634,7 +4634,7 @@ func (s *AgentSuite) TestACallTheRouterHeldBackRunsOnceThePersonHasActed() {
 			{Role: llm.ToolResult, ToolCallID: "1", Content: result},
 			{Role: llm.User, Content: "I pressed it, try again."},
 		}
-		_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: echo.Name, Arguments: echo.Arguments})
+		_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: echo.Name, Arguments: echo.Arguments}, nil)
 		return repeated
 	}
 

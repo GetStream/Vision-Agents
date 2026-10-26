@@ -276,6 +276,26 @@ func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumb
 		SipUri:  attached.Bridge.URI}}, nil
 }
 
+// detachPhoneNumber stops a number's callers reaching the agent, keeping the number.
+func (s *Server) detachPhoneNumber(ctx context.Context, request *detachPhoneNumberRequest) (*struct{}, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+
+	err := s.phone.Detach(ctx, customerID, request.E164)
+	if isNumberNotHeld(err) {
+		return nil, notFound(err.Error())
+	}
+	if err != nil {
+		return nil, phoneFailure(s.logger, err)
+	}
+	return nil, nil
+}
+
 // placePhoneCall dials out from one of the customer's numbers.
 func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequest) (*placePhoneCallResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
@@ -908,6 +928,20 @@ func (s *Server) registerPhone(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.attachPhoneNumber)
 	huma.Register(api, huma.Operation{
+		OperationID: "detachPhoneNumber",
+		Method:      http.MethodDelete,
+		Path:        "/v1/phone/numbers/{e164}/attach",
+		Summary:     "Stop a number taking calls, keeping it",
+		Description: "Callers stop reaching the agent. The number is kept and still charged, and it keeps " +
+			"placing calls. Attaching it again turns calls back on. Detaching a number that is not " +
+			"attached changes nothing.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The number no longer takes calls"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.detachPhoneNumber)
+	huma.Register(api, huma.Operation{
 		OperationID: "placePhoneCall",
 		Method:      http.MethodPost,
 		Path:        "/v1/phone/calls",
@@ -1051,6 +1085,10 @@ type buyPhoneNumberResponse struct {
 }
 
 type releasePhoneNumberRequest struct {
+	E164 string `path:"e164" doc:"The number in +15551234567 form."`
+}
+
+type detachPhoneNumberRequest struct {
 	E164 string `path:"e164" doc:"The number in +15551234567 form."`
 }
 

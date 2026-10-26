@@ -197,6 +197,22 @@ func (s *CallHooksSuite) TestAnArrivingCallToANumberIsStillDispatched() {
 	}
 }
 
+func (s *CallHooksSuite) TestAnArrivingCallToADetachedNumberIsNotDispatched() {
+	// Detached, the number stays on its trunk for its calls out, so a caller can still reach
+	// Stream until the vendor stops sending them.
+	s.hold("default", s.callID)
+	group := store.TrunkGroup{CustomerID: s.customerID(), Vendor: "telnyx"}
+	s.Require().NoError(s.store.InTrunkGroup(context.Background(), group, func(_ context.Context, tx *store.TrunkGroupTx) error {
+		return tx.Detach(s.e164)
+	}))
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arriveRingingNumber())
+
+	s.nothingReaches(worker.Calls(), "a detached number was answered")
+}
+
 func (s *CallHooksSuite) TestATamperedCallEventIsRefused() {
 	body := s.arriving("default:" + s.callID)
 	signature := sign(body, suiteStreamSecret)
