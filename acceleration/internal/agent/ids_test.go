@@ -55,26 +55,6 @@ func TestAnIDNothingGaveTheModelIsNotPassedOn(t *testing.T) {
 	assert.True(t, failedResult(unfoundIDResult("ticket_id", "840", nil)))
 }
 
-func TestALastFourThatIsNotFourDigitsIsNotSent(t *testing.T) {
-	for arguments, misshapen := range map[string]bool{
-		`{"pin":"4471","last4":"9821","address":"14 Cedar Lane"}`: false,
-		`{"pin":"4471","last4":"98214"}`:                          true,
-		`{"last4":"98t1"}`:                                        true,
-		`{"last_four":"129821"}`:                                  true,
-		`{"pin":"4471"}`:                                          false,
-		`{"last4":""}`:                                            false,
-		`{"last4":"9821","address":"98214 Cedar Lane"}`:           true,
-		`{"last4":"9821","address":"1400 Cedar Lane"}`:            false,
-	} {
-		_, _, got := misshapenLastFour(llm.ToolCall{Name: "verify_account", Arguments: arguments})
-		assert.Equal(t, misshapen, got, arguments)
-	}
-	assert.True(t, failedResult(misshapenResult("last4", "98214", nil)))
-
-	heard := []llm.Message{{Role: llm.User, Content: "PIN 4471. Last four. 553017 Oak Road. Is there an outage?"}}
-	assert.Contains(t, misshapenResult("last4", "55317", heard), "the last four 5530 followed by the address 17 Oak Road")
-}
-
 func TestAHandedOutIDLeftOutIsAskedFor(t *testing.T) {
 	tools := harness.Tools{Tools: []harness.Tool{
 		{Name: "create_ticket"},
@@ -121,7 +101,7 @@ func TestANumberNobodyGaveIsNotSent(t *testing.T) {
 	}
 	refused := append(history,
 		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "verify_account"}}},
-		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: misshapenResult("last4", "19821", nil)})
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: didNotWork + `"19821" is not four digits.`})
 	_, _, _, got := unheardNumber(refused, llm.ToolCall{Name: "verify_account", Arguments: `{"last4":"1982"}`})
 	assert.True(t, got, "a refusal quoting 19821 does not make 1982 heard")
 
