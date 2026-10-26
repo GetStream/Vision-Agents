@@ -184,8 +184,8 @@ const didNotWork = "That did not work: "
 // says nothing was done (undoneResult).
 //
 // A call that changes something is matched across the whole call: Nemotron booked a table,
-// heard "Yes, please go ahead" and booked it again, and a forced chase made Qwen book the same
-// table again after the caller thanked it; each second booking failed against the first.
+// heard "Yes, please go ahead" and booked it again, and the second booking failed against the
+// first.
 func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool) {
 	same := func(other llm.ToolCall) bool {
 		return other.Name == call.Name && fillsIn(other.Arguments, call.Arguments)
