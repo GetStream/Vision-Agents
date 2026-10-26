@@ -596,11 +596,18 @@ type stub struct {
 	// was told to take back.
 	ordered  int
 	released []string
+	// stopped are the numbers this vendor was told to stop sending callers to the trunk.
+	stopped []string
 	// leg is how this vendor's leg reaches Stream: per call unless a test says otherwise.
 	leg StreamLeg
 }
 
 func (s *stub) StreamLeg() StreamLeg { return s.leg }
+
+func (s *stub) StopInbound(_ context.Context, e164 string) error {
+	s.stopped = append(s.stopped, e164)
+	return s.err
+}
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
 	s.searched++

@@ -3097,6 +3097,19 @@ impl Client {
         )
         .await
     }
+    /// Stop a number taking calls, keeping it
+    ///
+    /// `DELETE /v1/phone/numbers/{e164}/attach` (`detachPhoneNumber`).
+    pub async fn detach_phone_number(&self, e164: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/phone/numbers/{e164}/attach", e164 = segment(e164)),
+            None::<&()>,
+            None::<&()>,
+            "detachPhoneNumber",
+        )
+        .await
+    }
     /// List opt-outs
     ///
     /// `GET /v1/phone/opt-outs` (`listOptOuts`).

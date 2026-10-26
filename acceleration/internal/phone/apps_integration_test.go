@@ -266,6 +266,32 @@ func (s *AppsSuite) TestReleasingANumberDeletesItsTrunkAndRouteInItsApp() {
 	s.Empty(s.own.Rules())
 }
 
+func (s *AppsSuite) TestReleasingStopsTheVendorSendingCallsFirst() {
+	s.ownApp()
+	s.sealed()
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.Equal([]string{s.e164}, s.vendor.stopped)
+	_, err = s.store.Number(s.ctx, s.customer, s.e164)
+	s.ErrorIs(err, store.ErrNoNumber, "the number is released")
+}
+
+func (s *AppsSuite) TestAReleaseTheVendorWillNotStopKeepsTheNumber() {
+	s.ownApp()
+	s.sealed()
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.vendor.err = errors.New("the vendor refused")
+
+	s.Require().Error(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.NotNil(s.number().AttachedAt, "the vendor may still send callers, so the agent still answers")
+	s.Equal([]string{s.e164}, s.own.TrunkNumbers(attached.TrunkID))
+}
+
 func (s *AppsSuite) TestReattachingAfterRegistrationMovesTheTrunk() {
 	// The number was attached while the customer acted in the deployment's app, and is
 	// attached again once it has its own: the old trunk goes from the old app.
@@ -280,6 +306,184 @@ func (s *AppsSuite) TestReattachingAfterRegistrationMovesTheTrunk() {
 	s.Empty(s.deployment.Trunks())
 	s.Empty(s.deployment.Rules())
 	s.Equal([]string{second.TrunkID}, s.own.Trunks())
+}
+
+func (s *AppsSuite) TestDetachingKeepsTheNumberOnItsTrunk() {
+	s.ownApp()
+	s.sealed()
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+
+	held := s.number()
+	s.Nil(held.AttachedAt, "callers no longer reach the agent")
+	s.Equal(attached.TrunkID, held.StreamTrunkID)
+	s.Equal([]string{attached.TrunkID}, s.own.Trunks())
+	s.Equal([]string{attached.RouteID}, s.own.Rules())
+	s.Equal([]string{s.e164}, s.own.TrunkNumbers(attached.TrunkID))
+	s.Equal([]string{s.e164}, s.vendor.stopped, "the vendor stops sending callers to the trunk")
+}
+
+func (s *AppsSuite) TestDetachingANumberAttachedInTheDeploymentsApp() {
+	// The deployment's app is stored as no app at all, and its trunk group is app zero.
+	s.sealed()
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+
+	held := s.number()
+	s.Nil(held.AttachedAt)
+	s.Equal(attached.TrunkID, held.StreamTrunkID)
+	s.Equal([]string{attached.TrunkID}, s.deployment.Trunks())
+	s.Equal([]string{attached.RouteID}, s.deployment.Rules())
+	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(attached.TrunkID))
+	s.Equal([]string{s.e164}, s.vendor.stopped)
+}
+
+func (s *AppsSuite) TestADetachedNumberStillPlacesCalls() {
+	s.ownApp()
+	s.sealed()
+	s.own.OneTrunkPerNumber()
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+
+	_, err = s.callFrom(s.e164)
+
+	s.Require().NoError(err)
+	s.Equal([]string{attached.TrunkID}, s.own.Trunks())
+}
+
+func (s *AppsSuite) TestDetachingANumberNotAttachedChangesNothing() {
+	s.sealed()
+	before := s.number()
+
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+
+	s.Equal(before, s.number())
+	s.Equal([]string{s.e164}, s.vendor.stopped, "the vendor is told anyway, in case it still sends callers")
+}
+
+func (s *AppsSuite) TestDetachingAnotherCustomersNumberFails() {
+	s.sealed()
+	other := "customer-" + uuid.NewString()
+	theirs := s.anotherNumber(other, s.vendor.vendor)
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: other, E164: theirs})
+	s.Require().NoError(err)
+
+	err = s.service.Detach(s.ctx, s.customer, theirs)
+
+	s.ErrorContains(err, "is not a number")
+	held, err := s.store.Number(s.ctx, other, theirs)
+	s.Require().NoError(err)
+	s.NotNil(held.AttachedAt)
+	s.Empty(s.vendor.stopped)
+}
+
+func (s *AppsSuite) TestAVendorThatRefusesLeavesTheNumberAttached() {
+	s.sealed()
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.vendor.err = errors.New("the vendor refused")
+
+	s.Require().Error(s.service.Detach(s.ctx, s.customer, s.e164))
+	s.NotNil(s.number().AttachedAt, "the vendor may still send callers, so the agent still answers")
+
+	s.vendor.err = nil
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+	s.Nil(s.number().AttachedAt)
+}
+
+func (s *AppsSuite) TestAttachingADetachedNumberUsesTheSameTrunk() {
+	s.ownApp()
+	s.sealed()
+	s.own.OneTrunkPerNumber()
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+	s.vendor.inbound = Inbound{}
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, again.TrunkID)
+	s.Equal(first.RouteID, again.RouteID)
+	s.NotNil(s.number().AttachedAt)
+	s.Equal(s.e164, s.vendor.inbound.E164, "the vendor is pointed back at the trunk")
+}
+
+func (s *AppsSuite) TestAttachingADetachedNumberWithoutAKeyWorks() {
+	s.own.OneTrunkPerNumber()
+	s.ownApp()
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err, "Stream lets a number be on one trunk only")
+	s.NotNil(s.number().AttachedAt)
+	s.Equal([]string{again.TrunkID}, s.own.Trunks())
+	s.Equal([]string{s.e164}, s.own.TrunkNumbers(again.TrunkID))
+	s.Equal([]string{again.RouteID}, s.own.Rules())
+}
+
+func (s *AppsSuite) TestDetachingLeavesALiveCallAlone() {
+	s.ownApp()
+	s.sealed()
+	s.own.OneTrunkPerNumber()
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	placed, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	scope := store.AppScope{App: 4242}
+	live, err := s.store.CallResourcesInApp(s.ctx, scope, placed.CallType, placed.CallID)
+	s.Require().NoError(err)
+	s.Require().Len(live, 1)
+
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+
+	kept, err := s.store.CallResourcesInApp(s.ctx, scope, placed.CallType, placed.CallID)
+	s.Require().NoError(err)
+	s.Equal(live, kept)
+	s.Equal([]string{attached.TrunkID}, s.own.Trunks())
+	s.Equal([]string{attached.RouteID}, s.own.Rules())
+
+	s.Require().NoError(s.service.ReleaseCall(s.ctx, scope, placed.CallType, placed.CallID))
+	ended, err := s.store.CallResourcesInApp(s.ctx, scope, placed.CallType, placed.CallID)
+	s.Require().NoError(err)
+	s.Empty(ended)
+	s.Equal([]string{attached.TrunkID}, s.own.Trunks(), "the number's own line outlives its calls")
+}
+
+func (s *AppsSuite) TestDetachingASipTrunkNumberChangesNothing() {
+	sealer, err := auth.NewSealer("apps suite")
+	s.Require().NoError(err)
+	service, err := NewService(ServiceOptions{
+		Registry: NewRegistry(s.config()), Store: s.store, Apps: s.apps, Sealer: sealer,
+		SIPTrunks: &stub{vendor: SIPTrunkVendor},
+	})
+	s.Require().NoError(err)
+	password := "trunk-s3cret"
+	trunk, err := service.CreateSIPTrunk(s.ctx, s.customer, SIPTrunkSettings{
+		Name: "main", Host: "trunk.example.com", Username: "trunk-user", Password: &password,
+	})
+	s.Require().NoError(err)
+	e164 := aNumber()
+	_, err = service.AddTrunkNumber(s.ctx, TrunkNumber{
+		Owner: routing.Owner{CustomerID: s.customer}, TrunkID: trunk.ID, E164: e164, Country: "us",
+	})
+	s.Require().NoError(err)
+	before, err := s.store.Number(s.ctx, s.customer, e164)
+	s.Require().NoError(err)
+
+	s.Require().NoError(service.Detach(s.ctx, s.customer, e164), "sip_trunk is no vendor of the registry")
+
+	after, err := s.store.Number(s.ctx, s.customer, e164)
+	s.Require().NoError(err)
+	s.Equal(before, after)
 }
 
 func (s *AppsSuite) TestAttachingAnAttachedNumberAgainChangesNothing() {

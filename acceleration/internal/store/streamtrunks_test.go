@@ -232,6 +232,49 @@ func (s *StoreSuite) TestClearingALineLeavesAnotherCustomersNumberAlone() {
 	s.Equal("trunk-theirs", held.StreamTrunkID)
 }
 
+func (s *StoreSuite) TestDetachClearsAttachedAndKeepsTheLine() {
+	group := TrunkGroup{CustomerID: "acme", StreamAppPK: 7, Vendor: "twilio"}
+	s.lined(group, "+15125551234", "trunk-1")
+	s.Require().NoError(s.store.AttachNumber(s.ctx, "acme", "+15125551234", NumberAttachment{
+		TrunkID: "trunk-1", RouteID: "route-trunk-1", StreamAppPK: 7, CallType: "default",
+		BridgeURI: "sip:bridge.example.com", BridgeUsername: "user", BridgePasswordSealed: []byte("sealed"), BridgePasswordKEKVersion: 1,
+	}))
+	before, err := s.store.Number(s.ctx, "acme", "+15125551234")
+	s.Require().NoError(err)
+	s.Require().NotNil(before.AttachedAt)
+
+	s.Require().NoError(s.store.InTrunkGroup(s.ctx, group, func(_ context.Context, tx *TrunkGroupTx) error {
+		return tx.Detach("+15125551234")
+	}))
+
+	after, err := s.store.Number(s.ctx, "acme", "+15125551234")
+	s.Require().NoError(err)
+	s.Nil(after.AttachedAt)
+	s.Nil(after.ReleasedAt)
+	s.Equal(before.StreamTrunkID, after.StreamTrunkID)
+	s.Equal(before.StreamRouteID, after.StreamRouteID)
+	s.Equal(before.BridgeURI, after.BridgeURI)
+	s.Equal(before.BridgePasswordSealed, after.BridgePasswordSealed)
+}
+
+func (s *StoreSuite) TestDetachOfANumberAnotherCustomerHoldsFails() {
+	s.lined(TrunkGroup{CustomerID: "globex", StreamAppPK: 7, Vendor: "telnyx"}, "+15125551234", "trunk-theirs")
+	s.Require().NoError(s.store.AttachNumber(s.ctx, "globex", "+15125551234", NumberAttachment{
+		TrunkID: "trunk-theirs", RouteID: "route-theirs", StreamAppPK: 7, CallType: "default",
+	}))
+
+	err := s.store.InTrunkGroup(s.ctx, TrunkGroup{CustomerID: "acme", StreamAppPK: 7, Vendor: "twilio"},
+		func(_ context.Context, tx *TrunkGroupTx) error {
+			return tx.Detach("+15125551234")
+		})
+
+	s.Error(err, "acme holds no such number")
+	held, err := s.store.Number(s.ctx, "globex", "+15125551234")
+	s.Require().NoError(err)
+	s.NotNil(held.AttachedAt)
+	s.Equal("trunk-theirs", held.StreamTrunkID)
+}
+
 func (s *StoreSuite) TestDeletingATrunkForgetsIt() {
 	group := TrunkGroup{CustomerID: "acme", StreamAppPK: 7, Vendor: "twilio"}
 	s.savedTrunk(group, "trunk-1")

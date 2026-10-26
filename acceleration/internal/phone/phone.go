@@ -409,6 +409,12 @@ type DigitsPlayer interface {
 	PlaysDigits(digits string) bool
 }
 
+// InboundStopper is a vendor whose number keeps sending callers to the trunk until told
+// otherwise. A vendor that asks the router on every call needs no such step.
+type InboundStopper interface {
+	StopInbound(ctx context.Context, e164 string) error
+}
+
 // StreamLeg is how a vendor's leg to Stream is set up.
 type StreamLeg int
 
