@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -135,6 +136,11 @@ type login struct {
 	// connected it (a later connected_at), never because it was connected already.
 	asked           bool
 	connectedBefore *time.Time
+	// endedWithout is whether a consent was used up without connecting: the person declined
+	// it, or it failed at the provider, which the store does not tell apart for a callback on
+	// another router (watchConsent). A run of code shows no new consent after it
+	// (offerConsent); list_tools still does.
+	endedWithout bool
 	// opened holds the binding's routes once the login is made. Nil before.
 	opened *dispatcher
 	// held are the calls waiting for the person to answer a consent on their step, by call id.
@@ -473,14 +479,15 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login, callID string) (c
 //
 // It begins none while the login's newest consent is still open, wherever it is shown, so a
 // second run, or one in a later reply, shows nothing new; askToLogIn reuses the consent this
-// shows within the same reply. Nor does it begin one where askToLogIn would not: a binding
+// shows within the same reply. Nor any once a consent ended without connecting
+// (endedWithout): the person said no, and the model is still told to call list_tools. Nor does it begin one where askToLogIn would not: a binding
 // already opened, or whose connection the store says is usable now (openConnected), a token
 // the provider rejected, a conversation that is not the caller's own, or a config that no
 // longer binds it as the caller's.
 func (d *dispatcher) offerConsent(ctx context.Context, l *login) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.opened != nil || time.Now().Before(l.last.ExpiresAt) || d.openConnected(ctx, l) || l.rejected ||
+	if l.opened != nil || time.Now().Before(l.last.ExpiresAt) || d.openConnected(ctx, l) || l.endedWithout || l.rejected ||
 		d.logins.canAsk == nil || !d.logins.canAsk(d.spec.Caller.UserID) || !d.stillWaits(ctx, l.binding) {
 		return
 	}
@@ -490,7 +497,8 @@ func (d *dispatcher) offerConsent(ctx context.Context, l *login) {
 }
 
 // watchConsent reads the connection of a consent a run of code showed every loginPoll, until
-// the consent expires or the session closes. Once the consent connected it,
+// the consent expires, the session closes, or its attempt was used up without connecting it
+// (endedWithout), wherever its callback landed. Once the consent connected it,
 // it hands the consent back as the router's callback does (ConnectorConsentFinished), which
 // opens the binding and tells the session to carry on: a consent finished on another router is
 // never handed to this one, and no call waits for it to read the store (waitForLogin). Of the
@@ -510,11 +518,20 @@ func (d *dispatcher) watchConsent(l *login, consent Consent) {
 			l.mu.Lock()
 			before := l.connectedBefore
 			l.mu.Unlock()
+			// The attempt is read before the connection: a callback uses it up before it stores
+			// the connection, so one read after a connect finds it connected.
+			_, open := d.store.ConnectorAuthorizationAttemptByID(context.Background(), consent.AuthorizationID)
 			// Connected anew since the consent began, as openConnected reads it; loginFinished
 			// checks the rest, and does nothing for a login already open.
 			connection, err := d.store.ConnectorConnection(context.Background(), d.spec.CustomerID, consent.ConnectionID)
 			if err == nil && connectedSince(connection.ConnectedAt, before) {
 				d.logins.finished(context.Background(), d.spec.CustomerID, consent.ConnectionID, consent.AuthorizationID)
+				return
+			}
+			if errors.Is(open, store.ErrNoAuthorizationAttempt) {
+				l.mu.Lock()
+				l.endedWithout = true
+				l.mu.Unlock()
 				return
 			}
 		}
@@ -748,6 +765,7 @@ func (d *dispatcher) loginEndedWithout(authorizationID, connectionID, status str
 		if l.last.AuthorizationID == authorizationID {
 			l.last = Consent{}
 		}
+		l.endedWithout = true
 		// A call of a later reply may wait on a newer consent, which is still open.
 		for _, call := range l.held {
 			if call.authorizationID != authorizationID {
