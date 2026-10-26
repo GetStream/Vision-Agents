@@ -319,6 +319,10 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 		call.Headers = *request.Body.Headers
 	}
 	if request.Body.Custom != nil {
+		// The call hook hands a call naming a number to the agent of whoever holds it.
+		if _, named := (*request.Body.Custom)[phone.NumberKey]; named {
+			return nil, invalidRequest("custom cannot set " + phone.NumberKey)
+		}
 		call.Custom = *request.Body.Custom
 	}
 
@@ -1278,7 +1282,7 @@ type PhoneVendor struct {
 
 // PlaceCallRequest is the PlaceCallRequest schema.
 type PlaceCallRequest struct {
-	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it."`
+	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set."`
 	From               string             `json:"from" doc:"One of the customer's own numbers, which is what the person sees."`
 	Headers            *map[string]string `json:"headers,omitempty" doc:"Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call."`
 	InitialDigits      *string            `json:"initial_digits,omitempty" doc:"Digits pressed once the person answers, for reaching an extension behind a menu, e.g. \"ww1234#\". w is a short pause and W a long one."`

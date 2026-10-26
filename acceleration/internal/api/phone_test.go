@@ -105,6 +105,17 @@ func (s *PhoneSuite) TestACallCannotRingForLessThanNoTime() {
 	s.Contains(failure, "less than no time")
 }
 
+func (s *PhoneSuite) TestACallCannotNameTheNumberItRangUnder() {
+	// The call hook dispatches the agent of whoever holds the number a call names, so a
+	// customer naming somebody else's would hand their call to that customer's agent.
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "+15550001111", Custom: &map[string]string{"phone_number": "+15125550000"},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "phone_number")
+}
+
 func (s *PhoneSuite) TestACallToAShortCodeIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
 		From: "+15125551234", To: "911",
