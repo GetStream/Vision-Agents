@@ -442,6 +442,63 @@ class TestFolder:
             ConnectorSettings(name="mail", tools=None, required=False),
         ]
 
+    def test_an_object_reads_sandbox_and_require_approval(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n"
+            "  - name: github\n    sandbox: true\n"
+            "  - name: issues\n    require_approval: [create_*, merge_pull_request]\n"
+            "  - name: mail\n    sandbox: false\n    require_approval: []\n"
+            "  - name: notes\n    sandbox: null\n    require_approval: null\n",
+        )
+
+        assert load(root).settings.connectors == [
+            ConnectorSettings(name="github", sandbox=True),
+            ConnectorSettings(
+                name="issues", require_approval=["create_*", "merge_pull_request"]
+            ),
+            ConnectorSettings(name="mail", require_approval=[]),
+            ConnectorSettings(name="notes"),
+        ]
+
+    @pytest.mark.parametrize("sandbox", ["github", '"true"', "1", "[true]"])
+    def test_a_sandbox_that_is_not_true_or_false_is_refused(
+        self, tmp_path: Path, sandbox: str
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            f"name: triage\nconnectors:\n  - name: github\n    sandbox: {sandbox}\n",
+        )
+
+        with pytest.raises(
+            ValueError, match="should give connectors sandbox as true or false"
+        ):
+            load(root)
+
+    @pytest.mark.parametrize(
+        "require_approval",
+        ["create_*", "[1]", "[[create_*]]", "{create_*: true}", "true"],
+    )
+    def test_a_require_approval_that_is_not_a_list_of_names_is_refused(
+        self, tmp_path: Path, require_approval: str
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n"
+            f"    require_approval: {require_approval}\n",
+        )
+
+        with pytest.raises(
+            ValueError, match="should give connectors.require_approval as a list"
+        ):
+            load(root)
+
     def test_tools_left_out_offers_every_tool_and_an_empty_list_is_refused(
         self, tmp_path: Path
     ):
