@@ -2362,3 +2362,46 @@ func (s *ConfigsSuite) TestAnUpdateKeepingABindingToAForceDeletedConnectorIsAcce
 
 	s.Equal(http.StatusOK, status)
 }
+
+// Tool output is kept as long as the session unless a config says otherwise, an update
+// that leaves the setting out keeps it, and an empty one removes it.
+func (s *ConfigsSuite) TestAConfigKeepsToolOutputForAsLongAsItSays() {
+	unnamed := s.createConfig(map[string]any{"name": "support"})
+	s.Nil(unnamed.Tools.OutputRetention)
+
+	created := s.createConfig(map[string]any{"name": "billing", "tools": map[string]any{"output_retention": "7d"}})
+	s.Equal("7d", value(created.Tools.OutputRetention))
+
+	var saved AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
+		"/v1/agents/configs/"+created.Id, map[string]any{"name": "billing", "tools": map[string]any{"progressive": true}}, &saved))
+	s.Equal("7d", value(saved.Tools.OutputRetention), "a setting left out on an update stays")
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+created.Id, map[string]any{"tools": map[string]any{"output_retention": "none"}}, &patched))
+	s.Equal("none", value(patched.Tools.OutputRetention))
+
+	var cleared AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+created.Id, map[string]any{"tools": map[string]any{"output_retention": ""}}, &cleared))
+	s.Nil(cleared.Tools.OutputRetention)
+}
+
+func (s *ConfigsSuite) TestAToolOutputRetentionOutsideItsBoundsIsRefusedOnEveryWrite() {
+	created := s.createConfig(map[string]any{"name": "support"})
+	tooLong := map[string]any{"output_retention": "3651d"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "billing", "tools": tooLong})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "tools.output_retention")
+	status, failure = s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "tools": tooLong})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "tools.output_retention")
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"tools": tooLong})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "tools.output_retention")
+}

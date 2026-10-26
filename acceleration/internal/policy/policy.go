@@ -220,6 +220,8 @@ type decision struct {
 	screen bool
 	// ownApp is a customer that must act in a Stream app of its own.
 	ownApp bool
+	// toolOutput is the longest a session keeps what its tools were given and gave back.
+	toolOutput options.Retention
 	// organization is the one the app is in, empty while it is not known.
 	organization string
 	// balanceWarning is the balance its organization's policy warns at, over its tier's; nil
@@ -527,6 +529,21 @@ func (e *Enforcer) RequiresOwnStreamApp(ctx context.Context, customerID string) 
 	return decided.ownApp, nil
 }
 
+// ToolOutputRetention is the longest a customer's sessions may keep what their tools were
+// given and gave back: the shorter of the app's and the organization's, empty when neither
+// says. It fails closed, as RequiresOwnStreamApp does: a policy that could not be read keeps
+// nothing, since the other answer stores what a customer may have said must not be.
+func (e *Enforcer) ToolOutputRetention(ctx context.Context, customerID string) (options.Retention, error) {
+	if e == nil || customerID == "" {
+		return "", nil
+	}
+	decided := e.decide(ctx, customerID)
+	if decided.unread != nil {
+		return options.RetentionNone, decided.unread
+	}
+	return decided.toolOutput, nil
+}
+
 // Save replaces a scope's policy and drops the decisions it may have changed, so the next
 // request of this process reads them again.
 func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string, document store.PolicyDocument) error {
@@ -695,6 +712,7 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 		ownApp:         enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
 		organization:   organizationID,
 		balanceWarning: organization.BalanceWarningMicros,
+		toolOutput:     organization.ToolOutputRetention.Shorter(app.ToolOutputRetention),
 	}
 	decided.appQuota, decided.organizationQuota = app.Quota, organization.Quota
 	// An app whose users cannot be told apart is taken to have some with a policy, so each is

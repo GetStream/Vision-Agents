@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -129,6 +130,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	}
 	config.MCPServers = servers
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := outputRetentionComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
@@ -248,11 +252,15 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
+	config.ToolOutputRetention = outputRetentionOf(existing.ToolOutputRetention, request.Body.Tools)
 	config.ReviewInstructions = reviewOf(existing.ReviewInstructions, request.Body.Review)
 	// Field by field, as the doc says of an update: a block naming only the limit keeps
 	// enabled and the zone.
 	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := outputRetentionComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
@@ -1845,6 +1853,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	config.EpisodeCards = value(request.EpisodeCards)
 	if request.Tools != nil {
 		config.ProgressiveTools = value(request.Tools.Progressive)
+		config.ToolOutputRetention = options.Retention(value(request.Tools.OutputRetention))
 	}
 	config.Scheduling = schedulingOf(request.Scheduling)
 	config.ReviewInstructions = reviewOf("", request.Review)
@@ -1932,7 +1941,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	episodeCards := config.EpisodeCards
 	rendered.EpisodeCards = &episodeCards
 	progressive := config.ProgressiveTools
-	rendered.Tools = &AgentTools{Progressive: &progressive}
+	rendered.Tools = &AgentTools{Progressive: &progressive, OutputRetention: optional(string(config.ToolOutputRetention))}
 	rendered.Scheduling = renderedScheduling(config.Scheduling)
 	if len(config.Skills) > 0 {
 		skills := config.Skills
@@ -2262,11 +2271,12 @@ type AgentConfig struct {
 
 // AgentTools is how an agent is offered its plugin, MCP server and connector tools.
 type AgentTools struct {
-	Progressive *bool `json:"progressive,omitempty" doc:"Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays."`
+	Progressive     *bool   `json:"progressive,omitempty" doc:"Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays."`
+	OutputRetention *string `json:"output_retention,omitempty" pattern:"^(|none|[1-9][0-9]*[hd])$" patternDescription:"none, a number of hours such as 12h, or a number of days such as 30d" example:"30d" doc:"How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set."`
 }
 
 func (*AgentTools) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "How an agent is offered its plugin, MCP server and connector tools."
+	schema.Description = "How an agent is offered its tools, and how long what they were given and gave back is kept."
 	return schema
 }
 
@@ -2360,6 +2370,20 @@ func schedulingComplaint(config store.AgentConfig) (string, bool) {
 		return "scheduling.default_timezone: " + err.Error(), false
 	}
 	return "", true
+}
+
+// outputRetentionOf is the tool output retention once tools is written over stored: what
+// it says, or stored when it says nothing.
+func outputRetentionOf(stored options.Retention, tools *AgentTools) options.Retention {
+	if tools == nil || tools.OutputRetention == nil {
+		return stored
+	}
+	return options.Retention(*tools.OutputRetention)
+}
+
+// outputRetentionComplaint refuses a tool output retention out of bounds.
+func outputRetentionComplaint(config store.AgentConfig) (string, bool) {
+	return toolOutputRetentionComplaint("tools.output_retention", config.ToolOutputRetention)
 }
 
 // progressiveOf is whether tools are offered progressively once tools is written over

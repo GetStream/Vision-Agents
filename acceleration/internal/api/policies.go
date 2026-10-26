@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -39,6 +41,7 @@ type Policy struct {
 	Tags                 map[string]string `json:"tags,omitempty" example:"{\"application\":\"support\"}" doc:"Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags."`
 	RequireOwnStreamApp  *bool             `json:"require_own_stream_app,omitempty" doc:"Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused."`
 	BalanceWarningMicros *int64            `json:"balance_warning_micros,omitempty" minimum:"0" example:"20000000" doc:"The organization's own warning threshold, in millionths of a dollar: at or below it, every answer to a backend says X-Stream-Balance-Warning: low, and the organization's stream event destinations get one account.balance_low. It wins over the tier's. Left out, the tier's applies. Only an organization's policy has one: an app's that sets it is refused."`
+	ToolOutputRetention  *string           `json:"tool_output_retention,omitempty" pattern:"^(|none|[1-9][0-9]*[hd])$" patternDescription:"none, a number of hours such as 12h, or a number of days such as 30d" example:"30d" doc:"How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once."`
 }
 
 func (*Policy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -219,6 +222,7 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 		Tags:                 sent.Tags,
 		RequireOwnStreamApp:  sent.RequireOwnStreamApp,
 		BalanceWarningMicros: sent.BalanceWarningMicros,
+		ToolOutputRetention:  options.Retention(value(sent.ToolOutputRetention)),
 	}
 	// Credit is the organization's, so the balance it is warned at is too.
 	if scope == store.ScopeApp && sent.BalanceWarningMicros != nil {
@@ -239,6 +243,9 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 			}
 		}
 		document.RequireOwnStreamApp = nil
+	}
+	if message, ok := toolOutputRetentionComplaint("tool_output_retention", document.ToolOutputRetention); !ok {
+		return Policy{}, stack.Wrap(errors.New(message))
 	}
 	if !document.DataPolicy.Valid() {
 		return Policy{}, stack.Wrap(fmt.Errorf("retention is none or a duration such as 30d, not %q",
@@ -281,7 +288,29 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 		Tags:                 document.Tags,
 		RequireOwnStreamApp:  document.RequireOwnStreamApp,
 		BalanceWarningMicros: document.BalanceWarningMicros,
+		ToolOutputRetention:  optional(string(document.ToolOutputRetention)),
 	}, nil
+}
+
+// The shortest and longest tool output retention a setting may name. Less than an hour is
+// within reach of how often redaction runs, so it would promise more than is done; ten
+// years only catches a typo, since leaving it out keeps it for as long as the session.
+const (
+	minToolOutputRetention = time.Hour
+	maxToolOutputRetention = 3650 * 24 * time.Hour
+)
+
+// toolOutputRetentionComplaint refuses a tool output retention that is not none, empty, or
+// a duration between the bounds.
+func toolOutputRetentionComplaint(field string, retention options.Retention) (string, bool) {
+	if retention == "" || retention == options.RetentionNone {
+		return "", true
+	}
+	window, ok := retention.Window()
+	if !ok || window < minToolOutputRetention || window > maxToolOutputRetention {
+		return fmt.Sprintf("%s is none, or a duration from 1h to 3650d such as 30d, not %q", field, retention), false
+	}
+	return "", true
 }
 
 // quotaOf is a sent quota as it is stored. One that sets neither number is no opinion.

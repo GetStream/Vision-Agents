@@ -1696,7 +1696,7 @@ module GetStream
           required: %w[peak_concurrent_sessions peak_at tool_calls tools].freeze, open: false
         }.freeze,
         "AgentTools" => {
-          properties: %w[progressive].freeze,
+          properties: %w[output_retention progressive].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AnalyzeReviewsRequest" => {
@@ -2380,7 +2380,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "Policy" => {
-          properties: %w[allowed_models balance_warning_micros budget data_policy prompt_injection quota require_own_stream_app tags].freeze,
+          properties: %w[allowed_models balance_warning_micros budget data_policy prompt_injection quota require_own_stream_app tags tool_output_retention].freeze,
           required: [].freeze, open: false
         }.freeze,
         "PostalAddress" => {

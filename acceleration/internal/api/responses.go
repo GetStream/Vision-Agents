@@ -339,7 +339,7 @@ type AgentResponseItem struct {
 	At         time.Time               `json:"at"`
 	Kind       AgentResponseItemKind   `json:"kind" enum:"said,thought,tool_call,tool_result,answer,blocked,error"`
 	Ordinal    int                     `json:"ordinal" doc:"The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in."`
-	Payload    *map[string]interface{} `json:"payload,omitempty" doc:"Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result."`
+	Payload    *map[string]interface{} `json:"payload,omitempty" doc:"Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording."`
 	ResponseId string                  `json:"response_id"`
 	SessionId  *string                 `json:"session_id,omitempty"`
 	Text       *string                 `json:"text,omitempty"`

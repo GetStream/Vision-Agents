@@ -200,11 +200,15 @@ type Settings struct {
 	App map[string]any `yaml:"app"`
 }
 
-// ToolSettings is how MCP server and connector tools are offered.
+// ToolSettings is how MCP server and connector tools are offered, and how long what any tool
+// was given and gave back is kept.
 type ToolSettings struct {
 	// Progressive offers each tool by a summary, the first call to it returning its full
 	// description instead of running it. Nil when the declaration says nothing about it.
 	Progressive *bool `yaml:"progressive"`
+	// OutputRetention is how long the agent's sessions keep a tool's arguments and output:
+	// none, or a duration such as 12h or 30d. Nil when the declaration says nothing about it.
+	OutputRetention *string `yaml:"output_retention"`
 }
 
 // ConnectorSettings is one connector the agent binds. agent.yaml gives it as the alias

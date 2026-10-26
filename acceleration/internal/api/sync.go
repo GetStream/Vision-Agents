@@ -268,6 +268,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok := outputRetentionComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
@@ -559,6 +562,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 		config.MCPServers = mcpServersOf(body.McpServers)
 	}
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, body.Tools)
+	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, body.Tools)
 	config.Scheduling = schedulingOr(config.Scheduling, body.Scheduling)
 	if body.Channels != nil {
 		config.Channels = channelsOf(body.Channels)

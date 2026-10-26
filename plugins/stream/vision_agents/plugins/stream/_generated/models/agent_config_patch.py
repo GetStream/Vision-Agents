@@ -83,7 +83,8 @@ class AgentConfigPatch:
             stt (str | Unset):
             subagent (str | Unset): Only a voice agent names one. Switching an agent to text drops it.
             tags (AgentConfigPatchTags | Unset):
-            tools (AgentTools | Unset): How an agent is offered its plugin, MCP server and connector tools.
+            tools (AgentTools | Unset): How an agent is offered its tools, and how long what they were given and gave back
+                is kept.
             tts (str | Unset):
             video (SessionVideo | Unset):
             visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as

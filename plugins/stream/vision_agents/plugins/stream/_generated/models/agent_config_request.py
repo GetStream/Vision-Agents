@@ -108,7 +108,8 @@ class AgentConfigRequest:
             config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel
             connection and subscribes to no event, which stay with the live config, and it may bind a channel connection
             another config binds.
-        tools (AgentTools | Unset): How an agent is offered its plugin, MCP server and connector tools.
+        tools (AgentTools | Unset): How an agent is offered its tools, and how long what they were given and gave back
+            is kept.
         tts (str | Unset):
         video (SessionVideo | Unset):
         visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as

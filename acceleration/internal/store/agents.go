@@ -73,7 +73,7 @@ var configColumns = []string{
 	"name", "role", "mode", "stt", "tts", "sts", "voice", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
 	"skills", "plugins", "connectors", "left_out_connectors", "plugin_events", "mcp_servers", "channels", "scheduling", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
-	"dispatch_incoming_call", "dispatch_text", "episode_cards", "progressive_tools", "sync_hash", "updated_at",
+	"dispatch_incoming_call", "dispatch_text", "episode_cards", "progressive_tools", "tool_output_retention", "sync_hash", "updated_at",
 }
 
 // UpdateAgentConfig replaces a config a customer holds. Every field is written, so an
