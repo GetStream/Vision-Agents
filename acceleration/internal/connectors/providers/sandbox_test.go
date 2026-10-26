@@ -37,7 +37,7 @@ func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIAndGitHosts()
 // From revision 5, Google Drive's REST API host (AI-1958).
 func (s *SandboxSuite) TestGoogleDriveGivesASandboxItsTokenForTheRESTAPIHost() {
 	drive := s.manifest("google_drive")
-	s.Equal(5, drive.Revision)
+	s.Equal(6, drive.Revision)
 	s.Require().NotEmpty(drive.Schemes)
 
 	for _, scheme := range drive.Schemes {

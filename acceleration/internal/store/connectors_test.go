@@ -146,10 +146,10 @@ func (s *StoreSuite) TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBefor
 	s.False(broken)
 }
 
-// TestGoogleDriveRevisionFiveSeedsOverTheRevisionFourTheBuildBeforeStored: revision 5 takes a
+// TestGoogleDriveRevisionSixSeedsOverTheRevisionFourTheBuildBeforeStored: revision 6 takes a
 // grant of drive in place of drive.file (AI-1935). testdata/google_drive-revision-4.yaml is the
 // file a database already holds.
-func (s *StoreSuite) TestGoogleDriveRevisionFiveSeedsOverTheRevisionFourTheBuildBeforeStored() {
+func (s *StoreSuite) TestGoogleDriveRevisionSixSeedsOverTheRevisionFourTheBuildBeforeStored() {
 	four, err := os.ReadFile("testdata/google_drive-revision-4.yaml")
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"google_drive.yaml": &fstest.MapFile{Data: four}}))
@@ -161,7 +161,7 @@ func (s *StoreSuite) TestGoogleDriveRevisionFiveSeedsOverTheRevisionFourTheBuild
 
 	now, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, "google_drive")
 	s.Require().NoError(err)
-	s.Equal(5, now.Revision)
+	s.Equal(6, now.Revision)
 	s.NotEmpty(now.Manifest.Scopes.CoveredBy)
 }
 
