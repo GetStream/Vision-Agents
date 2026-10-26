@@ -875,7 +875,7 @@ func commandsIn(messages []Message) map[string]commandRecord {
 		record.State = m.State
 		// Only a follow-up, which has no message of a person's, is read back; its
 		// latest message is the one a retry after an abandoned turn answered with.
-		if record.UserMessageID == "" {
+		if record.UserMessageID == "" && readBack(m.CommandID) {
 			record.Reply, record.Files = m.Text, m.Files
 		}
 		commands[m.CommandID] = record
@@ -1281,7 +1281,7 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 		return receipt, nil
 	}
 	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
-		return CommandReceipt{}, stack.Wrap(errors.New("a response is already running"))
+		return CommandReceipt{}, stack.Wrap(ErrResponseRunning)
 	}
 	now := time.Now().UTC()
 	if !validClientID.MatchString(clientID) {
