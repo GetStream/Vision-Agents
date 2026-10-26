@@ -148,9 +148,6 @@ type Turn struct {
 	// NoTools offers the reply no tools without telling it to hurry: nobody has spoken
 	// yet, so there is nothing to act on.
 	NoTools bool
-	// OnlyTool narrows a turn that must call to the one tool it names. Made to call after
-	// dispatch_tech failed for want of a reboot, Qwen called dispatch_tech again.
-	OnlyTool string
 	// Asked is what the caller asked to change about this reply, written over the
 	// session's own overwrites.
 	Asked llmoptions.LLM
@@ -390,11 +387,6 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 
 	toolChoice := ""
 	maxTokens := h.options.MaxTokens
-	if turn.MustCall && turn.OnlyTool != "" {
-		if only := slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool { return tool.Name != turn.OnlyTool }); len(only) > 0 {
-			tools = only
-		}
-	}
 	if turn.MustCall && len(tools) > 0 {
 		toolChoice = "required"
 		// Constrained to a call, Gemma on vLLM once wrote nothing for 37 seconds while the

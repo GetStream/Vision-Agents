@@ -4796,41 +4796,6 @@ func (s *AgentSuite) TestThinkingInWritingIsReportedApartFromTheReply() {
 	s.Equal("The user greets; greet back.", thought.String())
 }
 
-func TestADescribedStepIsTheToolNotYetCalled(t *testing.T) {
-	tools := harness.Tools{Tools: []harness.Tool{{Name: "walk_reboot"}, {Name: "check_outage"}, {Name: "create_ticket"}}}
-	checked := []llm.Message{{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{Name: "check_outage"}}}}
-	cases := []struct {
-		said string
-		want string
-	}{
-		{"No outages. Let's try walking through a reboot of your gateway.", "walk_reboot"},
-		{"Would you like me to walk you through a reboot?", ""},
-		{"Let me check the outage map for you.", ""},
-		{"Rebooting usually helps.", ""},
-		{"I'll create a ticket for that error.", "create_ticket"},
-		{"Since the reboot didn't work, I'll need to walk you through a formal reboot process.", "walk_reboot"},
-		{"To walk you through a reboot, I'll need your account PIN.", ""},
-	}
-	for _, c := range cases {
-		if got := describedStep(c.said, tools, checked); got != c.want {
-			t.Errorf("describedStep(%q) = %q, want %q", c.said, got, c.want)
-		}
-	}
-}
-
-func (s *AgentSuite) TestAFailureThatNamesAnotherToolsStepNamesThatTool() {
-	tools := []harness.Tool{{Name: "dispatch_tech"}, {Name: "walk_reboot"}, {Name: "check_outage"}}
-	called := llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "dispatch_tech"}}}
-	failed := llm.Message{Role: llm.ToolResult, ToolCallID: "1",
-		Content: `{"error": "reboot the gateway before dispatching a truck"}`}
-	s.Equal("walk_reboot", stepNamed([]llm.Message{called, failed}, tools))
-
-	worked := llm.Message{Role: llm.ToolResult, ToolCallID: "1", Content: `{"ok": true, "note": "reboot done"}`}
-	s.Empty(stepNamed([]llm.Message{called, worked}, tools), "a result that did not fail names no step")
-	s.Empty(stepNamed([]llm.Message{called, failed, {Role: llm.User, Content: "ok"}}, tools),
-		"the caller spoke since")
-}
-
 func (s *AgentSuite) TestACallThatLeavesARequiredArgumentEmptyIsNotRun() {
 	tool := harness.Tool{Name: "verify_account", Parameters: map[string]any{
 		"required": []any{"pin", "last4", "address"},

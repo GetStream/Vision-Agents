@@ -466,9 +466,6 @@ type Agent struct {
 	// narrationAsked is set once a reply that only talked about the caller has been asked
 	// again, since the caller last spoke.
 	narrationAsked bool
-	// stepChased is the tool whose described step was last chased up since the caller
-	// last spoke (describedStep).
-	stepChased string
 	// forcedChase is the chase that was made to call a tool, and forcedNote what it was
 	// told, so a forced chase that produced nothing can be asked again without forcing.
 	forcedChase string
@@ -2010,7 +2007,6 @@ func (a *Agent) respondTurn(
 	a.chaseForced = false
 	a.narrationAsked = false
 	a.callerTurns++
-	a.stepChased = ""
 	a.toolReply = false
 	a.asked = asked
 	a.sender = sender
@@ -2928,7 +2924,6 @@ func (a *Agent) finish(response llm.Response) {
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
 		len(a.availableTools().Tools) > 0 {
 		backed := backsClaim(history, said, toolNames(a.availableTools()))
-		step := stepNamed(history, a.availableTools().Tools)
 		owes := withheld || owesACall(said, backed)
 		if owes && strings.HasPrefix(response.ID, toolPrefix) {
 			// Qwen met the chase with "Let me check for any outages. One moment, please."
@@ -2945,10 +2940,6 @@ func (a *Agent) finish(response llm.Response) {
 		switch {
 		case withheld:
 			a.keepPromise(response.ID, keepPromise, true)
-		case step != "":
-			// Made to call after dispatch_tech failed for want of a reboot, Qwen called
-			// dispatch_tech again, so the chase offers the named step alone.
-			a.chase(response.ID, fmt.Sprintf(doTheStep, step), true, step)
 		case owesACall(said, backed):
 			// A hold phrase can come before the caller has given what the call needs, and
 			// a forced call is then made with blanks; a claim that it is done cannot.
@@ -2957,21 +2948,6 @@ func (a *Agent) finish(response llm.Response) {
 			// A go-ahead to "you're booked" has nothing left to do: forced to call, Qwen
 			// ordered from the menu.
 			a.keepPromise(response.ID, actOnGoAhead, true)
-		default:
-			// A step is chased even after another promise was: in Voicebench the chase that
-			// made the outage check used that up, and the reboot it led to went uncalled.
-			// Each step is chased once, so a model that still describes it is left be.
-			step := describedStep(said, a.availableTools(), history)
-			a.mu.Lock()
-			fresh := step != "" && a.stepChased != step
-			if fresh {
-				a.stepChased = step
-				a.promiseChased = false
-			}
-			a.mu.Unlock()
-			if fresh {
-				a.keepPromise(response.ID, fmt.Sprintf(callTheStep, step), true)
-			}
 		}
 	}
 	a.respondQueued()
@@ -2985,23 +2961,18 @@ func (a *Agent) finish(response llm.Response) {
 // made. It is asked once per thing the caller said, so a model that still calls nothing is
 // left to the caller's next words.
 func (a *Agent) keepPromise(promised, note string, mustCall bool) {
-	a.chase(promised, note, mustCall, "")
+	a.chaseAfter(promised, note, mustCall, 0)
 }
 
-// chase asks again for the reply to promised, held to the one tool only names if any.
-func (a *Agent) chase(promised, note string, mustCall bool, only string) {
-	a.chaseAfter(promised, note, mustCall, only, 0)
-}
-
-// chaseAfter is chase on its waited-th try. A caller still heard puts the chase off rather
+// chaseAfter is keepPromise on its waited-th try. A caller still heard puts the chase off rather
 // than dropping it: on a quiet line the energy gate kept hearing the hiss, every chase
 // was dropped, and the caller who said "please go ahead" waited on a reschedule that
 // never came. A reply begun meanwhile supersedes it; a turn ignored as the TV does not.
-func (a *Agent) chaseAfter(promised, note string, mustCall bool, only string, waited int) {
+func (a *Agent) chaseAfter(promised, note string, mustCall bool, waited int) {
 	a.mu.Lock()
 	if a.promiseChased || a.harness == nil || a.closed || a.generating || a.interrupting ||
 		a.recoveringVoice != nil || a.toolRounds >= maxToolRounds {
-		a.logger.Debug("a chase was dropped", "turn", promised, "only", only, "chased", a.promiseChased,
+		a.logger.Debug("a chase was dropped", "turn", promised, "chased", a.promiseChased,
 			"generating", a.generating, "interrupting", a.interrupting, "recovering", a.recoveringVoice != nil,
 			"rounds", a.toolRounds, "waited", waited)
 		a.mu.Unlock()
@@ -3015,10 +2986,10 @@ func (a *Agent) chaseAfter(promised, note string, mustCall bool, only string, wa
 			moved := a.speakingTurn != replying
 			a.mu.Unlock()
 			if !moved {
-				a.chaseAfter(promised, note, mustCall, only, waited+1)
+				a.chaseAfter(promised, note, mustCall, waited+1)
 				return
 			}
-			a.logger.Debug("a chase gave way to a reply", "turn", promised, "only", only)
+			a.logger.Debug("a chase gave way to a reply", "turn", promised)
 		})
 		return
 	}
@@ -3036,7 +3007,7 @@ func (a *Agent) chaseAfter(promised, note string, mustCall bool, only string, wa
 	a.mu.Unlock()
 
 	a.logger.Info("the reply owed a call and made none, asking for it",
-		"turn", turnID, "chases", promised, "must_call", mustCall, "only", only)
+		"turn", turnID, "chases", promised, "must_call", mustCall)
 	a.turns.started(turnID, kindChase)
 	a.turns.begin(turnID, participant, time.Now(), time.Time{}, 0)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: promised})
@@ -3049,7 +3020,6 @@ func (a *Agent) chaseAfter(promised, note string, mustCall bool, only string, wa
 		// Told in a note alone, Gemma met it with "Is there anything else?" and the
 		// booking it had announced was never made.
 		MustCall: mustCall,
-		OnlyTool: only,
 		Asked:    asked,
 	}, ""); err != nil {
 		a.fail(err, "llm")
@@ -3074,114 +3044,6 @@ const actOnGoAhead = "The caller just told you to go ahead. Call the tool that d
 // speakToTheCaller is the note a reply that only talked about the caller is asked again with.
 const speakToTheCaller = "Your last reply described the caller instead of speaking to them, and " +
 	"they heard none of it. Answer them now, speaking to them directly."
-
-// callTheStep is the note a reply that described a tool's step instead of calling it is
-// chased up with.
-const callTheStep = "You just described the step %s does but did not call it. Call %[1]s " +
-	"now, without saying anything first, even if the caller says they already tried it."
-
-// describedStep is the tool a reply described the step of instead of calling it, or empty.
-// In Voicebench Gemma said "Let's try walking through a reboot of your gateway" with
-// walk_reboot offered and never called, so the reboot the ticket depended on was never
-// recorded. A tool counts as described when every word of its name of four letters or more
-// opens a word of the reply, and there are at least two. A reply that asks the caller for
-// something is not one: what the call needs may still be missing. "I'll need to walk you
-// through a reboot" asks for nothing, so owesAnAnswer's "i'll need" is too broad here.
-func describedStep(said string, tools harness.Tools, history []llm.Message) string {
-	lower := strings.ToLower(strings.TrimSpace(said))
-	if strings.HasSuffix(lower, "?") || slices.ContainsFunc(asks, func(ask string) bool { return strings.Contains(lower, ask) }) {
-		return ""
-	}
-	called := map[string]bool{}
-	for _, message := range history {
-		for _, call := range message.ToolCalls {
-			called[call.Name] = true
-		}
-	}
-	words := strings.FieldsFunc(strings.ToLower(said), func(r rune) bool {
-		return !unicode.IsLetter(r)
-	})
-	for _, tool := range tools.Tools {
-		if called[tool.Name] {
-			continue
-		}
-		var parts []string
-		for _, part := range strings.Split(strings.ToLower(tool.Name), "_") {
-			if len(part) >= 4 {
-				parts = append(parts, part)
-			}
-		}
-		if len(parts) < 2 {
-			continue
-		}
-		if !slices.ContainsFunc(parts, func(part string) bool {
-			return !slices.ContainsFunc(words, func(word string) bool { return strings.HasPrefix(word, part) })
-		}) {
-			return tool.Name
-		}
-	}
-	return ""
-}
-
-// asks are what a reply asking the caller for a value says.
-var asks = []string{
-	"need your", "could you", "can you", "may i have", "please tell", "please give",
-	"please provide", "please confirm", "please spell", "please read",
-}
-
-// doTheStep is the note a reply that met a failed call naming another tool's step with no
-// call is chased up with.
-const doTheStep = "The tool you called failed and said what has to happen first, which your " +
-	"%s tool does. Call it now, without saying anything first."
-
-// stepNamed returns the tool whose step the last tool result, a failure, says has to come
-// first ("reboot the gateway before dispatching a truck" names walk_reboot), or empty. Told
-// to call that tool and try again, Gemma and Qwen both asked the caller about it instead.
-func stepNamed(history []llm.Message, tools []harness.Tool) string {
-	if len(history) == 0 || history[len(history)-1].Role != llm.ToolResult {
-		return ""
-	}
-	result := history[len(history)-1]
-	lower := strings.ToLower(result.Content)
-	if !strings.Contains(lower, "error") && !strings.Contains(lower, "did not work") {
-		return ""
-	}
-	// The guidance the result is replayed with names tools of its own.
-	if end := strings.LastIndex(lower, "}"); end >= 0 {
-		lower = lower[:end+1]
-	}
-	failed := ""
-	if call := lastCall(history); call != nil {
-		failed = call.Name
-	}
-	for _, tool := range tools {
-		if tool.Name != failed && strings.Contains(lower, strings.ToLower(tool.Name)) {
-			return tool.Name
-		}
-	}
-	for _, tool := range tools {
-		if tool.Name == failed {
-			continue
-		}
-		for word := range strings.SplitSeq(strings.ToLower(tool.Name), "_") {
-			// "identity not verified" names verify_account by its stem.
-			if len(word) >= 5 && strings.Contains(lower, word[:5]) {
-				return tool.Name
-			}
-		}
-	}
-	return ""
-}
-
-// lastCall is the most recent call the agent made in history, or nil.
-func lastCall(history []llm.Message) *llm.ToolCall {
-	for i := len(history) - 1; i >= 0; i-- {
-		if calls := history[i].ToolCalls; len(calls) > 0 {
-			return &calls[len(calls)-1]
-		}
-	}
-	return nil
-}
 
 // doneBeforeGoAhead reports whether the agent's last words before the caller's told them
 // the work was done.
