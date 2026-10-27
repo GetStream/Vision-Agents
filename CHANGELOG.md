@@ -77,6 +77,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### A photo is still seen after the model calls a tool
+
+A question asked with photos was answered as though none came when the model called a tool before answering, such as loading the `vision` skill: the photos went only with the turn's first model call. They now go with every reply of that turn, the replies to its tool results included, on the person's message, and the next turn drops them.
+
 ### The agent tells people apart in a group text chat
 
 In a thread several people write in, such as an iMessage group chat or a Slack thread with two people, the reply model is told who wrote each message once a second person has written: `Speaker 1: What are our names?`, each person under `Speaker N` in the order they first wrote, never their phone number or Slack id, with a note that several people are writing. It read every message as one person's, so it answered Kanat as Ana. A 1:1 chat and a session in writing from the dashboard or an SDK send the model what they did (AI-2014).
