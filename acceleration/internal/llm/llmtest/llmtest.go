@@ -74,6 +74,14 @@ func (s *Script) Fail(err error, context string) {
 	s.Done()
 }
 
+// Cancel ends the response as abandoned before it finished, the way a provider ends a stream
+// whose context was cancelled: with no failure (openai.go, anthropic/messages.go,
+// openaicompat.go all report context.Canceled as ResponseWriter.Cancelled).
+func (s *Script) Cancel() {
+	s.write(func(w *llm.ResponseWriter) { w.Cancelled() })
+	s.Done()
+}
+
 // Done settles the response, which is what unblocks whoever is draining it.
 func (s *Script) Done() {
 	s.closeOnce.Do(func() { close(s.ended) })
