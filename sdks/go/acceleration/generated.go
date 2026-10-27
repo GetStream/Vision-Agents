@@ -7810,7 +7810,7 @@ type SessionMemory struct {
 	// Filter The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it.
 	Filter *map[string]string `json:"filter,omitempty"`
 
-	// UserId Who the memories belong to. Empty means the customer.
+	// UserId Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users.
 	UserId *string `json:"user_id,omitempty"`
 }
 
