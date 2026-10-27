@@ -92,9 +92,6 @@ stream property. Answering a tool call does not depend on anybody listening: it 
   caller decides.
 - A tool result echoes `request_id` and `turn_id` only when the call carried a `request_id`; a
   bare `turn_id` routes to a path that fails for a persisted session.
-- A session's socket names the tools it runs in `tools`, empty for none, as Go does. The router
-  sends a call only to a socket that runs it, and without `tools` it compares the socket's caller
-  with the session's: a socket has no auth type, which a `proxy` router reads as a backend.
 
 Frames in tests are quoted verbatim from `frameOf` in
 [`sessionws.go`](../../../acceleration/internal/api/sessionws.go).

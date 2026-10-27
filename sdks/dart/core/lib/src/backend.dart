@@ -29,9 +29,8 @@ final class StreamCredentials {
 /// so Stream is set up once. Beside a `customerId` the key is Stream's alone, and the router
 /// is still reached by customer id.
 ///
-/// Every request is sent as a device's, with `Stream-Auth-Type: jwt`. A socket carries no auth
-/// type, since a browser cannot send one, and a router in `proxy` mode takes it for a backend.
-/// That is why a session's socket names the tools it runs.
+/// Every request and handshake is sent as a device's: `Stream-Auth-Type: jwt` on requests,
+/// and no auth type at all on a socket, which the router reads the same way.
 final class Backend {
   Backend({
     Uri? url,
