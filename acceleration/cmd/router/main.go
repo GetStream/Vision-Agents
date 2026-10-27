@@ -1552,7 +1552,7 @@ type stopping struct {
 	handOverMetrics func()
 	// handOverProxy stops the sandbox egress proxy taking connections when a drain starts,
 	// so the router taking over on the same address serves the sandboxes; the tunnels already
-	// open stay until the process ends. Without a drain the caller stops it at exit.
+	// open stay until the process ends. Without a drain the caller stops it at exit. It does nothing outside an overlap deploy.
 	handOverProxy func()
 	drain         time.Duration
 	// grace is how long the requests still open on a closing listener get to finish; zero
