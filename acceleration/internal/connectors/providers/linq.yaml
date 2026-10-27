@@ -12,7 +12,8 @@
 #   [send]     https://docs.linqapp.com/channel/imessage/guides/messaging/sending-messages/index.md
 id: linq
 # A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# Revision 2 (AI-2092): the text is every part's value, not the first part's.
+revision: 2
 name: Linq
 category: Communication
 description: Answer people over iMessage on the customer's own Linq line.
@@ -67,10 +68,13 @@ channel:
     # episode card by it (channelbridge.episodeSources).
     author_id: $.data.sender_handle.handle
     provider_message_id: $.data.id
-    # [send], «Message parts»: text is a part, and [events] shows text and media parts. Only
-    # the first part is read, a limit of a path without filters, so a message whose first part
-    # is media is read without its text. # unverified: how often a person's first part is media
-    text: $.data.parts[0].value
+    # [send], «Message parts»: text is a part, and [events] shows text and media parts. A
+    # photo sent with a caption comes as [media, text] (staging, 2026-10-27, AI-2088), so every
+    # part's value is read, joined by a newline. A media part has a url and no value, so it is
+    # left out. A link part's value is its URL ([webhooks reference], «Link»), which the
+    # agent gets as the person's text, as revision 1 did when it was the first part.
+    #   [webhooks reference] https://docs.linqapp.com/channel/imessage/api/resources/webhooks/index.md, opened October 27, 2026
+    text_parts: $.data.parts[*].value
   reply:
     # [send]: POST https://api.linqapp.com/api/partner/v3/chats/{chatId}/messages. Linq
     # answers 200 with the message sent, and 400, 401, 404 or 429 when it is not ([send]).

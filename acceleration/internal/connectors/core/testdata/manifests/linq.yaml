@@ -40,9 +40,9 @@ channel:
     author_id: $.data.sender_handle.handle
     provider_message_id: $.data.id
     # [send], «Message parts»: text is a part; consecutive text parts are not allowed, so the
-    # text of a message with media first sits in a later part. Reading only the first part is
-    # a limit of a path without filters. # unverified: how often a person's first part is media
-    text: $.data.parts[0].value
+    # text of a message with media first sits in a later part. Every part's value is read,
+    # joined by a newline; a media part has a url and no value.
+    text_parts: $.data.parts[*].value
   reply:
     # [send]: POST https://api.linqapp.com/api/partner/v3/chats/{chatId}/messages.
     url: https://api.linqapp.com/api/partner/v3/chats/{thread.chat_id}/messages
