@@ -27,8 +27,19 @@ The iOS simulator reaches your Mac's localhost, and the Android emulator reaches
 `http://192.168.1.20:8080` and `http://192.168.1.20:8099`.
 
 The app depends on `sdks/dart/core`, `chat` and `rtc` by path, so a change to the SDK shows up in
-the app without publishing it. Stream Chat's AI components come from the `stream-chat-flutter-ai`
-branch that adds the conversation view and the voice glow, until they are released.
+the app without publishing it. Stream Chat's AI components come from `stream-chat-flutter-ai`'s
+`main`, pinned to a commit, until they are released. To try the app against a branch of them,
+point it at a local checkout in a `pubspec_overrides.yaml` next to `pubspec.yaml`, which git
+ignores. Its `dependency_overrides` replace the ones in `pubspec.yaml`, so keep
+`vision_agents_core` there too:
+
+```yaml
+dependency_overrides:
+  stream_chat_flutter_ai:
+    path: ../../../../stream-chat-flutter-ai/packages/stream_chat_flutter_ai
+  vision_agents_core:
+    path: ../../../sdks/dart/core
+```
 
 The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
 `XAI_API_KEY`; a call keeps the agent's faster model.
@@ -40,7 +51,8 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
   call would have had. The session is kept in a Stream Chat channel, which the router writes and
   the app shows with Stream's AI components (`stream_chat_flutter_ai`):
   - `AIConversationView` lays the conversation out in turns. The reply streams in below the
-    question without moving it, and `AIReplyActionsView` copies and rates each finished reply.
+    question without moving it, and `AIReplyActionsView` copies, shares (with `share_plus`) and
+    rates each finished reply.
   - The model's reasoning shows as it thinks (`StreamingReasoningView`), reassembled from the
     live updates by `LiveReasoning`.
   - Each tool call shows as it runs (`AIToolCallView`).
@@ -48,13 +60,17 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
   - `ChatComposer` asks, dictates and stops a reply, and `AISuggestionsView` starts a
     conversation.
 - **Voice** starts a session, which puts the agent on a call, and joins it over Stream Video as
-  the same user, with the token `backend` signed.
+  the same user, with the token `backend` signed. On Android the app asks for the microphone
+  first; on iOS the system asks when the call first uses it.
   - The agent is Stream's voice glow (`AIVoiceGlowView`). It moves with the agent's voice in
-    Stream's blue and with yours in red, from the call's audio levels.
+    Stream's blue and with yours in red. Who is talking comes from the call's audio levels:
+    the agent first, and you only after a moment of talking and once the agent's echo has died
+    away.
   - Underneath it, a word says what the agent is doing: "Listening", "Thinking", "Working on
     refund decision", "Speaking".
-  - The button at the top right picks the glow or Stream's voice wave (`AIVoiceWaveView`). The
-    last thing said is captioned at the bottom.
+  - The button at the top right picks the glow or Stream's voice wave (`AIVoiceWaveView`).
+  - What is being said is captioned at the bottom, a sentence at a time: the agent's reply at
+    the pace of its voice, what you said in italics once it is transcribed.
   - The call carries on while the Chat tab is shown, and ends with the hang-up button or when
     the agent leaves.
 - **`lookup_order`** is a tool the model calls that runs in `lib/demo.dart`. Its data never
@@ -64,5 +80,6 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
   owed, the agent calls it, and the call waits for you.
   - In Chat the question is on the reply's step (`AIToolApprovalView`, through an
     `AIToolApprover` that answers with `session.decide`).
-  - On a call it is a card above the controls (`AIToolApprovalCard`).
+  - On a call it is a card above the controls (`AIToolApprovalCard`), which shows the answer
+    sending until the call moves on.
   - Choosing Refund runs the tool; choosing Not now tells the agent you declined.

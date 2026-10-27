@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
 import 'package:vision_agents_core/vision_agents_core.dart';
 import 'package:vision_agents_rtc/vision_agents_rtc.dart';
 
+import 'captions.dart';
 import 'demo.dart';
 
 /// How the agent is shown on a call.
@@ -41,10 +44,27 @@ class _VoiceViewState extends State<VoiceView> {
   bool _starting = false;
   final _subscriptions = <StreamSubscription<Object?>>[];
 
-  // Who is talking, from the call's audio levels rather than the session: a reply is written
-  // before it is spoken and done before the agent stops talking.
+  // The call's participants, whose audio levels say who is talking.
   video.CallParticipantState? _agent;
   video.CallParticipantState? _person;
+
+  /// How long after the agent was last heard the microphone is still ignored, so what is left
+  /// of its voice after echo cancellation never reads as the person.
+  static const _echoTail = Duration(milliseconds: 300);
+
+  /// How long the person has to keep talking to count, so room noise does not.
+  static const _onset = Duration(milliseconds: 120);
+
+  /// Who is talking and how loud, or null while nobody is. This comes from the audio rather
+  /// than the session: a reply is written before it is spoken and is done before the agent
+  /// stops talking, and the person is transcribed only after they have started.
+  ({bool isPerson, double level})? _heard;
+  var _captions = Captions();
+  Timer? _meter;
+  final _clock = Stopwatch()..start();
+  var _lastTick = Duration.zero;
+  Duration? _agentLastHeard;
+  Duration? _personSince;
 
   @override
   void dispose() {
@@ -57,6 +77,16 @@ class _VoiceViewState extends State<VoiceView> {
       _starting = true;
       _failure = null;
     });
+    if (Platform.isAndroid &&
+        !await Permission.microphone.request().isGranted) {
+      if (mounted) {
+        setState(() {
+          _starting = false;
+          _failure = 'Talking to the agent needs the microphone.';
+        });
+      }
+      return;
+    }
     try {
       final voice = await VoiceSession.start(
         Demo.agents,
@@ -89,17 +119,63 @@ class _VoiceViewState extends State<VoiceView> {
     final call = state.call;
     if (call != null && _participants == null) {
       _participants = call.state.valueStream.listen((callState) {
-        setState(() {
-          _person = callState.callParticipants
-              .where((p) => p.isLocal)
-              .firstOrNull;
-          _agent = callState.callParticipants
-              .where((p) => !p.isLocal)
-              .firstOrNull;
-        });
+        _person = callState.callParticipants
+            .where((p) => p.isLocal)
+            .firstOrNull;
+        _agent = callState.callParticipants
+            .where((p) => !p.isLocal)
+            .firstOrNull;
       });
+      _lastTick = _clock.elapsed;
+      _meter = Timer.periodic(const Duration(milliseconds: 33), (_) => _tick());
     }
     setState(() {});
+  }
+
+  /// Reads who is talking, and moves the captions on, thirty times a second.
+  void _tick() {
+    final voice = _voice;
+    if (voice == null) return;
+    final now = _clock.elapsed;
+    final elapsed = now - _lastTick;
+    _lastTick = now;
+
+    final agent = _agent;
+    final person = _person;
+    final agentIsAudible = agent?.isSpeaking ?? false;
+    _personSince = person?.isSpeaking ?? false ? _personSince ?? now : null;
+    final personSince = _personSince;
+    final agentLastHeard = _agentLastHeard;
+    // The agent first: while its voice plays, the microphone hears it too.
+    final ({bool isPerson, double level})? heard;
+    if (agentIsAudible) {
+      _agentLastHeard = now;
+      heard = (isPerson: false, level: agent!.audioLevel);
+    } else if (personSince != null &&
+        now - personSince >= _onset &&
+        (agentLastHeard == null || now - agentLastHeard > _echoTail)) {
+      heard = (isPerson: true, level: person!.audioLevel);
+    } else {
+      heard = null;
+    }
+
+    final caption = _captions.caption;
+    final captionIsVisible = _captions.isVisible;
+    _captions.update(
+      turn: voice.session.turns.lastOrNull,
+      agentIsAudible: agentIsAudible,
+      agentIsAnswering: switch (voice.session.state) {
+        Responding() || Working() => true,
+        _ => false,
+      },
+      now: now,
+      elapsed: elapsed,
+    );
+    if (heard != _heard ||
+        caption != _captions.caption ||
+        captionIsVisible != _captions.isVisible) {
+      setState(() => _heard = heard);
+    }
   }
 
   void _conversationChanged(Conversation conversation) {
@@ -121,8 +197,14 @@ class _VoiceViewState extends State<VoiceView> {
     _subscriptions.clear();
     unawaited(_participants?.cancel());
     _participants = null;
+    _meter?.cancel();
+    _meter = null;
     _agent = null;
     _person = null;
+    _heard = null;
+    _captions = Captions();
+    _agentLastHeard = null;
+    _personSince = null;
     if (mounted) setState(() {});
     await voice?.leave();
   }
@@ -142,11 +224,13 @@ class _VoiceViewState extends State<VoiceView> {
     if (!_inCall) {
       return (state: AIVoiceAgentState.connecting, status: 'Connecting');
     }
-    if (_agent?.isSpeaking ?? false) {
-      return (state: AIVoiceAgentState.speaking, status: 'Speaking');
-    }
-    if (_person?.isSpeaking ?? false) {
-      return (state: AIVoiceAgentState.listening, status: 'Listening');
+    switch (_heard?.isPerson) {
+      case true:
+        return (state: AIVoiceAgentState.listening, status: 'Listening');
+      case false:
+        return (state: AIVoiceAgentState.speaking, status: 'Speaking');
+      case null:
+        break;
     }
     return switch (voice.session.state) {
       Listening() => (state: AIVoiceAgentState.listening, status: 'Listening'),
@@ -170,17 +254,10 @@ class _VoiceViewState extends State<VoiceView> {
   Widget build(BuildContext context) {
     final voice = _voice;
     final presence = _presence;
-    final personTalking =
-        !(_agent?.isSpeaking ?? false) && (_person?.isSpeaking ?? false);
-    final level = _agent?.isSpeaking ?? false
-        ? _agent!.audioLevel
-        : personTalking
-        ? _person!.audioLevel
-        : null;
-    final colors = personTalking ? _personColors : _agentColors;
+    final level = _heard?.level;
+    final colors = _heard?.isPerson ?? false ? _personColors : _agentColors;
     final theme = Theme.of(context);
     final request = voice?.session.approvals.value.firstOrNull;
-    final caption = voice?.session.turns.lastOrNull?.text;
 
     return SafeArea(
       child: Column(
@@ -215,39 +292,25 @@ class _VoiceViewState extends State<VoiceView> {
             ),
           ),
           const Spacer(),
-          if (caption != null && caption.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-              child: Text(
-                caption,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-              ),
-            ),
+          CaptionView(
+            caption: _captions.caption,
+            isVisible: _captions.isVisible,
+          ),
           if (voice != null && request != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: AIToolApprovalCard(
+              // Keyed by the call, so a second question starts with no answer sending.
+              child: _ApprovalCard(
                 key: ValueKey(request.id),
-                approval: AIToolApproval(
-                  title: request.approval.title,
-                  message: request.approval.message,
-                  reason: request.reason.isEmpty ? null : request.reason,
-                  allowTitle: request.approval.allowTitle,
-                  declineTitle: request.approval.declineTitle,
-                ),
-                onAnswer: (decision) => voice.session.decide(
-                  request.id,
-                  allowed: decision == AIToolApprovalDecision.allowed,
-                ),
+                request: request,
+                session: voice.session,
               ),
             ),
-          if (_failure case final failure?)
+          if (voice == null && _failure != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Text(
-                failure,
+                _failure!,
                 textAlign: TextAlign.center,
                 style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
               ),
@@ -279,28 +342,91 @@ class _CallControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final muted = voice.state.value.isMuted;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      spacing: 24,
+    final state = voice.state.value;
+    final muted = state.isMuted;
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      spacing: 16,
       children: [
-        IconButton.filledTonal(
-          iconSize: 28,
-          tooltip: muted ? 'Unmute' : 'Mute',
-          onPressed: () => voice.setMuted(!muted),
-          icon: Icon(muted ? Icons.mic_off : Icons.mic),
-        ),
-        IconButton.filled(
-          iconSize: 28,
-          tooltip: 'Hang up',
-          style: IconButton.styleFrom(
-            backgroundColor: Colors.red,
-            foregroundColor: Colors.white,
+        if (state.failure case final failure?)
+          Text(
+            '$failure',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
           ),
-          onPressed: onHangUp,
-          icon: const Icon(Icons.call_end),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          spacing: 24,
+          children: [
+            IconButton.filledTonal(
+              iconSize: 28,
+              tooltip: muted ? 'Unmute' : 'Mute',
+              onPressed: state.isJoined ? () => voice.setMuted(!muted) : null,
+              icon: Icon(muted ? Icons.mic_off : Icons.mic),
+            ),
+            IconButton.filled(
+              iconSize: 28,
+              tooltip: 'Hang up',
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: onHangUp,
+              icon: const Icon(Icons.call_end),
+            ),
+          ],
         ),
       ],
+    );
+  }
+}
+
+/// A tool's question, asked over the call with Stream's approval card. The tool runs only
+/// once it is allowed, and the agent is told when it is not.
+class _ApprovalCard extends StatefulWidget {
+  const _ApprovalCard({
+    super.key,
+    required this.request,
+    required this.session,
+  });
+
+  final ToolApprovalRequest request;
+  final AgentSession session;
+
+  @override
+  State<_ApprovalCard> createState() => _ApprovalCardState();
+}
+
+class _ApprovalCardState extends State<_ApprovalCard> {
+  AIToolApprovalState _state = const AIToolApprovalIdle();
+
+  /// Sending lasts until the call leaves the session's approvals, which takes the card away.
+  void _answer(AIToolApprovalDecision decision) {
+    setState(() => _state = AIToolApprovalSending(decision));
+    try {
+      widget.session.decide(
+        widget.request.id,
+        allowed: decision == AIToolApprovalDecision.allowed,
+      );
+    } on StateError catch (error) {
+      setState(() => _state = AIToolApprovalFailed(decision, error));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final request = widget.request;
+    return AIToolApprovalCard(
+      approval: AIToolApproval(
+        title: request.approval.title,
+        message: request.approval.message,
+        reason: request.reason.isEmpty ? null : request.reason,
+        allowTitle: request.approval.allowTitle,
+        declineTitle: request.approval.declineTitle,
+      ),
+      state: _state,
+      onAnswer: _answer,
     );
   }
 }
