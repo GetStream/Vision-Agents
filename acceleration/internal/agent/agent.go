@@ -1889,9 +1889,9 @@ func (a *Agent) queueToolReply() {
 	a.mu.Lock()
 	wait := a.pendingTools > 0 || a.generating
 	a.mu.Unlock()
-	// A caller who is talking holds the floor, so the tool result waits for follow to pick
-	// it up rather than being said over them.
-	if wait || a.converse.Listening() {
+	// A caller who is talking holds the floor, and so do words of theirs still being ruled
+	// on, so the tool result waits for follow to pick it up rather than being said over them.
+	if wait || a.converse.Listening() || a.converse.Undecided() {
 		return
 	}
 	if err := a.respondAfterTool(toolPrefix + turnStamp()); err != nil {
@@ -3142,8 +3142,10 @@ func (a *Agent) follow() error {
 		a.mu.Unlock()
 		return nil
 	}
-	// A turn nobody asked for must not take the floor from a caller who is still talking.
-	if a.converse.Listening() {
+	// A turn nobody asked for must not take the floor from a caller who is still talking,
+	// nor from words the caller finished that are still being ruled on: the reply to them
+	// carries what is owed, and starting first has the ruling land mid-reply as a barge-in.
+	if a.converse.Listening() || a.converse.Undecided() {
 		a.mu.Unlock()
 		return nil
 	}

@@ -2748,6 +2748,122 @@ func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainWhenTheCallerSpeaksAft
 	s.NotContains(s.model.requests()[2].Instructions, "12.63", "the caller heard the answer before they spoke")
 }
 
+func (s *AgentSuite) TestAnAnswerComingBackWaitsForWordsStillBeingRuledOn() {
+	// The caller asked something else while the subagent worked, and their words held still
+	// long enough to stop counting as talking but are still with the controller. Passing the
+	// answer on now would be said over them, and the ruling would land mid-reply as though
+	// they had cut in. The reply to their words is the one that passes it on.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63, and we open at nine."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	asked := len(s.flow.requests())
+	s.says(participant, "and when do you open")
+	s.eventually(func() bool { return len(s.flow.requests()) > asked }, "the words were never put to the controller")
+
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
+		callerHold+presenceTick+200*time.Millisecond, 20*time.Millisecond,
+		"an answer must not be passed on over words still being ruled on")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller was never answered")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.",
+		"the reply to the caller's words passes on what came back")
+	s.Zero(countOf[Interrupted](s.reported()))
+}
+
+func (s *AgentSuite) TestAToolResultWaitsForWordsStillBeingRuledOn() {
+	// The caller said something else while the tool ran, and it is still with the controller
+	// when the result comes back. Saying the result now would be said over them.
+	s.ownsTools("")
+	s.join(true)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"It ships tomorrow, and we open at nine."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(settleFor):
+		s.FailNow("the tool did not start")
+	}
+	s.eventually(func() bool { return !s.agent.floor().Talking }, "the first reply was never heard")
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	asked := len(s.flow.requests())
+	s.says(participant, "and when do you open")
+	s.eventually(func() bool { return len(s.flow.requests()) > asked }, "the words were never put to the controller")
+	// Long enough held still that they no longer count as the caller talking.
+	s.eventually(func() bool { return !s.agent.converse.Listening() }, "the caller's words never held still")
+
+	release()
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
+		presenceTick+200*time.Millisecond, 20*time.Millisecond,
+		"a tool's result must not be said over words still being ruled on")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller was never answered")
+	s.Zero(countOf[Interrupted](s.reported()))
+}
+
+func (s *AgentSuite) TestAnAnswerIsNotHeldForAWordsRulingThatNeverComes() {
+	// A ruling lost on the way back would otherwise hold what the caller is owed for as long
+	// as they stay quiet.
+	s.delegates()
+	s.join(true)
+	s.agent.converse.undecidedFor = 300 * time.Millisecond
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	ruling := make(chan struct{})
+	defer close(ruling)
+	s.flow.holdCreate = ruling
+	asked := len(s.flow.requests())
+	s.says(participant, "and when do you open")
+	s.eventually(func() bool { return len(s.flow.requests()) > asked }, "the words were never put to the controller")
+
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer was held for good by a ruling that never came")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
+}
+
 func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
 	// An utterance the voice has finished sending is still on its way out of the edge.
 	// Starting the follow-up on that word talks over the tail of the reply.

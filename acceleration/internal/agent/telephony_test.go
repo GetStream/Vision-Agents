@@ -1566,7 +1566,10 @@ func (s *AgentSuite) TestAToolResultLandingAfterAnInterruptionIsStillSpoken() {
 
 	release()
 
-	s.eventually(func() bool { return s.spokenText("ships tomorrow") },
+	// The controller keeps ruling that "hello? are you there?" is unfinished, so the result
+	// is not said over those words: it goes with the reply to them once patience runs out.
+	s.Require().Eventually(func() bool { return s.spokenText("ships tomorrow") },
+		defaultPatience+settleFor, 5*time.Millisecond,
 		"the result came back after the interruption and was never said")
 }
 
