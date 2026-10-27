@@ -1581,6 +1581,8 @@ func (s *RouterSuite) gateOnClosedStore() (restore func()) {
 	return restore
 }
 
+// useFixture points the clients at the app of the fixture called name, with client signed
+// in as the fixture's user.
 func (s *RouterSuite) useFixture(name string) {
 	loaded := s.requireFixture(name)
 	s.useApp(loaded.testApp)
