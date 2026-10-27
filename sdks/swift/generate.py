@@ -20,8 +20,9 @@ The generator is handed a copy of the spec holding those operations, their succe
 schemas they reach, and nothing else: ``FailureMiddleware`` throws every other status before the
 client reads it. The copy is also put in terms the generator reads. It reads only string enums,
 so an integer enum is a plain integer, and it drops a field that is a string-or-object union,
-so such a field is sent as its string shorthand. A model whose name a hand-written type already
-has is renamed, as ``RENAMED`` says.
+so such a field is sent as its string shorthand. It ignores ``nullable``, so a required field
+that may be null is not required, or a null would fail to decode. A model whose name a
+hand-written type already has is renamed, as ``RENAMED`` says.
 
 WebSockets are not generated. OpenAPI cannot describe a socket past the upgrade, so the
 session events socket is hand-written in ``SessionSocket.swift``.
@@ -47,25 +48,32 @@ GENERATED = TARGET / "Generated"
 GENERATOR = ROOT.parent / "chat" / "tools" / "openapi"
 
 # What a client is allowed to reach: opening a conversation, finding and ending one, a guest
-# to do it as, and looking something up. Everything else about an agent — what it is configured as, what it
-# has said before, a token to join a call with, and the routed modalities on their own — is
+# to do it as, looking something up, and the user's own scheduled tasks. Everything else about
+# an agent — what it is configured as, what it has said before, a token to join a call with, and the routed modalities on their own — is
 # the app's own backend to ask for and to hand down. Holding the conversation is driven over
 # the session socket, which is hand-written rather than generated.
 OPERATIONS = [
     "createGuestUser",
     "createResponse",
     "createSession",
+    "deleteScheduledTask",
     "deleteSession",
     "forkSession",
+    "getScheduledTask",
     "getSession",
     "listResponseItems",
     "listResponses",
+    "listScheduledTaskRuns",
+    "listScheduledTasks",
+    "pauseScheduledTask",
     "querySessions",
+    "resumeScheduledTask",
     "rewindSession",
     "search",
     "startSessionVoice",
     "stopSession",
     "stopSessionVoice",
+    "updateScheduledTask",
     "updateSession",
 ]
 
@@ -74,6 +82,9 @@ OPERATIONS = [
 RENAMED = {
     "Greeting": "GreetingPayload",
     "ImageSource": "ImageSourcePayload",
+    "ModelOverwrites": "ModelOverwritesPayload",
+    "ScheduledTask": "ScheduledTaskPayload",
+    "ScheduledTaskRun": "ScheduledTaskRunPayload",
     "SearchAnswer": "SearchAnswerPayload",
     "SearchOptions": "SearchOptionsPayload",
     "Session": "SessionPayload",
@@ -155,8 +166,9 @@ def client(spec: dict) -> dict:
 
 
 def readable(node: object, schemas: dict) -> object:
-    """``node`` in terms the generator reads: no integer enums, and a reference to a
-    string-or-object union written out as a string where it is used."""
+    """``node`` in terms the generator reads: no integer enums, no required field that may be
+    null, and a reference to a string-or-object union written out as a string where it is
+    used."""
     if isinstance(node, list):
         return [readable(value, schemas) for value in node]
     if not isinstance(node, dict):
@@ -168,6 +180,14 @@ def readable(node: object, schemas: dict) -> object:
     node = {key: readable(value, schemas) for key, value in node.items()}
     if node.get("type") == "integer":
         node.pop("enum", None)
+    # A parameter's or a body's required is a flag; only a schema's is a list of fields.
+    if isinstance(node.get("required"), list):
+        properties = node.get("properties", {})
+        node["required"] = [
+            name
+            for name in node["required"]
+            if not properties.get(name, {}).get("nullable")
+        ]
     return node
 
 

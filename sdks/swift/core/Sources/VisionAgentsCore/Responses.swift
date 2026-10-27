@@ -80,11 +80,60 @@ public struct Responses: Sendable {
             items: page.items.map(ResponseItem.init), hasMore: page.hasMore, nextCursor: page.nextCursor)
     }
 
+    /// Every item, oldest first, read a page at a time as the loop asks for more.
+    ///
+    /// Paging is inside rather than outside because a conversation's length is not something the
+    /// caller chose: `for try await item in responses.unwind()` reads a turn or a thousand the
+    /// same way.
+    public func unwind(responseID: String? = nil) -> ResponseItems {
+        ResponseItems(responses: self, responseID: responseID)
+    }
+
     /// Goes back to a response and carries on from there, as though nothing after it was said.
     ///
     /// The model forgets the later turns and they drop out of `list` and `items`. A transcript
     /// an `AgentSession` is showing still has them, so read it back after this.
     public func rewind(to responseID: String) async throws {
         try await VisionAgents(backend: backend).rewind(sessionID: sessionID, to: responseID)
+    }
+}
+
+/// Every item of a session's turns, or of one of them, oldest first. Nothing is read until the
+/// loop asks for the first one, and each page only once the one before it has been read.
+public struct ResponseItems: AsyncSequence, Sendable {
+    public typealias Element = ResponseItem
+
+    let responses: Responses
+    let responseID: String?
+
+    public func makeAsyncIterator() -> Iterator {
+        Iterator(responses: responses, responseID: responseID)
+    }
+
+    public struct Iterator: AsyncIteratorProtocol {
+        let responses: Responses
+        let responseID: String?
+        private var page: [ResponseItem] = []
+        private var index = 0
+        private var cursor: String?
+        private var done = false
+
+        init(responses: Responses, responseID: String?) {
+            self.responses = responses
+            self.responseID = responseID
+        }
+
+        public mutating func next() async throws -> ResponseItem? {
+            while index == page.count {
+                if done { return nil }
+                let read = try await responses.items(responseID: responseID, limit: 200, cursor: cursor)
+                page = read.items
+                index = 0
+                cursor = read.nextCursor
+                done = !read.hasMore || cursor == nil
+            }
+            defer { index += 1 }
+            return page[index]
+        }
     }
 }

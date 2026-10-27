@@ -13,13 +13,13 @@ final class ForkSessionRequest: Sendable, Codable, JSONEncodable {
     let messages: Bool?
     /// What to change about the models for one session, over whatever its agent config decided.
     /// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
-    let modelOverwrites: ModelOverwrites?
+    let modelOverwrites: ModelOverwritesPayload?
     let projectId: String?
     /// Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
     let responseId: String?
     let title: String?
 
-    init(agent: String? = nil, configId: String? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, incognito: Bool? = nil, messages: Bool? = nil, modelOverwrites: ModelOverwrites? = nil, projectId: String? = nil, responseId: String? = nil, title: String? = nil) {
+    init(agent: String? = nil, configId: String? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, incognito: Bool? = nil, messages: Bool? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, responseId: String? = nil, title: String? = nil) {
         self.agent = agent
         self.configId = configId
         self.custom = custom
@@ -40,7 +40,7 @@ final class ForkSessionRequest: Sendable, Codable, JSONEncodable {
         self.description = try container.decodeIfPresent(String.self, forKey: .description)
         self.incognito = try container.decodeIfPresent(Bool.self, forKey: .incognito)
         self.messages = try container.decodeIfPresent(Bool.self, forKey: .messages)
-        self.modelOverwrites = try container.decodeIfPresent(ModelOverwrites.self, forKey: .modelOverwrites)
+        self.modelOverwrites = try container.decodeIfPresent(ModelOverwritesPayload.self, forKey: .modelOverwrites)
         self.projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
         self.responseId = try container.decodeIfPresent(String.self, forKey: .responseId)
         self.title = try container.decodeIfPresent(String.self, forKey: .title)

@@ -112,6 +112,129 @@ class DefaultAPI: DefaultAPIEndpoints, @unchecked Sendable {
         }
     }
 
+    func listScheduledTasks(configId: String?, cursor: String?, limit: Int?, sessionId: String?, state: String?) async throws -> ScheduledTaskPage {
+        let path = "/v1/agents/scheduled-tasks"
+
+                let queryParams = APIHelper.mapValuesToQueryItems([
+                    "config_id": (wrappedValue: configId?.encodeToJSON(), isExplode: true),
+                    "cursor": (wrappedValue: cursor?.encodeToJSON(), isExplode: true),
+                    "limit": (wrappedValue: limit?.encodeToJSON(), isExplode: true),
+                    "session_id": (wrappedValue: sessionId?.encodeToJSON(), isExplode: true),
+                    "state": (wrappedValue: state?.encodeToJSON(), isExplode: true)
+                ])
+
+        let urlRequest = try makeRequest(
+            uriPath: path,
+            queryParams: queryParams ?? [],
+            httpMethod: "GET"
+        )
+        return try await send(request: urlRequest) {
+            try self.jsonDecoder.decode(ScheduledTaskPage.self, from: $0)
+        }
+    }
+
+    func deleteScheduledTask(id: String) async throws -> Void {
+        var path = "/v1/agents/scheduled-tasks/{id}"
+
+                let idPreEscape = "\(APIHelper.mapValueToPathItem(id))"
+                let idPostEscape = idPreEscape.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                path = path.replacingOccurrences(of: String(format: "{%@}", "id"), with: idPostEscape, options: .literal, range: nil)
+
+        let urlRequest = try makeRequest(
+            uriPath: path,
+            httpMethod: "DELETE"
+        )
+        _ = try await send(request: urlRequest) {
+            try self.jsonDecoder.decode(EmptyResponse.self, from: $0)
+        }
+    }
+
+    func getScheduledTask(id: String) async throws -> ScheduledTaskPayload {
+        var path = "/v1/agents/scheduled-tasks/{id}"
+
+                let idPreEscape = "\(APIHelper.mapValueToPathItem(id))"
+                let idPostEscape = idPreEscape.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                path = path.replacingOccurrences(of: String(format: "{%@}", "id"), with: idPostEscape, options: .literal, range: nil)
+
+        let urlRequest = try makeRequest(
+            uriPath: path,
+            httpMethod: "GET"
+        )
+        return try await send(request: urlRequest) {
+            try self.jsonDecoder.decode(ScheduledTaskPayload.self, from: $0)
+        }
+    }
+
+    func updateScheduledTask(id: String, updateScheduledTaskRequest: UpdateScheduledTaskRequest) async throws -> ScheduledTaskPayload {
+        var path = "/v1/agents/scheduled-tasks/{id}"
+
+                let idPreEscape = "\(APIHelper.mapValueToPathItem(id))"
+                let idPostEscape = idPreEscape.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                path = path.replacingOccurrences(of: String(format: "{%@}", "id"), with: idPostEscape, options: .literal, range: nil)
+
+        let urlRequest = try makeRequest(
+            uriPath: path,
+            httpMethod: "PATCH",
+            request: updateScheduledTaskRequest
+        )
+        return try await send(request: urlRequest) {
+            try self.jsonDecoder.decode(ScheduledTaskPayload.self, from: $0)
+        }
+    }
+
+    func pauseScheduledTask(id: String) async throws -> ScheduledTaskPayload {
+        var path = "/v1/agents/scheduled-tasks/{id}/pause"
+
+                let idPreEscape = "\(APIHelper.mapValueToPathItem(id))"
+                let idPostEscape = idPreEscape.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                path = path.replacingOccurrences(of: String(format: "{%@}", "id"), with: idPostEscape, options: .literal, range: nil)
+
+        let urlRequest = try makeRequest(
+            uriPath: path,
+            httpMethod: "POST"
+        )
+        return try await send(request: urlRequest) {
+            try self.jsonDecoder.decode(ScheduledTaskPayload.self, from: $0)
+        }
+    }
+
+    func resumeScheduledTask(id: String) async throws -> ScheduledTaskPayload {
+        var path = "/v1/agents/scheduled-tasks/{id}/resume"
+
+                let idPreEscape = "\(APIHelper.mapValueToPathItem(id))"
+                let idPostEscape = idPreEscape.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                path = path.replacingOccurrences(of: String(format: "{%@}", "id"), with: idPostEscape, options: .literal, range: nil)
+
+        let urlRequest = try makeRequest(
+            uriPath: path,
+            httpMethod: "POST"
+        )
+        return try await send(request: urlRequest) {
+            try self.jsonDecoder.decode(ScheduledTaskPayload.self, from: $0)
+        }
+    }
+
+    func listScheduledTaskRuns(id: String, cursor: String?, limit: Int?) async throws -> ScheduledTaskRunPage {
+        var path = "/v1/agents/scheduled-tasks/{id}/runs"
+
+                let idPreEscape = "\(APIHelper.mapValueToPathItem(id))"
+                let idPostEscape = idPreEscape.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                path = path.replacingOccurrences(of: String(format: "{%@}", "id"), with: idPostEscape, options: .literal, range: nil)
+                let queryParams = APIHelper.mapValuesToQueryItems([
+                    "cursor": (wrappedValue: cursor?.encodeToJSON(), isExplode: true),
+                    "limit": (wrappedValue: limit?.encodeToJSON(), isExplode: true)
+                ])
+
+        let urlRequest = try makeRequest(
+            uriPath: path,
+            queryParams: queryParams ?? [],
+            httpMethod: "GET"
+        )
+        return try await send(request: urlRequest) {
+            try self.jsonDecoder.decode(ScheduledTaskRunPage.self, from: $0)
+        }
+    }
+
     func createSession(createSessionRequest: CreateSessionRequest) async throws -> SessionPayload {
         let path = "/v1/agents/sessions"
 
@@ -352,6 +475,20 @@ class DefaultAPI: DefaultAPIEndpoints, @unchecked Sendable {
 
 protocol DefaultAPIEndpoints {
     func createGuestUser(guestUserRequest: GuestUserRequest) async throws -> GuestUser
+
+    func listScheduledTasks(configId: String?, cursor: String?, limit: Int?, sessionId: String?, state: String?) async throws -> ScheduledTaskPage
+
+    func deleteScheduledTask(id: String) async throws -> Void
+
+    func getScheduledTask(id: String) async throws -> ScheduledTaskPayload
+
+    func updateScheduledTask(id: String, updateScheduledTaskRequest: UpdateScheduledTaskRequest) async throws -> ScheduledTaskPayload
+
+    func pauseScheduledTask(id: String) async throws -> ScheduledTaskPayload
+
+    func resumeScheduledTask(id: String) async throws -> ScheduledTaskPayload
+
+    func listScheduledTaskRuns(id: String, cursor: String?, limit: Int?) async throws -> ScheduledTaskRunPage
 
     func createSession(createSessionRequest: CreateSessionRequest) async throws -> SessionPayload
 

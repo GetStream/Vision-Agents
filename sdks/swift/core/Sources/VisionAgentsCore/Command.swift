@@ -8,8 +8,8 @@ import Foundation
 public enum Command: Sendable, Hashable {
     /// Speak this without going through the model.
     case say(String)
-    /// Abandon the reply in flight.
-    case interrupt
+    /// Abandon the reply in flight, or with `requestID` the one answering that request.
+    case interrupt(requestID: String = "")
     /// Answer a tool call. One of `output` or `error` says how it went, and `images` are
     /// pictures the call shows beside `output`. A call made for a request is only accepted back
     /// with its `requestID` and `turnID`.
@@ -60,8 +60,11 @@ extension Command: Encodable {
         case .say(let text):
             try container.encode("say", forKey: .type)
             try container.encode(text, forKey: .text)
-        case .interrupt:
+        case .interrupt(let requestID):
             try container.encode("interrupt", forKey: .type)
+            if !requestID.isEmpty {
+                try container.encode(requestID, forKey: .requestID)
+            }
         case .toolResult(let id, let output, let error, let images, let requestID, let turnID):
             try container.encode("tool_result", forKey: .type)
             try container.encode(id, forKey: .toolCallID)

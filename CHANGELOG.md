@@ -43,6 +43,10 @@ nothing is sent and the sign-in goes back to the dashboard, as before.
 `declineLogin` does: the router ends the call, runs nothing and tells the agent the person did
 not connect.
 
+### The Swift SDK catches up with the other client SDKs
+
+`SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.
+
 ### A tool on a speech-to-speech conversation can say how it is going
 
 `/v1/sts/stream` now takes `tool_update` (`tool_call_id`, `text`, `verbatim`) for a call the model is waiting on, and has the model say it the way an agent session does: once no reply is being spoken and the caller is not talking, a newer update for the call replacing one not yet said, and the call's `tool_result` dropping it. A status is said in the model's own words, `verbatim` words as written or close to them. An update for a call the model is not waiting on, or to a model that cannot be told about an open call, is dropped. `tool_hold` is answered with `tool_held` for an open call, and with `tool_cancel` for one the model cancelled or was answered for. In Python, `stream.STS` runs each function with `current_call()` set, so `update()`, `say()` and `disallow_interruptions()` work there as they do on `stream.Accelerated`; before, they did nothing.
@@ -182,6 +186,10 @@ Every watcher of a session's events socket still sees each `tool_call`, which no
 ### The Swift SDK's `User` and JSON values are StreamCore's
 
 `VisionAgentsCore` now generates its client with the generator Stream Chat and Stream Video use, on StreamCore, and drops its own copies of what StreamCore already has. `User` is StreamCore's: `User(id:name:imageURL:)`, with `name` optional and `imageURL` a `URL` in place of `image`. `JSONValue` is gone in favour of StreamCore's `RawJSON`, in tool arguments and parameters, `AgentEvent.fields`, and `custom` on sessions and guests: `.object` is `.dictionary`, `.null` is `.nil`, and `stringValue`, `boolValue` and `arrayValue` are optional, so `arguments["id"]?.stringValue ?? ""` reads as before. `import VisionAgentsCore` brings both in. The SDK no longer depends on swift-openapi-runtime, swift-openapi-urlsession or swift-http-types.
+
+### Swift's `ForkOptions.agent` is an agent's name, and `Command.interrupt` takes a request id
+
+`ForkOptions.agent` names the agent to fork onto, as `agent` does everywhere else; it used to be sent as a config id, which is now `ForkOptions.configID`. `Command.interrupt` is `Command.interrupt(requestID:)`, so code sending the command itself writes `.interrupt()`. `session.interrupt()` is unchanged.
 
 ### The Go SDK refuses `plugins:` and `plugin_events:` in agent.yaml
 

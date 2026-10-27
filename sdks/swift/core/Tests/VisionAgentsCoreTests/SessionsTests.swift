@@ -87,6 +87,181 @@ import Testing
 
         #expect(try await server.request().body["return_url"] == .string("com.example.app:/connected"))
     }
+
+    @Test func aSessionOpensWithItsLabelsModelsAndTheSignedInUsersMemory() async throws {
+        let server = try SessionServer(answer: .session(status: 201, callID: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        agents.setUser(User(id: "jlahey"), token: "token")
+        var options = SessionOptions(agent: "myagent")
+        options.custom = ["ticket": .string("T-7")]
+        options.modelOverwrites = ModelOverwrites(thinking: .low, temperature: 0, maxOutputTokens: 300)
+        options.memory = .init(filter: ["topic": "billing"])
+        options.timezone = "Europe/Amsterdam"
+
+        _ = try await agents.createSession(options)
+
+        let body = try await server.request().body
+        #expect(body["timezone"] == .string("Europe/Amsterdam"))
+        #expect(body["custom"] == .dictionary(["ticket": .string("T-7")]))
+        #expect(
+            body["model_overwrites"]
+                == .dictionary(["thinking": .string("low"), "temperature": .number(0), "max_output_tokens": .number(300)]))
+        #expect(
+            body["memory"]
+                == .dictionary(["user_id": .string("jlahey"), "filter": .dictionary(["topic": .string("billing")])]))
+    }
+
+    @Test func aSessionWithoutMemoryOrLabelsSendsNeither() async throws {
+        let server = try SessionServer(answer: .session(status: 201, callID: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        agents.setUser(User(id: "jlahey"), token: "token")
+
+        _ = try await agents.createSession(SessionOptions(agent: "myagent"))
+
+        let body = try await server.request().body
+        #expect(body["memory"] == nil)
+        #expect(body["custom"] == nil)
+        #expect(body["model_overwrites"] == nil)
+    }
+
+    @Test func aForkNamesTheAgentAndWhatItChanges() async throws {
+        let server = try SessionServer()
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        var options = ForkOptions(responseID: "r2")
+        options.agent = "reviewer"
+        options.custom = ["branch": .string("b")]
+        options.modelOverwrites = ModelOverwrites(llm: "anthropic/claude-sonnet-5-5")
+        options.incognito = true
+
+        _ = try await agents.fork(sessionID: "s1", options)
+
+        let request = try await server.request()
+        #expect(request.path == "/v1/agents/sessions/s1/fork")
+        #expect(
+            request.body == [
+                "agent": .string("reviewer"), "response_id": .string("r2"),
+                "custom": .dictionary(["branch": .string("b")]),
+                "model_overwrites": .dictionary(["llm": .string("anthropic/claude-sonnet-5-5")]),
+                "incognito": .bool(true),
+            ])
+    }
+
+    @Test func aQueryNarrowsByWhenLabelsAndOrder() async throws {
+        let server = try SessionServer(
+            answer: .init(
+                status: 200, headers: ["Content-Type": "application/json"],
+                body: #"{"items":[],"has_more":false}"#))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        var query = SessionQuery()
+        query.createdSince = Date(timeIntervalSince1970: 1_790_000_000)
+        query.custom = ["ticket": "T-7"]
+        query.sort = .updatedAt
+
+        _ = try await agents.agent("myagent").sessions.search("refund", query)
+
+        let body = try await server.request().body
+        #expect(
+            body["filter"]
+                == .dictionary([
+                    "agent": .string("myagent"), "created_at": .dictionary(["$gte": .string("2026-09-21T14:13:20.000Z")]),
+                    "custom": .dictionary(["ticket": .string("T-7")]), "text": .dictionary(["$q": .string("refund")]),
+                ]))
+        #expect(body["sort"] == .array([.dictionary(["field": .string("updated_at")])]))
+    }
+
+    @Test func everyItemIsReadInOrderAndNoMoreIsAskedForAfterTheLastPage() async throws {
+        let server = try SessionServer(
+            answer: .init(
+                status: 200, headers: ["Content-Type": "application/json"],
+                body: #"""
+                    {"items":[
+                      {"response_id":"r1","ordinal":0,"kind":"said","text":"Hi","at":"2026-10-27T08:00:00Z"},
+                      {"response_id":"r1","ordinal":1,"kind":"answer","text":"Hello","at":"2026-10-27T08:00:01Z"}
+                    ],"has_more":false}
+                    """#))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        var read: [String] = []
+        for try await item in agents.sessions.responses("s1").unwind(responseID: "r1") {
+            read.append(item.text)
+        }
+
+        #expect(read == ["Hi", "Hello"])
+        let request = try await server.request()
+        #expect(request.path == "/v1/agents/sessions/s1/responses/items")
+        #expect(request.query.contains("response_id=r1"))
+        #expect(request.query.contains("limit=200"))
+    }
+}
+
+@Suite struct ScheduledTasksTests {
+    @Test func aTaskThatHasNotRunReadsWithItsNextOccurrences() async throws {
+        let server = try SessionServer(
+            answer: .init(
+                status: 200, headers: ["Content-Type": "application/json"],
+                body: #"""
+                    {"id":"t1","user_id":"jlahey","config_id":"c1","session_id":"","title":"Stretch",
+                     "instructions":"Remind them to stretch","schedule":{"at":"2026-10-28T09:00:00",
+                     "repeat":"FREQ=DAILY","timezone":"Europe/Amsterdam","description":"Every day at 09:00 (Europe/Amsterdam)"},
+                     "deliver_to":["conversation"],"state":"active","next_run_at":"2026-10-28T09:00:00+01:00",
+                     "upcoming":["2026-10-28T09:00:00+01:00","2026-10-29T09:00:00+01:00"],"last_run_at":null,
+                     "consecutive_failures":0,"created_by":"agent","created_at":"2026-10-27T08:00:00Z",
+                     "updated_at":"2026-10-27T08:00:00Z"}
+                    """#))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        let task = try await agents.scheduledTasks.get("t1")
+
+        #expect(task.state == .active)
+        #expect(task.schedule.repeat == "FREQ=DAILY")
+        #expect(task.schedule.description == "Every day at 09:00 (Europe/Amsterdam)")
+        #expect(task.nextRunAt == Date(timeIntervalSince1970: 1_793_174_400))
+        #expect(task.upcoming.count == 2)
+        #expect(task.lastRunAt == nil)
+        #expect(task.createdBy == .agent)
+        #expect(try await server.request().path == "/v1/agents/scheduled-tasks/t1")
+    }
+
+    @Test func aSnoozeMovesOnlyTheNextOccurrence() async throws {
+        let server = try SessionServer(answer: .init(status: 500, headers: [:], body: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        _ = try? await agents.scheduledTasks.update("t1", next: .in("PT15M"))
+
+        let request = try await server.request()
+        #expect(request.method == "PATCH")
+        #expect(request.path == "/v1/agents/scheduled-tasks/t1")
+        #expect(request.body == ["next": .dictionary(["in": .string("PT15M")])])
+    }
+
+    @Test func aRunNotYetFinishedReadsWithoutAnEnd() async throws {
+        let server = try SessionServer(
+            answer: .init(
+                status: 200, headers: ["Content-Type": "application/json"],
+                body: #"""
+                    {"items":[{"id":"run1","task_id":"t1","scheduled_for":"2026-10-28T09:00:00+01:00",
+                     "trigger":"schedule","state":"running","delivered_to":"","session_id":"s1","attempts":1,
+                     "started_at":"2026-10-28T08:00:01Z","finished_at":null,"error":null}],"has_more":false}
+                    """#))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        let runs = try await agents.scheduledTasks.runs("t1")
+
+        let run = try #require(runs.items.first)
+        #expect(run.state == .running)
+        #expect(run.scheduledFor == Date(timeIntervalSince1970: 1_793_174_400))
+        #expect(run.finishedAt == nil)
+        #expect(run.error == "")
+        #expect(try await server.request().path == "/v1/agents/scheduled-tasks/t1/runs")
+    }
 }
 
 /// A real HTTP peer that answers one request with a session carrying what it was sent, or with
