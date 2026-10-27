@@ -21,21 +21,36 @@ type unansweredPeerRequest struct {
 }
 
 // endUnanswered ends the session of a placed call nobody will answer, here or on the node
-// holding it. A session not open yet is left to its start timeout.
+// holding it, off the vendor's request: a vendor waits a few seconds for its answer, less than
+// a forward to a peer may take, and a vendor that hangs up must not cancel the ending.
+// A session not open yet is left to its start timeout.
 func (s *Server) endUnanswered(ctx context.Context, customerID, sessionID string) {
-	if s.sessions == nil || s.sessions.EndUnanswered(customerID, sessionID) {
+	if s.sessions == nil {
 		return
 	}
-	if s.directory == nil || s.forwarder == nil {
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
+		defer cancel()
+		s.endUnansweredNow(ctx, customerID, sessionID)
+	}()
+}
+
+// endUnansweredNow is endUnanswered on the caller's goroutine.
+func (s *Server) endUnansweredNow(ctx context.Context, customerID, sessionID string) {
+	if s.sessions.EndUnanswered(customerID, sessionID) || s.directory == nil || s.forwarder == nil {
 		return
 	}
 	address, err := s.directory.Node(ctx, sessionID)
-	if err != nil || address == "" || address == s.directory.Address() {
+	if err != nil {
+		s.logger.Warn("could not find the node holding an unanswered call's session",
+			"session", sessionID, "error", err)
 		return
 	}
-	ask, cancel := context.WithTimeout(ctx, forwardTimeout)
-	defer cancel()
-	answer, err := s.askToEndUnanswered(ask, address, unansweredPeerRequest{CustomerID: customerID, SessionID: sessionID})
+	if address == "" || address == s.directory.Address() {
+		return
+	}
+	answer, err := s.askToEndUnanswered(ctx, address, unansweredPeerRequest{CustomerID: customerID, SessionID: sessionID})
 	if err != nil {
 		s.logger.Warn("could not ask the node holding an unanswered call's session to end it",
 			"session", sessionID, "node", address, "error", err)

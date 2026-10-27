@@ -1396,7 +1396,7 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	return true, found.Close()
 }
 
-// end ends found when its timeout is reached, as Close does but interrupting the agent:
+// end ends found when its timeout is reached, or its call will not be answered, as Close does but interrupting the agent:
 // nobody is left to hear the end of its sentence. A reopened conversation can take the id
 // of a session that ended, so it does nothing unless found is still the session held under
 // its id.
@@ -1418,7 +1418,7 @@ func (m *Manager) end(found *Session, reason TimeoutReason) {
 	}()
 	m.release(found.id)
 
-	m.logger.Info("ending the session at its timeout", "session", found.id, "timeout", reason)
+	m.logger.Info("ending the session", "session", found.id, "reason", reason)
 	found.abandon()
 }
 

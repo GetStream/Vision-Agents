@@ -1352,7 +1352,7 @@ func (s *Service) report(ctx context.Context, token string, status CallStatus) (
 
 // OnUnanswered sets what ends the session of a placed call once its vendor says nobody will
 // answer, rather than the agent waiting out its start timeout. Called before the service is
-// used.
+// used. end is called on the vendor's status request, so it must not hold up the answer.
 func (s *Service) OnUnanswered(end func(ctx context.Context, customerID, sessionID string)) {
 	s.unanswered = end
 }
