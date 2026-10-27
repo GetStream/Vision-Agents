@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 )
@@ -27,11 +28,13 @@ const DefaultChunk = 1200
 // paragraphs cut one to a passage grew a document thousands of times.
 const minChunk = 500
 
-// maxHeading is how many characters of a heading are repeated in each later passage of
-// its section and in every passage's source. A heading of any length repeated in every
-// passage is the other half of what multiplied a document. With minChunk, a document's
-// passages are at most about (500 + 256 + 128 + 66) / (500 - 128), about 2.6, times its
-// size, counting a 256-character name, " > " and a 63-byte id.
+// maxHeading is how many bytes of a heading are repeated in each later passage of its
+// section and in every passage's source. A heading of any length repeated in every
+// passage is the other half of what multiplied a document. It is counted in bytes, as
+// passages are: 128 four-byte characters repeated in a 500-byte passage would leave no
+// room for anything else. With minChunk, a document's passages are at most about
+// (500 + 256 + 128 + 66) / (500 - 128), about 2.6, times its size, counting a 256-byte
+// name, " > " and a 63-byte id.
 const maxHeading = 128
 
 // IDSeparator divides the file a passage came from from its place in that file. Keeping
@@ -190,11 +193,15 @@ type passage struct {
 // The heading is repeated at the top of every piece of a section it was cut from. Without
 // it the second half of a long section is prose with nothing saying what it is about,
 // which is exactly what full-text search needs to match on. Only its first maxHeading
-// characters are repeated; the first piece keeps the heading line as it was written.
+// bytes are repeated; the first piece keeps the heading line as it was written, so a
+// heading is never cut away from the paragraph under it.
 func split(name, content string, size int) []passage {
 	var passages []passage
 	var heading string
 	var current strings.Builder
+	// held says current has something under its heading. A passage of only the heading
+	// would not be stored, so one that is not held is never flushed to make room.
+	held := false
 
 	flush := func() {
 		text := strings.TrimSpace(current.String())
@@ -214,16 +221,18 @@ func split(name, content string, size int) []passage {
 			flush()
 			heading = clip(title, maxHeading)
 			current.WriteString(block + "\n\n")
+			held = prose(block)
 			continue
 		}
 		for _, piece := range rows(block, size) {
-			if current.Len() > 0 && current.Len()+len(piece) > size {
+			if held && current.Len()+len(piece) > size {
 				flush()
 				if heading != "" {
 					current.WriteString("## " + heading + "\n\n")
 				}
 			}
 			current.WriteString(piece + "\n\n")
+			held = true
 		}
 	}
 	flush()
@@ -299,15 +308,15 @@ func prose(text string) bool {
 	return false
 }
 
-// clip is the first n characters of text, cut between characters rather than inside one.
+// clip is at most the first n bytes of text, cut between characters rather than inside one.
 func clip(text string, n int) string {
-	for index := range text {
-		if n == 0 {
-			return text[:index]
-		}
+	if len(text) <= n {
+		return text
+	}
+	for n > 0 && !utf8.RuneStart(text[n]) {
 		n--
 	}
-	return text
+	return text[:n]
 }
 
 // headingOf reports the title a block opens with, when it opens with one.
