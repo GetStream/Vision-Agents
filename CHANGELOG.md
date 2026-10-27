@@ -2,6 +2,18 @@
 
 ## Features
 
+### A Node.js tool's parameters can be a Zod schema
+
+`parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.
+
+### Go holds a tool's arguments to its JSON Schema
+
+Every call's arguments are checked against the schema the model was told before the function runs, and arguments that do not fit fail the call with each one and why, such as `/seats: maximum: got 12, want 9`. Struct tags describe more than `schema`: `enum`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`, `minItems`, `maxItems`, `pattern`, `format`, `default` and `example`, and an invopop-style `jsonschema:"..."` tag. `tools.RegisterSchema` takes the schema as a `map[string]any`, raw JSON or another library's schema type, and the new `tools.RegisterWithSchema` takes one the same way and decodes the arguments into a struct.
+
+### Python describes a tool's arguments with Pydantic
+
+A function registered with `register_function` is described to the model by Pydantic from its signature: a parameter can be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit. A function that takes one Pydantic model is given the model's fields as its arguments, and is handed the parsed model. Each call's arguments are checked and converted before the function runs; arguments that do not fit raise `ToolArgumentsError`, a `TypeError`, naming each one and why, which the model is told. `parameters_schema=` is unchanged. `pydantic>=2.7` is now a dependency.
+
 ### Sandbox code reads Linear
 
 A `linear_app` binding with `sandbox: true` lets code in the session's sandbox call Linear's GraphQL API (`https://api.linear.app/graphql`) and file storage (`https://uploads.linear.app`) with `Authorization: Bearer $LINEAR_ACCESS_TOKEN`. The sandbox holds a placeholder, never the token. Behind the egress proxy, a POST to `/graphql` passes only when every operation is a query; a mutation gets 403, so code writes through the connector's tools. A `linear_app` connection made at revision 1 gives the sandbox nothing until it connects again. A `linear` (DCR) connection gets no sandbox access: Linear's API refuses its token (AI-2082).
@@ -85,6 +97,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 A question asked with photos was answered as though none came when the model called a tool before answering, such as loading the `vision` skill: the photos went only with the turn's first model call. They now go with every reply of that turn, the replies to its tool results included, on the person's message, and the next turn drops them.
 
+### A knowledge document no longer grows thousands of times when it is cut into passages
+
+Only the first 128 bytes of a heading, cut between characters, are now repeated at the top of each later passage of its section and in each passage's `source`; the first passage keeps the heading as written. A `chunk_size` under 500 on `POST /v1/agents/knowledge` is raised to 500, and so is the URL crawler's and `cmd/knowledge`'s. Before, a long heading over one-character paragraphs with `chunk_size` 1 turned 1 MiB into about 1 GB of passages, and an 8 MiB request could run a router out of memory (AI-1988).
+
 ### The agent tells people apart in a group text chat
 
 In a thread several people write in, such as an iMessage group chat or a Slack thread with two people, the reply model is told who wrote each message once a second person has written: `Speaker 1: What are our names?`, each person under `Speaker N` in the order they first wrote, never their phone number or Slack id, with a note that several people are writing. It read every message as one person's, so it answered Kanat as Ana. A 1:1 chat and a session in writing from the dashboard or an SDK send the model what they did (AI-2014).
@@ -166,6 +182,10 @@ A `connectors:` entry in agent.yaml may say `sandbox: true` and `require_approva
 When the provider lists a granted tool with another schema than the one approved, a session's binding now opens with its other tools (while it still offers one tool), also when the binding is required (reported in `connector_unavailable` as `tool_unavailable`) or has sandbox access (the sandbox keeps it), and when the person connects it in the conversation: that login no longer waits until its consent expires. A call of the left-out tool answers `tool_unavailable` with what gives it back: for a tool granted by name or by pattern, an admin's approval of the new schema (`POST /v1/agents/connections/{id}/tools/approve`); for a schema digest the agent config names, saving the config at the new schema. A login's `list_tools` names it under `left_out`. A granted tool the provider no longer lists is still unknown to the session, and still fails a required binding (AI-1932).
 
 ## Breaking Changes
+
+### Go and Python refuse tool arguments that do not fit the schema
+
+A call whose arguments break the tool's schema, such as a missing required field, a value outside its bounds or one not in its `enum`, now fails without running the function, where it used to run with what was sent. Python converts the arguments it accepts to the annotated types, so a function annotated `int` is handed an `int` when the model sent `"2"`.
 
 ### The helpers that read and set a tool's call are named after the tool call context
 

@@ -94,6 +94,8 @@ export {
   Tools,
   render,
   type ParameterSchema,
+  type StandardIssue,
+  type StandardToolSchema,
   type Tool,
   type ToolApproval,
   type ToolCallFields,

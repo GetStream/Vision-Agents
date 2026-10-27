@@ -6606,7 +6606,7 @@ export type components = {
             readonly passages: number;
         };
         readonly IngestKnowledgeRequest: {
-            /** @description Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. */
+            /** @description Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under 500 is raised to 500. */
             readonly chunk_size?: number;
             readonly documents: readonly components["schemas"]["KnowledgeDocument"][];
             /**
