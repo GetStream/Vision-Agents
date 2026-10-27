@@ -79,6 +79,9 @@ func run(options options, paths []string, logger *slog.Logger) error {
 	if options.size <= 0 {
 		return errors.New("a passage needs room for something to read")
 	}
+	if options.limits.MinChunk < 0 || options.limits.MaxHeading < 0 {
+		return errors.New("-min-chunk and -max-heading cannot be negative")
+	}
 
 	documents, err := ingest.Read(paths, options.size, options.limits)
 	if err != nil {

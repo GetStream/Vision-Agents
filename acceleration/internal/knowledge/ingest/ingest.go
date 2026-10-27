@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,19 +24,33 @@ import (
 // enough that a passage still answers the question on its own.
 const DefaultChunk = 1200
 
-// Limits bound how much larger a document's passages can be than the document. A field
-// left zero or below is DefaultLimits'.
+// Limits bound how much larger a document's passages can be than the document.
 type Limits struct {
 	// MinChunk is the smallest size Split cuts at. Every passage carries its source and its
 	// id whatever its size, so tiny passages turn a document into mostly those:
 	// one-character paragraphs cut one to a passage grew a document thousands of times.
+	// Zero is no minimum.
 	MinChunk int
 	// MaxHeading is how many bytes of a heading are repeated in each later passage of its
 	// section and in every passage's source. A heading of any length repeated in every
 	// passage is the other half of what multiplied a document. It is counted in bytes, as
 	// passages are: 128 four-byte characters repeated in a 500-byte passage would leave no
-	// room for anything else.
+	// room for anything else. Zero repeats no heading.
 	MaxHeading int
+}
+
+// maxSource is the longest source the API takes, in characters.
+const maxSource = 256
+
+// SizeMultiple is how many times larger than a document its passages can be: a passage, its
+// source and its id over what is left of the passage once the repeated heading is in. With
+// no minimum chunk, or no room under the heading, nothing bounds it, and it is +Inf.
+func (l Limits) SizeMultiple() float64 {
+	room := l.MinChunk - l.MaxHeading
+	if l.MinChunk == 0 || room <= 0 {
+		return math.Inf(1)
+	}
+	return float64(l.MinChunk+maxSource+len(" > ")+l.MaxHeading+maxID) / float64(room)
 }
 
 // DefaultLimits are the limits a router has unless configured otherwise. With them, a
@@ -136,12 +151,6 @@ func readFile(path, name string, size int, limits Limits) ([]knowledge.Document,
 // path as a reader would recognise it rather than wherever the file happened to be. A size
 // under limits.MinChunk is raised to it.
 func Split(name, content string, size int, limits Limits) []knowledge.Document {
-	if limits.MinChunk <= 0 {
-		limits.MinChunk = DefaultLimits.MinChunk
-	}
-	if limits.MaxHeading <= 0 {
-		limits.MaxHeading = DefaultLimits.MaxHeading
-	}
 	pieces := split(name, content, max(size, limits.MinChunk), limits)
 	documents := make([]knowledge.Document, 0, len(pieces))
 	for index, piece := range pieces {
