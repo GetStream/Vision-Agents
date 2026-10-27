@@ -213,6 +213,12 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### The SDKs go to production in us-east4 by default
+
+Every SDK's default router is `https://accelerate-us-east4.gcp.stream-io-api.com` in place of `https://accelerate.gcp.stream-io-api.com`, which GetStream/chat#19561 removes along with `accelerate-prod.gcp.stream-io-api.com`: production is only `accelerate-<region>`, and staging moves to `https://accelerate-staging.gcp.stream-io-api.com`. `STREAM_ACCELERATION_URL` names any router, and the new `STREAM_ACCELERATION_REGION` (or the `region` option, `Region` in Go and .NET) another production region by name: `europe-west4` is `https://accelerate-europe-west4.gcp.stream-io-api.com`. Every `accelerate-<region>` host authenticates through the proxy without being asked. A URL, passed in or in `STREAM_ACCELERATION_URL`, wins over a region in the environment; a URL and a region both passed in are refused, as is a name that is not shaped like a region. The Kotlin, Swift and Dart SDKs default to us-east4 too, and build another region's URL with `Backend.regionUrl` (`Backend.regionURL` in Swift). Which regions are served is the load balancer's to say, so another needs no SDK release.
+
+Staging is reached with `STREAM_ACCELERATION_URL=https://accelerate-staging.gcp.stream-io-api.com` and, in every server SDK but Go, `STREAM_ACCELERATION_AUTHENTICATE=1`. `perfbench` drops its `staging` target and defaults to `benchmark`, `stt_realtime_example`'s `-staging` is `-hosted` (the SDK's default router), and the JS `staging.test.ts` is `hosted.test.ts`, reading `QA_ACCELERATION_URL` and `QA_DOCS_SEARCH_URL` and skipping without the first. `DEVELOPMENT.md` lists the variables for local, staging and production.
+
 ### Go and Python refuse tool arguments that do not fit the schema
 
 A call whose arguments break the tool's schema, such as a missing required field, a value outside its bounds or one not in its `enum`, now fails without running the function, where it used to run with what was sent. Python converts the arguments it accepts to the annotated types, so a function annotated `int` is handed an `int` when the model sent `"2"`.

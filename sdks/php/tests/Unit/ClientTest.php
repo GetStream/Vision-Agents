@@ -53,6 +53,91 @@ final class ClientTest extends TestCase
         self::assertFalse((new Backend(url: 'http://router', customerId: 'examples'))->authenticate);
     }
 
+    public function testARegionIsTheHostedRouterThere(): void
+    {
+        $backend = self::withEnv(
+            [Backend::URL_ENV => null, Backend::REGION_ENV => null],
+            fn () => new Backend(customerId: 'examples', apiKey: 'key', apiSecret: 'secret', region: 'us-east4'),
+        );
+
+        self::assertSame('https://accelerate-us-east4.gcp.stream-io-api.com', $backend->url);
+        self::assertTrue($backend->authenticate);
+    }
+
+    public function testARegionInTheEnvironmentGivesWayToAUrlThere(): void
+    {
+        $backend = self::withEnv(
+            [Backend::URL_ENV => 'http://localhost:8080', Backend::REGION_ENV => 'us-east4'],
+            fn () => new Backend(customerId: 'examples'),
+        );
+        self::assertSame('http://localhost:8080', $backend->url);
+
+        $backend = self::withEnv(
+            [Backend::URL_ENV => null, Backend::REGION_ENV => 'us-east4'],
+            fn () => new Backend(customerId: 'examples', apiKey: 'key', apiSecret: 'secret'),
+        );
+        self::assertSame('https://accelerate-us-east4.gcp.stream-io-api.com', $backend->url);
+        self::assertTrue($backend->authenticate);
+    }
+
+    public function testARegionPassedInBeatsAUrlInTheEnvironment(): void
+    {
+        $backend = self::withEnv(
+            [Backend::URL_ENV => 'http://localhost:8080'],
+            fn () => new Backend(customerId: 'examples', apiKey: 'key', apiSecret: 'secret', region: 'europe-west4'),
+        );
+
+        self::assertSame('https://accelerate-europe-west4.gcp.stream-io-api.com', $backend->url);
+    }
+
+    public function testAUrlAndARegionTogetherAreRefused(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        new Backend(url: 'https://acceleration.example.com', customerId: 'examples', region: 'us-east4');
+    }
+
+    #[DataProvider('notRegions')]
+    public function testAnythingButARegionNameIsRefused(string $name): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage(var_export($name, true));
+        new Backend(customerId: 'examples', region: $name);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function notRegions(): iterable
+    {
+        foreach (['US-EAST4', 'us-east4.evil.com/x', 'us_east4', 'useast4', 'us-east', "us-east4\n"] as $name) {
+            yield $name => [$name];
+        }
+    }
+
+    /**
+     * Runs `$build` with each variable set, null unsetting it, and puts back what was there before.
+     *
+     * @template T
+     * @param array<string, ?string> $values
+     * @param callable(): T $build
+     * @return T
+     */
+    private static function withEnv(array $values, callable $build): mixed
+    {
+        $saved = [];
+        foreach ($values as $name => $value) {
+            $saved[$name] = getenv($name);
+            putenv($value === null ? $name : "{$name}={$value}");
+        }
+        try {
+            return $build();
+        } finally {
+            foreach ($saved as $name => $value) {
+                putenv($value === false ? $name : "{$name}={$value}");
+            }
+        }
+    }
+
     public function testCustomerHeaderAndUser(): void
     {
         $this->router->answer('GET', '/v1/agents/configs', 200, []);
