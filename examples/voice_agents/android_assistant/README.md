@@ -117,6 +117,10 @@ which is kept seven days; the app moves to the release that has them.
   Stream's sign-in card on its step. Connect hands the card's page to `SignIn.authenticate`, and
   the account is connected when the page comes back with `status=connected`; the call then
   carries on at the router. Not now is `AgentSession.declineLogin`, which ends the call there.
+  The router needs connectors on (`ROUTER_CONNECTORS_ENABLED=true` and a `ROUTER_PUBLIC_URL`).
+  Linear registers its own OAuth client; Gmail needs a Google OAuth client
+  (`GOOGLE_MCP_CLIENT_ID` and its secret) in a project enrolled in Google's Workspace Developer
+  Preview, without which a Gmail call has no sign-in to offer.
   The composer floats over the conversation, which `contentPadding` keeps clear of it, so the
   latest message and the scroll-to-latest button are never under it.
 
