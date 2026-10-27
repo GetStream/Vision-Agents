@@ -13,22 +13,24 @@ Some general docs tips
 
 ## How a page reads
 
-Write it so it needs no deslop pass. `agents/_default/02-agents/creating-an-agent.md` is the reference page, and Thierry's deslop commits in getstream.io (7ee27d28eb, 21c69fd256, edf81f51f2, 1d93015abe) show the cuts.
+Write it so it needs no deslop pass. `agents/_default/02-agents/creating-an-agent.md` is the reference for how a page opens and flows, and Thierry's deslop commits in getstream.io (7ee27d28eb, 21c69fd256, edf81f51f2, 1d93015abe) show the cuts.
 
 - Open with why the reader wants it and one real example, not a definition: "Your support agent shouldn't answer: Please solve the Navier-Stokes problem", not "A guardrail screens what a caller asks"
-- Example first: the `agent.yaml` or the call, then the command to try it (`getstream agents test support --sync`) and a question to ask. Then explain only what the example doesn't show
-- Real example values (`dentist_ai`, `acme-workspace`, "What is your return policy?"), never `foo` or `my-thing`
-- One or two sentences per paragraph, written like a person: "It returns the connection", not "The answer is the connection". Contractions are fine
+- Example first: the `agent.yaml` or the call, then the command to try it (`getstream agents test support --sync`) and a question to ask. Pick an example the reader can run as is, such as a connector the app owns rather than one each user signs in to. Then explain only what the example doesn't show
+- Real example values (`dentist_ai`, "Northwind Pizza, what can I get you?", "What is your return policy?"), never `foo` or `my-thing`
+- One or two sentences per paragraph, written like a person: "It returns the connection", not "The answer is the connection". Contractions are fine. State facts, not "should": "is configurable", not "should be configurable"
 - Where there are options, recommend one and say when to pick the other: "We recommend each user's own account for personal data, and a shared account for company tools"
-- One H2 per thing the reader wants to do. A fact lives on one page and other pages link it. End with `## Going further` and `<Cards>`
+- One H2 per thing the reader wants to do. A fact lives on one page: detail that has its own page is cut to a link. End with `## Going further` and `<Cards>`
+- Say what a feature can't do in a plain sentence, under `## Limitations` when there are several. A limit the reader can hit stays; a cap on a field goes
+- A table that sums up the page is fine when its last column links each row to its page (`| Path | What it holds | Learn more |`)
 
 Leave out:
 
-- Validation rules, limits and error codes ("refused with a 400", length caps, "refused rather than ignored"). A troubleshooting page may list the errors people really hit, by their message
+- Validation rules, field caps and error codes ("refused with a 400", length caps, "refused rather than ignored"). An error the reader sees while trying the example is shown as printed, and a troubleshooting page lists the errors people really hit, by their message
 - Internal mechanics the reader never touches: channel names, sync fingerprints, our staging clusters and test apps
 - Raw HTTP paths when an SDK or the CLI does it. A call with no SDK method gets one curl block
 - Client setup boilerplate in snippets: show the call
-- Sentences that restate the code above them, "To recap" tables that restate the page, and signposting ("The next section explains")
+- Sentences that restate the code above them, and signposting ("The next section explains")
 - Which SDK supports what "for now". When only some SDKs have a feature, one `<Admonition>` names them
 - Bold lead-ins in bullets or prose (bold is for step titles), and hype ("amazed", "effortlessly")
 
