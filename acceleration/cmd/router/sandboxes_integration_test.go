@@ -161,7 +161,8 @@ func (s *UsageCommandsSuite) TestSandboxUsageIsReconciled() {
 	s.Equal("app-a", short.CustomerID, "owned as its rows were")
 	s.Equal("session-a", short.SessionID)
 	s.Equal(sandboxOrigin, short.APIKey, "under the reconciliation's own origin")
-	s.EqualValues(8_400+2_700+54, short.CostMicros, "priced at Daytona's rates, as the rest of its life")
+	s.EqualValues(8_400+2_700+54, short.BaseCostMicros, "costed at Daytona's rates, as the rest of its life")
+	s.EqualValues(13_385, short.CostMicros, "and charged at the price the seed wrote: 11,154 × 1.2, rounded once")
 	s.True(short.Billable)
 
 	s.Require().Len(gaps["sandbox-f"], 1, "a sandbox within its tolerance is billed what Daytona billed all the same")
@@ -202,7 +203,7 @@ func (s *UsageCommandsSuite) TestAnOrphansTimeIsBilledToItsLabels() {
 	s.Equal(metered.SandboxStopped, stopped.Model)
 	s.Equal(pricing.Quantities{pricing.DiskGBSeconds: 10_800}, stopped.Meters)
 	s.Equal("true", stopped.Attributes[metered.AttributeOrphan], "time after its session closed, so a customer can be shown it")
-	s.EqualValues(324, stopped.CostMicros, "an hour of a 3 GiB disk")
+	s.EqualValues(324, stopped.BaseCostMicros, "an hour of a 3 GiB disk at Daytona's rate")
 	for _, row := range rows {
 		s.Equal("app-b", row.CustomerID, "the app on its labels")
 		s.Equal("session-b", row.SessionID, "the session on its labels")
