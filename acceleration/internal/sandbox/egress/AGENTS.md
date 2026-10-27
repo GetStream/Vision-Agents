@@ -20,8 +20,18 @@ Most of a sandbox's clients cannot use a TLS proxy URL (curl, urllib, wget, node
 2. The proxy reads the sandbox's `Record` from Redis under the credential's SHA-256 (`Store`). None, or expired: 407.
 3. The host must be a name one of the record's grants or allowed domains covers, and the port 443. An IP literal, any other host or any other port: 403, nothing is tunnelled. A host the allowed domains cover and no grant does gets a blind tunnel: the proxy dials it only when every address it resolves to is public (else 502), and copies bytes both ways. It reads none of them and puts in no token. A host both cover is a grant's, so steps 4 to 6 follow.
 4. The proxy answers the TLS handshake with a certificate for the host, signed by the router's CA (`code_sandbox.proxy_ca_cert`, `proxy_ca_key`). The sandbox trusts that CA's certificate.
-5. For each request in the tunnel it reads the record again (a `Delete` ends open tunnels too), checks `Host` is the CONNECT host (else 421), and looks for a grant's placeholder in `Authorization`: `Bearer <ph>`, `token <ph>`, or Basic whose password is `<ph>`. Nowhere else: not the body, the query or another header.
+5. For each request in the tunnel it reads the record again (a `Delete` ends open tunnels too), checks `Host` is the CONNECT host (else 421), refuses a method other than GET and HEAD unless one of the grants' reads matches it (403, see «Read-only»), and looks for a grant's placeholder in `Authorization`: `Bearer <ph>`, `token <ph>`, or Basic whose password is `<ph>`. Nowhere else: not the body, the query or another header.
 6. With one, it asks `Tokens` for the token (the connections resolver, on every request: no copy is kept), puts it in the placeholder's place, and sends the request over TLS verified with the system's roots. The response's headers and body have the token turned back into the placeholder: as sent, in a JSON string, URL-encoded, in base64 and in Basic's encoded form. `Range` and `If-Range` are dropped from the request, so no echo comes back in pieces. A response in a `Content-Encoding` the transport did not undo is refused (502), and its trailers and any 1xx response are not sent on.
+
+## Read-only
+
+Code in the sandbox reads a granted host and writes through the connector's tools, which a binding can make ask the user first. So the proxy lets a request to a granted host through only when it is a GET or a HEAD, or one of the grants' `reads` (`core.SandboxRead`) matches it: the method as sent (case-sensitive, RFC 9110 section 9.1), the host, and a `path.Match` pattern over the path. Any other request gets 403, `egress: POST api.github.com/repos/o/r/issues refused: code in the sandbox only reads through a connector; write with the connector's tools`, reaches no host and asks for no token, with the placeholder or without it.
+
+- A read lists a request that reads with another method: GitHub's is `POST github.com/*/*/git-upload-pack`, which git clone and fetch send (gitprotocol-http(5)). A push's `git-receive-pack` is refused.
+- Only a path as the host gets it is matched: one with a percent escape, a dot segment or an empty segment is refused, so no other spelling of a path reaches another resource behind a pattern.
+- A session takes the reads from the connector's latest revision, whatever revision the connection pins (`sandboxGrant`, `lateGrant` in `internal/session/sandbox_grants.go`). `Manifest.ReadsAsConnection` leaves them out, so a new read needs no reconnect.
+- A tunnel to an allowed domain is not read, so it takes any method, as before.
+- Under `code_sandbox.broker: daytona` the egress is Daytona's, which does not see methods: code there can still write with the token. Read-only holds under the proxy broker only.
 
 ## Rules
 
@@ -31,6 +41,8 @@ Most of a sandbox's clients cannot use a TLS proxy URL (curl, urllib, wget, node
 
 ## Known limits
 
+- Read-only trusts a host's methods: a host that writes on a GET or a HEAD, or on a request a read lists, lets code write. A host that takes the method from a header reads it on a POST (Google's `X-HTTP-Method-Override`, https://docs.cloud.google.com/apis/docs/http, «Long request URLs»), which the proxy refuses unless a read lists it.
+- A read that uses POST and is not listed is refused: GraphQL queries (`gh`, Linear) and Git LFS's batch API among them.
 - A host that echoes the token in a form the rewrite does not know (another escape, split across headers, its case changed) gives it to the sandbox. Grant only hosts that do not.
 - A host that keeps the token it was sent and returns it later, in the response to a request that carries no placeholder, gives it to the sandbox: only a response to a request with the token is rewritten.
 - Sandbox code has root (passwordless `sudo`, live probe 2026-10-21). No control inside the sandbox protects anything: code can change its env, its CA files and its routes. The controls are the token, which stays in the router; Daytona's network allow list, which lets the sandbox reach the proxy's address alone (that code with root cannot bypass it by changing its routes, NET_ADMIN: unverified); and the grant check in step 3.

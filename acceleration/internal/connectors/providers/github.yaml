@@ -18,6 +18,8 @@
 # Opened October 20, 2026:
 #   [assets]  https://docs.github.com/en/rest/releases/assets
 #   [secrets] https://www.daytona.io/docs/en/secrets.md
+# Opened October 27, 2026:
+#   [smart]   https://git-scm.com/docs/gitprotocol-http
 # Opened October 22, 2026:
 #   [remotes] https://docs.github.com/en/get-started/git-basics/about-remote-repositories
 #   [install] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
@@ -41,8 +43,9 @@ id: github
 # 5 (AI-1309) adds the X-MCP-Toolsets header on the mcp source, so GitHub offers its Actions
 # tools beside the default ones. 6 adds sandbox, so code in a session's sandbox can call
 # GitHub's REST API with the connection's token. 7 (AI-1576) adds github.com to sandbox.hosts,
-# so git over HTTPS reaches it through both brokers.
-revision: 7
+# so git over HTTPS reaches it through both brokers. 8 adds sandbox.reads: under the proxy
+# broker code in the sandbox reads only, and git clone and fetch read with a POST.
+revision: 8
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -181,3 +184,13 @@ sandbox:
     # «Authorization: Bearer» there (401 to git-receive-pack, 2026-10-22T03:53:09Z), so git
     # takes the Basic form, which both brokers replace (see the comment above `sandbox`).
     - github.com
+  # Under the proxy broker a request to these hosts with a method other than GET or HEAD is
+  # refused, except these, which only read. [smart], «Smart Service git-upload-pack»: clone and
+  # fetch send «POST $GIT_URL/git-upload-pack», after a GET of
+  # $GIT_URL/info/refs?service=git-upload-pack. $GIT_URL is /<owner>/<repo>.git, or /<owner>/<repo>
+  # when the URL leaves .git out ([remotes]), and * matches either. A push is «POST
+  # $GIT_URL/git-receive-pack» ([smart], «Smart Service git-receive-pack»), so it is refused.
+  reads:
+    - host: github.com
+      method: POST
+      path: /*/*/git-upload-pack

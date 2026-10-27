@@ -7,6 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -44,6 +47,9 @@ type Grant struct {
 	// Hosts are exact hosts, or *. and a domain, which takes the domain and every name under
 	// it (core.SandboxRule).
 	Hosts []string `json:"hosts"`
+	// Reads are the requests to Hosts that read with a method other than GET and HEAD
+	// (core.SandboxRead): the proxy refuses any other request with such a method.
+	Reads []core.SandboxRead `json:"reads,omitempty"`
 }
 
 // covers says whether host is one of the grant's hosts.
@@ -70,6 +76,28 @@ func (r Record) granted(host string) bool {
 	for _, grant := range r.Grants {
 		if grant.covers(host) {
 			return true
+		}
+	}
+	return false
+}
+
+// reads says whether a request with method to target's path on host only reads: a GET or a HEAD,
+// or one of a grant's reads for host. Methods are case-sensitive (RFC 9110 section 9.1), so get
+// is not GET. Only a path as the host gets it, with no escape, dot segment or empty segment, is
+// matched, so no other spelling of a path reaches another resource behind a pattern.
+func (r Record) reads(host, method string, target *url.URL) bool {
+	if method == http.MethodGet || method == http.MethodHead {
+		return true
+	}
+	at := target.EscapedPath()
+	if at != target.Path || path.Clean(at) != at {
+		return false
+	}
+	for _, grant := range r.Grants {
+		for _, read := range grant.Reads {
+			if matched, _ := path.Match(read.Path, at); matched && read.Method == method && covers([]string{read.Host}, host) {
+				return true
+			}
 		}
 	}
 	return false
