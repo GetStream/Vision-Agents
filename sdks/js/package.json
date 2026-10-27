@@ -1,6 +1,6 @@
 {
   "name": "@stream-io/calypso",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "JavaScript client for the Stream acceleration backend: agents that run there, and the conversations they hold.",
   "license": "Apache-2.0",
   "repository": {
