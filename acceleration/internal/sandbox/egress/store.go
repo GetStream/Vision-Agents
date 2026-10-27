@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -90,9 +91,12 @@ func (r Record) granted(host string) bool {
 // or one of a grant's reads for host. Methods are case-sensitive (RFC 9110 section 9.1), so get
 // is not GET. Only a path as the host gets it, with no escape, dot segment or empty segment, is
 // matched, so no other spelling of a path reaches another resource behind a pattern.
+// git push's first request, a GET of info/refs for git-receive-pack (gitprotocol-http(5),
+// https://git-scm.com/docs/gitprotocol-http, "Smart Clients"), is not a read: git prints the
+// body of a refusal there to the model, and drops the body of a refused POST.
 func (r Record) reads(host, method string, target *url.URL) bool {
 	if method == http.MethodGet || method == http.MethodHead {
-		return true
+		return !strings.HasSuffix(target.Path, "/info/refs") || !slices.Contains(target.Query()["service"], "git-receive-pack")
 	}
 	at := target.EscapedPath()
 	if at != target.Path || path.Clean(at) != at {

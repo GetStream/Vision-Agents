@@ -478,6 +478,33 @@ func (s *ProxySuite) TestAGrantedHostTakesOnlyAGetOrAHead() {
 	s.Contains(s.logs.String(), "refused a request that may write")
 }
 
+// TestGitPushIsRefusedAtItsFirstRequest: git push first GETs info/refs for git-receive-pack,
+// and git shows the model the body of a refusal there; a clone's GET for git-upload-pack
+// reads.
+func (s *ProxySuite) TestGitPushIsRefusedAtItsFirstRequest() {
+	for target, status := range map[string]int{
+		"https://api.github.test/o/r.git/info/refs?service=git-receive-pack":                         http.StatusForbidden,
+		"https://api.github.test/o/r/info/refs?service=git-receive-pack":                             http.StatusForbidden,
+		"https://api.github.test/o/r.git/info/refs?service=git-upload-pack&service=git-receive-pack": http.StatusForbidden,
+		"https://api.github.test/o/r.git/info/refs?service=git-upload-pack":                          http.StatusOK,
+		"https://api.github.test/o/r.git/info/refs":                                                  http.StatusOK,
+		"https://api.github.test/echo?service=git-receive-pack":                                      http.StatusOK,
+	} {
+		s.granted.forget()
+
+		response, body, err := s.send(s.sandbox(s.credential), s.request(http.MethodGet, target, "Bearer "+s.placeholder, ""))
+
+		s.Require().NoError(err, target)
+		s.Equal(status, response.StatusCode, target)
+		if status == http.StatusForbidden {
+			s.Empty(s.granted.requests(), target)
+			s.Contains(body, "refused: code in the sandbox only reads through a connector; write with the connector's tools", target)
+		} else {
+			s.Len(s.granted.requests(), 1, target)
+		}
+	}
+}
+
 // TestAReadTakesItsMethodToItsPathOnItsHostAlone: a grant's read lets one more method through, to
 // the paths its pattern matches on its host, as the host gets them: a path spelled another way
 // (an escape, a dot segment, an empty segment) is refused even where its pattern would match.
