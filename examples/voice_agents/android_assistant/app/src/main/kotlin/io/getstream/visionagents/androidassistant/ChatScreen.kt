@@ -1,14 +1,14 @@
 package io.getstream.visionagents.androidassistant
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -45,6 +45,7 @@ import io.getstream.chat.android.ai.compose.ui.component.AIConversationReplyActi
 import io.getstream.chat.android.ai.compose.ui.component.AIReplyActionsRow
 import io.getstream.chat.android.ai.compose.ui.component.AISuggestions
 import io.getstream.chat.android.ai.compose.ui.component.AIToolApprover
+import io.getstream.chat.android.ai.compose.ui.component.AIToolAuthorizer
 import io.getstream.chat.android.ai.compose.ui.component.AITypingIndicator
 import io.getstream.chat.android.ai.compose.ui.component.ChatAiComponentFactory
 import io.getstream.chat.android.ai.compose.ui.component.ChatComposer
@@ -81,8 +82,8 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
     val approver = chat?.let { rememberApprover(it) }
     val views = remember(viewModel) { AssistantViews(viewModel) }
     var draft by rememberSaveable(stateSaver = MessageData.Saver) { mutableStateOf(MessageData()) }
-    // How tall the composer is, keyboard included, which the end of the conversation keeps
-    // clear of so the latest message is never under it.
+    // How tall the composer is, keyboard included, which the conversation keeps clear of so the
+    // latest message and its scroll-to-latest button are never under it.
     var barHeight by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     val isWelcoming = messages.isEmpty() && pending == null
@@ -106,9 +107,9 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
                             )
                         })
                     }
-                    Spacer(Modifier.height(barHeight))
                 },
-                emptyContent = { Welcome(Modifier.padding(bottom = barHeight)) },
+                emptyContent = { Welcome() },
+                contentPadding = PaddingValues(bottom = barHeight),
             )
 
             // The conversation fades away under the composer rather than stopping at a hairline,
@@ -161,18 +162,28 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
 }
 
 /**
- * Answers the questions of the tools that ask first, as the person signed in here.
+ * Answers the questions of the tools that ask first, as the person signed in here, and signs
+ * them in when a connector's call waits for their account.
  *
  * The router addresses a question to the person whose message the call answers, and Stream's
  * components show it only to them. The answer goes back over the session's socket, which is
- * also what runs the tool once it is allowed.
+ * also what runs the tool once it is allowed. Connect opens the sign-in page in an Auth Tab; the
+ * page comes back to this app with `status=connected` when the account is connected, and the
+ * call carries on at the router. Not now ends the call there.
  */
 @Composable
 private fun rememberApprover(chat: AgentChat): AIToolApprover {
     val context = LocalContext.current
+    val signIn = LocalSignIn.current
     val scope = rememberCoroutineScope()
-    return remember(chat) {
-        AIToolApprover(Assistant.user.id, AIClientIdentity.installId(context), scope) { call, allowed ->
+    return remember(chat, signIn) {
+        val authorizer = AIToolAuthorizer(
+            connect = { _, url ->
+                signIn.authenticate(Uri.parse(url))?.getQueryParameter("status") == "connected"
+            },
+            decline = { call -> chat.session.declineLogin(call.id) },
+        )
+        AIToolApprover(Assistant.user.id, AIClientIdentity.installId(context), scope, authorizer) { call, allowed ->
             chat.session.decide(call.id, allowed)
         }
     }
