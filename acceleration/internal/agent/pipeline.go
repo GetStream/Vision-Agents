@@ -700,6 +700,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 	if lost == a.tts && a.speakingTurn != "" {
 		cutShort = a.cutShortLocked(a.speakingTurn, time.Now())
 	}
+	outstanding := a.speakingTurn != "" && a.audioOutstandingLocked(a.speakingTurn)
 	// What the lost voice was saying will not be heard from it.
 	a.forgetUtterancesLocked()
 	replace := !a.closed && !a.switching.Load() &&
@@ -726,7 +727,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 	current := a.harness
 	a.mu.Unlock()
 	if cut != "" {
-		if current != nil {
+		if current != nil && outstanding {
 			current.Release(cut)
 		}
 		a.turns.interrupt(cut)

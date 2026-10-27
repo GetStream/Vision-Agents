@@ -3422,6 +3422,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	}
 	heard, played := a.voiced == turnID, time.Since(a.voicedAt)
 	cut := a.cutShortLocked(turnID, time.Now())
+	outstanding := a.generating || a.audioOutstandingLocked(turnID)
 	a.abandoned[turnID] = struct{}{}
 	a.interrupting = true
 	a.speakingTurn = ""
@@ -3437,7 +3438,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	a.dropSpeech()
 
 	a.finishGenerate(turnID)
-	if current != nil {
+	if current != nil && outstanding {
 		current.Release(turnID)
 	}
 	a.logger.Debug("stopping mid-reply, the caller took the floor",
@@ -3688,4 +3689,14 @@ func (a *Agent) openSubagent(target string) func(context.Context) (*llmrouter.Se
 			LanguageHints: a.options.LanguageHints, InputModalities: modalities,
 		})
 	}
+}
+
+// audioOutstandingLocked reports whether any of a turn's speech has yet to be heard in full.
+func (a *Agent) audioOutstandingLocked(turnID string) bool {
+	for _, heard := range a.heard {
+		if heard.turnID == turnID {
+			return true
+		}
+	}
+	return a.speechPending()
 }

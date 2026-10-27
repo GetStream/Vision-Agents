@@ -444,7 +444,8 @@ func (h *Harness) release(turnID string) {
 		// read itself as having already said this.
 		for _, carried := range h.written.notes {
 			carried.turn = ""
-			if !carried.cutOff {
+			// A correction of the harness's own is not something the caller was being told.
+			if !carried.cutOff && carried.skill != "" {
 				carried.cutOff = true
 				carried.text += " " + cutOffNote
 			}

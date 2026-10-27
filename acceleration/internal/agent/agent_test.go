@@ -2635,6 +2635,119 @@ func (s *AgentSuite) TestAnAnswerTalkedOverWhilePlayingIsToldAgain() {
 	s.Contains(s.model.requests()[2].Instructions, "cut off before the caller heard it")
 }
 
+// heardInFull has the agent hand work over, get its answer back and pass it on, and waits for
+// that reply to have been heard to the end.
+func (s *AgentSuite) heardInFull() {
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never written")
+	s.eventually(func() bool { return !s.agent.floor().Talking }, "the answer was never heard to the end")
+	s.False(s.agent.harness.Pending())
+}
+
+func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainByAnInterrupt() {
+	// Stopping the agent once it has nothing left to say cuts nothing off: what it passed
+	// on was heard.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.heardInFull()
+
+	s.agent.Interrupt()
+
+	s.False(s.agent.harness.Pending(), "an answer the caller heard in full is not owed again")
+}
+
+func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainWhenTheVoiceIsLost() {
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63.", "That comes to 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.heardInFull()
+
+	s.voice.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Fatal: true, Err: errors.New("socket closed")})
+
+	s.eventually(func() bool { return countOf[Error](s.reported()) >= 1 }, "the voice was never lost")
+	model := s.model
+	s.never(func() bool { return len(model.requests()) > 2 },
+		"losing the voice after the answer was heard must not have it said again")
+	s.False(s.agent.harness.Pending())
+}
+
+func (s *AgentSuite) TestAnAnswerReadIsNotOwedAgainByAnInterrupt() {
+	// Somebody reading has the whole reply the moment it is written: there is no playing
+	// for an interrupt to cut short.
+	s.delegates()
+	s.joinText()
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63.", "We open at nine."}
+	s.subagent.reply = nil
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "what is 15% of 84.20"))
+	s.heardInFull()
+
+	s.agent.Interrupt()
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "and when do you open"))
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the next message was never answered")
+	s.NotContains(s.model.requests()[2].Instructions, "12.63")
+}
+
+func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainWhenTheCallerSpeaksAfterIt() {
+	// The reply passing the answer on also asked for a tool, so the agent is still working
+	// when the caller speaks again. Stopping that work cuts nothing they had not heard.
+	s.delegates()
+	s.ownsTools("")
+	s.join(true)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63. Let me also look up your order.", "We open at nine."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	s.model.callsOn = 2
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never written")
+	<-runner.began
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.utterances == 0
+	}, "the answer was never heard to the end")
+	s.flow.then = []string{`{"disposition":"respond","floor":"stop"}`}
+
+	s.says(participant, "and when do you open")
+
+	s.eventually(func() bool { return len(s.model.requests()) >= 3 }, "the caller was never answered")
+	s.NotContains(s.model.requests()[2].Instructions, "12.63", "the caller heard the answer before they spoke")
+}
+
 func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
 	// An utterance the voice has finished sending is still on its way out of the edge.
 	// Starting the follow-up on that word talks over the tail of the reply.
