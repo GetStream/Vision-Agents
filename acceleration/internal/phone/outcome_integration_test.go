@@ -39,6 +39,8 @@ type OutcomeSuite struct {
 	clock    *meteringClock
 	customer string
 	e164     string
+	// asked is every (customer, session) the service asked to end because nobody answered.
+	asked [][2]string
 }
 
 func TestOutcomeSuite(t *testing.T) { suite.Run(t, new(OutcomeSuite)) }
@@ -90,6 +92,10 @@ func (s *OutcomeSuite) build(vendor Provider, publicURL string) {
 		Logger: slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
+	s.asked = nil
+	s.service.OnUnanswered(func(_ context.Context, customerID, sessionID string) {
+		s.asked = append(s.asked, [2]string{customerID, sessionID})
+	})
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
 		E164: s.e164, Vendor: "telnyx", Country: "US", CustomerID: s.customer, PurchasedAt: s.clock.now(),
 	}))
@@ -378,4 +384,67 @@ func (s *OutcomeSuite) TestAStatusAfterTheTokenIsSweptIs404AndKeepsTheOutcome() 
 	call := s.read(placed.CallID)
 	s.Equal(outcome.Completed, call.Outcome)
 	s.NotNil(call.EndedAt)
+}
+
+// asksOnceToEnd checks a final result nobody answered asks once for the placed call's session
+// to end.
+func (s *OutcomeSuite) asksOnceToEnd(result CallResult, word string) {
+	placed, token := s.placeReported()
+
+	s.Require().NoError(s.report(token, result, word))
+
+	s.Equal([][2]string{{s.customer, placed.SessionID}}, s.asked)
+}
+
+func (s *OutcomeSuite) TestABusyCallAsksForItsSessionToEnd() {
+	s.asksOnceToEnd(CallBusy, "busy")
+}
+
+func (s *OutcomeSuite) TestANoAnswerCallAsksForItsSessionToEnd() {
+	s.asksOnceToEnd(CallNoAnswer, "no-answer")
+}
+
+func (s *OutcomeSuite) TestAFailedCallAsksForItsSessionToEnd() {
+	s.asksOnceToEnd(CallFailed, "failed")
+}
+
+func (s *OutcomeSuite) TestACanceledCallAsksForItsSessionToEnd() {
+	s.asksOnceToEnd(CallCanceled, "canceled")
+}
+
+func (s *OutcomeSuite) TestACompletedCallAsksNothing() {
+	_, token := s.placeReported()
+
+	s.Require().NoError(s.report(token, CallCompleted, "completed"))
+
+	s.Empty(s.asked)
+}
+
+func (s *OutcomeSuite) TestANonFinalReportAsksNothing() {
+	_, token := s.placeReported()
+
+	s.Require().NoError(s.report(token, "", "ringing"))
+
+	s.Empty(s.asked)
+}
+
+func (s *OutcomeSuite) TestABusyAfterThePhoneJoinedAsksNothing() {
+	placed, token := s.placeReported()
+	s.answered(placed)
+
+	s.Require().NoError(s.report(token, CallBusy, "busy"))
+
+	s.Empty(s.asked)
+}
+
+func (s *OutcomeSuite) TestAnInboundCallAsksNothing() {
+	callID := "call-" + uuid.NewString()
+	s.arrived(callID)
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, defaultCallType, callID, "session-1", "caller-1",
+		"+15125550199", time.Time{}))
+	s.clock.advance(time.Minute)
+
+	s.ended(defaultCallType, callID)
+
+	s.Empty(s.asked)
 }

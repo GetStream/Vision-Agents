@@ -46,8 +46,11 @@ type Service struct {
 	publicURL string
 	// outcomes keeps how each placed call ended. Nil without a store.
 	outcomes *outcome.Keeper
-	clock    func() time.Time
-	logger   *slog.Logger
+	// unanswered ends the session of a placed call nobody will answer. Nil leaves it to the
+	// session's start timeout.
+	unanswered func(ctx context.Context, customerID, sessionID string)
+	clock      func() time.Time
+	logger     *slog.Logger
 	// heard is the calls whose participant events this process recorded lately (Heard), and
 	// unhooked the apps it lately logged as not delivering them.
 	heard, unhooked recently
@@ -1336,7 +1339,22 @@ func (s *Service) report(ctx context.Context, token string, status CallStatus) (
 	if errors.Is(err, outcome.ErrUnknownCall) {
 		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
 	}
-	return call, err
+	if err != nil {
+		return outcome.Call{}, err
+	}
+	// A repeated post asks again, which is harmless: ending a session that has ended does
+	// nothing.
+	if call.NobodyAnswered() && s.unanswered != nil {
+		s.unanswered(ctx, call.CustomerID, call.CallID)
+	}
+	return call, nil
+}
+
+// OnUnanswered sets what ends the session of a placed call once its vendor says nobody will
+// answer, rather than the agent waiting out its start timeout. Called before the service is
+// used.
+func (s *Service) OnUnanswered(end func(ctx context.Context, customerID, sessionID string)) {
+	s.unanswered = end
 }
 
 // SweepBridges removes the bridges left behind by calls nobody answered.

@@ -1422,6 +1422,22 @@ func (m *Manager) end(found *Session, reason TimeoutReason) {
 	found.abandon()
 }
 
+// EndUnanswered ends the customer's phone session id if this node holds it and no phone caller
+// has joined it, reporting whether this node holds it.
+func (m *Manager) EndUnanswered(customerID, id string) bool {
+	m.mu.Lock()
+	found, held := m.sessions[id]
+	m.mu.Unlock()
+	if !held {
+		return false
+	}
+	spec := found.Spec()
+	if OwnerOf(spec).CustomerID == customerID && spec.Phone != nil && !found.CallerJoined() {
+		m.end(found, TimeoutUnanswered)
+	}
+	return true
+}
+
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
 // claim that is not taken back expires on its own.
 const releaseTimeout = 2 * time.Second
