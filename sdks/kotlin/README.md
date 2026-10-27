@@ -82,6 +82,32 @@ included. The channel from `chat(context)` is what Stream Chat's AI components s
 streaming in, its reasoning and tool calls, and the approvals waiting on the person. On a call,
 `voice.call` is the Stream `Call` that Stream Video's Compose views render.
 
+`say(text)` has the agent speak words as written, without the model; `say(text, interrupt = true)`
+stops what it is saying first rather than waiting for it to finish.
+
+### Remembering the user
+
+`memory` has the agent remember the user `setUser` named: what it learned about them before is
+recalled in this session, and what it learns here is kept for their next one. It is always that
+user's; a device recalls nobody else's, and an `incognito` session remembers nothing.
+
+```kotlin
+val chat = agents.agent("docs").chat(
+    SessionOptions(memory = SessionOptions.Memory(filter = mapOf("topic" to "billing"))),
+)
+```
+
+`filter` narrows what is recalled with your own labels and never widens it past the user;
+`appId` keeps two of your apps sharing one memory account apart. Left null, nothing is
+remembered.
+
+`timezone` names the user's zone, which the phone knows and the router does not, so the agent
+reads "at six" in it and remembers it for the scheduled tasks that follow:
+
+```kotlin
+SessionOptions(memory = SessionOptions.Memory(), timezone = TimeZone.getDefault().id)
+```
+
 ### A tool that runs on the phone
 
 The agent runs in the backend; a tool you give it runs here. That is the point: it can read
@@ -144,7 +170,19 @@ val live = SessionQuery(state = Session.State.Live, limit = 20)
 val first = sessions.query(live)
 val next = first.nextCursor?.let { sessions.query(live.copy(cursor = it)) }
 val found = sessions.search("billing")
+
+val lastWeek = sessions.query(
+    SessionQuery(
+        custom = mapOf("ticket" to "4721"),   // the labels SessionOptions.custom opened it with
+        createdSince = Clock.System.now() - 7.days,
+        sort = SessionQuery.Sort.UpdatedAt,
+    ),
+)
 ```
+
+`createdSince` is inclusive and `createdBefore` is not. Every order is descending: most
+recently active first, or best match first for a search, which is also what leaving `sort` out
+means.
 
 `update` renames a conversation or relabels it, `chat.update(title = "Billing")` on an open one
 and `sessions.update(id, title = "Billing")` on one that ended. A device may change `title`,

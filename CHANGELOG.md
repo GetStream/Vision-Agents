@@ -59,6 +59,19 @@ not connect.
 
 `SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.
 
+### Kotlin sessions remember the user and name their timezone, lists filter by date and label, and say can interrupt
+
+`SessionOptions.memory` in the Kotlin SDK (a `SessionOptions.Memory` of `filter` and `appId`)
+sends `memory` with `user_id` set to the user `setUser` named, as Swift's `memory` does, so a
+phone's session recalls what the agent learned about them and keeps what it learns; an
+incognito session still remembers nothing. `SessionQuery` takes `createdSince` and
+`createdBefore` (`kotlin.time.Instant`, sent as `filter.created_at` `$gte` and `$lt`),
+`custom` (sent as `filter.custom`, every pair held) and `sort` (`SessionQuery.Sort.UpdatedAt`
+or `Relevance`, sent as `sort: [{"field": ...}]`). `AgentSession.say(text, interrupt = true)`
+sends `interrupt` and then `say`, so the reply in flight stops before the words are spoken. `SessionOptions.timezone`
+(an IANA zone, such as `TimeZone.getDefault().id`) is sent as `timezone`, so the agent reads dates
+in the user's zone and remembers it for the scheduled tasks that follow.
+
 ### A tool on a speech-to-speech conversation can say how it is going
 
 `/v1/sts/stream` now takes `tool_update` (`tool_call_id`, `text`, `verbatim`) for a call the model is waiting on, and has the model say it the way an agent session does: once no reply is being spoken and the caller is not talking, a newer update for the call replacing one not yet said, and the call's `tool_result` dropping it. A status is said in the model's own words, `verbatim` words as written or close to them. An update for a call the model is not waiting on, or to a model that cannot be told about an open call, is dropped. `tool_hold` is answered with `tool_held` for an open call, and with `tool_cancel` for one the model cancelled or was answered for. In Python, `stream.STS` runs each function with `current_call()` set, so `update()`, `say()` and `disallow_interruptions()` work there as they do on `stream.Accelerated`; before, they did nothing.
