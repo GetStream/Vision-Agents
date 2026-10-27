@@ -69,7 +69,7 @@ func (s *MeteringSuite) SetupTest() {
 // withSandbox builds the service over a fresh customer, a gate holding them to sandbox, and a
 // recorder written out before the test reads.
 func (s *MeteringSuite) withSandbox(sandbox dlc.Sandbox) {
-	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	s.recorder = routing.NewRecorder(routing.Phone, s.store, nil, list, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(s.recorder.Close)
@@ -725,7 +725,8 @@ func (s *MeteringSuite) TestABoughtNumberIsBilledItsFirstMonth() {
 	s.Require().NoError(err)
 
 	month := s.row(ModelNumber)
-	s.Equal(int64(1_000_000), month.CostMicros, "the price the vendor quoted")
+	s.Equal(int64(1_200_000), month.CostMicros, "the price the vendor quoted, resold at the factor")
+	s.Equal(int64(1_000_000), month.BaseCostMicros, "the price the vendor quoted")
 	s.True(month.Billable)
 	s.Equal("key-a", month.APIKey, "the month it was bought in is the buyer's")
 	s.Equal(bought.PurchasedAt, month.StartedAt.UTC())
@@ -740,7 +741,7 @@ func (s *MeteringSuite) TestANumberWhosePriceIsOnlyInItsOfferIsBilledTheOffer() 
 	s.Require().NoError(err)
 
 	s.Equal(int64(1_500_000), bought.MonthlyCostMicros, "the number's own offer")
-	s.Equal(int64(1_500_000), s.row(ModelNumber).CostMicros)
+	s.Equal(int64(1_800_000), s.row(ModelNumber).CostMicros)
 }
 
 func (s *MeteringSuite) TestANumberWithNoPriceIsBillableWorkWithNoPrice() {

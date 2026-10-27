@@ -48,6 +48,8 @@ class UsageEvent:
             provider (str | Unset): Who did the work, such as openai.
             purpose (str | Unset): What within the request the work was for, such as subagent.
             session_id (str | Unset): The session the work was done in.
+            sku (str | Unset): The SKU of the item the work was priced as, as getPrices lists it: the same across its price
+                changes. Absent for work no entry priced, and for work recorded before SKUs were.
             tags (UsageEventTags | Unset): The cost labels the request carried.
             team (str | Unset): The team the user's token named, the name of the team:<name> category among
                 usage_categories. Absent with none.
@@ -73,6 +75,7 @@ class UsageEvent:
     provider: str | Unset = UNSET
     purpose: str | Unset = UNSET
     session_id: str | Unset = UNSET
+    sku: str | Unset = UNSET
     tags: UsageEventTags | Unset = UNSET
     team: str | Unset = UNSET
     user_id: str | Unset = UNSET
@@ -117,6 +120,8 @@ class UsageEvent:
 
         session_id = self.session_id
 
+        sku = self.sku
+
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
@@ -157,6 +162,8 @@ class UsageEvent:
             field_dict["purpose"] = purpose
         if session_id is not UNSET:
             field_dict["session_id"] = session_id
+        if sku is not UNSET:
+            field_dict["sku"] = sku
         if tags is not UNSET:
             field_dict["tags"] = tags
         if team is not UNSET:
@@ -214,6 +221,8 @@ class UsageEvent:
 
         session_id = d.pop("session_id", UNSET)
 
+        sku = d.pop("sku", UNSET)
+
         _tags = d.pop("tags", UNSET)
         tags: UsageEventTags | Unset
         if isinstance(_tags, Unset):
@@ -244,6 +253,7 @@ class UsageEvent:
             provider=provider,
             purpose=purpose,
             session_id=session_id,
+            sku=sku,
             tags=tags,
             team=team,
             user_id=user_id,

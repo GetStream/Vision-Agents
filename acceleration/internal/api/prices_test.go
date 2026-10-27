@@ -66,7 +66,7 @@ func (s *PriceListsSuite) TestPricesAreTheListInForce() {
 		s.Equal("llm", price.Modality, "the modality asked for alone")
 	}
 
-	counted := s.created(s.change(countedAt(3, 0.3, 15)))
+	counted := s.created(s.change(countedAt(3, 0.3, 15, 1)))
 	read, _ = s.readPrices(s.serverClient, "")
 	price, ok := priceOfModel(read.Entries, "counted-model")
 	s.Require().True(ok)
@@ -74,39 +74,38 @@ func (s *PriceListsSuite) TestPricesAreTheListInForce() {
 	s.runCounted()
 	for _, row := range s.countedRows() {
 		s.Equal(price.Change, row.PriceVersion, "the rows name the change the read named")
+		s.Equal(price.SKU, row.SKU, "and the SKU the read named")
 	}
 }
 
 func (s *PriceListsSuite) TestPricesAreWhatTheCustomerPays() {
-	s.setMarkup(2000)
 	model := "m" + s.token()
-	s.created(s.change(entry(model, 4)))
+	s.created(s.change(pricedAt(entry(model, 4), 4.8)))
 	cancelled := s.change(entry(model, 9))
 	cancelled.EffectiveAt = pointerTo(time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second))
 	called := s.created(cancelled)
 	s.cancel(called.Name)
-	markup := s.change()
-	markup.MarkupBps = pointerTo(int64(3000))
-	remarked := s.tomorrow(markup)
+	raised := s.tomorrow(s.change(pricedAt(entry(model, 4), 5.2)))
 
 	read, _ := s.readPrices(s.serverClient, "")
 
 	inForce, ok := priceOfModel(read.Entries, model)
 	s.Require().True(ok)
-	s.Equal(4.8, inForce.Rates["input_tokens"].USD, "$4 per million with the list's 20%")
+	s.Equal(4.8, inForce.Rates["input_tokens"].USD, "the price, never the vendor's $4")
 	s.Equal(int64(1_000_000), inForce.Rates["input_tokens"].Per)
+	s.Equal("llm-t1c-"+model, inForce.SKU)
 	s.False(slices.ContainsFunc(read.Upcoming, func(price Price) bool { return price.Change == called.Name }),
 		"a cancelled change is not upcoming")
 	moved, ok := priceOfModel(read.Upcoming, model)
-	s.Require().True(ok, "a markup change shows as every entry it moves")
-	s.Equal(remarked.Name, moved.Change)
+	s.Require().True(ok)
+	s.Equal(raised.Name, moved.Change)
 	s.Equal(5.2, moved.Rates["input_tokens"].USD)
+	s.Equal(inForce.SKU, moved.SKU)
 }
 
 func (s *PriceListsSuite) TestPricesLeaveOutWhatOnlyStaffRead() {
-	s.setMarkup(2000)
 	model := "m" + s.token()
-	written := s.created(s.change(entry(model, 1.25)))
+	written := s.created(s.change(pricedAt(entry(model, 1.25), 1.5)))
 
 	read, raw := s.readPrices(s.serverClient, "")
 
@@ -115,8 +114,9 @@ func (s *PriceListsSuite) TestPricesLeaveOutWhatOnlyStaffRead() {
 	}
 	inForce, ok := priceOfModel(read.Entries, model)
 	s.Require().True(ok)
-	s.Equal(1.5, inForce.Rates["input_tokens"].USD, "the charged rate, never the vendor's 1.25")
-	for _, staffOnly := range []string{"markup", "unpriced", "vendor.example", written.CreatedBy, `"source"`, "created_by", "charged_"} {
+	s.Equal(1.5, inForce.Rates["input_tokens"].USD, "the price, never the vendor's 1.25")
+	for _, staffOnly := range []string{"markup", "unpriced", "vendor.example", written.CreatedBy, `"source"`, "created_by",
+		"charged_", `"prices"`, "price_tiers"} {
 		s.False(strings.Contains(raw, staffOnly), "the answer says %q", staffOnly)
 	}
 }

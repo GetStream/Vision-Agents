@@ -39,6 +39,7 @@ type UsageEvent struct {
 	CostMicros     int64             `bun:"cost_micros,notnull"`
 	BaseCostMicros int64             `bun:"base_cost_micros,notnull"`
 	PriceVersion   string            `bun:"price_version,notnull"`
+	SKU            string            `bun:"sku,notnull"`
 	Billable       bool              `bun:"billable,notnull"`
 	Success        bool              `bun:"success,notnull"`
 	ErrorCode      string            `bun:"error_code,notnull"`
@@ -55,7 +56,7 @@ func eventRow(e usage.Event) UsageEvent {
 		UserID: e.UserID, UsageCategories: e.UsageCategories, AgentID: e.AgentID, CallID: e.CallID, SessionID: e.SessionID,
 		Meter: e.Meter, Provider: e.Provider, Model: e.Model, Purpose: e.Purpose,
 		Quantities: e.Quantities, Attributes: e.Attributes,
-		CostMicros: e.CostMicros, BaseCostMicros: e.BaseCostMicros, PriceVersion: e.PriceVersion,
+		CostMicros: e.CostMicros, BaseCostMicros: e.BaseCostMicros, PriceVersion: e.PriceVersion, SKU: e.SKU,
 		Billable: e.Billable, Success: e.Success, ErrorCode: e.ErrorCode, Tags: e.Tags, Source: e.Source,
 	}
 }
@@ -68,7 +69,7 @@ func (r UsageEvent) Event() usage.Event {
 		UserID: r.UserID, UsageCategories: r.UsageCategories, AgentID: r.AgentID, CallID: r.CallID, SessionID: r.SessionID,
 		Meter: r.Meter, Provider: r.Provider, Model: r.Model, Purpose: r.Purpose,
 		Quantities: r.Quantities, Attributes: r.Attributes,
-		CostMicros: r.CostMicros, BaseCostMicros: r.BaseCostMicros, PriceVersion: r.PriceVersion,
+		CostMicros: r.CostMicros, BaseCostMicros: r.BaseCostMicros, PriceVersion: r.PriceVersion, SKU: r.SKU,
 		Billable: r.Billable, Success: r.Success, ErrorCode: r.ErrorCode, Tags: r.Tags, Source: r.Source,
 	}
 }

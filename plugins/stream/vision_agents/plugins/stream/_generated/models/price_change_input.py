@@ -27,9 +27,8 @@ class PriceChangeInput:
         confirm (bool | Unset): Required when the preview answers confirmation_required.
         effective_at (datetime.datetime | Unset): When the change takes effect. Absent is now; it may be up to two years
             ahead, but never more than 5 minutes in the past, and a time up to 5 minutes past is taken as now.
-        entries (list[PriceEntryInput] | None | Unset): Each replaces its item's entry under its when whole: every rate,
-            tier and markup it has.
-        markup_bps (int | Unset): The list's markup in basis points from effective_at on. Absent leaves it.
+        entries (list[PriceEntryInput] | None | Unset): Each replaces its item's entry under its when whole: its cost,
+            its price and every tier of both.
     """
 
     name: str
@@ -38,7 +37,6 @@ class PriceChangeInput:
     confirm: bool | Unset = UNSET
     effective_at: datetime.datetime | Unset = UNSET
     entries: list[PriceEntryInput] | None | Unset = UNSET
-    markup_bps: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
@@ -65,8 +63,6 @@ class PriceChangeInput:
         else:
             entries = self.entries
 
-        markup_bps = self.markup_bps
-
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -82,8 +78,6 @@ class PriceChangeInput:
             field_dict["effective_at"] = effective_at
         if entries is not UNSET:
             field_dict["entries"] = entries
-        if markup_bps is not UNSET:
-            field_dict["markup_bps"] = markup_bps
 
         return field_dict
 
@@ -131,8 +125,6 @@ class PriceChangeInput:
 
         entries = _parse_entries(d.pop("entries", UNSET))
 
-        markup_bps = d.pop("markup_bps", UNSET)
-
         price_change_input = cls(
             name=name,
             reason=reason,
@@ -140,7 +132,6 @@ class PriceChangeInput:
             confirm=confirm,
             effective_at=effective_at,
             entries=entries,
-            markup_bps=markup_bps,
         )
 
         return price_change_input

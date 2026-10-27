@@ -48,7 +48,11 @@ func (s *MeteringSuite) SetupSuite() {
 
 	s.config, err = routing.DefaultConfig()
 	s.Require().NoError(err)
-	s.prices, err = routing.Prices(s.config, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	listed, err := routing.Prices(s.config, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.Require().NoError(err)
+	// At the vendors' rates, so each cost below is what a vendor's published rate makes of the
+	// characters it took.
+	s.prices, err = pricing.NewList("vendor", pricing.AllAtCost(listed.Entries()), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 }
 

@@ -119,6 +119,10 @@ const (
 	codeMemoryUnavailable       = "memory_unavailable"
 	// The price list's management operations (price_lists.go).
 	codeInvalidPrice         = "invalid_price"
+	codePriceMetersMismatch  = "price_meters_mismatch"
+	codePriceTiersMismatch   = "price_tiers_mismatch"
+	codeSKUInUse             = "sku_in_use"
+	codeSKUChanged           = "sku_changed"
 	codeConfirmationRequired = "confirmation_required"
 	codeIdempotencyKeyReused = "idempotency_key_reused"
 	codePriceChangeInForce   = "price_change_in_force"

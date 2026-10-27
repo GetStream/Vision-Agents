@@ -99,6 +99,7 @@ func (s *LedgerSuite) TestAnEventIsRecordedOnce() {
 	event := usagetest.Event("o1", func(e *usage.Event) {
 		e.UserID, e.UsageCategories = "u1", []string{"team:finance", "project:x"}
 		e.AgentID, e.CallID, e.SessionID, e.Purpose, e.PriceVersion = "agent", "call", "session", "reply", "20261110_seed"
+		e.SKU = "llm-openai-gpt-5-6-luna"
 		e.Attributes, e.Tags = map[string]string{"country": "US"}, map[string]string{"env": "prod"}
 	})
 
@@ -114,7 +115,18 @@ func (s *LedgerSuite) TestAnEventIsRecordedOnce() {
 	stored.OccurredAt = stored.OccurredAt.UTC()
 	event.UsageCategories = []string{"project:x", "team:finance"}
 	s.Equal(event, stored)
+	s.Equal("llm-openai-gpt-5-6-luna", rows[0].SKU)
 	s.WithinDuration(time.Now(), rows[0].ReceivedAt, time.Minute)
+}
+
+// TestAnEventFromAProducerThatNamesNoSKUIsRecorded: a router built before SKUs ships events
+// without one, which read empty.
+func (s *LedgerSuite) TestAnEventFromAProducerThatNamesNoSKUIsRecorded() {
+	s.ingest(usagetest.Event("o1"))
+
+	rows := s.stored()
+	s.Require().Len(rows, 1)
+	s.Empty(rows[0].SKU)
 }
 
 func (s *LedgerSuite) TestABatchSentTwiceIsRecordedOnce() {
@@ -357,5 +369,5 @@ func (s *LedgerSuite) TestMigratingAgainChangesNothing() {
 	s.Require().NoError(s.ledger.Migrate(s.ctx))
 	var version int64
 	s.Require().NoError(s.ledger.DB().QueryRowContext(s.ctx, "SELECT max(version_id) FROM goose_db_version").Scan(&version))
-	s.Equal(int64(4), version)
+	s.Equal(int64(5), version)
 }

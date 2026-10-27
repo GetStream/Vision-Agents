@@ -141,6 +141,7 @@ type CustomerUsageEvent struct {
 	Purpose         string            `json:"purpose,omitempty"`
 	Quantities      map[string]int64  `json:"quantities"`
 	Attributes      map[string]string `json:"attributes,omitempty"`
+	SKU             string            `json:"sku,omitempty" doc:"The priced item's SKU, as getPrices lists it: the same across its price changes. Absent for work no entry priced, and for events recorded before SKUs were."`
 	CostMicros      int64             `json:"cost_micros" doc:"What the organization is charged for the work, in micros."`
 	Billable        bool              `json:"billable"`
 	Success         bool              `json:"success"`
@@ -162,7 +163,7 @@ func CustomerUsageEventOf(event Event) CustomerUsageEvent {
 		UsageID: event.UsageID, OccurredAt: event.OccurredAt.UTC(), AppID: event.AppID, APIKey: event.APIKey,
 		UserID: event.UserID, UsageCategories: categories, AgentID: event.AgentID, CallID: event.CallID,
 		SessionID: event.SessionID, Meter: event.Meter, Provider: event.Provider, Model: event.Model,
-		Purpose: event.Purpose, Quantities: quantities, Attributes: event.Attributes, CostMicros: event.CostMicros,
+		Purpose: event.Purpose, Quantities: quantities, Attributes: event.Attributes, SKU: event.SKU, CostMicros: event.CostMicros,
 		Billable: event.Billable, Success: event.Success, ErrorCode: event.ErrorCode, Tags: event.Tags,
 	}
 }
