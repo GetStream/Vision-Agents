@@ -36,7 +36,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     let mode: SessionMode?
     /// What to change about the models for one session, over whatever its agent config decided.
     /// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
-    let modelOverwrites: ModelOverwrites?
+    let modelOverwrites: ModelOverwritesPayload?
     let projectId: String?
     /// Why the review scored the conversation as it did. Read by a backend only.
     let reviewNotes: String?
@@ -64,7 +64,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     /// The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String, callId: String, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwrites? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String, callId: String, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.callId = callId
@@ -123,7 +123,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.llm = try container.decodeIfPresent(String.self, forKey: .llm)
         self.modality = try container.decode(SessionModality.self, forKey: .modality)
         self.mode = try container.decodeIfPresent(SessionMode.self, forKey: .mode)
-        self.modelOverwrites = try container.decodeIfPresent(ModelOverwrites.self, forKey: .modelOverwrites)
+        self.modelOverwrites = try container.decodeIfPresent(ModelOverwritesPayload.self, forKey: .modelOverwrites)
         self.projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
         self.reviewNotes = try container.decodeIfPresent(String.self, forKey: .reviewNotes)
         self.reviewScore = try container.decodeIfPresent(Int.self, forKey: .reviewScore)
