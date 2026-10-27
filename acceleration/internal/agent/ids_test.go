@@ -200,6 +200,11 @@ func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 		`{"name":"Maria de la Cruz"}`:  false,
 		`{"guests":3}`:                 false,
 		`{"name":"Carry on with the caller from what is in your instructions."}`: true,
+		`{"name":"what a tool or your colleague"}`:                               true,
+		`{"name":"one short sentence"}`:                                          true,
+		`{"event_name":"Northside Pottery Club Spring Open Day"}`:                false,
+		`{"file_name":"minutes of the annual general meeting 2026"}`:             false,
+		`{"name":"Carry Lind"}`:                                                  false,
 	} {
 		_, got := placeholderName(nil, llm.ToolCall{Name: "book_room", Arguments: arguments})
 		assert.Equal(t, stand, got, arguments)

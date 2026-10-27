@@ -222,8 +222,8 @@ func emptyResult(tool, key string) string {
 }
 
 // placeholderName reports a name argument filled with a stand-in for one the caller never
-// gave, such as "Caller" or "John Doe". More than four words is suspicious unless a caller
-// or tool supplied them: a sentence of the agent's own instructions is not anyone's name.
+// gave, such as "Caller" or "John Doe", or with words of a note the router wrote into the
+// conversation itself (fromNote), which is nobody's name.
 func placeholderName(history []llm.Message, call llm.ToolCall) (string, bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -234,12 +234,43 @@ func placeholderName(history []llm.Message, call llm.ToolCall) (string, bool) {
 		if !ok || (key != "name" && !strings.HasSuffix(key, "_name")) {
 			continue
 		}
-		if (slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || len(strings.Fields(text)) > 4) &&
+		if (slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || fromNote(text)) &&
 			!nameWasGiven(history, text) {
 			return text, true
 		}
 	}
 	return "", false
+}
+
+// noteRun is how many words in a row a value has to share with a router note to have been
+// taken from it. Two words such as "the caller" turn up anywhere; three in the note's own order
+// do not turn up in a name by chance.
+const noteRun = 3
+
+// formatVerb is a fmt verb, where a note written as a format string has words of its own.
+var formatVerb = regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z]`)
+
+// fromNote reports whether text repeats noteRun or more words, in order, of a note the router
+// writes into the conversation itself: the harness's (harness.Notes) and the agent's own
+// (composeNote, approvalSilence).
+func fromNote(text string) bool {
+	words := func(text string) []string {
+		return strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	}
+	said := words(text)
+	var notes []string
+	for _, note := range append(harness.Notes(), composeNote, approvalSilence) {
+		notes = append(notes, formatVerb.Split(note, -1)...)
+	}
+	for _, note := range notes {
+		joined := " " + strings.Join(words(note), " ") + " "
+		for at := 0; at+noteRun <= len(said); at++ {
+			if strings.Contains(joined, " "+strings.Join(said[at:at+noteRun], " ")+" ") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // A name field can identify a place or business, not just a person. The lexical
