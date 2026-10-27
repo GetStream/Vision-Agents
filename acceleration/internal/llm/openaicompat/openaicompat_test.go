@@ -609,7 +609,7 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenAsTextIsMadeNotSpoken() {
 func (s *OpenAICompatSuite) TestAMarkedToolCallAfterFillerKeepsTheFiller() {
 	s.frames = []string{
 		textFrame("One moment, checking. <|tool_call>call:create_reservation{name:<|\"|>Quillon<|\"|>,"),
-		textFrame("party_size:6,allergen:<|\"|>gluten<|\"|>,notes:{high_chair:false,tags:[1,<|\"|>a, b<|\"|>]}}<tool_call|>"),
+		textFrame("party_size:6,allergen:<|\"|>sesame<|\"|>,notes:{high_chair:false,tags:[1,<|\"|>a, b<|\"|>]}}<tool_call|>"),
 		toolFrame(0, "call-1", "check_availability", `{"party_size":6}`),
 		usageFrame(20, 0, 30, 0, "tool_calls"),
 	}
@@ -623,7 +623,7 @@ func (s *OpenAICompatSuite) TestAMarkedToolCallAfterFillerKeepsTheFiller() {
 	s.ElementsMatch([]string{"create_reservation", "check_availability"}, names)
 	for _, call := range response.ToolCalls {
 		if call.Name == "create_reservation" {
-			s.JSONEq(`{"name":"Quillon","party_size":6,"allergen":"gluten","notes":{"high_chair":false,"tags":[1,"a, b"]}}`, call.Arguments)
+			s.JSONEq(`{"name":"Quillon","party_size":6,"allergen":"sesame","notes":{"high_chair":false,"tags":[1,"a, b"]}}`, call.Arguments)
 		}
 	}
 }
