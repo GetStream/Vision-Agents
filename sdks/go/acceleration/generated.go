@@ -6299,7 +6299,7 @@ type ModelCallTiming struct {
 	// DurationMs Request to completed response or failed create.
 	DurationMs *float64 `json:"duration_ms,omitempty"`
 
-	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure.
+	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider's health.
 	ErrorCode   *string `json:"error_code,omitempty"`
 	InputTokens *int64  `json:"input_tokens,omitempty"`
 	Model       string  `json:"model"`
