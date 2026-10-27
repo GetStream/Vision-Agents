@@ -41,7 +41,7 @@ var (
 		Namespace: "router",
 		Name:      "sandbox_egress_requests_total",
 		Help: "Requests of sandbox code through the egress proxy, by granted host, method, decision and status class. " +
-			"A tunnel opened to a granted host is counted by the requests in it, one to an allowed domain by its CONNECT.",
+			"A tunnel opened to a granted host is counted by the requests in it, one to an allowed domain by its CONNECT",
 	}, []string{"host", "method", "decision", "status"})
 	// A request is timed to its response header, the proxy's wait for the host; a body's time
 	// is the sandbox's reading.

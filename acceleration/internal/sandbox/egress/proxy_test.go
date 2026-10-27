@@ -1374,16 +1374,19 @@ func (s *ProxySuite) TestABlindTunnelThatCannotBeDialedIsCountedAsBlindWithAServ
 }
 
 // TestAHostOrAPortWithoutAGrantIsCountedAsDeniedHost: a granted host on another port keeps its
-// label, any other host is "other".
+// label, any other host is "other", an allowed domain on another port included.
 func (s *ProxySuite) TestAHostOrAPortWithoutAGrantIsCountedAsDeniedHost() {
+	s.allow("allowed.test")
 	outside := s.requestCount("other", "CONNECT", "denied_host", "4xx")
 	port := s.requestCount("api.github.test", "CONNECT", "denied_host", "4xx")
 
 	s.connectStatus("outside.test:443", basic("sbx", s.credential))
 	s.connectStatus("127.0.0.1:443", basic("sbx", s.credential))
 	s.connectStatus("api.github.test:8443", basic("sbx", s.credential))
+	s.connectStatus("allowed.test:8443", basic("sbx", s.credential))
 
-	s.Equal(outside+2, s.requestCount("other", "CONNECT", "denied_host", "4xx"))
+	s.NotContains(s.labelValues(), "allowed.test")
+	s.Equal(outside+3, s.requestCount("other", "CONNECT", "denied_host", "4xx"))
 	s.Equal(port+1, s.requestCount("api.github.test", "CONNECT", "denied_host", "4xx"))
 }
 
@@ -1439,8 +1442,7 @@ func (s *ProxySuite) TestARequestTheProxyDoesNotServeIsCountedAsDeniedRequest() 
 	s.Equal(noPort+1, s.requestCount("other", "CONNECT", "denied_request", "4xx"))
 }
 
-// TestGrantsThatCannotBeReadAreCountedAsAnError: Redis lost before and after the CONNECT, and a
-// connection that gives no token.
+// TestGrantsThatCannotBeReadAreCountedAsAnError: Redis lost before the CONNECT.
 func (s *ProxySuite) TestGrantsThatCannotBeReadAreCountedAsAnError() {
 	closed, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
@@ -1497,10 +1499,12 @@ func (s *ProxySuite) TestAConnectionThatGivesNoTokenIsCountedAsAnError() {
 	s.Equal(replaced, s.requestCount("api.github.test", "GET", "token", "4xx"))
 }
 
-// TestTheStatusIsTheClassTheSandboxGot: a host's 404 and a host that cannot be reached.
+// TestTheStatusIsTheClassTheSandboxGot: a host's 404 and a host that cannot be reached, both
+// timed.
 func (s *ProxySuite) TestTheStatusIsTheClassTheSandboxGot() {
 	s.answering(func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) })
 	missing := s.requestCount("api.github.test", "GET", "token", "4xx")
+	timed := s.metric("router_sandbox_egress_upstream_seconds", map[string]string{"host": "api.github.test"})
 
 	s.get("Bearer " + s.placeholder)
 
@@ -1514,6 +1518,7 @@ func (s *ProxySuite) TestTheStatusIsTheClassTheSandboxGot() {
 	s.get("Bearer " + s.placeholder)
 
 	s.Equal(unreachable+1, s.requestCount("api.github.test", "GET", "token", "5xx"))
+	s.Equal(timed+2, s.metric("router_sandbox_egress_upstream_seconds", map[string]string{"host": "api.github.test"}))
 }
 
 // TestTheLabelsHoldNoNameTheSandboxChoosesNorAnySecret: a wildcard grant is one host label
@@ -1538,6 +1543,39 @@ func (s *ProxySuite) TestTheLabelsHoldNoNameTheSandboxChoosesNorAnySecret() {
 	for _, secret := range []string{"gho_first-token-of-the-connection", s.placeholder, s.credential, s.session,
 		"a.github.test", "b.github.test", "BREW"} {
 		s.NotContains(values, secret)
+	}
+}
+
+// TestAStreamedResponseReachesTheSandboxBeforeTheHostEnds: the first flushed chunk is not held
+// by the counting wrapper, with a placeholder and without.
+func (s *ProxySuite) TestAStreamedResponseReachesTheSandboxBeforeTheHostEnds() {
+	for _, authorization := range []string{"", "Bearer " + s.placeholder} {
+		release := make(chan struct{})
+		s.answering(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("first\n"))
+			s.NoError(http.NewResponseController(w).Flush())
+			select {
+			case <-release:
+			case <-time.After(10 * time.Second):
+			}
+			_, _ = w.Write([]byte("second\n"))
+		})
+		response, err := s.sandbox(s.credential).Do(s.request(http.MethodGet, "https://api.github.test/echo", authorization, ""))
+		s.Require().NoError(err)
+		read := make(chan string, 1)
+		go func() {
+			line, _ := bufio.NewReader(response.Body).ReadString('\n')
+			read <- line
+		}()
+		select {
+		case line := <-read:
+			s.Equal("first\n", line, "authorization %q", authorization)
+		case <-time.After(5 * time.Second):
+			s.Fail("the first chunk was held until the host ended", "authorization %q", authorization)
+		}
+		close(release)
+		_ = response.Body.Close()
 	}
 }
 
