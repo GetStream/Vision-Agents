@@ -13,9 +13,9 @@ import (
 )
 
 // unfoundID reports an ID argument whose value no tool has returned, under that key or as an
-// "id", with the IDs the tools have returned so far. PhoneLLM Mini passed the patient's "p1"
-// as an appointment_id, "Thursday 2pm with doctor Chen" as one, and the gateway's error code
-// as a ticket_id before any ticket was opened.
+// "id", with the IDs the tools have returned so far. Models pass made-up values as IDs: a
+// person's own identifier as an appointment's, a time and a name as an appointment ID, or an
+// error code as a ticket that was never opened.
 //
 // Only an ID one of the tools hands out is checked: "ticket_id" when there is a create_ticket,
 // "appointment_id" when there is a lookup_appointment. Any other ID, such as a member_id, is
@@ -28,8 +28,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 	}
 	var said strings.Builder
 	var results []any
-	// texts are results that are not JSON objects or lists: τ-bench's find_user_id_by_email
-	// answers with the bare ID, noah_ito_3850, under no key to look it up by.
+	// texts are results that are not JSON objects or lists: a lookup may answer with the
+	// bare ID, such as jane_doe_17, under no key to look it up by.
 	var texts []string
 	for _, message := range history {
 		switch message.Role {
@@ -72,7 +72,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 		var ids []string
 		for _, result := range results {
 			walkIDs(result, "", func(at, id string) {
-				if namesID(at, name) && alphanumeric(id) == wanted {
+				if (at == name || at == "id") && alphanumeric(id) == wanted {
 					returned = true
 				}
 				if entry := fmt.Sprintf("%s (%s)", id, at); !slices.Contains(ids, entry) {
@@ -88,8 +88,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 }
 
 // missingID reports a handed-out ID the tool takes but the call left out, once a tool that
-// makes or finds that thing has returned one. PhoneLLM Max dispatched a technician with no
-// ticket_id right after create_ticket returned T-1842, and the tool ran with none.
+// makes or finds that thing has returned one: a dispatch sent with no ticket_id right after
+// create_ticket returned one runs with none.
 func missingID(history []llm.Message, call llm.ToolCall, tools harness.Tools) (key string, known []string, missing bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -128,7 +128,7 @@ func missingID(history []llm.Message, call llm.ToolCall, tools harness.Tools) (k
 				continue
 			}
 			walkIDs(result, "", func(at, id string) {
-				if entry := fmt.Sprintf("%s (%s)", id, at); namesID(at, name) && !slices.Contains(ids, entry) {
+				if entry := fmt.Sprintf("%s (%s)", id, at); (at == "id" || at == name) && !slices.Contains(ids, entry) {
 					ids = append(ids, entry)
 				}
 			})
@@ -141,8 +141,8 @@ func missingID(history []llm.Message, call llm.ToolCall, tools harness.Tools) (k
 }
 
 // emptyNamed reports a string argument sent empty that the tool's description asks for.
-// MiniMax verified "with PIN, last four of the card or account, and service address" with
-// the address empty, before the caller had finished reading it out. One the description
+// A verification described as needing a PIN and an address, sent with the address empty
+// before the caller had finished reading it out, verifies nothing. One the description
 // offers as an alternative ("member ID or phone") may be left empty.
 func emptyNamed(call llm.ToolCall, tools harness.Tools) (string, bool) {
 	var arguments map[string]any
@@ -159,7 +159,7 @@ func emptyNamed(call llm.ToolCall, tools harness.Tools) (string, bool) {
 			properties, _ = tool.Parameters["properties"].(map[string]any)
 		}
 	}
-	// A string property left out is as empty as one sent as "": MiniMax left the address out.
+	// A string property left out is as empty as one sent as "": an address left out is empty.
 	keys := make([]string, 0, len(arguments)+len(properties))
 	for key := range arguments {
 		keys = append(keys, key)
@@ -201,9 +201,8 @@ func emptyResult(tool, key string) string {
 }
 
 // placeholderName reports a name argument filled with a stand-in for one the caller never
-// gave: PhoneLLM Mini booked tables for "Caller", Qwen for "John Doe". More than four words
-// is suspicious unless a caller or tool supplied them: PhoneLLM Max booked a table under
-// the note that resumes a turn ("Carry on with the caller from what is in your instructions...").
+// gave, such as "Caller" or "John Doe". More than four words is suspicious unless a caller
+// or tool supplied them: a sentence of the agent's own instructions is not anyone's name.
 func placeholderName(history []llm.Message, call llm.ToolCall) (string, bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -273,8 +272,8 @@ func nameWasGiven(history []llm.Message, name string) bool {
 }
 
 // unheardNumber reports an argument of four or more digits that neither the caller nor a
-// tool ever gave. PhoneLLM Max verified with a last four of 1982 for "nine eight two one",
-// and booked a phone of 512550142 for "five one two, five five five, oh one four two".
+// tool ever gave: digits reordered from what the caller said ("nine eight two one" sent as
+// 1982), or a phone number with a digit dropped.
 func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string, heard []string, unheard bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -346,13 +345,13 @@ func unheardResult(key, value string, heard []string) string {
 }
 
 // misspelledName reports a name argument that is not the name the caller spelled out
-// letter by letter. The caller said "The name is Okafor, o k a f o r" and every model booked
-// the transcriber's "Alkafor" or "Alcophor".
+// letter by letter. The caller said "The name is Odenor, o d e n o r" and every model booked
+// the transcriber's "Aldenor" or "Aldinor".
 //
 // A name the caller spelled exactly at some point in the call is let through even where
 // another spelling is close to it: the transcriber hears the same letters differently from
 // one spelling to the next ("n o a h", then "n o a a"), and holding the name to whichever
-// close spelling came first refused Noah and Ivan as the callers had spelled them.
+// close spelling came first refused names exactly as the callers had spelled them.
 func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled string, misspelled bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -389,13 +388,13 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 }
 
 // spelledNames are the names a caller spelled out in one message, lowercase: three or more
-// single letters read out one at a time, "o k a f o r", "P-A-T-E-L", "J. O. H. N.".
+// single letters read out one at a time, "o d e n o r", "P-A-T-E-L", "J. O. H. N.".
 //
 // A spelling's letters are joined by one kind of separator, spaces, commas, hyphens or
 // periods, and a change of separator ends it: in "f i s c h e r. I need" the period ends
 // the sentence, and read as one more letter the "I" made Fischer "fischeri". A letter only
-// counts when it stands alone: in "that's a l v a r e z" the s ends a word, and read as a
-// spelled letter it made Alvarez "Salvarez".
+// counts when it stands alone: in "that's a l m e i d a" the s ends a word, and read as a
+// spelled letter it made Almeida "Salmeida".
 //
 // A caller who says a name and then spells it with the next one in a single breath ("Lay
 // Wilson. That's l e i w i l s o n") gives the transcriber no pause to write. A spelling
@@ -538,16 +537,15 @@ func handedOut(key string, tools []string) bool {
 	return slices.ContainsFunc(tools, func(tool string) bool { return tool != "" && strings.Contains(tool, "_"+entity) })
 }
 
-// walkIDs calls found with every string or number held under "id" or a key ending in "_id",
-// with every one listed under a plural key as the ID of what that key names: τ-bench's
-// get_user_details lists a user's orders as "orders": ["#W5272531"], each an order_id; and
-// and with every key of a map of records under a key that names their collection, which is
-// keyed by the records' IDs: "cards": {"primary": {...}} gives a card_id, primary, though no
-// field of the card repeats it.
+// walkIDs calls found with every string or number held under "id" or a key ending in "_id";
+// with every one listed under a plural key as the ID of what that key names: a profile that
+// lists "orders": ["A-1001"] gives order_id A-1001; and with every key of a map of records
+// under a plural key, which is keyed by the records' IDs: "vehicles": {"van-2": {...}} gives
+// vehicle_id van-2, though no field of the vehicle repeats it.
 func walkIDs(value any, at string, found func(at, id string)) {
 	switch typed := value.(type) {
 	case map[string]any:
-		if keyed := collectionID(at); keyed != "" && keyedByID(typed) {
+		if keyed := listedID(at); keyed != "" && keyedByID(typed) {
 			for name := range typed {
 				found(keyed, name)
 			}
@@ -573,30 +571,11 @@ func walkIDs(value any, at string, found func(at, id string)) {
 	}
 }
 
-// collectionID is the ID key of the records a map under key holds, when key names a
-// collection of them: "card_id" for "cards" or "card_list", "booking_id" for "bookings".
-// A key that names no collection, or no key at all, gives none: the keys of a map nothing
-// calls a collection are not taken for anyone's IDs.
-func collectionID(key string) string {
-	for _, suffix := range []string{"_list", "_map", "_index"} {
-		if entity, ok := strings.CutSuffix(key, suffix); ok && entity != "" {
-			return entity + "_id"
-		}
-	}
-	return listedID(key)
-}
-
-// namesID reports whether an ID found under at is the kind an argument called name takes:
-// at is "id", name itself, or a longer name of the same thing ("credit_card_id" for
-// "card_id").
-func namesID(at, name string) bool {
-	return at == "id" || at == name || strings.HasSuffix(at, "_"+name)
-}
-
 // keyedByID reports whether a map is a collection of records keyed by their IDs: every value
 // is a record, an object that is not itself such a collection. A record's own fields hold
 // values of every kind, so this is never true of one record; and a wrapper such as
-// {"card_list": {...}} holds a collection rather than records, so its key is not an ID.
+// {"fleet": {"vehicles": {...}}} holds a collection rather than records, so its key is not
+// an ID.
 func keyedByID(collection map[string]any) bool {
 	if len(collection) == 0 {
 		return false
@@ -624,7 +603,7 @@ func allObjects(fields map[string]any) bool {
 }
 
 // holdsValue reports whether a result written as text gives wanted as one of its words, as
-// the bare noah_ito_3850 does. wanted is already alphanumeric.
+// a bare ID answered alone does. wanted is already alphanumeric.
 func holdsValue(result, wanted string) bool {
 	return slices.ContainsFunc(strings.FieldsFunc(result, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("_-#", r)
