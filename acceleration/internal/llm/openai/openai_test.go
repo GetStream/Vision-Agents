@@ -304,6 +304,36 @@ func (s *OpenAISuite) TestAResponseTheVendorFailedIsNotCutShort() {
 	s.False(response.TimedOut)
 	s.Equal(llm.StatusFailed, response.Status)
 	s.ErrorContains(stream.Err(), "the model fell over")
+	s.True(llm.Transient(stream.Err()), "a server error is OpenAI's own")
+}
+
+// failedWith is the error a stream ends with when OpenAI sends event as it.
+func (s *OpenAISuite) failedWith(event string) error {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+event+"\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	s.Equal(llm.StatusFailed, drained(stream).Status)
+	return stream.Err()
+}
+
+func (s *OpenAISuite) TestAnErrorEventOnOpenAIsSideIsTransient() {
+	err := s.failedWith(`{"type":"error","code":"rate_limit_exceeded","message":"slow down","param":null,"sequence_number":1}`)
+	s.ErrorContains(err, "slow down")
+	s.True(llm.Transient(err))
+}
+
+func (s *OpenAISuite) TestAFailureOfTheRequestItselfIsNotTransient() {
+	err := s.failedWith(`{"type":"response.failed","response":{"id":"r","status":"failed","error":{"code":"invalid_prompt","message":"not this"}}}`)
+	s.ErrorContains(err, "not this")
+	s.False(llm.Transient(err))
 }
 
 func (s *OpenAISuite) TestTheInstructionsOpenAConversationThatIsReplayed() {

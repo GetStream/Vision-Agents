@@ -620,14 +620,15 @@ func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bo
 		m.mu.Unlock()
 		return m.resume(running, response)
 	}
-	// A provider that fails part way through an answer, overloaded or with its stream
-	// dropped, has failed this attempt, not the work: nothing of it reached the caller, who
-	// hears only the settled answer, so the same question is put once more while the task
-	// is still wanted. Its deadline is not restarted and bounds the second attempt too. A
-	// failure the request itself caused fails again at once, so asking once more is all
-	// that is risked; a second failure settles the task as failed.
-	if running.failure != nil && response.Status == llm.StatusFailed && running.live() &&
-		!running.retried && !m.closed {
+	// A provider that fails part way through an answer for a reason of its own, overloaded,
+	// rate limited or with its stream dropped, has failed this attempt, not the work: nothing
+	// of it reached the caller, who hears only the settled answer, so the same question is
+	// put once more while the task is still wanted. Its deadline is not restarted and bounds
+	// the second attempt too, and a second failure settles the task as failed. A failure the
+	// request itself caused, or one nothing classifies, would only fail again and is paid
+	// for each time, so it settles the task at once.
+	if running.failure != nil && response.Status == llm.StatusFailed && llm.Transient(running.failure) &&
+		running.live() && !running.retried && !m.closed {
 		failed := running.failure
 		running.retried, running.failure = true, nil
 		messages := running.messages

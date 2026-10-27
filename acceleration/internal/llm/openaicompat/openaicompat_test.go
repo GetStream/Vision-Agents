@@ -246,6 +246,26 @@ func (s *OpenAICompatSuite) ask(provider *LLM, params llm.ResponseParams) (
 	return stream.Response(), events
 }
 
+// failedWith is the error a stream ends with when the provider sends frame after some text.
+func (s *OpenAICompatSuite) failedWith(frame string) error {
+	s.frames = []string{textFrame("Hel"), frame}
+	stream, err := s.provider(Options{}).Create(context.Background(), hello())
+	s.Require().NoError(err)
+	s.Equal(llm.StatusFailed, drain(stream).Status)
+	return stream.Err()
+}
+
+func (s *OpenAICompatSuite) TestAnErrorSentMidStreamWithAServerStatusIsTransient() {
+	s.True(llm.Transient(s.failedWith(`{"error":{"code":503,"message":"try later"}}`)))
+	s.True(llm.Transient(s.failedWith(`{"error":{"type":"server_error","message":"try later"}}`)))
+}
+
+func (s *OpenAICompatSuite) TestAnErrorSentMidStreamAboutTheRequestIsNotTransient() {
+	s.False(llm.Transient(s.failedWith(`{"error":{"code":400,"message":"not this"}}`)))
+	s.False(llm.Transient(s.failedWith(`{"error":{"type":"invalid_request_error","message":"not this"}}`)))
+	s.False(llm.Transient(s.failedWith(`{"error":{"message":"something"}}`)), "nothing named")
+}
+
 // hello is the simplest request a test can make.
 func hello() llm.ResponseParams {
 	return llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}}

@@ -14,6 +14,7 @@ package openaicompat
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -233,6 +235,42 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 			channel: l.channelSplitter(), toolText: l.toolCallSplitter(params),
 		},
 	), nil
+}
+
+// named keeps what a provider said about a failure it sent inside a stream, as an `error`
+// object in an event. Providers on this API fill it in differently, so only two readings are
+// trusted: an HTTP status given as its code, and the names OpenAI's own API gives its side's
+// failures. Anything else is left unclassified.
+func named(err error) error {
+	sent, ok := errors.AsType[*ssestream.StreamError](err)
+	if !ok {
+		return err
+	}
+	var event struct {
+		Error struct {
+			Code json.RawMessage `json:"code"`
+			Type string          `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(sent.Event.Data, &event) != nil {
+		return err
+	}
+	var status int
+	var code string
+	if json.Unmarshal(event.Error.Code, &status) != nil {
+		_ = json.Unmarshal(event.Error.Code, &code)
+	}
+	failure := &llm.ProviderFailure{Err: err, Code: cmp.Or(code, event.Error.Type)}
+	switch {
+	case status != 0:
+		failure.Code, failure.Transient = strconv.Itoa(status), llm.TransientStatus(status)
+	case code == "server_error" || code == "rate_limit_exceeded" ||
+		event.Error.Type == "server_error" || event.Error.Type == "rate_limit_exceeded":
+		failure.Transient = true
+	case failure.Code == "":
+		return err
+	}
+	return failure
 }
 
 // withBody adds the provider's own words to an API error the client could not read them
@@ -488,7 +526,7 @@ func (p *puller) finish(w *llm.ResponseWriter) {
 		w.TimedOut()
 		p.err = err
 	default:
-		p.err = err
+		p.err = named(err)
 	}
 
 	p.upstream.Close()
