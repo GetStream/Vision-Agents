@@ -323,15 +323,19 @@ func nameWasGiven(history []llm.Message, name string) bool {
 	return false
 }
 
-// unheardNumber reports an argument of four or more digits that neither the caller nor a
-// tool ever gave: digits reordered from what the caller said ("six three zero five" sent as
-// 5630), or a phone number with a digit dropped.
-func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string, heard []string, unheard bool) {
+// unheardNumber reports an argument of four or more digits that neither the caller, a tool
+// nor the operator's instructions (told) ever gave, and that is a near miss of a number the
+// caller said (nearMiss): digits reordered from what the caller said ("six three zero five"
+// sent as 5630), or a phone number with a digit dropped. A number that is no near miss is the
+// model's to work out, such as a year from "next year", and is let through.
+func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, value string, heard []string, unheard bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
 		return "", "", nil, false
 	}
-	var sources []string
+	sources := []string{told}
+	// spoken are the numbers the caller said, each as its digits alone.
+	var spoken []string
 	for _, message := range history {
 		switch message.Role {
 		case llm.User:
@@ -341,6 +345,7 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 					heard = append(heard, number)
 				}
 			}
+			spoken = append(spoken, digitGroups(message.Content, withSpokenSeparators(digitsFor(message.Content)))...)
 		case llm.ToolResult:
 			// A refusal quotes the value refused: "56305" refused let 5630 through.
 			if !failedResult(message.Content) {
@@ -348,17 +353,8 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 			}
 		}
 	}
-	var digits []string
-	for _, source := range sources {
-		for _, group := range numberGroup.FindAllString(source, -1) {
-			digits = append(digits, strings.Map(func(r rune) rune {
-				if unicode.IsDigit(r) {
-					return r
-				}
-				return -1
-			}, group))
-		}
-	}
+	spoken = append(spoken, heard...)
+	digits := digitGroups(sources...)
 	keys := make([]string, 0, len(arguments))
 	for name := range arguments {
 		keys = append(keys, name)
@@ -369,11 +365,66 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 		if !ok || len(text) < 4 || !allDigits(text) {
 			continue
 		}
-		if !slices.ContainsFunc(digits, func(said string) bool { return strings.Contains(said, text) }) {
+		if slices.ContainsFunc(digits, func(said string) bool { return strings.Contains(said, text) }) {
+			continue
+		}
+		if slices.ContainsFunc(spoken, func(said string) bool { return nearMiss(text, said) }) {
 			return name, text, heard, true
 		}
 	}
 	return "", "", nil, false
+}
+
+// digitGroups returns every number written in texts (numberGroup) as its digits alone.
+func digitGroups(texts ...string) []string {
+	var digits []string
+	for _, text := range texts {
+		for _, group := range numberGroup.FindAllString(text, -1) {
+			digits = append(digits, strings.Map(func(r rune) rune {
+				if unicode.IsDigit(r) {
+					return r
+				}
+				return -1
+			}, group))
+		}
+	}
+	return digits
+}
+
+// nearMiss reports whether value is a number the caller said, written wrongly in the way a
+// number is misheard or miscopied: the same digits in another order, or one digit dropped. A
+// single digit changed is not counted: it is also what a number worked out from one said
+// looks like, such as next year's from this year's.
+//
+// Numbers said one after another can run together in the transcript ("six three zero five,
+// fourteen" is written 630514), so the number may also be the start or the end of what the
+// caller said.
+func nearMiss(value, said string) bool {
+	for _, length := range []int{len(value), len(value) + 1} {
+		if length > len(said) {
+			continue
+		}
+		for _, part := range []string{said[:length], said[len(said)-length:]} {
+			if part == value {
+				continue
+			}
+			if length == len(value) {
+				a, b := []byte(value), []byte(part)
+				slices.Sort(a)
+				slices.Sort(b)
+				if string(a) == string(b) {
+					return true
+				}
+				continue
+			}
+			for at := range part {
+				if part[:at]+part[at+1:] == value {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 var digitRun = regexp.MustCompile(`\d+`)

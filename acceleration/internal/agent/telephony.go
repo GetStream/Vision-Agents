@@ -476,7 +476,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
 	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
 		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
-	} else if key, value, heard, unheard := unheardNumber(record, requested.Call); unheard {
+	} else if key, value, heard, unheard := unheardNumber(record, requested.Call, told); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
 	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
 		parts = llm.TextParts(misspelledResult(name, spelled))

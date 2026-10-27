@@ -126,18 +126,43 @@ func TestANumberNobodyGaveIsNotSent(t *testing.T) {
 		`{"dob":"1990-11-21"}`:                                    false,
 		`{"slot":"am","amount":"50"}`:                             false,
 	} {
-		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "confirm_member", Arguments: arguments})
+		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "confirm_member", Arguments: arguments}, "")
 		assert.Equal(t, unheard, got, arguments)
 	}
 	refused := append(history,
 		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "confirm_member"}}},
 		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: didNotWork + `"56305" is not four digits.`})
-	_, _, _, got := unheardNumber(refused, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`})
+	_, _, _, got := unheardNumber(refused, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`}, "")
 	assert.True(t, got, "a refusal quoting 56305 does not make 5630 heard")
 
-	_, _, heard, _ := unheardNumber(history, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`})
+	_, _, heard, _ := unheardNumber(history, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`}, "")
 	assert.Contains(t, unheardResult("last4", "5630", heard), "The numbers the caller said are: ")
 	assert.True(t, failedResult(unheardResult("last4", "5630", heard)))
+}
+
+func TestOnlyANearMissOfANumberTheCallerSaidIsRefused(t *testing.T) {
+	history := []llm.Message{
+		{Role: llm.User, Content: "Same trip as this year, two thousand twenty six, but for next year. My member number is four one seven three."},
+	}
+	for arguments, unheard := range map[string]bool{
+		`{"year":"2027"}`:          false,
+		`{"member_number":"4173"}`: false,
+		`{"member_number":"1473"}`: true,
+		`{"member_number":"413"}`:  false,
+		`{"store":"8812"}`:         false,
+	} {
+		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "book_trip", Arguments: arguments}, "")
+		assert.Equal(t, unheard, got, arguments)
+	}
+	tooShort := []llm.Message{{Role: llm.User, Content: "Code four one seven three two."}}
+	_, _, _, got := unheardNumber(tooShort, llm.ToolCall{Name: "redeem", Arguments: `{"code":"4729"}`}, "")
+	assert.False(t, got, "a number nothing like any the caller said")
+	_, _, _, got = unheardNumber(tooShort, llm.ToolCall{Name: "redeem", Arguments: `{"code":"4132"}`}, "")
+	assert.True(t, got, "one digit dropped")
+
+	_, _, _, got = unheardNumber([]llm.Message{{Role: llm.User, Content: "Store eight one two eight, please."}},
+		llm.ToolCall{Name: "check_stock", Arguments: `{"store":"8812"}`}, "Our main store is 8812.")
+	assert.False(t, got, "the operator gave it")
 }
 
 func TestANameIsBookedAsTheCallerSpelledIt(t *testing.T) {
@@ -359,10 +384,10 @@ func TestANumberReadOutInDashedGroupsIsOneNumber(t *testing.T) {
 	for arguments, unheard := range map[string]bool{
 		`{"phone_number":"5552468013"}`:   false,
 		`{"phone_number":"555-246-8013"}`: false,
-		`{"phone_number":"5552468014"}`:   true,
 		`{"phone_number":"2468013555"}`:   true,
+		`{"phone_number":"555246813"}`:    true,
 	} {
-		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "find_customer_by_phone", Arguments: arguments})
+		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "find_customer_by_phone", Arguments: arguments}, "")
 		assert.Equal(t, unheard, got, arguments)
 	}
 }
