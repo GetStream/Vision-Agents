@@ -132,8 +132,8 @@ final class AgentSession {
         // for an app holding one.
         'decisions': 'false',
         if (interim) 'interim': 'true',
-        // The router sends a tool's calls only to a socket that says it runs that tool, so this
-        // one names this session's tools, or none.
+        // The tools this app runs, so the router sends their calls to this socket. Empty when
+        // there are none, so a socket that only watches is never asked to run one.
         'tools': _tools.keys.join(','),
       }),
     );
