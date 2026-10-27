@@ -709,6 +709,34 @@ func (s *StoreSuite) TestAnEditedOneShotWhoseLostWorkerPlacedACallIsCompletedNot
 	s.Empty(again, "the user is not rung a second time")
 }
 
+func (s *StoreSuite) TestAOneShotMovedOffAnOccurrenceWhoseLostWorkerPlacedACallStaysAtItsNewTime() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	took, _, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", claimed[0].Run.ID, "call-1")
+	s.Require().NoError(err)
+	s.Require().True(took)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = now() - interval '1 second'").
+		Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	later := s.base.Add(time.Hour)
+	task.NextRunAt = &later
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+
+	stored, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskActive, stored.State, "the call was for the occurrence the task moved off")
+	s.Require().NotNil(stored.NextRunAt)
+	s.True(later.Equal(*stored.NextRunAt), "%v", stored.NextRunAt)
+	s.Equal(ScheduledTaskRunMissed, s.run(claimed[0].Run.ID).State)
+}
+
 func (s *StoreSuite) TestAOneShotMovedWhileBeingDeliveredLetsThatDeliveryGo() {
 	due := s.base.Add(-time.Minute)
 	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
