@@ -159,10 +159,15 @@ func read[T any](ctx context.Context, s *Store, name string, load func(context.C
 // A deletion that does not land is logged rather than returned: the write it followed has
 // already happened, and refusing it afterwards would tell the caller their change was
 // rejected when it was not. The TTL is what covers the difference.
+//
+// The deletion goes out even when the request has been cancelled since the write: rueidis
+// returns the context's error before it sends anything, so neither the DEL nor the PING
+// would reach Redis and every node would keep the old value until the TTL.
 func (s *Store) forget(ctx context.Context, names ...string) {
 	if s.cache == nil {
 		return
 	}
+	ctx = context.WithoutCancel(ctx)
 	for _, name := range names {
 		if err := s.cache.Del(ctx, name); err != nil {
 			s.logger.Error("could not drop a cached configuration key",
@@ -173,6 +178,7 @@ func (s *Store) forget(ctx context.Context, names ...string) {
 	// a read made as soon as the DEL returns can still be answered by the old copy. The
 	// client reads everything over one connection, in order, so once a PING after the DEL
 	// is answered the invalidation has been applied. A PING that fails needs nothing more:
-	// a broken connection drops every local copy it held.
+	// a broken connection drops every local copy it held, and any other failure is the one
+	// the TTL covers.
 	s.cache.Client().Do(ctx, s.cache.Client().B().Ping().Build())
 }

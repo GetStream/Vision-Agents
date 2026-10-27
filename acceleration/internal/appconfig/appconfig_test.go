@@ -196,6 +196,29 @@ func (s *AppConfigSuite) TestPolicy() {
 		s.Zero(stale.Load(), "reads that failed or answered with the policy from before the save")
 	})
 
+	s.Run("a save whose request is cancelled right after the commit still drops the old value", func() {
+		name := key("policy", "app", fmt.Sprintf("app-%d", time.Now().UnixNano()))
+		for _, node := range []*Store{s.first, s.other} {
+			_, err := read(s.ctx, node, name, func(context.Context) (string, error) {
+				return "before the save", nil
+			})
+			s.Require().NoError(err)
+		}
+
+		cancelled, cancel := context.WithCancel(s.ctx)
+		cancel()
+		s.first.forget(cancelled, name)
+
+		for _, node := range []*Store{s.first, s.other} {
+			s.Eventually(func() bool {
+				now, err := read(s.ctx, node, name, func(context.Context) (string, error) {
+					return "after the save", nil
+				})
+				return err == nil && now == "after the save"
+			}, settleFor, 10*time.Millisecond, "a node still reads the value from before the save")
+		}
+	})
+
 	s.Run("a read that loaded before a save never puts what it loaded back after it", func() {
 		// One node is reading a value from Postgres while a save deletes it, and a second
 		// read of the same value on that node is waiting. Neither may leave the old value in
