@@ -1156,7 +1156,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Keeping a knowledge base filled from a url needs a row, a base and a crawler.
 	// Missing any of those, the url paths say so rather than storing a subscription
 	// nothing would ever honour.
-	pages, err := buildKnowledgeURLs(pgStore, settings.Redis.Addr, base, knowledgeLimits(settings.Knowledge), logger)
+	pages, err := buildKnowledgeURLs(pgStore, settings.Redis, holds, base, knowledgeLimits(settings.Knowledge), logger)
 	if err != nil {
 		return err
 	}
@@ -1927,14 +1927,15 @@ func buildSessions(
 // nobody is listening to can take as long as it takes.
 func buildKnowledgeURLs(
 	pgStore *store.Store,
-	redisAddress string,
+	redis config.Redis,
+	shared rueidis.Client,
 	base *metered.Knowledge,
 	limits ingest.Limits,
 	logger *slog.Logger,
 ) (*urls.Service, error) {
-	if pgStore == nil || redisAddress == "" || base == nil {
+	if pgStore == nil || shared == nil || base == nil {
 		logger.Debug("not serving knowledge urls",
-			"database", pgStore != nil, "redis", redisAddress != "", "knowledge", base != nil)
+			"database", pgStore != nil, "redis", shared != nil, "knowledge", base != nil)
 		return nil, nil
 	}
 
@@ -1946,12 +1947,22 @@ func buildKnowledgeURLs(
 
 	return urls.New(urls.Options{
 		Store:     pgStore,
-		Redis:     asynq.RedisClientOpt{Addr: redisAddress},
+		Redis:     queueRedis(redis, shared),
 		Reader:    reader,
 		Knowledge: base,
 		Limits:    limits,
 		Logger:    logger,
 	})
+}
+
+// queueRedis is how asynq reaches redis, the Redis shared is a client of. asynq does not find
+// out for itself whether that is a cluster, and a client of one node is answered MOVED for
+// every key another shard holds, so it is told what rueidis found when it connected.
+func queueRedis(redis config.Redis, shared rueidis.Client) asynq.RedisConnOpt {
+	if shared.Mode() == rueidis.ClientModeCluster {
+		return asynq.RedisClusterClientOpt{Addrs: []string{redis.Addr}, Username: redis.Username, Password: redis.Password}
+	}
+	return asynq.RedisClientOpt{Addr: redis.Addr, Username: redis.Username, Password: redis.Password}
 }
 
 // newKnowledge is the knowledge base every lookup and write goes through, recorded by
