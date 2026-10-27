@@ -242,31 +242,33 @@ func placeholderName(history []llm.Message, call llm.ToolCall) (string, bool) {
 	return "", false
 }
 
-// noteRun is how many words in a row a value has to share with a router note to have been
-// taken from it. Two words such as "the caller" turn up anywhere; three in the note's own order
-// do not turn up in a name by chance.
-const noteRun = 3
-
 // formatVerb is a fmt verb, where a note written as a format string has words of its own.
 var formatVerb = regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z]`)
 
-// fromNote reports whether text repeats noteRun or more words, in order, of a note the router
-// writes into the conversation itself: the harness's (harness.Notes) and the agent's own
-// (composeNote, approvalSilence).
+// noteSentence ends a sentence of a note.
+var noteSentence = regexp.MustCompile(`[.?!;:]`)
+
+// fromNote reports whether text was taken from a note the router writes into the
+// conversation itself, the harness's (harness.Notes) and the agent's own (composeNote,
+// approvalSilence): it is three or more words lying wholly inside one of them, or it holds one
+// of their sentences whole. A name that only shares a few words with a note, "On With The
+// Show" with "Carry on with the caller", is not taken from it.
 func fromNote(text string) bool {
-	words := func(text string) []string {
-		return strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	words := func(text string) string {
+		return " " + strings.Join(strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		}), " ") + " "
 	}
 	said := words(text)
-	var notes []string
 	for _, note := range append(harness.Notes(), composeNote, approvalSilence) {
-		notes = append(notes, formatVerb.Split(note, -1)...)
-	}
-	for _, note := range notes {
-		joined := " " + strings.Join(words(note), " ") + " "
-		for at := 0; at+noteRun <= len(said); at++ {
-			if strings.Contains(joined, " "+strings.Join(said[at:at+noteRun], " ")+" ") {
+		for _, part := range formatVerb.Split(note, -1) {
+			if len(strings.Fields(said)) >= 3 && strings.Contains(words(part), said) {
 				return true
+			}
+			for _, sentence := range noteSentence.Split(part, -1) {
+				if sentence := words(sentence); len(strings.Fields(sentence)) >= 3 && strings.Contains(said, sentence) {
+					return true
+				}
 			}
 		}
 	}

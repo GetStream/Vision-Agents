@@ -181,11 +181,11 @@ func (c *toolCallSplitter) nextCall() (start, skip, partial int) {
 }
 
 // nextBareCall finds an offered tool's name written straight into the answer with its
-// arguments, `check_outage{}` or `verify_account(pin=4471)`, with no marker or prefix ahead of
-// it: a caller has heard a whole repair flow read out that way, and none of it was done. The name
-// has to start a word and be followed at once by its brace or parenthesis. Such a call is only
-// made when nothing but space follows it (held): a tool named in a sentence, "you can use
-// send_note(to=...) for that", is words.
+// arguments, `get_weather{}` or `send_note(to="ana")`, with no marker or prefix ahead of it.
+// A model that writes its calls as text sometimes drops the marker, and the call would
+// otherwise be read out instead of made. The name has to start a word and be followed at
+// once by its brace or parenthesis. Such a call is only made when nothing but space follows
+// it (held): a tool named in a sentence, "you can use send_note(to=...) for that", is words.
 func (c *toolCallSplitter) nextBareCall() int {
 	at := -1
 	for tool := range c.tools {
