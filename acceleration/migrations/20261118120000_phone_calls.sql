@@ -39,7 +39,6 @@ CREATE TABLE phone_calls (
 );
 
 CREATE INDEX phone_calls_customer_call_idx ON phone_calls (customer_id, call_id, id DESC);
-CREATE INDEX phone_calls_call_idx ON phone_calls (call_type, call_id);
 -- Only the tokens still to sweep.
 CREATE INDEX phone_calls_placed_idx ON phone_calls (placed_at) WHERE token IS NOT NULL;
 
