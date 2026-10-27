@@ -79,7 +79,9 @@ func (s *ThreadChannelSuite) TestThePeoplesMessagesAreHistoryOnceAnswered() {
 
 	s.Require().NoError(err)
 	s.Equal([]llm.Message{
-		{Role: llm.User, Content: "is the build green?"},
+		// AI-2014: the author goes with the turn, as their Stream user, and their name, which
+		// the bridge sets to the provider's id for them, goes nowhere.
+		{Role: llm.User, Content: "is the build green?", Author: "U1"},
 		{Role: llm.Assistant, Content: "It is."},
 	}, history)
 }
