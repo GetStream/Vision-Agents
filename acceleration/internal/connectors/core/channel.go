@@ -126,10 +126,27 @@ type MessageRule struct {
 	// (AI-2092). It wins over Text when both are set; Text stays beside it so a build that
 	// does not know TextParts, after a rollback, still reads a stored revision's text.
 	TextParts string `yaml:"text_parts,omitempty" json:"text_parts,omitempty"`
+	// Media is where the files sent with a message are, such as Linq's media parts (AI-2094).
+	// Absent: a message is read without files, as before.
+	Media *MediaRule `yaml:"media,omitempty" json:"media,omitempty"`
 	// Addressed is when a message speaks to the connection's own account, such as its bot in
 	// a channel of people. A message that does not starts no thread: it is answered only on a
 	// thread already linked. Empty: every message does, as before (AI-989).
 	Addressed *AddressRule `yaml:"addressed,omitempty" json:"addressed,omitempty"`
+}
+
+// MediaRule is where each file of a message is: URL and MIMEType are paths through the same
+// element, at their last [*], which is past Each and starts with it when there is one, as
+// TextParts does. A file is an element where both are found; one with only one of them, such
+// as a text part or a link card, is not a file.
+type MediaRule struct {
+	URL      string `yaml:"url" json:"url"`
+	MIMEType string `yaml:"mime_type" json:"mime_type"`
+}
+
+// element is the path of the element a media path reads in: the path up to its last [*].
+func element(path string) string {
+	return path[:strings.LastIndex(path, "[*]")+len("[*]")]
 }
 
 // AddressRule is when a message speaks to the connection's own account: when it has match,
@@ -192,7 +209,7 @@ func (rule MessageRule) mention(metadata map[string]string) (string, bool) {
 func (rule MessageRule) IsZero() bool {
 	return rule.Each == "" && len(rule.Match) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
 		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == "" &&
-		rule.TextParts == "" && rule.Addressed == nil
+		rule.TextParts == "" && rule.Media == nil && rule.Addressed == nil
 }
 
 // ThreadKeyPart is one named part of a thread key.
@@ -543,7 +560,7 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 		if len(steps) < len(each) || !slices.Equal(steps[:len(each)], each) {
 			fail(field, "%q does not start with messages.each, so its pieces are not the message's", path)
 		} else if !slices.ContainsFunc(steps[len(each):], func(step pathStep) bool { return step.index == wildcard }) {
-			fail(field, "%q has no [*] past messages.each, so it reads one value: that is text", path)
+			fail(field, "%q has no [*] past messages.each, so it reads one value, not one for each piece", path)
 		}
 	}
 	if c.Format == FormatForm && msgs.Each != "" {
@@ -630,6 +647,13 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 		checkPath("channel.messages.text", msgs.Text)
 		if msgs.TextParts != "" {
 			checkParts("channel.messages.text_parts", msgs.TextParts)
+		}
+		if media := msgs.Media; media != nil {
+			checkParts("channel.messages.media.url", media.URL)
+			checkParts("channel.messages.media.mime_type", media.MIMEType)
+			if strings.Contains(media.URL, "[*]") && strings.Contains(media.MIMEType, "[*]") && element(media.URL) != element(media.MIMEType) {
+				fail("channel.messages.media", "url %q and mime_type %q differ up to their last [*], so they are not one file's", media.URL, media.MIMEType)
+			}
 		}
 	}
 	m.checkSignals(fail)
@@ -1003,6 +1027,10 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ski
 	if err != nil {
 		return ChannelMessage{}, "", err
 	}
+	media, err := rule.media(root, bound)
+	if err != nil {
+		return ChannelMessage{}, "", err
+	}
 	direct := false
 	if rule.Addressed != nil && len(rule.Addressed.Match) > 0 {
 		direct = true
@@ -1020,6 +1048,7 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ski
 			ThreadKey:         strings.Join(keys, ":"),
 			AuthorID:          author,
 			Text:              text,
+			Media:             media,
 			ProviderMessageID: id,
 		},
 		ThreadParts: parts,
@@ -1039,6 +1068,36 @@ func (rule MessageRule) text(root any, bound []int) (string, error) {
 	}
 	pieces, err := readEvery(root, rule.TextParts, bound)
 	return strings.Join(pieces, "\n"), err
+}
+
+// media is the files of a message: one for each element at media.url's last [*], inside the
+// message bound gives, where both its url and its mime type are found, in order.
+func (rule MessageRule) media(root any, bound []int) ([]Media, error) {
+	if rule.Media == nil {
+		return nil, nil
+	}
+	elements, err := enumerate(root, element(rule.Media.URL))
+	if err != nil {
+		return nil, err
+	}
+	var media []Media
+	for _, at := range elements {
+		if !slices.Equal(at[:len(bound)], bound) {
+			continue
+		}
+		source, hasURL, err := readPath(root, rule.Media.URL, at)
+		if err != nil {
+			return nil, err
+		}
+		mime, hasMIME, err := readPath(root, rule.Media.MIMEType, at)
+		if err != nil {
+			return nil, err
+		}
+		if hasURL && hasMIME {
+			media = append(media, Media{URL: source, MIMEType: mime})
+		}
+	}
+	return media, nil
 }
 
 // Reply is the URL and JSON body that send one reply, from the channel block's templates. A
