@@ -119,6 +119,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### Sandbox code can no longer write through a method-override header
+
+Under the egress proxy broker, a request from sandbox code to a connector's host that carries `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` now gets the read-only 403 and reaches no host. Google runs a GET with `X-HTTP-Method-Override: POST` as the POST, so a read-only Google grant let code write with the connection's token (AI-2120).
+
 ### An iMessage photo's caption is answered
 
 A Linq message's text is now every text part joined by a newline, not only the first part: a caption an iPhone sends after a photo got no reply before. A connection takes `linq` revision 2 at its next write. A channel manifest reads text in pieces with `messages.text_parts` (AI-2092).
