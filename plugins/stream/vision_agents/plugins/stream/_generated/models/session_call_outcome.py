@@ -20,15 +20,15 @@ class SessionCallOutcome:
 
     Attributes:
         answered_at (datetime.datetime | Unset): When the person picked up: their phone joined the call.
-        duration_seconds (int | Unset): How long they talked, from answered_at to when their phone left. Absent until it
-            has.
+        duration_seconds (int | Unset): How long they talked, from answered_at to when their phone left, rounded to the
+            nearest second. Absent until it has.
         outcome (CallOutcome | Unset): How a placed call ended.
             completed: the person answered and the call ended.
             busy: the line was busy or the person declined.
             no_answer: it rang until the ring timeout.
             failed: the vendor could not place it, for a bad number or a carrier fault.
             canceled: the vendor says the call was hung up before an answer.
-            unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+            unknown: the vendor reports nothing about how it ended, and the phone never joined.
     """
 
     answered_at: datetime.datetime | Unset = UNSET

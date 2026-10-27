@@ -1530,7 +1530,7 @@ components:
         no_answer: it rang until the ring timeout.
         failed: the vendor could not place it, for a bad number or a carrier fault.
         canceled: the vendor says the call was hung up before an answer.
-        unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+        unknown: the vendor reports nothing about how it ended, and the phone never joined.
       enum:
         - completed
         - busy
@@ -3135,6 +3135,9 @@ components:
           type: string
         instructions:
           type: string
+        outcome:
+          $ref: '#/components/schemas/CallOutcome'
+          description: How the call to them ended, once it has. The state still says only whether they were rung.
         state:
           enum:
             - pending
@@ -7722,7 +7725,7 @@ components:
           format: date-time
           type: string
         duration_seconds:
-          description: How long they talked, from answered_at to when their phone left. Absent until it has.
+          description: How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
           format: int64
           type: integer
         outcome:

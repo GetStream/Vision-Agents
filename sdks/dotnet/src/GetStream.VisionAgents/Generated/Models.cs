@@ -4589,6 +4589,12 @@ namespace GetStream.VisionAgents.Models
         public string? Instructions { get; set; } = default!;
 
         /// <summary>
+        /// How the call to them ended, once it has. The state still says only whether they were rung.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("outcome")]
+        public string? Outcome { get; set; } = default!;
+
+        /// <summary>
         /// One of `pending`, `calling`, `done`, `failed`.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("state")]
@@ -11350,7 +11356,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset? AnsweredAt { get; set; } = default!;
 
         /// <summary>
-        /// How long they talked, from answered_at to when their phone left. Absent until it has.
+        /// How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("duration_seconds")]
         public long? DurationSeconds { get; set; } = default!;

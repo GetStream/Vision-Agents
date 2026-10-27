@@ -5,7 +5,7 @@ import StreamCore
 final class SessionCallOutcome: Sendable, Codable, JSONEncodable {
     /// When the person picked up: their phone joined the call.
     let answeredAt: Date?
-    /// How long they talked, from answered_at to when their phone left. Absent until it has.
+    /// How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
     let durationSeconds: Int?
     /// How a placed call ended.
     /// completed: the person answered and the call ended.
@@ -13,7 +13,7 @@ final class SessionCallOutcome: Sendable, Codable, JSONEncodable {
     /// no_answer: it rang until the ring timeout.
     /// failed: the vendor could not place it, for a bad number or a carrier fault.
     /// canceled: the vendor says the call was hung up before an answer.
-    /// unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+    /// unknown: the vendor reports nothing about how it ended, and the phone never joined.
     let outcome: CallOutcome?
 
     init(answeredAt: Date? = nil, durationSeconds: Int? = nil, outcome: CallOutcome? = nil) {

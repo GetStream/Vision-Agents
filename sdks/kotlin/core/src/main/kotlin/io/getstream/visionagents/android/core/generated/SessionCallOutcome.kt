@@ -38,7 +38,7 @@ import kotlinx.serialization.encoding.Encoder
  * How the call the router placed for a session ended.
  *
  * @param answeredAt When the person picked up: their phone joined the call.
- * @param durationSeconds How long they talked, from answered_at to when their phone left. Absent until it has.
+ * @param durationSeconds How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
  * @param outcome 
  */
 @Serializable
@@ -49,7 +49,7 @@ internal data class SessionCallOutcome (
     @SerialName(value = "answered_at")
     val answeredAt: kotlin.String? = null,
 
-    /* How long they talked, from answered_at to when their phone left. Absent until it has. */
+    /* How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has. */
     @SerialName(value = "duration_seconds")
     val durationSeconds: kotlin.Long? = null,
 

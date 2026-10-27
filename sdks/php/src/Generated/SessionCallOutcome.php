@@ -16,7 +16,7 @@ final readonly class SessionCallOutcome
     public function __construct(
         // When the person picked up: their phone joined the call.
         public ?\DateTimeImmutable $answeredAt = null,
-        // How long they talked, from answered_at to when their phone left. Absent until it has.
+        // How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent unti...
         public ?int $durationSeconds = null,
         // How the call ended. Absent while it is ringing or under way.
         public CallOutcome|string|null $outcome = null,

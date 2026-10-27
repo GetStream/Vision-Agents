@@ -2088,7 +2088,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "Contact" => {
-          properties: %w[attempts call_id error id instructions state to_number vendor_call_id].freeze,
+          properties: %w[attempts call_id error id instructions outcome state to_number vendor_call_id].freeze,
           required: %w[attempts id state to_number].freeze, open: false
         }.freeze,
         "ContactsRequest" => {

@@ -4968,7 +4968,7 @@ export type components = {
          *     no_answer: it rang until the ring timeout.
          *     failed: the vendor could not place it, for a bad number or a carrier fault.
          *     canceled: the vendor says the call was hung up before an answer.
-         *     unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+         *     unknown: the vendor reports nothing about how it ended, and the phone never joined.
          * @enum {string}
          */
         readonly CallOutcome: "completed" | "busy" | "no_answer" | "failed" | "canceled" | "unknown";
@@ -5857,6 +5857,8 @@ export type components = {
             readonly error?: string;
             readonly id: string;
             readonly instructions?: string;
+            /** @description How the call to them ended, once it has. The state still says only whether they were rung. */
+            readonly outcome?: components["schemas"]["CallOutcome"];
             /** @enum {string} */
             readonly state: "pending" | "calling" | "done" | "failed";
             readonly to_number: string;
@@ -8550,7 +8552,7 @@ export type components = {
             readonly answered_at?: string;
             /**
              * Format: int64
-             * @description How long they talked, from answered_at to when their phone left. Absent until it has.
+             * @description How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
              */
             readonly duration_seconds?: number;
             /** @description How the call ended. Absent while it is ringing or under way. */

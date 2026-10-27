@@ -2102,7 +2102,7 @@ busy: the line was busy or the person declined.
 no_answer: it rang until the ring timeout.
 failed: the vendor could not place it, for a bad number or a carrier fault.
 canceled: the vendor says the call was hung up before an answer.
-unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.*/
+unknown: the vendor reports nothing about how it ended, and the phone never joined.*/
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3928,6 +3928,9 @@ pub struct Contact {
     pub id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub instructions: ::std::option::Option<::std::string::String>,
+    ///How the call to them ended, once it has. The state still says only whether they were rung.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub outcome: ::std::option::Option<CallOutcome>,
     pub state: ContactState,
     pub to_number: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -9841,7 +9844,7 @@ pub struct SessionCallOutcome {
     ///When the person picked up: their phone joined the call.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub answered_at: ::std::option::Option<::std::string::String>,
-    ///How long they talked, from answered_at to when their phone left. Absent until it has.
+    ///How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub duration_seconds: ::std::option::Option<i64>,
     ///How the call ended. Absent while it is ringing or under way.

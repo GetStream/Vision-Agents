@@ -3885,7 +3885,7 @@ type CallEvent struct {
 // no_answer: it rang until the ring timeout.
 // failed: the vendor could not place it, for a bad number or a carrier fault.
 // canceled: the vendor says the call was hung up before an answer.
-// unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+// unknown: the vendor reports nothing about how it ended, and the phone never joined.
 type CallOutcome string
 
 // CallToken defines model for CallToken.
@@ -4847,9 +4847,18 @@ type Contact struct {
 	CallId *string `json:"call_id,omitempty"`
 
 	// Error Why they could not be rung, when they could not be.
-	Error        *string      `json:"error,omitempty"`
-	Id           string       `json:"id"`
-	Instructions *string      `json:"instructions,omitempty"`
+	Error        *string `json:"error,omitempty"`
+	Id           string  `json:"id"`
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Outcome How a placed call ended.
+	// completed: the person answered and the call ended.
+	// busy: the line was busy or the person declined.
+	// no_answer: it rang until the ring timeout.
+	// failed: the vendor could not place it, for a bad number or a carrier fault.
+	// canceled: the vendor says the call was hung up before an answer.
+	// unknown: the vendor reports nothing about how it ended, and the phone never joined.
+	Outcome      *CallOutcome `json:"outcome,omitempty"`
 	State        ContactState `json:"state"`
 	ToNumber     string       `json:"to_number"`
 	VendorCallId *string      `json:"vendor_call_id,omitempty"`
@@ -7809,7 +7818,7 @@ type SessionCallOutcome struct {
 	// AnsweredAt When the person picked up: their phone joined the call.
 	AnsweredAt *time.Time `json:"answered_at,omitempty"`
 
-	// DurationSeconds How long they talked, from answered_at to when their phone left. Absent until it has.
+	// DurationSeconds How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
 	DurationSeconds *int64 `json:"duration_seconds,omitempty"`
 
 	// Outcome How a placed call ended.
@@ -7818,7 +7827,7 @@ type SessionCallOutcome struct {
 	// no_answer: it rang until the ring timeout.
 	// failed: the vendor could not place it, for a bad number or a carrier fault.
 	// canceled: the vendor says the call was hung up before an answer.
-	// unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+	// unknown: the vendor reports nothing about how it ended, and the phone never joined.
 	Outcome *CallOutcome `json:"outcome,omitempty"`
 }
 

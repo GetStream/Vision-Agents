@@ -34,7 +34,7 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * How a placed call ended. completed: the person answered and the call ended. busy: the line was busy or the person declined. no_answer: it rang until the ring timeout. failed: the vendor could not place it, for a bad number or a carrier fault. canceled: the vendor says the call was hung up before an answer. unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+ * How a placed call ended. completed: the person answered and the call ended. busy: the line was busy or the person declined. no_answer: it rang until the ring timeout. failed: the vendor could not place it, for a bad number or a carrier fault. canceled: the vendor says the call was hung up before an answer. unknown: the vendor reports nothing about how it ended, and the phone never joined.
  *
  * Values: completed,busy,no_answer,failed,canceled,unknown,unknown_default_open_api
  */

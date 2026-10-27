@@ -7,7 +7,7 @@ import StreamCore
 /// no_answer: it rang until the ring timeout.
 /// failed: the vendor could not place it, for a bad number or a carrier fault.
 /// canceled: the vendor says the call was hung up before an answer.
-/// unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+/// unknown: the vendor reports nothing about how it ended, and the phone never joined.
 final class CallOutcome: RawRepresentable, Codable, Hashable, Sendable {
     let rawValue: String
 

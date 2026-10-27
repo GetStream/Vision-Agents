@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.call_outcome import CallOutcome
 from ..models.contact_state import ContactState
 from ..types import UNSET, Unset
 
@@ -24,6 +25,13 @@ class Contact:
         call_id (str | Unset): The call this contact became, which is what the call paths take.
         error (str | Unset): Why they could not be rung, when they could not be.
         instructions (str | Unset):
+        outcome (CallOutcome | Unset): How a placed call ended.
+            completed: the person answered and the call ended.
+            busy: the line was busy or the person declined.
+            no_answer: it rang until the ring timeout.
+            failed: the vendor could not place it, for a bad number or a carrier fault.
+            canceled: the vendor says the call was hung up before an answer.
+            unknown: the vendor reports nothing about how it ended, and the phone never joined.
         vendor_call_id (str | Unset):
     """
 
@@ -34,6 +42,7 @@ class Contact:
     call_id: str | Unset = UNSET
     error: str | Unset = UNSET
     instructions: str | Unset = UNSET
+    outcome: CallOutcome | Unset = UNSET
     vendor_call_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -51,6 +60,10 @@ class Contact:
         error = self.error
 
         instructions = self.instructions
+
+        outcome: str | Unset = UNSET
+        if not isinstance(self.outcome, Unset):
+            outcome = self.outcome.value
 
         vendor_call_id = self.vendor_call_id
 
@@ -70,6 +83,8 @@ class Contact:
             field_dict["error"] = error
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
+        if outcome is not UNSET:
+            field_dict["outcome"] = outcome
         if vendor_call_id is not UNSET:
             field_dict["vendor_call_id"] = vendor_call_id
 
@@ -92,6 +107,13 @@ class Contact:
 
         instructions = d.pop("instructions", UNSET)
 
+        _outcome = d.pop("outcome", UNSET)
+        outcome: CallOutcome | Unset
+        if isinstance(_outcome, Unset):
+            outcome = UNSET
+        else:
+            outcome = CallOutcome(_outcome)
+
         vendor_call_id = d.pop("vendor_call_id", UNSET)
 
         contact = cls(
@@ -102,6 +124,7 @@ class Contact:
             call_id=call_id,
             error=error,
             instructions=instructions,
+            outcome=outcome,
             vendor_call_id=vendor_call_id,
         )
 
