@@ -1487,7 +1487,8 @@ read, and so does adding the page again.
 go run ./cmd/knowledge -customer examples -namespace docs ../docs ../README.md
 ```
 
-A namespace belongs to a customer: turbopuffer stores it as `<customer>__<namespace>`, so two
+A namespace belongs to a customer: turbopuffer stores it as `<customer>__<slug>-<hash>`, a
+readable slug of the namespace and a hash of it as given (`examples__docs-<16 hex>`), so two
 apps that both say `default` never read each other's. `-customer` is the app id the agent
 runs under.
 
