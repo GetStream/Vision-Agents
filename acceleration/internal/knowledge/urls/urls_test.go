@@ -309,25 +309,40 @@ func (s *URLsSuite) TestARefreshDuringAReadIsThatRead() {
 		"the refresh read the page a second time")
 }
 
-func (s *URLsSuite) TestAReindexDuringAReadReadsThePageOnceMore() {
-	// Someone asking to read the page again after it changed is not answered by a read that
-	// may have fetched it before they asked.
-	reading, release := s.holdReads()
-	defer release()
-	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
-	s.Require().NoError(err)
-	<-reading
+func (s *URLsSuite) TestAskingToReadDuringAReadReadsThePageOnceMore() {
+	// Someone asking to read the page again, by reindexing it or adding it again, is not
+	// answered by a read that may have fetched it before they asked.
+	wanted := Subscription{Namespace: "docs", URL: "https://example.com/pricing"}
+	for name, ask := range map[string]func(store.KnowledgeURL) error{
+		"reindexed": func(page store.KnowledgeURL) error {
+			_, err := s.service.Reindex(s.ctx, page.CustomerID, page.ID)
+			return err
+		},
+		"added again": func(store.KnowledgeURL) error {
+			_, err := s.service.Add(s.ctx, "acme", wanted)
+			return err
+		},
+	} {
+		s.Run(name, func() {
+			s.reader.mu.Lock()
+			s.reader.reads = 0
+			s.reader.mu.Unlock()
+			reading, release := s.holdReads()
+			defer release()
+			page, err := s.service.Add(s.ctx, "acme", wanted)
+			s.Require().NoError(err)
+			<-reading
 
-	_, err = s.service.Reindex(s.ctx, page.CustomerID, page.ID)
-	s.Require().NoError(err)
-	_, err = s.service.Reindex(s.ctx, page.CustomerID, page.ID)
-	s.Require().NoError(err)
-	release()
+			s.Require().NoError(ask(page))
+			s.Require().NoError(ask(page))
+			release()
 
-	s.Eventually(func() bool { return s.readsMade() == 2 }, 10*time.Second, 20*time.Millisecond,
-		"the reindex was not read")
-	s.Never(func() bool { return s.readsMade() > 2 }, 500*time.Millisecond, 20*time.Millisecond,
-		"asking twice during one read reads the page once more, not twice")
+			s.Eventually(func() bool { return s.readsMade() == 2 }, 10*time.Second, 20*time.Millisecond,
+				"the page was not read again")
+			s.Never(func() bool { return s.readsMade() > 2 }, 500*time.Millisecond, 20*time.Millisecond,
+				"asking twice during one read reads the page once more, not twice")
+		})
+	}
 }
 
 func (s *URLsSuite) TestAddingAPageQueuesItsReadRatherThanWaitingOnIt() {
