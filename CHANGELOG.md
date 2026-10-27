@@ -133,6 +133,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### A key refused while voices are listed or cloned is counted
+
+The voice library (ElevenLabs, Cartesia, Inworld) and voice cloning (ElevenLabs, Cartesia, Fish) send their requests on the provider's key pool, as speech does. A 401 or 402 on them is counted in `router_keypool_refused_attempts_total` under the provider's key variable, and a 429 moves to the next key. Before, they sent on the first key outside the pool, so a refused key went uncounted there. One voice client keeps to one key while that key is not resting, so a cloned voice is looked up and deleted on the account that made it.
+
 ### Every 401 and 402 on a pooled key is counted as refused
 
 `router_keypool_refused_attempts_total` now counts every 401 and 402 a provider answers on a pooled key, whatever the body says, with `status` `401` or `402`. Before, it counted one only when the body said `quota_exceeded`, so Gemini's 402 "prepayment credits are depleted" raised no `key_refused` alert. Which keys rest and when a request moves to the next key is unchanged (AI-2123).

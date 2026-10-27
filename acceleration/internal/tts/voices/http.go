@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -59,13 +60,15 @@ func (f *form) done() (io.Reader, string, error) {
 	return &f.body, f.writer.FormDataContentType(), nil
 }
 
-// client is the HTTP client a cloner uses. It is a field rather than the default so a test
-// can point one at a server of its own.
-func client(timeout time.Duration) *http.Client {
+// client is the HTTP client a provider uses. Every request that carries the key goes out on
+// a key from keys, put where auth says, so a key the vendor refuses is counted and rested as
+// it is on a call. It keeps to one key while that key is not resting: a cloned voice belongs
+// to the account of the key that made it, and is looked up and deleted there.
+func client(keys *keypool.Pool, auth keypool.Auth, timeout time.Duration) *http.Client {
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
-	return &http.Client{Timeout: timeout}
+	return keys.Pin().WrapClient(&http.Client{Timeout: timeout}, auth)
 }
 
 // speak posts a JSON synthesis request and reads the audio it answers with. The content
