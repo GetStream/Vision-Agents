@@ -53,16 +53,21 @@ func (g Grant) covers(host string) bool {
 
 // covers says whether host is one of hosts: exact hosts, or *. and a domain.
 func covers(hosts []string, host string) bool {
-	for _, named := range hosts {
-		if domain, wildcard := strings.CutPrefix(named, "*."); wildcard {
+	return named(hosts, host) != ""
+}
+
+// named is the entry of hosts that covers host, or "" when none does.
+func named(hosts []string, host string) string {
+	for _, entry := range hosts {
+		if domain, wildcard := strings.CutPrefix(entry, "*."); wildcard {
 			if host == domain || strings.HasSuffix(host, "."+domain) {
-				return true
+				return entry
 			}
-		} else if host == named {
-			return true
+		} else if host == entry {
+			return entry
 		}
 	}
-	return false
+	return ""
 }
 
 // granted says whether any grant covers host.
@@ -73,6 +78,18 @@ func (r Record) granted(host string) bool {
 		}
 	}
 	return false
+}
+
+// hostLabel is how the metrics name host: the entry of a grant's hosts that covers it, which
+// the connector's manifest wrote, so a wildcard names the domain once whatever the sandbox
+// asks for under it; "other" for a host no grant covers.
+func (r Record) hostLabel(host string) string {
+	for _, grant := range r.Grants {
+		if entry := named(grant.Hosts, host); entry != "" {
+			return entry
+		}
+	}
+	return otherHost
 }
 
 // allowed says whether host is one of the config's allowed domains.
