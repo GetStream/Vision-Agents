@@ -105,6 +105,41 @@ func (s *SandboxSuite) TestALinearAppConnectionOfRevisionOneNeedsAReconnect() {
 	s.True(one.ReadsAsConnection(latest))
 }
 
+// From revision 4, BigQuery's REST API host, read with GETs and with one SELECT per jobs.query
+// POST (AI-2114).
+func (s *SandboxSuite) TestBigQueryGivesASandboxItsTokenForSELECTsOfTheRESTAPI() {
+	bigquery := s.manifest("bigquery")
+	s.Equal(4, bigquery.Revision)
+	s.Require().NotEmpty(bigquery.Schemes)
+
+	for _, scheme := range bigquery.Schemes {
+		resolved, err := bigquery.Resolve(scheme, nil, nil)
+		s.Require().NoError(err, scheme)
+
+		s.Equal(&core.SandboxRule{Env: "BIGQUERY_TOKEN", Hosts: []string{"bigquery.googleapis.com"},
+			Reads: []core.SandboxRead{{Host: "bigquery.googleapis.com", Path: "/bigquery/v2/projects/*/queries", SQL: true}}},
+			resolved.Sandbox, scheme)
+	}
+}
+
+// Revision 4 adds the block itself, so a connection pinned to revision 3 is outdated and gives
+// the sandbox nothing until it is reconnected; the block is all that differs.
+func (s *SandboxSuite) TestABigQueryConnectionOfRevisionThreeNeedsAReconnect() {
+	raw, err := fs.ReadFile(providers.FS, "bigquery.yaml")
+	s.Require().NoError(err)
+	before, _, found := strings.Cut(string(raw), "\nsandbox:\n")
+	s.Require().True(found)
+	three, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 4\n", "revision: 3\n", 1)))
+	s.Require().NoError(err)
+	s.Equal(3, three.Revision)
+	s.Nil(three.Sandbox)
+
+	latest := s.manifest("bigquery")
+	s.False(three.ReadsAsConnection(latest))
+	latest.Sandbox = nil
+	s.True(three.ReadsAsConnection(latest))
+}
+
 // The router refuses two sandbox bindings with the same env (internal/api/configs.go), so no two
 // built-ins may name one.
 func (s *SandboxSuite) TestNoTwoBuiltInsShareASandboxEnv() {
@@ -126,14 +161,15 @@ func (s *SandboxSuite) TestNoTwoBuiltInsShareASandboxEnv() {
 // (git grep -n '^sandbox' b7187f622 -- acceleration/internal/connectors/providers: nothing); on
 // 8e132bd37 only github.yaml has one (the same grep); on b1cfbd31d github.yaml and
 // google_drive.yaml (the same grep), and linear_app.yaml adds the third. linear.yaml has none:
-// its DCR token gets 401 from api.linear.app/graphql (AI-2082).
+// its DCR token gets 401 from api.linear.app/graphql (AI-2082). On e1a71dcc4 those three (the
+// same grep), and bigquery.yaml adds the fourth.
 func (s *SandboxSuite) TestNoOtherBuiltInHasASandbox() {
 	files, err := fs.Glob(providers.FS, "*.yaml")
 	s.Require().NoError(err)
 	s.Require().NotEmpty(files)
 	for _, file := range files {
 		id := strings.TrimSuffix(file, ".yaml")
-		if id == "github" || id == "google_drive" || id == "linear_app" {
+		if id == "github" || id == "google_drive" || id == "linear_app" || id == "bigquery" {
 			continue
 		}
 		s.Nil(s.manifest(id).Sandbox, id)

@@ -12,8 +12,8 @@
 #         google_calendar.yaml quotes it.
 id: bigquery
 # A new revision for any change to what this file says; see AGENTS.md. 2 lists the tools
-# that only read. 3 takes execute_sql_readonly out of them.
-revision: 3
+# that only read. 3 takes execute_sql_readonly out of them. 4 adds the sandbox block (AI-2114).
+revision: 4
 name: BigQuery
 category: Analytics
 # [setup]: «running queries, getting metadata, and listing resources».
@@ -100,3 +100,36 @@ sources:
       - get_table_info
       - get_query_results
       - get_job
+# Code in a session's sandbox reads a placeholder from BIGQUERY_TOKEN, and the sandbox's egress
+# puts the connection's access token in its place only in a request header to these hosts. The
+# name is our own choice: Google documents no env var for a token, so it is `# unverified`, and
+# it differs from the other Google connectors' names (internal/api/configs.go,
+# sandboxBindingsComplaint). Code sends it as «Authorization: Bearer», the header [web] gives an
+# access token in, as google_drive.yaml quotes it. The token carries the one scope scopes.list asks for, bigquery,
+# which reads and writes; under the proxy broker the reads below keep code to reads, under
+# Daytona's nothing does. A connection pinned to revision 3 or earlier gets no block until it is
+# reconnected.
+#   [query] https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/jobs/query (opened
+#           2026-10-27, «Last updated 2026-06-30»)
+#   [probe] dry runs of jobs.query, 2026-10-27T19:55Z, billed to a Stream project, writing nothing
+sandbox:
+  env: BIGQUERY_TOKEN
+  hosts:
+    # [query]: «POST https://bigquery.googleapis.com/bigquery/v2/projects/{projectId}/queries».
+    # The REST API's GETs are on the same host: datasets, tables, tabledata.list, jobs.get and
+    # jobs.getQueryResults (GET /bigquery/v2/projects/*/queries/*), which a GET reads, so no read
+    # below is needed for them.
+    - bigquery.googleapis.com
+  # Under the proxy broker a request to this host with a method other than GET or HEAD is
+  # refused, except this one. SQL goes to BigQuery as a POST, a SELECT and a DELETE alike; the
+  # proxy lets a jobs.query POST through only when BigQuery's own dry run of it says its
+  # statementType is SELECT. [probe]: a SELECT, a WITH ... SELECT, CREATE TEMP FUNCTION ...;
+  # SELECT and a legacy SQL SELECT are SELECT; two statements, DECLARE, BEGIN TRANSACTION and
+  # EXECUTE IMMEDIATE are SCRIPT; EXPORT DATA is EXPORT_DATA and CREATE SCHEMA CREATE_SCHEMA, each
+  # creating nothing; a DELETE or an INSERT on a table the token cannot write gets 403 on the
+  # dry run. jobs.insert (POST .../jobs), which client.query() sends, has no read here, so it is
+  # refused.
+  reads:
+    - host: bigquery.googleapis.com
+      path: /bigquery/v2/projects/*/queries
+      sql: true
