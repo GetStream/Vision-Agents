@@ -53,6 +53,43 @@ func (s *DocumentsSuite) TestALongSectionIsCutAgainAndKeepsItsHeading() {
 	}
 }
 
+func (s *DocumentsSuite) TestALongHeadingAndTinyPassagesDoNotMultiplyADocument() {
+	// Every later passage of a section repeats its heading twice, at its top and in its
+	// source, so a long heading over one-character paragraphs grew a document 2,647 times.
+	content := "# " + strings.Repeat("h", 4000) + "\n\n" + strings.Repeat("x\n\n", 1<<17)
+
+	written := 0
+	for _, passage := range Split("pricing.md", content, 1) {
+		written += len(passage.ID) + len(passage.Text) + len(passage.Source)
+	}
+
+	s.Less(written, 3*len(content))
+}
+
+func (s *DocumentsSuite) TestALaterPassageRepeatsOnlyTheStartOfItsHeading() {
+	heading := strings.Repeat("Возврат ", 40)
+	short := string([]rune(heading)[:128])
+	content := "# " + heading + "\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
+
+	passages := Split("refunds.md", content, DefaultChunk)
+
+	s.Require().Greater(len(passages), 1)
+	s.True(strings.HasPrefix(passages[0].Text, "# "+strings.TrimSpace(heading)+"\n\n"), "the first passage keeps the heading whole")
+	for _, passage := range passages[1:] {
+		s.True(strings.HasPrefix(passage.Text, "## "+short+"\n\n"), passage.Text[:200])
+	}
+	for _, passage := range passages {
+		s.Equal("refunds.md > "+short, passage.Source)
+	}
+}
+
+func (s *DocumentsSuite) TestAChunkSizeUnderTheMinimumIsRaisedToIt() {
+	content := "# Refunds\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
+
+	s.Equal(Split("refunds.md", content, 500), Split("refunds.md", content, 1))
+	s.NotEqual(Split("refunds.md", content, 500), Split("refunds.md", content, 1000), "500 is a size of its own")
+}
+
 func (s *DocumentsSuite) TestASectionThatIsOnlyANameIsNotWorthStoring() {
 	// A heading with the next heading under it says nothing. Handed back as an answer it
 	// gives the model a title where it needed something to read.

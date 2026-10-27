@@ -486,7 +486,7 @@ func (*IndexedKnowledgeDocument) TransformSchema(_ huma.Registry, schema *huma.S
 
 // IngestKnowledgeRequest is the IngestKnowledgeRequest schema.
 type IngestKnowledgeRequest struct {
-	ChunkSize *int                `json:"chunk_size,omitempty" doc:"Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own."`
+	ChunkSize *int                `json:"chunk_size,omitempty" doc:"Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under 500 is raised to 500."`
 	Documents []KnowledgeDocument `json:"documents" minItems:"1" nullable:"false"`
 	Namespace string              `json:"namespace" doc:"The knowledge base to write into, which is what a config's knowledge_namespace names. Knowledge is never shared, so there is no default." example:"docs"`
 }

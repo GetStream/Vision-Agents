@@ -22,6 +22,18 @@ import (
 // enough that a passage still answers the question on its own.
 const DefaultChunk = 1200
 
+// minChunk is the smallest size Split cuts at. Every passage carries its source and its id
+// whatever its size, so tiny passages turn a document into mostly those: one-character
+// paragraphs cut one to a passage grew a document thousands of times.
+const minChunk = 500
+
+// maxHeading is how many characters of a heading are repeated in each later passage of
+// its section and in every passage's source. A heading of any length repeated in every
+// passage is the other half of what multiplied a document. With minChunk, a document's
+// passages are at most about (500 + 256 + 128 + 66) / (500 - 128), about 2.6, times its
+// size, counting a 256-character name, " > " and a 63-byte id.
+const maxHeading = 128
+
 // IDSeparator divides the file a passage came from from its place in that file. Keeping
 // the path in the id is what makes ingesting the same documentation twice an update
 // rather than a second copy of it.
@@ -110,9 +122,10 @@ func readFile(path, name string, size int) ([]knowledge.Document, error) {
 // Split cuts one document into the passages it will be stored as.
 //
 // The name is what a passage says it came from and what its id is keyed by, so it is the
-// path as a reader would recognise it rather than wherever the file happened to be.
+// path as a reader would recognise it rather than wherever the file happened to be. A size
+// under minChunk is raised to it.
 func Split(name, content string, size int) []knowledge.Document {
-	pieces := split(name, content, size)
+	pieces := split(name, content, max(size, minChunk))
 	documents := make([]knowledge.Document, 0, len(pieces))
 	for index, piece := range pieces {
 		documents = append(documents, knowledge.Document{
@@ -176,7 +189,8 @@ type passage struct {
 //
 // The heading is repeated at the top of every piece of a section it was cut from. Without
 // it the second half of a long section is prose with nothing saying what it is about,
-// which is exactly what full-text search needs to match on.
+// which is exactly what full-text search needs to match on. Only its first maxHeading
+// characters are repeated; the first piece keeps the heading line as it was written.
 func split(name, content string, size int) []passage {
 	var passages []passage
 	var heading string
@@ -198,7 +212,7 @@ func split(name, content string, size int) []passage {
 	for _, block := range blocks(content) {
 		if title, ok := headingOf(block); ok {
 			flush()
-			heading = title
+			heading = clip(title, maxHeading)
 			current.WriteString(block + "\n\n")
 			continue
 		}
@@ -283,6 +297,17 @@ func prose(text string) bool {
 		}
 	}
 	return false
+}
+
+// clip is the first n characters of text, cut between characters rather than inside one.
+func clip(text string, n int) string {
+	for index := range text {
+		if n == 0 {
+			return text[:index]
+		}
+		n--
+	}
+	return text
 }
 
 // headingOf reports the title a block opens with, when it opens with one.
