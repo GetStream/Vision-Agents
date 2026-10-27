@@ -121,7 +121,7 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ### A saved policy applies at once and stays applied
 
-The router that saves a policy, an API key or an agent config now reads the new value on its very next request: before, about one read in four made right after the save still got the old value, for up to 60 ms. A read that loaded the old value just before a save can no longer write it back to Redis afterwards, where every router kept reading it for up to an hour. The router now uses rueidis v1.0.79 (AI-2104).
+The router that saves a policy, an API key or an agent config now reads the new value on its very next request: before, about one read in four made right after the save still got the old value, for a few milliseconds. A save whose request was cancelled just after it committed also left the old value in place; it now clears it. A read that loaded the old value just before a save can no longer write it back to Redis afterwards, where every router kept reading it for up to an hour. The router now uses rueidis v1.0.79 (AI-2104).
 
 ### An iMessage photo's caption is answered
 

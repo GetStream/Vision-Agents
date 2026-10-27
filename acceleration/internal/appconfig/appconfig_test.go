@@ -175,7 +175,7 @@ func (s *AppConfigSuite) TestPolicy() {
 		var saves sync.WaitGroup
 		for writer := range 8 {
 			saves.Go(func() {
-				for attempt := range 250 {
+				for attempt := range 1000 {
 					scopeID := fmt.Sprintf("app-%d-%d-%d", time.Now().UnixNano(), writer, attempt)
 					for range 2 {
 						if _, err := s.first.Policy(s.ctx, store.ScopeApp, scopeID); err != nil {
