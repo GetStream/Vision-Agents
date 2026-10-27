@@ -178,40 +178,40 @@ const alreadyCalled = "You already made this exact call and it returned the foll
 const didNotWork = "That did not work: "
 
 // answeredSinceCaller returns the result of an identical call, the same tool with the same
-// arguments, already answered since the caller last spoke. After a result Gemma often asks
-// for the same call again, and run twice a dispatch or a booking is made twice. A call that
-// failed may be tried again, since what failed may not fail twice, and so may one whose result
-// says nothing was done (undoneResult), and code whose result tells the model to run it again
-// now that the user connected what it needed (harness.RunAgain, connected being the bindings
-// the user has connected): answered from that result, the repeat after the user connected got
-// the 401 from before.
+// arguments, already answered since the caller last spoke, while no call since may have
+// changed something. After a result Gemma often asks for the same call again, and run twice
+// a dispatch or a booking is made twice. A call that failed may be tried again, since what
+// failed may not fail twice, and so may one whose result says nothing was done
+// (undoneResult), and code whose result tells the model to run it again now that the user
+// connected what it needed (harness.RunAgain, connected being the bindings the user has
+// connected): answered from that result, the repeat after the user connected got the 401
+// from before.
 //
-// A call that changes something is matched across the whole call: Nemotron booked a table,
-// heard "Yes, please go ahead" and booked it again, and the second booking failed against the
-// first.
+// Once the caller speaks, the same call is theirs to ask for again: a second identical order
+// is a second order. And a call that may have changed something (changedState) ends the
+// match, a read because what it read may no longer be so, a write because it may have been
+// undone or used up by the call in between.
 func answeredSinceCaller(history []llm.Message, call llm.ToolCall, connected []string) (string, bool) {
 	same := func(other llm.ToolCall) bool {
 		return other.Name == call.Name && fillsIn(other.Arguments, call.Arguments)
 	}
-	changes := !readsOnly(call.Name)
-	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
-		// A read asked again after a call that may have changed something reads it again:
-		// what it read before may no longer be so. A call is taken as a change unless its
-		// name says it only reads, which can only cost a read that was not needed.
-		if !changes && changedState(history, i) {
-			return "", false
-		}
+	for i := len(history) - 1; i >= 0 && history[i].Role != llm.User; i-- {
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
 			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) ||
 			call.Name == sandbox.ToolName && harness.RunAgain(history[i].Content, connected) {
 			continue
 		}
-		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
+		for j := i - 1; j >= 0 && history[j].Role != llm.User; j-- {
 			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
 				return asked.ID == history[i].ToolCallID && same(asked)
 			}) {
 				return history[i].Content, true
 			}
+		}
+		// A call is taken as a change unless its name says it only reads, which can only
+		// cost a call that was not needed.
+		if changedState(history, i) {
+			return "", false
 		}
 	}
 	return "", false
@@ -295,10 +295,10 @@ const alreadyRefused = didNotWork + "you already made this exact call with these
 const tryOtherValues = ". Do not call it again with the same values. Read them back to the caller, " +
 	"digit by digit, and ask which one is wrong."
 
-// fillsIn reports whether a later call's arguments are an earlier call's with at most the
-// text arguments it left empty or out filled in, and the others it left out given their
-// zero value. create_reservation went out without the phone, then again with it and
-// "high_chair": false, and the second booking failed against the first.
+// fillsIn reports whether a later call's arguments are an earlier call's, with a key left out
+// taken to be the same as one sent with no value: null or blank text. Any value the earlier
+// call did not have makes a different call: a date added to a booking asks for that date,
+// and even false or zero may not be what the tool does when the key is left out.
 func fillsIn(earlier, later string) bool {
 	if sameArguments(earlier, later) {
 		return true
@@ -308,21 +308,22 @@ func fillsIn(earlier, later string) bool {
 		return false
 	}
 	for key, value := range before {
-		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
-			continue
-		}
-		if !reflect.DeepEqual(value, after[key]) {
+		if !reflect.DeepEqual(value, after[key]) && !(empty(value) && empty(after[key])) {
 			return false
 		}
 	}
 	for key, value := range after {
-		if _, ok := before[key]; !ok {
-			if _, text := value.(string); !text && !reflect.ValueOf(value).IsZero() {
-				return false
-			}
+		if _, ok := before[key]; !ok && !empty(value) {
+			return false
 		}
 	}
 	return true
+}
+
+// empty reports whether an argument has no value: absent, null or blank text.
+func empty(value any) bool {
+	text, isText := value.(string)
+	return value == nil || isText && strings.TrimSpace(text) == ""
 }
 
 // sameArguments compares two calls' arguments as JSON, so spacing and key order do not count.
