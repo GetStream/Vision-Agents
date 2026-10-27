@@ -45,7 +45,7 @@ Staging has a permanent SMS line since 2026-10-23.
 | --- | --- |
 | Number | +1 218 702 1098 (`TELNYX_SMS_NUMBER` in the repo `.env`) |
 | Telnyx messaging profile | `4001a107-bb22-4c6a-b01c-941d9024d596` ("vision-agents mcp_plugins") |
-| Its `webhook_url` | `https://accelerate.gcp.stream-io-api.com/v1/connectors/events/telnyx/4001a107-bb22-4c6a-b01c-941d9024d596` |
+| Its `webhook_url` | `https://accelerate-staging.gcp.stream-io-api.com/v1/connectors/events/telnyx/4001a107-bb22-4c6a-b01c-941d9024d596` |
 | Stream app | 1257545, keys `ATHENA_STREAM_API_KEY` / `ATHENA_STREAM_API_SECRET` (not `STREAM_API_KEY`, which is app 1728173) |
 | Provider app | `4001a107-bb22-4c6a-b01c-941d9024d596`, signing secret `TELNYX_PUBLIC_KEY` |
 | Connection | `81112518ea0565808d658c1464ed801b`, app-owned, token `TELNYX_API_KEY` |
@@ -92,7 +92,7 @@ const now = Math.floor(Date.now() / 1000);
 const input = b({ alg: "HS256", typ: "JWT" }) + "." + b({ server: true, iat: now, exp: now + 3600 });
 process.stdout.write(input + "." + c.createHmac("sha256", process.env.ATHENA_STREAM_API_SECRET).update(input).digest("base64url"));
 ')
-R=https://accelerate.gcp.stream-io-api.com
+R=https://accelerate-staging.gcp.stream-io-api.com
 A=(-H "Authorization: Bearer $TOKEN" -H 'stream-auth-type: jwt' -H 'Content-Type: application/json')
 K="api_key=$ATHENA_STREAM_API_KEY"
 curl -s "$R/v1/agents/connections?connector_id=telnyx&$K" "${A[@]}" | jq '.items[] | {id, status, account_id}'

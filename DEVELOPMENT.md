@@ -78,7 +78,8 @@ there: a customer id left over from local turns authentication off.
 
 Each production region is `https://accelerate-<region>.gcp.stream-io-api.com`, and keeps a
 request in that region: it fails rather than spill into another when that region is full or
-down. Pick another one by name, and it authenticates the way the default does:
+down. Once another region is offered, pick it by name, and it authenticates the way the default
+does:
 
 ```
 STREAM_ACCELERATION_REGION=europe-west4
@@ -86,8 +87,7 @@ STREAM_API_KEY=...
 STREAM_API_SECRET=...
 ```
 
-`STREAM_ACCELERATION_URL=https://accelerate.gcp.stream-io-api.com` is production in whichever
-region is closest with room, and authenticates by itself too.
+Production has no hostname without a region in it.
 
 The regions on offer are `local.accelerate_prod_regions` in `GetStream/chat`'s
 `infra/dns/gcp-stream-io-api-com/accelerate_global_lb.tf`, today `us-east4`. The SDKs check

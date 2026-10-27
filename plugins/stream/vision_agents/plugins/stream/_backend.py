@@ -23,7 +23,6 @@ CUSTOMER_HEADER = "X-Customer-Id"
 USER_HEADER = "X-Stream-User-Id"
 # Stream's hosted router, which is where a client goes when nothing says otherwise.
 DEFAULT_URL = "https://accelerate-us-east4.gcp.stream-io-api.com"
-_GLOBAL_URL = "https://accelerate.gcp.stream-io-api.com"
 
 # How long a token minted here lasts. Short, because it is minted per request and a stolen
 # one should stop working sooner than the credential behind it.
@@ -48,9 +47,7 @@ def region_url(name: str) -> str:
 
 
 def _hosted(url: str) -> bool:
-    """Whether url is the hosted router, in any region or none, which is always behind the proxy."""
-    if url == _GLOBAL_URL:
-        return True
+    """Whether url is the hosted router in some region, which is always behind the proxy."""
     if not url.startswith(_REGION_PREFIX) or not url.endswith(_REGION_SUFFIX):
         return False
     name = url[len(_REGION_PREFIX) : -len(_REGION_SUFFIX)]

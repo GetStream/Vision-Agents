@@ -22,7 +22,6 @@ final readonly class Backend
 {
     /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
     public const string DEFAULT_URL = 'https://accelerate-us-east4.gcp.stream-io-api.com';
-    private const string GLOBAL_URL = 'https://accelerate.gcp.stream-io-api.com';
     public const string URL_ENV = 'STREAM_ACCELERATION_URL';
     /** Holds this SDK to the hosted router in one region, such as us-east4. */
     public const string REGION_ENV = 'STREAM_ACCELERATION_REGION';
@@ -291,14 +290,11 @@ final readonly class Backend
     }
 
     /**
-     * Whether `$url` is the hosted router, in any region or none, which is always behind the
+     * Whether `$url` is the hosted router in some region, which is always behind the
      * proxy.
      */
     private static function hosted(string $url): bool
     {
-        if ($url === self::GLOBAL_URL) {
-            return true;
-        }
         $prefix = 'https://accelerate-';
         $suffix = '.gcp.stream-io-api.com';
         if (!str_starts_with($url, $prefix) || !str_ends_with($url, $suffix)) {

@@ -5,7 +5,8 @@ description: Ship acceleration/cmd/router to Stream's hosted environments. Read 
 
 # Deploy the router
 
-The hosted router behind `accelerate.gcp.stream-io-api.com` is `acceleration/cmd/router`
+The hosted router behind `accelerate-<region>.gcp.stream-io-api.com` (production) and
+`accelerate-staging.gcp.stream-io-api.com` is `acceleration/cmd/router`
 built from this repo. **The deploy lives in Stream's private infra repo** (`GetStream/chat`):
 `infra/docs/accelerate_launch.md` is the runbook, `infra/charts/accelerate/README.md` the
 chart, and the CLI, cluster names and credentials are all there. This repo is public — name
@@ -87,9 +88,10 @@ builds this checkout and swaps it in, in 11-20 s warm.
 
 ## Production
 
-Production is three shards, us-east4, us-west1 and europe-west4, behind
-`accelerate-prod.gcp.stream-io-api.com`; the load balancer sends a caller to the closest
-one, and any shard serves any app. Each runs the router with its own Postgres and Redis
+Production is three shards, us-east4, us-west1 and europe-west4. Each region has its own
+hostname, `accelerate-<region>.gcp.stream-io-api.com`, that reaches only that shard, and
+today only us-east4's is published (`local.accelerate_prod_regions`); it is the SDKs'
+default. Any shard serves any app. Each runs the router with its own Postgres and Redis
 beside the global ones in us-east4 (`acceleration/README.md`, "Shards"). The runbook is
 `infra/docs/accelerate_shards_rollout.md` in the private repo.
 

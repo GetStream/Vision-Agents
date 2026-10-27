@@ -78,15 +78,9 @@ func RegionURL(name string) (string, error) {
 	return "https://accelerate-" + name + ".gcp.stream-io-api.com", nil
 }
 
-// globalURL is the hosted router in whichever region is closest with room.
-const globalURL = "https://accelerate.gcp.stream-io-api.com"
-
-// hosted says whether url is the hosted router, in any region or none, which is always
-// behind the proxy.
+// hosted says whether url is the hosted router in some region, which is always behind
+// the proxy.
 func hosted(url string) bool {
-	if url == globalURL {
-		return true
-	}
 	name, ok := strings.CutPrefix(url, "https://accelerate-")
 	if !ok {
 		return false

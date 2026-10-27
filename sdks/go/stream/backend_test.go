@@ -123,7 +123,7 @@ func TestTheHostedRouterInAnyRegionIsAuthenticated(t *testing.T) {
 	t.Setenv(APIKeyEnv, "ntv9")
 	t.Setenv(APISecretEnv, "shh")
 
-	t.Setenv(URLEnv, "https://accelerate.gcp.stream-io-api.com")
+	t.Setenv(URLEnv, "https://accelerate-europe-west4.gcp.stream-io-api.com")
 	resolved, err := Backend{}.Resolve()
 	if err != nil {
 		t.Fatal(err)
