@@ -69,6 +69,12 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) {
 			continue
 		}
+		// An ID of letters and digits the caller said whole is theirs, whatever they called
+		// it: "logging in as USR001" gives a user ID without saying "user". Only digits need
+		// what they are said with them, because those turn up in speech by chance.
+		if mixesLettersAndDigits(text) && holdsValue(said.String(), wanted) {
+			continue
+		}
 		returned := false
 		var ids []string
 		for _, result := range results {
@@ -603,6 +609,12 @@ func allObjects(fields map[string]any) bool {
 		}
 	}
 	return true
+}
+
+// mixesLettersAndDigits reports whether text holds both, as an identifier does and a number
+// or a word does not.
+func mixesLettersAndDigits(text string) bool {
+	return strings.ContainsFunc(text, unicode.IsLetter) && strings.ContainsFunc(text, unicode.IsDigit)
 }
 
 // holdsValue reports whether a result written as text gives wanted as one of its words, as
