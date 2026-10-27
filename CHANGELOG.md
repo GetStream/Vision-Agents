@@ -2,6 +2,10 @@
 
 ## Features
 
+### Juno on Flutter
+
+`examples/voice_agents/flutter_assistant` is the Flutter half of swift_assistant: Juno, talked to from a Flutter app on iOS and Android with swift_assistant's agent, `configure` and backend, on the Dart SDK and Stream's Flutter AI components (`stream_chat_flutter_ai`). Its conversations are the router's, in a drawer that lists, searches, opens and deletes them, and a new one has no session until it is first written to. The chat is `AIConversationView`, with the reply's reasoning and steps, copy and rating under it, photos from the composer, Think harder, and the composer floating over the conversation. The phone answers `get_local_context`, `get_location`, `list_events`, `add_reminder` (Reminders on iOS, a calendar event with an alert on Android) and `send_email`, asking for each permission the first time a tool needs it. Voice mode starts voice on the open conversation, with Stream's voice glow, paced captions, the approval card over the call and a camera preview, and says which part of the agent failed, as the Android app does. Connector sign-in, the camera seen by the agent, sharing a reply and an install id wait on the Dart SDK and the Flutter AI components.
+
 ### A 1:1 iMessage chat can schedule reminders
 
 An agent answering a Linq (iMessage) chat is now offered the scheduling tools when the chat is 1:1: the latest message says `data.chat.is_group` `false`. The task belongs to the person who wrote, and comes back into the chat, `delivered_to` `imessage`. A group chat, a chat whose message does not say, and a chat linked before this release get no tools; a chat that becomes a group loses them, and its tasks fail `thread_gone`. Migration `20261116100000_channel_thread_people` adds the table `channel_thread_people` (AI-1867).
