@@ -65,9 +65,18 @@ func newStubLLM() *stubLLM {
 func (s *stubLLM) Start(context.Context) error { return nil }
 
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	// The script is kept with the request, under one lock: a test that waits for the request
+	// and then settles it would otherwise find no script yet (AI-2027).
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	hold, provider, model := s.holdCreate, cmp.Or(s.writtenBy[0], s.Provider()), cmp.Or(s.writtenBy[1], s.Model())
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   cmp.Or(s.writtenBy[0], s.Provider()),
+		Model:      cmp.Or(s.writtenBy[1], s.Model()),
+	})
+	s.scripts[params.ID] = script
+	s.order = append(s.order, params.ID)
+	hold := s.holdCreate
 	s.mu.Unlock()
 
 	if hold != nil {
@@ -78,15 +87,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		}
 	}
 
-	script := llmtest.New(llm.StreamOptions{
-		ResponseID: params.ID,
-		Provider:   provider,
-		Model:      model,
-	})
-
 	s.mu.Lock()
-	s.scripts[params.ID] = script
-	s.order = append(s.order, params.ID)
 	answer, queued := s.answers[params.ID]
 	if !queued && s.automatic != "" {
 		answer, queued = s.automatic, true
