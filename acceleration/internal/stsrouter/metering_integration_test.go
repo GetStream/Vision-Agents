@@ -453,6 +453,16 @@ func (s *MeteringSuite) settledReply(session *Session, id string) {
 	s.FailNow("the session closed before " + id + " settled")
 }
 
+// startedReply waits for the session to pass on the reply's start, so the reply is open in it.
+func (s *MeteringSuite) startedReply(session *Session, id string) {
+	for event := range session.Events() {
+		if started, ok := event.(sts.ResponseStarted); ok && started.ResponseID == id {
+			return
+		}
+	}
+	s.FailNow("the session closed before " + id + " started")
+}
+
 // audioOf is the audio each of the customer's rows bills, in the order they were written.
 func (s *MeteringSuite) audioOf(customer string) []int64 {
 	var audio []int64
@@ -479,6 +489,9 @@ func (s *MeteringSuite) TestAnXAIReplyCutOffBeforeItWasCountedBillsItsAudioOnce(
 	session.done("resp_3", 9)
 	s.settledReply(session.Session, "resp_3")
 	session.created("resp_4")
+	// The socket is read on its own goroutine: hanging up before it reads the fourth's
+	// creation leaves no fourth reply open to be cut off.
+	s.startedReply(session.Session, "resp_4")
 	s.Require().NoError(session.ProcessAudio(second, sts.Participant{}))
 	s.closed(session.Session, session.recorder)
 
