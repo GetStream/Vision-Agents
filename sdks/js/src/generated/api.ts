@@ -8522,7 +8522,7 @@ export type components = {
             readonly filter?: {
                 readonly [key: string]: string;
             };
-            /** @description Who the memories belong to. Empty means the customer. */
+            /** @description Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users. */
             readonly user_id?: string;
         };
         /**

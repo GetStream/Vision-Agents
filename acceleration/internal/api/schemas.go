@@ -829,7 +829,7 @@ type Session struct {
 type SessionMemory struct {
 	AppId  *string            `json:"app_id,omitempty" doc:"Separates two deployments sharing one memory account."`
 	Filter *map[string]string `json:"filter,omitempty" doc:"The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it."`
-	UserId *string            `json:"user_id,omitempty" doc:"Who the memories belong to. Empty means the customer."`
+	UserId *string            `json:"user_id,omitempty" doc:"Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users."`
 }
 
 func (*SessionMemory) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

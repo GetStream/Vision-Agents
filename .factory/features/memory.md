@@ -17,7 +17,12 @@ instructions, then hands each finished exchange over to be learned from.
 
 Scoping is as asked: `app_id` is the deployment and `user_id` is the customer, so two
 deployments sharing one mem0 account do not read each other's memories. Without an app id
-nothing is stored, which is the "calls without auth" case.
+nothing is stored, which is the "calls without auth" case. An end user's device may only open
+its own memories and an anonymous caller none; a backend names any of its users.
+
+There is one `MEM0_API_KEY`, never a pool of them: a mem0 key is scoped to one project, so
+keys taken in turn would spread a user's memories across projects. The live suites run in the
+router's integration workflow with that secret.
 
 ## Both directions stay off the conversation's path
 
@@ -34,5 +39,11 @@ so the provider and route paths do not serve the modality while the statistics p
 
 ## Not done
 
-Nothing outstanding. Only mem0 is implemented, which is what was asked; the contract is what a
-second provider would implement.
+Only mem0 is implemented, which is what was asked; the contract is what a second provider
+would implement.
+
+- **Truncating a user leaves what mem0 filed under the agent.** mem0 attributes each fact to
+  whoever stated it, so what the agent said carries the agent and run ids but no user id. It is
+  never recalled, and deleting the session forgets it. Accepted.
+- **Claiming a guest does not move its memories** to the account that claimed it.
+  `TestAClaimedGuestsMemoriesMoveToTheUserWhoClaimedThem` is skipped in CI until it does.

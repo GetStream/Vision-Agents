@@ -121,6 +121,14 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### Sandbox code can no longer write through a method-override header
+
+Under the egress proxy broker, a request from sandbox code to a connector's host that carries `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` now gets the read-only 403 and reaches no host. Google runs a GET with `X-HTTP-Method-Override: POST` as the POST, so a read-only Google grant let code write with the connection's token (AI-2120).
+
+### An end user's device opens only its own memories
+
+A session created by an end user's device (`POST /v1/agents/sessions` or the session socket's start frame) with a `memory.user_id` other than the caller's own user id is refused with `403`, and an anonymous caller naming any `memory.user_id` is refused too. Before, a signed-in user could name another user of the same app, read that user's memories through the agent and add to them. A backend may still name any of its users. `MEM0_API_KEY` is read as one key: a comma-separated list or `MEM0_API_KEY_1` is no longer taken as a pool, since a mem0 key belongs to one project.
+
 ### An iMessage photo's caption is answered
 
 A Linq message's text is now every text part joined by a newline, not only the first part: a caption an iPhone sends after a photo got no reply before. A connection takes `linq` revision 2 at its next write. A channel manifest reads text in pieces with `messages.text_parts` (AI-2092).
@@ -136,6 +144,10 @@ A question asked with photos was answered as though none came when the model cal
 ### A knowledge document no longer grows thousands of times when it is cut into passages
 
 Only the first 128 bytes of a heading, cut between characters, are now repeated at the top of each later passage of its section and in each passage's `source`; the first passage keeps the heading as written. A `chunk_size` under 500 on `POST /v1/agents/knowledge` is raised to 500, and so is the URL crawler's and `cmd/knowledge`'s. Before, a long heading over one-character paragraphs with `chunk_size` 1 turned 1 MiB into about 1 GB of passages, and an 8 MiB request could run a router out of memory (AI-1988).
+
+### A knowledge base can have any name
+
+A knowledge base named with a space, a slash or a letter outside A-Z, such as `my docs` or an agent synced from a directory called `Support Bot`, was refused by turbopuffer on every write and lookup. turbopuffer now stores a base as `<customer>__<slug>-<hash>`: a readable slug of the name and 16 hex characters of its SHA-256, so names that read alike, such as `Support Bot` and `support-bot`, stay two bases. Bases written before this release are under their old names and are not read; write them again (AI-1994).
 
 ### The agent tells people apart in a group text chat
 
@@ -240,6 +252,10 @@ Each entry of the router's price list now stores what its item is charged, `pric
 Migration `20261118120000_price_entry_prices` adds `price_entries.sku`, `prices` and `price_tiers` and `requests.sku`, stores every existing entry's price as what it was charged (its rates times its own markup, else the list's in force when it is or was) and gives every item its SKU; the immutability trigger covers the new columns. The usage service's migration `00005_usage_event_sku` adds `usage_events.sku`. `markup_bps` on `price_changes` and `price_entries` is read by nothing and left `NULL` on new rows, and goes in a later release. A router built before this one cannot write a price change against the new schema, and its reads of the list fail until it is replaced, while it keeps pricing with the list it last read.
 
 In the management API, `PriceEntry` and `UpcomingPriceEntry` gain `sku`, `prices` and `price_tiers` and lose `markup_bps`, `charged_markup_bps`, `charged_rates` and `charged_tiers`; `PriceChangeEntry` gains `sku`, `prices` and `price_tiers` and loses `markup_bps`; `PriceList`, `PriceChange` and `PriceChangeInput` lose `markup_bps`; `PriceEntryInput` gains `sku`, `prices` and `price_tiers` and loses `markup_bps`; `PricedEntry` gains `sku`, `prices` and `price_tiers` and loses `markup_bps`, `charged_rates` and `charged_tiers`; `PricePreviewItem` replaces `rate_factors` and `markup_factor` with `price_factors`; `PricePreview` loses `markup_bps_before` and `markup_bps_after`. A change's entry that is neither free nor withdrawn needs `rates` and `prices` with the same meters (else 400 `price_meters_mismatch`) and a price tier for each tier (else 400 `price_tiers_mismatch`); a SKU another item has in force is 400 `sku_in_use`, and another SKU for an item in force 400 `sku_changed`. `confirmation_required` is worked out on prices. `getPrices` gains each item's `sku`; its `rates` and `tiers` are the price, as before. A price file may set `prices`, `price_tiers` and `sku` on an entry; its top-level `markup_bps` is ignored with a warning (AI-2083).
+
+### The price list's `markup_bps` columns are dropped
+
+Migration `20261130120000_drop_price_markup` drops `markup_bps` from `price_changes` and `price_entries`, with its checks, and the trigger that lets a change only be cancelled stops comparing it. Nothing has read the column since `20261118120000_price_entry_prices` stored every entry's price. Every router of a deployment must run a release with that migration before this one: a router built earlier can no longer read the price list once this has run. Down brings the columns back `NULL`; the markups they held do not come back (AI-2083).
 
 ### The call a tool function is handed is named toolCallContext
 
