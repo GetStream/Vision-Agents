@@ -2447,6 +2447,22 @@ func (s *AgentSuite) TestAPictureAScheduledTaskSendsIsLookedAtAsScheduled() {
 	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the picture is the customer's spend")
 }
 
+// A picture sent with no text is still looked at: the vision skill is asked about it.
+func (s *AgentSuite) TestAPictureSentAloneIsLookedAtByTheVisionSkill() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+	picture := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	_, err := s.agent.RespondTo(s.ctx, "", picture, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "the vision task was never asked")
+	s.True(llm.HasImage(s.subagent.requests()[0].Input), "the skill is shown the picture")
+}
+
 func (s *AgentSuite) TestAPhotoIsStillSeenByTheReplyAfterATool() {
 	s.sees = true
 	s.ownsTools("order 1042 is a pair of running shoes")
