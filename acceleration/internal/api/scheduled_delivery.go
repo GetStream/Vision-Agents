@@ -323,7 +323,10 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 		// A send the channel would refuse is refused before the turn that
 		// writes it is paid for.
 		if err := s.reachableText(ctx, delivery, channel); err != nil {
-			return "", "", undelivered(scheduling.ReasonUnreachable, err)
+			if errors.Is(err, channels.ErrUnreachable) {
+				return "", "", undelivered(scheduling.ReasonUnreachable, err)
+			}
+			return "", "", err
 		}
 		text, files, err := s.captureReply(ctx, found, delivery)
 		if err != nil {
@@ -334,16 +337,7 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 		}
 		return channel, found.ID(), nil
 	case store.ScheduledTaskDeliveredPhone:
-		if late := time.Since(delivery.Due); late > scheduledCallGrace {
-			return "", "", &scheduling.Missed{Err: fmt.Errorf("the call would ring %s late", lateFor(late))}
-		}
-		// Ringing somebody the agent is already on a call with is a second
-		// call on top of the first; the occurrence waits for a retry
-		// instead, as every other channel waits the call out.
-		if found.Voicing() {
-			return "", "", undelivered(scheduling.ReasonOnACall, errors.New("the user is on a call"))
-		}
-		return s.deliverByPhone(ctx, delivery, found.Spec().AgentID)
+		return s.deliverByPhone(ctx, delivery, found)
 	default:
 		return "", "", fmt.Errorf("no channel called %s carries a task", channel)
 	}
@@ -505,7 +499,7 @@ func madeBy(event session.Event) []sandbox.Attachment {
 // user now, the words aside.
 func (s *Server) reachableText(ctx context.Context, delivery scheduledDelivery, channel string) error {
 	if s.channels == nil {
-		return errors.New("this router carries no channels")
+		return fmt.Errorf("%w: this router carries no channels", channels.ErrUnreachable)
 	}
 	return s.channels.Reachable(ctx, textNotice(delivery, channel, "", nil))
 }
@@ -817,39 +811,67 @@ func (s *Server) openTaskSession(ctx context.Context, delivery scheduledDelivery
 // config's own instructions, and the task is the call's first turn once
 // somebody picks up, framed as the conversation is sent it. The number rung
 // is the one the user texts this agent from; the number rung from is the
-// agent's own text line, or its WhatsApp one. An occurrence rings once: the
-// call's session is taken on the run before it is placed, so neither a retry
-// nor a worker taking the run over rings the user again. agentID is the
-// agent the conversation is written under, which the call writes as too.
-func (s *Server) deliverByPhone(ctx context.Context, delivery scheduledDelivery, agentID string) (string, string, error) {
+// agent's own text line. An occurrence rings once: the call's session is
+// taken on the run before it is placed, so neither a retry nor a worker
+// taking the run over rings the user again (callEnded). A call the
+// occurrence has no time left to ring and hold is missed, not placed: it
+// would be hung up mid-sentence when the occurrence runs out. The call is
+// taken before anything else is checked, so an attempt after the one that
+// rang says how that call went, whatever would stop this one. found is the
+// session the conversation is held in.
+func (s *Server) deliverByPhone(ctx context.Context, delivery scheduledDelivery, found *session.Session) (string, string, error) {
 	if s.phone == nil {
 		return "", "", errors.New("this router places no calls")
 	}
 	if s.store == nil {
 		return "", "", errors.New("this router has no store to ring from")
 	}
-	config, err := s.store.AgentConfig(ctx, delivery.CustomerID, delivery.ConfigID)
-	if err != nil {
-		return "", "", err
-	}
-	to, err := s.callableNumber(ctx, delivery)
-	if err != nil {
-		return "", "", err
-	}
-	from := config.Channels.Lines()["sms"]
-	if from == "" {
-		from = config.Channels.Lines()["whatsapp"]
-	}
-	if from == "" {
-		return "", "", undelivered(scheduling.ReasonNoLine, errors.New("the agent has no number to call from"))
-	}
 	sessionID := uuid.NewString()
-	took, err := s.store.TakeScheduledTaskRunCall(ctx, delivery.CustomerID, delivery.RunID, sessionID)
+	took, rang, err := s.store.TakeScheduledTaskRunCall(ctx, delivery.CustomerID, delivery.RunID, sessionID)
 	if err != nil {
 		return "", "", err
 	}
 	if !took {
-		return "", "", undeliveredFinally(scheduling.ReasonRungAlready, errors.New("a call was placed for this occurrence already"))
+		return "", "", undeliveredFinally(cmp.Or(rang, scheduling.ReasonRungAlready), errors.New("a call was placed for this occurrence already"))
+	}
+	spec, err := s.placeCall(ctx, delivery, found, sessionID)
+	if err != nil {
+		// A call that was not placed rang nobody, so a later attempt may.
+		if err := s.store.ReleaseScheduledTaskRunCall(context.WithoutCancel(ctx), delivery.CustomerID, delivery.RunID, sessionID); err != nil {
+			s.logger.Error("could not give back a scheduled task's call", "run", delivery.RunID, "error", err)
+		}
+		return "", "", err
+	}
+	return s.carryOutOnCall(ctx, delivery, spec)
+}
+
+// placeCall rings the task's user on the call sessionID the run has taken,
+// and answers the session the call is held in. The call is written under the
+// agent found is written as.
+func (s *Server) placeCall(ctx context.Context, delivery scheduledDelivery, found *session.Session, sessionID string) (session.Spec, error) {
+	if late := time.Since(delivery.Due); late > scheduledCallGrace {
+		return session.Spec{}, &scheduling.Missed{Err: fmt.Errorf("the call would ring %s late", lateFor(late))}
+	}
+	// Ringing somebody the agent is already on a call with is a second
+	// call on top of the first; the occurrence waits for a retry
+	// instead, as every other channel waits the call out.
+	if found.Voicing() {
+		return session.Spec{}, undelivered(scheduling.ReasonOnACall, errors.New("the user is on a call"))
+	}
+	config, err := s.store.AgentConfig(ctx, delivery.CustomerID, delivery.ConfigID)
+	if err != nil {
+		return session.Spec{}, err
+	}
+	to, err := s.callableNumber(ctx, delivery)
+	if err != nil {
+		return session.Spec{}, err
+	}
+	from := config.Channels.Lines()["sms"]
+	if from == "" {
+		return session.Spec{}, undelivered(scheduling.ReasonNoLine, errors.New("the agent has no number to call from"))
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < scheduledPhoneWindow+scheduledCallLimit {
+		return session.Spec{}, &scheduling.Missed{Err: fmt.Errorf("the call would have %s left to ring and be held", lateFor(time.Until(deadline)))}
 	}
 	placed, err := s.phone.Call(ctx, phone.CallRequest{
 		Owner:     routing.Owner{CustomerID: delivery.CustomerID, Attribution: delivery.attribution()},
@@ -858,13 +880,9 @@ func (s *Server) deliverByPhone(ctx context.Context, delivery scheduledDelivery,
 		SessionID: sessionID,
 	})
 	if err != nil {
-		// A call that could not be placed rang nobody, so a later attempt may.
-		if err := s.store.ReleaseScheduledTaskRunCall(context.WithoutCancel(ctx), delivery.CustomerID, delivery.RunID, sessionID); err != nil {
-			s.logger.Error("could not give back a scheduled task's call", "run", delivery.RunID, "error", err)
-		}
-		return "", "", err
+		return session.Spec{}, err
 	}
-	return s.carryOutOnCall(ctx, delivery, callSpec(config, delivery, agentID, placed, from, to))
+	return callSpec(config, delivery, found.Spec().AgentID, placed, from, to), nil
 }
 
 // callSpec is the session a call a task placed is held in: the config as it
@@ -899,7 +917,7 @@ func callSpec(config store.AgentConfig, delivery scheduledDelivery, agentID stri
 func (s *Server) carryOutOnCall(ctx context.Context, delivery scheduledDelivery, spec session.Spec) (string, string, error) {
 	created, err := s.sessions.Create(ctx, spec)
 	if err != nil {
-		return "", "", undeliveredFinally(scheduling.ReasonFailed, err)
+		return "", "", s.callEnded(ctx, delivery, spec.ID, undeliveredFinally(scheduling.ReasonFailed, err))
 	}
 	if err := s.store.SetScheduledTaskSession(ctx, delivery.CustomerID, delivery.TaskID, created.ID()); err != nil {
 		s.logger.Error("could not record the session a scheduled task rang into",
@@ -912,24 +930,37 @@ func (s *Server) carryOutOnCall(ctx context.Context, delivery scheduledDelivery,
 		s.logger.Error("could not end a scheduled task's call", "session", created.ID(), "error", err)
 	}
 	if held != nil {
-		return "", "", held
+		return "", "", s.callEnded(ctx, delivery, spec.ID, held)
 	}
 	return store.ScheduledTaskDeliveredPhone, created.ID(), nil
 }
 
-// callableNumber is the number the task's user is rung on: the one they
-// text this agent from, text messages first, either being a number.
-func (s *Server) callableNumber(ctx context.Context, delivery scheduledDelivery) (string, error) {
-	for _, kind := range []string{"sms", "whatsapp"} {
-		identity, err := s.store.ChannelIdentityByUser(ctx, delivery.CustomerID, delivery.ConfigID, kind, delivery.UserID)
-		if err == nil {
-			return identity.Address, nil
-		}
-		if !errors.Is(err, store.ErrUnknownChannelIdentity) {
-			return "", err
-		}
+// callEnded records on the run the reason the call callID failed under, and
+// answers that failure: a worker taking the run over after this one stopped
+// finds the call placed, and records how it went rather than that it was.
+func (s *Server) callEnded(ctx context.Context, delivery scheduledDelivery, callID string, err error) error {
+	var failure *scheduling.Failure
+	if !errors.As(err, &failure) {
+		return err
 	}
-	return "", undelivered(scheduling.ReasonNoNumber, errors.New("the user has no number to call: they have never texted this agent"))
+	if err := s.store.SetScheduledTaskRunCallReason(context.WithoutCancel(ctx), delivery.CustomerID, delivery.RunID, callID, failure.Reason); err != nil {
+		s.logger.Error("could not record how a scheduled task's call ended", "run", delivery.RunID, "error", err)
+	}
+	return err
+}
+
+// callableNumber is the number the task's user is rung on: the one they
+// text this agent from. A number they only use on WhatsApp is not rung: a
+// person who chose to write there agreed to no call.
+func (s *Server) callableNumber(ctx context.Context, delivery scheduledDelivery) (string, error) {
+	identity, err := s.store.ChannelIdentityByUser(ctx, delivery.CustomerID, delivery.ConfigID, "sms", delivery.UserID)
+	if errors.Is(err, store.ErrUnknownChannelIdentity) {
+		return "", undelivered(scheduling.ReasonNoNumber, errors.New("the user has no number to call: they have never texted this agent"))
+	}
+	if err != nil {
+		return "", err
+	}
+	return identity.Address, nil
 }
 
 // holdCall waits for somebody to pick up a call the task placed, then has

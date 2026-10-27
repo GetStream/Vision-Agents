@@ -583,13 +583,21 @@ func (s *Server) runScheduledTask(ctx context.Context, request *runScheduledTask
 	return &runScheduledTaskResponse{Body: scheduledTaskRunOf(task, run)}, nil
 }
 
-// deliverManualRun delivers a run made by hand and records how it landed.
+// deliverManualRun delivers a run made by hand and records how it landed: a
+// delivery too late to make, such as a call that would ring long after the
+// run was asked for, is missed, as a scheduled occurrence's is.
 func (s *Server) deliverManualRun(task store.ScheduledTask, run store.ScheduledTaskRun) {
 	ctx := context.Background()
 	deliveredTo, sessionID, err := s.DeliverScheduledTask(ctx, store.ClaimedScheduledTask{Task: task, Run: run})
 	state := store.ScheduledTaskRunDelivered
 	failure := ""
-	if err != nil {
+	var late *scheduling.Missed
+	switch {
+	case errors.As(err, &late):
+		state = store.ScheduledTaskRunMissed
+		s.logger.Info("a scheduled task run by hand was too late to deliver",
+			"task", task.ID, "run", run.ID, "error", err)
+	case err != nil:
 		state, failure = store.ScheduledTaskRunFailed, scheduling.ReasonOf(err)
 		s.logger.Error("a scheduled task run by hand did not land",
 			"task", task.ID, "run", run.ID, "error", err)

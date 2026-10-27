@@ -214,6 +214,10 @@ type Notice struct {
 // router does not send, so the write is refused and the caller falls back.
 const whatsappWindow = 24 * time.Hour
 
+// ErrUnreachable is a notice the channel would refuse its user now: they never wrote on it, opted
+// out or are outside its window, or the agent has no line there. Any other error is the router's own.
+var ErrUnreachable = errors.New("channels: the user cannot be reached on this channel")
+
 // Notify sends text and files to one end user on a channel they already talk to the
 // agent on, over the line that agent answers on there.
 //
@@ -270,7 +274,7 @@ func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, st
 	identity, err := s.store.ChannelIdentityByUser(ctx, notice.CustomerID, notice.ConfigID,
 		string(notice.Kind), notice.UserID)
 	if errors.Is(err, store.ErrUnknownChannelIdentity) {
-		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on %s", notice.UserID, notice.Kind))
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: %s has never written on %s", ErrUnreachable, notice.UserID, notice.Kind))
 	}
 	if err != nil {
 		return Account{}, "", "", nil, stack.Wrap(err)
@@ -281,17 +285,23 @@ func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, st
 	}
 	number := config.Channels.Lines()[string(notice.Kind)]
 	if number == "" {
-		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: the agent answers on no %s line", notice.Kind))
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: the agent answers on no %s line", ErrUnreachable, notice.Kind))
 	}
 	account, err := s.store.ChannelAccount(ctx, notice.CustomerID, string(notice.Kind), number)
+	if errors.Is(err, store.ErrUnknownChannelAccount) {
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: the %s line %s is not connected", ErrUnreachable, notice.Kind, number))
+	}
 	if err != nil {
-		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: the %s line %s is not connected: %w", notice.Kind, number, err))
+		return Account{}, "", "", nil, stack.Wrap(err)
 	}
 	line, err := Open(s.secrets, account)
 	if err != nil {
 		return Account{}, "", "", nil, stack.Wrap(err)
 	}
 	if err := s.gate.Allow(ctx, notice.CustomerID, string(notice.Kind), identity.Address); err != nil {
+		if errors.Is(err, dlc.ErrRefused) {
+			err = fmt.Errorf("%w: %w", ErrUnreachable, err)
+		}
 		return Account{}, "", "", nil, err
 	}
 	if notice.Kind == WhatsApp {
@@ -301,18 +311,18 @@ func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, st
 		}
 		switch {
 		case last.IsZero():
-			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on WhatsApp, "+
-				"so there is no window to write first in", identity.Address))
+			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: %s has never written on WhatsApp, "+
+				"so there is no window to write first in", ErrUnreachable, identity.Address))
 		case time.Since(last) > whatsappWindow:
-			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: %s last wrote over a day ago, "+
-				"outside WhatsApp's window for writing first", identity.Address))
+			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: %s last wrote over a day ago, "+
+				"outside WhatsApp's window for writing first", ErrUnreachable, identity.Address))
 		}
 	}
 	thread := identity.Address
 	if notice.Kind == IMessage {
 		thread = identity.Thread
 		if thread == "" {
-			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: there is no iMessage chat with %s to write to", identity.Address))
+			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: there is no iMessage chat with %s to write to", ErrUnreachable, identity.Address))
 		}
 	}
 	provider, ok := For(notice.Kind, s.transport)

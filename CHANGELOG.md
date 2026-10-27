@@ -44,6 +44,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### Scheduled calls ring only SMS numbers, and say why they ended
+
+A scheduled call rings only a number the user texts the agent from, from the agent's SMS line; a WhatsApp-only number is not rung (`no_phone_number`, `no_agent_number`). A call with less than its ring and call limit left in the occurrence, or a run by hand over 15 min late, is `missed`. A run taken over after its call keeps the call's reason, such as `not_answered`, and an edited one-shot whose call was placed is completed rather than rung again. A text channel's own failure, such as a store or line credential error, is `delivery_failed`, not `channel_unreachable`.
+
 ### A repeat created with its start passed runs its whole COUNT from now
 
 A scheduled task created with a repeat whose start has passed, over `POST /v1/agents/scheduled-tasks` or the agent's `schedule_task` tool, now starts at its first occurrence after now: its stored `at` is that occurrence, and its COUNT counts from it. "Daily, three times, from three days ago" is three reminders from tomorrow; before, it was refused as `schedule_in_past`, and one from this morning ran twice. A task stored in the second pass of a fall-back hour keeps that instant when it is read back: its upcoming list starts at its `next_run_at`, and a one-shot paused and resumed inside that hour still runs. The prompt of a one-shot whose occurrence an edit re-dued states the time it was due and how late it is from then, not from the edit (AI-1563, AI-1564, AI-1597).
