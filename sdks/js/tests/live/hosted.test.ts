@@ -48,19 +48,18 @@ function authenticated(headers: Record<string, string>): WebSocketConstructor {
  * token is allowed to reach is the whole of what keeps one person's conversation from
  * another's.
  */
-const acceleration =
-  process.env["STAGING_ACCELERATION_URL"] ?? "https://accelerate-staging.gcp.stream-io-api.com";
-const docs =
-  process.env["STAGING_DOCS_SEARCH_URL"] ?? "https://search-production-98b1.up.railway.app";
+const acceleration = process.env["QA_ACCELERATION_URL"] ?? "";
+const docs = process.env["QA_DOCS_SEARCH_URL"] ?? "https://search-production-98b1.up.railway.app";
 
 const apiKey = process.env["STREAM_API_KEY"] ?? "";
 const apiSecret = process.env["STREAM_API_SECRET"] ?? "";
 
 describe(
-  "staging acceleration",
+  "hosted acceleration",
   {
-    skip:
-      apiKey && apiSecret
+    skip: !acceleration
+      ? "QA_ACCELERATION_URL is not set"
+      : apiKey && apiSecret
         ? await unreachable(acceleration)
         : "STREAM_API_KEY and STREAM_API_SECRET are not set",
   },

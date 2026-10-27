@@ -126,4 +126,4 @@ and check that the pods start and open an existing connection. To roll back, res
   the person's approval.
 - The version is deliberately not in the pod spec. The fetch initContainer's log says which binary a pod started on; after a fastdeploy, ask `--status` instead.
 - A model with no key in that environment drops to the next candidate, and when a strict term like `diarize` leaves none the STT socket just closes on the caller. Check the key before reading that as a bug.
-- Verify from outside: `examples/routers/stt_realtime_example -staging` streams a file through the hosted router and prints which model answered.
+- Verify from outside: `examples/routers/stt_realtime_example -hosted` streams a file through the hosted router and prints which model answered.

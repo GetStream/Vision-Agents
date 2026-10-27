@@ -490,7 +490,7 @@ not in CI: they talk to a deployment, and they skip rather than fail when there 
 talk to — a laptop with no router up, or a checkout with no credentials, is not a broken
 build. `test:local` wants a router on `LOCAL_ACCELERATION_URL`, default
 `http://127.0.0.1:8098`. `test:qa` wants `STREAM_API_KEY` and `STREAM_API_SECRET`, and
-reaches `STAGING_ACCELERATION_URL` and `STAGING_DOCS_SEARCH_URL`. They are the only place
+reaches `QA_ACCELERATION_URL`, which it skips without, and `QA_DOCS_SEARCH_URL`. They are the only place
 the claims above are checked against a real backend rather than against a test one, which
 is worth running before trusting any of them: three of them are `todo` there today, each
 naming what the deployment does instead.

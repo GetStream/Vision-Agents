@@ -5,7 +5,7 @@
 // real is the three models, which are the router's own mock/* providers: they reach no
 // vendor and bill nothing, so the only thing a run measures is the router.
 //
-//	perfbench run -target staging -start 1 -max 128 -hold 90s -out out/before
+//	perfbench run -target benchmark -start 1 -max 128 -hold 90s -out out/before
 //	perfbench compare out/before out/after
 //
 // A run needs STREAM_API_KEY and STREAM_API_SECRET, a router built with
@@ -41,13 +41,8 @@ type hosted struct {
 }
 
 // targets are the hosted routers -target names. benchmark is the release deploys are
-// rehearsed on, so a run there disturbs nobody; staging is the one people use.
+// rehearsed on, so a run there disturbs nobody.
 var targets = map[string]hosted{
-	"staging": {
-		url:       "https://accelerate-staging.gcp.stream-io-api.com",
-		namespace: "accelerate-staging",
-		selector:  "app.kubernetes.io/name=accelerate,app.kubernetes.io/instance=chat-accelerate-staging",
-	},
 	"benchmark": {
 		url:       "https://accelerate-benchmark.gcp.stream-io-api.com",
 		namespace: "accelerate-benchmark",
@@ -55,7 +50,7 @@ var targets = map[string]hosted{
 	},
 }
 
-// hostedContext is the kubectl context both hosted routers are in.
+// hostedContext is the kubectl context the hosted routers are in.
 const hostedContext = "gke_stream-gcp-2026-v2_us-east1_us-east1-acceleration"
 
 func main() {
@@ -81,7 +76,7 @@ func run(args []string) error {
 
 func ramp(args []string) error {
 	flags := flag.NewFlagSet("run", flag.ExitOnError)
-	target := flags.String("target", "staging", "staging, benchmark, or a router URL")
+	target := flags.String("target", "benchmark", "benchmark, or a router URL")
 	label := flags.String("label", "", "what this run is of, for the comparison")
 	agent := flags.String("agent", "perfbench", "the stored config the conversations run")
 	start := flags.Int("start", 1, "how many agents the first step runs")

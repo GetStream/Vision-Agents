@@ -10,10 +10,10 @@
 //
 //	go run .                                    # stt-realtime-fast
 //	go run . -use-case stt-realtime-accurate
-//	go run . -staging
+//	go run . -hosted
 //
 // Needs a router: see acceleration/README.md, then point STREAM_ACCELERATION_URL at it.
-// -staging is the hosted one, which authenticates a Stream app rather than naming a
+// -hosted is Stream's router, which authenticates a Stream app rather than naming a
 // customer, so it needs STREAM_API_KEY and STREAM_API_SECRET instead.
 package main
 
@@ -29,8 +29,6 @@ import (
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
-const staging = "https://accelerate-staging.gcp.stream-io-api.com"
-
 const audio = "saturday_seven_thirty.wav"
 
 // settling is how long the transcripts of the trailing silence are waited for.
@@ -39,7 +37,7 @@ const settling = 3 * time.Second
 func main() {
 	useCase := flag.String("use-case", "stt-realtime-fast",
 		"the config to transcribe under: stt-realtime-fast or stt-realtime-accurate")
-	hosted := flag.Bool("staging", false, "transcribe on the hosted router rather than a local one")
+	hosted := flag.Bool("hosted", false, "transcribe on the hosted router rather than a local one")
 	flag.Parse()
 
 	if err := run(context.Background(), *useCase, *hosted); err != nil {
@@ -55,7 +53,7 @@ func run(ctx context.Context, useCase string, hosted bool) error {
 	// below reads the same either way, which is the point of holding a client.
 	backend := stream.Backend{}
 	if hosted {
-		backend = stream.Backend{URL: staging, Authenticate: true}
+		backend = stream.Backend{URL: stream.DefaultURL, Authenticate: true}
 	}
 	client, err := stream.NewClient(backend)
 	if err != nil {

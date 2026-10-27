@@ -23,7 +23,7 @@ import (
 
 const replicateUsage = `usage: router replicate --from <url> --api-key <key> --api-secret <secret> [flags]
 
-  --from        the deployment to copy from, for example https://accelerate-staging.gcp.stream-io-api.com
+  --from        the deployment to copy from, for example https://accelerate-benchmark.gcp.stream-io-api.com
   --api-key     a server-side key there, vak_live_...
   --api-secret  its secret, vas_live_...
   --as          the app id the rows land under here. Defaults to the one they had
