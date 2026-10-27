@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
@@ -224,6 +226,40 @@ func (s *LinqChannelSuite) TestAVideoIsNotPassedOn() {
 	s.Empty(photoURLs(s.written(aloneChannel, 1)[0]))
 	s.Require().Equal(http.StatusOK, s.streamDelivers(aloneChannel, 0))
 	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+}
+
+// A connection reads a message with its own revision (channelbridge take), so one still on
+// revision 2, until its next write, passes no photo on: the caption is answered from its text,
+// as on revision 2.
+func (s *LinqChannelSuite) TestAConnectionStillOnRevision2PassesNoPhotoOn() {
+	ctx := context.Background()
+	raw, err := fs.ReadFile(providers.FS, "linq.yaml")
+	s.Require().NoError(err)
+	revision2 := strings.NewReplacer("\nrevision: 3\n", "\nrevision: 2\n",
+		"    media:\n      url: $.data.parts[*].url\n      mime_type: $.data.parts[*].mime_type\n", "").Replace(string(raw))
+	s.Require().NotContains(revision2, "mime_type: $")
+	s.Require().NoError(s.store.SeedConnectorDefinitions(ctx, fstest.MapFS{"linq.yaml": {Data: []byte(revision2)}}))
+	// Its credentials are sealed for its revision, so that stays.
+	s.Require().NoError(s.store.WithLockedConnectorConnection(ctx, s.customerID(), s.connection.ID,
+		func(connection *store.ConnectorConnection, _ func() error) (bool, error) {
+			connection.DefinitionRevision = 2
+			return true, nil
+		}))
+	s.answersWith("vision/vision-model")
+	chat, asked := s.utils.uuid(), len(s.vision.requests())
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{s.photo("/photo.jpeg"), linqCaption}), time.Now()))
+	channel := s.threadChannel(chat)
+	stored := s.written(channel, 1)[0]
+	s.Equal("What is in this photo?", stored["text"])
+	s.Empty(photoURLs(stored))
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Equal("Two roses.", s.took(1)[0].text)
+	said := s.lastTurn(s.vision.requests()[asked:])
+	s.Equal("What is in this photo?", said.Content)
+	s.Empty(imagesIn(said))
 }
 
 // answersWith has the line's agent answer with model.
