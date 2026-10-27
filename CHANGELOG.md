@@ -2,6 +2,10 @@
 
 ## Features
 
+### A photo in a thread channel reaches the agent
+
+A message in a `thread-` channel with an image attachment (`type: image`, `image_url` or `asset_url`), with or without text, is answered, and the agent sees the photo; an agent with no vision skill and a model that takes text alone says it cannot see it rather than staying silent (AI-2093).
+
 ### A Node.js tool's parameters can be a Zod schema
 
 `parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.
@@ -115,6 +119,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### An iMessage photo's caption is answered
+
+A Linq message's text is now every text part joined by a newline, not only the first part: a caption an iPhone sends after a photo got no reply before. A connection takes `linq` revision 2 at its next write. A channel manifest reads text in pieces with `messages.text_parts` (AI-2092).
+
 ### OpenAI Realtime bills a caller turn's transcription when the session closes right after it
 
 A session closed as soon as the caller's transcript arrived could lose the row for that transcription: the transcript was passed on before its usage, and closing the session dropped the usage. The usage now goes first, so a transcript that was passed on always has its row (AI-2062).
@@ -208,6 +216,12 @@ A `connectors:` entry in agent.yaml may say `sandbox: true` and `require_approva
 When the provider lists a granted tool with another schema than the one approved, a session's binding now opens with its other tools (while it still offers one tool), also when the binding is required (reported in `connector_unavailable` as `tool_unavailable`) or has sandbox access (the sandbox keeps it), and when the person connects it in the conversation: that login no longer waits until its consent expires. A call of the left-out tool answers `tool_unavailable` with what gives it back: for a tool granted by name or by pattern, an admin's approval of the new schema (`POST /v1/agents/connections/{id}/tools/approve`); for a schema digest the agent config names, saving the config at the new schema. A login's `list_tools` names it under `left_out`. A granted tool the provider no longer lists is still unknown to the session, and still fails a required binding (AI-1932).
 
 ## Breaking Changes
+
+### The SDKs go to production in us-east4 by default
+
+Every SDK's default router is `https://accelerate-us-east4.gcp.stream-io-api.com` in place of `https://accelerate.gcp.stream-io-api.com`, which GetStream/chat#19561 removes along with `accelerate-prod.gcp.stream-io-api.com`: production is only `accelerate-<region>`, and staging moves to `https://accelerate-staging.gcp.stream-io-api.com`. `STREAM_ACCELERATION_URL` names any router, and the new `STREAM_ACCELERATION_REGION` (or the `region` option, `Region` in Go and .NET) another production region by name: `europe-west4` is `https://accelerate-europe-west4.gcp.stream-io-api.com`. Every `accelerate-<region>` host authenticates through the proxy without being asked. A URL, passed in or in `STREAM_ACCELERATION_URL`, wins over a region in the environment; a URL and a region both passed in are refused, as is a name that is not shaped like a region. The Kotlin, Swift and Dart SDKs default to us-east4 too, and build another region's URL with `Backend.regionUrl` (`Backend.regionURL` in Swift). Which regions are served is the load balancer's to say, so another needs no SDK release.
+
+Staging is reached with `STREAM_ACCELERATION_URL=https://accelerate-staging.gcp.stream-io-api.com` and, in every server SDK but Go, `STREAM_ACCELERATION_AUTHENTICATE=1`. `perfbench` drops its `staging` target and defaults to `benchmark`, `stt_realtime_example`'s `-staging` is `-hosted` (the SDK's default router), and the JS `staging.test.ts` is `hosted.test.ts`, reading `QA_ACCELERATION_URL` and `QA_DOCS_SEARCH_URL` and skipping without the first. `DEVELOPMENT.md` lists the variables for local, staging and production.
 
 ### Go and Python refuse tool arguments that do not fit the schema
 

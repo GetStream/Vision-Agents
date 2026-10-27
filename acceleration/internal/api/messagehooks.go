@@ -1,10 +1,12 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -13,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -49,7 +52,45 @@ type messageEvent struct {
 		// under "custom" as the v2 API returns them (Stream Chat docs, «Webhook Events»,
 		// message.new; the classic GET /messages/{id} of an episode card shows the same).
 		Source json.RawMessage `json:"source"`
+		// Attachments are what was sent with the message; a photo on a thread channel is
+		// answered (photos). Read by photos, one at a time, so an attachment of a shape
+		// nothing here expects costs only itself, not the message's text.
+		Attachments json.RawMessage `json:"attachments"`
 	} `json:"message"`
+}
+
+// messageAttachment is the part of a Stream Chat attachment that says whether it is a photo
+// and where it is. An image carries its URL in image_url, as this router writes it
+// (conversation.chatFileAttachments), or in asset_url, as Stream's upload docs write it
+// (https://getstream.io/chat/docs/javascript/file_uploads/).
+type messageAttachment struct {
+	Type     string `json:"type"`
+	ImageURL string `json:"image_url"`
+	AssetURL string `json:"asset_url"`
+	// OGScrapeURL is set on the preview Stream adds for a link in the text, which may be an
+	// image but is no photo anyone sent
+	// (https://getstream.io/chat/docs/javascript/message_format/, «URL Attachment Fields»).
+	OGScrapeURL string `json:"og_scrape_url"`
+}
+
+// photos are the images sent with a message, at most maxRunImages, as many as a run takes.
+func (e messageEvent) photos() []llm.ImagePart {
+	var attachments []json.RawMessage
+	if json.Unmarshal(e.Message.Attachments, &attachments) != nil {
+		return nil
+	}
+	var images []llm.ImagePart
+	for _, raw := range attachments {
+		var attachment messageAttachment
+		if json.Unmarshal(raw, &attachment) != nil {
+			continue
+		}
+		source := cmp.Or(attachment.ImageURL, attachment.AssetURL)
+		if attachment.Type == "image" && source != "" && attachment.OGScrapeURL == "" && len(images) < maxRunImages {
+			images = append(images, llm.ImagePart{URL: source})
+		}
+	}
+	return images
 }
 
 // receiveMessageEvent takes the message events Stream sends and turns a message written to
@@ -120,7 +161,8 @@ func chatHookAttribution(customerID string, event messageEvent) routing.Attribut
 // is delivered here, and a team's channel has nothing on the other end of it. A message
 // carrying a source: everything the agent stores does, whether it is speech it answered as
 // it was said or its own reply, and answering either is the agent talking to itself. And a
-// message with nothing written in it, which an attachment on its own is.
+// message with nothing written in it, which an attachment on its own is, except a photo on a
+// thread channel: the person in an external thread sent it to the agent (answerThread).
 func addressed(event messageEvent) bool {
 	// This namespace belongs to durable session commands, even on older channels
 	// without trigger metadata or when a client omits/forges the source marker.
@@ -130,7 +172,7 @@ func addressed(event messageEvent) bool {
 	if event.ChannelType != chatlog.ChannelType || event.ChannelID == "" {
 		return false
 	}
-	if event.Message.Text == "" {
+	if event.Message.Text == "" && (!strings.HasPrefix(event.ChannelID, conversation.ThreadChannelPrefix) || len(event.photos()) == 0) {
 		return false
 	}
 	return len(event.Message.Source) == 0
@@ -152,6 +194,10 @@ func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body [
 	}
 	if linked {
 		go s.answerThread(origin, thread, event)
+		return
+	}
+	// Only a linked thread answers a photo sent without text (addressed).
+	if event.Message.Text == "" {
 		return
 	}
 	if s.sessions != nil {

@@ -7148,7 +7148,7 @@ pub struct ModelCallTiming {
     ///Request to completed response or failed create.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub duration_ms: ::std::option::Option<f64>,
-    ///Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure.
+    ///Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider's health.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error_code: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -8528,7 +8528,7 @@ pub struct ProviderBenchmark {
 ///`ProviderHealth`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ProviderHealth {
-    ///False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
+    ///False once the health window holds enough requests to judge and their error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
     pub available: bool,
     pub error_rate: f64,
     pub errors: i64,

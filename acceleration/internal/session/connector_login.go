@@ -846,7 +846,7 @@ func (m *Manager) ConnectorConsentFinished(ctx context.Context, customerID, conn
 			return
 		}
 		text := name + " is connected now. Carry on with what I asked for before you needed it."
-		if err := s.FollowUp(context.WithoutCancel(ctx), "login_"+store.NewID(), text); err != nil {
+		if err := s.FollowUp(context.WithoutCancel(ctx), "login_"+store.NewID(), text, nil); err != nil {
 			m.logger.Warn("could not carry on after a login in the conversation", "session", s.id, "error", err)
 		}
 		return

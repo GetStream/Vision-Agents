@@ -9,16 +9,52 @@ use sha2::Sha256;
 use crate::error::{Error, Result};
 
 pub const URL_ENV: &str = "STREAM_ACCELERATION_URL";
+/// Holds this SDK to the hosted router in one region, such as `us-east4`.
+pub const REGION_ENV: &str = "STREAM_ACCELERATION_REGION";
 pub const CUSTOMER_ENV: &str = "STREAM_ACCELERATION_CUSTOMER_ID";
 pub const API_KEY_ENV: &str = "STREAM_API_KEY";
 pub const API_SECRET_ENV: &str = "STREAM_API_SECRET";
 pub const AUTHENTICATE_ENV: &str = "STREAM_ACCELERATION_AUTHENTICATE";
 
 /// Stream's hosted router, which is where a client goes when nothing says otherwise.
-pub const DEFAULT_URL: &str = "https://accelerate.gcp.stream-io-api.com";
+pub const DEFAULT_URL: &str = "https://accelerate-us-east4.gcp.stream-io-api.com";
 
 /// How long a token minted here lasts. Short, because one is minted per request.
 pub const TOKEN_VALIDITY_SECONDS: u64 = 60 * 60;
+
+/// The hosted router held to one region: requests to it are served there and nowhere else,
+/// even when that region is full or down.
+///
+/// Only the shape of the name is checked, such as `us-east4` or `europe-west4`: which
+/// regions are served is the hosted router's to say, so offering another needs no release
+/// of this SDK.
+pub fn region_url(name: &str) -> Result<String> {
+    if !is_region(name) {
+        return Err(Error::configuration(format!(
+            "{name:?} is not a region, such as us-east4"
+        )));
+    }
+    Ok(format!("https://accelerate-{name}.gcp.stream-io-api.com"))
+}
+
+/// Whether `name` is one or more lowercase letters, a hyphen, one or more lowercase letters
+/// and one or more digits, and nothing else.
+fn is_region(name: &str) -> bool {
+    let lowercase = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase());
+    let Some((area, rest)) = name.split_once('-') else {
+        return false;
+    };
+    let place = rest.trim_end_matches(|c: char| c.is_ascii_digit());
+    lowercase(area) && lowercase(place) && place.len() < rest.len()
+}
+
+/// Whether `url` is the hosted router in some region, which is always behind the
+/// proxy.
+fn hosted(url: &str) -> bool {
+    url.strip_prefix("https://accelerate-")
+        .and_then(|rest| rest.strip_suffix(".gcp.stream-io-api.com"))
+        .is_some_and(is_region)
+}
 
 /// Where the router is and who is calling it.
 ///
@@ -29,9 +65,13 @@ pub const TOKEN_VALIDITY_SECONDS: u64 = 60 * 60;
 /// Go, Python and JavaScript SDKs read.
 #[derive(Debug, Clone, Default)]
 pub struct ClientOptions {
-    /// The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted
-    /// router, so only a self-hosted or local router needs it.
+    /// The router's base URL. Falls back to `region`, then `STREAM_ACCELERATION_URL`, then
+    /// `STREAM_ACCELERATION_REGION`, then Stream's hosted router, so only a self-hosted or
+    /// local router needs it.
     pub url: Option<String>,
+    /// Holds this client to Stream's hosted router in one region, such as `us-east4`. It
+    /// cannot be set together with `url`.
+    pub region: Option<String>,
     /// Who the work is billed to, taken at face value, for a router with no keys in front
     /// of it. Falls back to `STREAM_ACCELERATION_CUSTOMER_ID`.
     pub customer_id: Option<String>,
@@ -48,8 +88,8 @@ pub struct ClientOptions {
     /// the sessions opened belong to that user and their own device can reach them.
     pub user_id: Option<String>,
     /// Whether the router is reached through Stream's authenticating proxy, which wants the
-    /// credential spelled its own way. On for the hosted router; anywhere else it falls back
-    /// to `STREAM_ACCELERATION_AUTHENTICATE`.
+    /// credential spelled its own way. On for the hosted router, in any region; anywhere else
+    /// it falls back to `STREAM_ACCELERATION_AUTHENTICATE`.
     pub authenticate: Option<bool>,
     /// The HTTP client to send with, for a caller that wants its own proxy or timeouts.
     pub http: Option<reqwest::Client>,
@@ -71,13 +111,26 @@ pub(crate) struct Backend {
 
 impl Backend {
     pub fn new(options: &ClientOptions) -> Result<Self> {
-        let url = options
-            .url
-            .clone()
-            .or_else(|| env(URL_ENV))
-            .unwrap_or_else(|| DEFAULT_URL.to_string())
-            .trim_end_matches('/')
-            .to_string();
+        Self::with_env(options, env)
+    }
+
+    /// [`Backend::new`], reading the environment through `env`, so a test can say what is in
+    /// it without changing the process's own.
+    fn with_env(options: &ClientOptions, env: impl Fn(&str) -> Option<String>) -> Result<Self> {
+        let url = match (&options.url, &options.region) {
+            (Some(_), Some(_)) => {
+                return Err(Error::configuration("set a url or a region, not both"));
+            }
+            (Some(url), None) => url.clone(),
+            (None, Some(region)) => region_url(region)?,
+            (None, None) => match (env(URL_ENV), env(REGION_ENV)) {
+                (Some(url), _) => url,
+                (None, Some(region)) => region_url(&region)?,
+                (None, None) => DEFAULT_URL.to_string(),
+            },
+        }
+        .trim_end_matches('/')
+        .to_string();
         let customer_id = options
             .customer_id
             .clone()
@@ -101,9 +154,10 @@ impl Backend {
                 String::new()
             }
         });
+        // The hosted router, in any region, is always behind the proxy.
         let authenticate = options
             .authenticate
-            .unwrap_or_else(|| flag(env(AUTHENTICATE_ENV)) || url == DEFAULT_URL);
+            .unwrap_or_else(|| flag(env(AUTHENTICATE_ENV)) || hosted(&url));
 
         if authenticate && api_key.is_empty() {
             return Err(Error::configuration(format!(
@@ -255,4 +309,139 @@ pub(crate) fn env(name: &str) -> Option<String> {
 
 fn flag(value: Option<String>) -> bool {
     value.is_some_and(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An environment holding only `pairs`, read in place of the process's own so tests
+    /// running side by side do not see each other's.
+    fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, value)| key == name && !value.is_empty())
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    const CREDENTIAL: [(&str, &str); 3] = [
+        (CUSTOMER_ENV, "acme"),
+        (API_KEY_ENV, "ntv9"),
+        (API_SECRET_ENV, "shh"),
+    ];
+
+    #[test]
+    fn a_region_is_the_hosted_router_there() {
+        let backend = Backend::with_env(
+            &ClientOptions {
+                region: Some("us-east4".into()),
+                ..Default::default()
+            },
+            environment(&CREDENTIAL),
+        )
+        .unwrap();
+
+        assert_eq!(
+            backend.url,
+            "https://accelerate-us-east4.gcp.stream-io-api.com"
+        );
+        assert!(backend.authenticate);
+    }
+
+    #[test]
+    fn a_region_in_the_environment_gives_way_to_a_url_there() {
+        let local = Backend::with_env(
+            &ClientOptions::default(),
+            environment(&[
+                (CUSTOMER_ENV, "acme"),
+                (REGION_ENV, "us-east4"),
+                (URL_ENV, "http://localhost:8080"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(local.url, "http://localhost:8080");
+
+        let regional = Backend::with_env(
+            &ClientOptions::default(),
+            environment(&[
+                (REGION_ENV, "us-east4"),
+                CREDENTIAL[0],
+                CREDENTIAL[1],
+                CREDENTIAL[2],
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            regional.url,
+            "https://accelerate-us-east4.gcp.stream-io-api.com"
+        );
+        assert!(regional.authenticate);
+    }
+
+    #[test]
+    fn a_region_passed_in_beats_a_url_in_the_environment() {
+        let backend = Backend::with_env(
+            &ClientOptions {
+                region: Some("europe-west4".into()),
+                ..Default::default()
+            },
+            environment(&[
+                (URL_ENV, "http://localhost:8080"),
+                CREDENTIAL[0],
+                CREDENTIAL[1],
+                CREDENTIAL[2],
+            ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            backend.url,
+            "https://accelerate-europe-west4.gcp.stream-io-api.com"
+        );
+    }
+
+    #[test]
+    fn a_url_and_a_region_together_are_refused() {
+        let refused = Backend::with_env(
+            &ClientOptions {
+                url: Some("https://acceleration.example.com".into()),
+                region: Some("us-east4".into()),
+                customer_id: Some("acme".into()),
+                ..Default::default()
+            },
+            environment(&[]),
+        );
+
+        assert!(matches!(refused, Err(Error::Configuration(_))));
+    }
+
+    #[test]
+    fn anything_but_a_region_name_is_refused() {
+        for name in [
+            "US-EAST4",
+            "us-east4.evil.com/x",
+            "us_east4",
+            "useast4",
+            "us-east",
+        ] {
+            let refused = Backend::with_env(
+                &ClientOptions {
+                    region: Some(name.into()),
+                    customer_id: Some("acme".into()),
+                    ..Default::default()
+                },
+                environment(&[]),
+            );
+            match refused {
+                Err(Error::Configuration(message)) => assert!(message.contains(name), "{message}"),
+                other => panic!("{name:?} resolved: {other:?}"),
+            }
+        }
+    }
 }

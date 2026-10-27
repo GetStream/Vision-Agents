@@ -7168,7 +7168,7 @@ export type components = {
              * @description Request to completed response or failed create.
              */
             readonly duration_ms?: number;
-            /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure. */
+            /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider's health. */
             readonly error_code?: string;
             /** Format: int64 */
             readonly input_tokens?: number;
@@ -7927,7 +7927,7 @@ export type components = {
             readonly word_error_rate?: number;
         };
         readonly ProviderHealth: {
-            /** @description False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses. */
+            /** @description False once the health window holds enough requests to judge and their error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses. */
             readonly available: boolean;
             /** Format: double */
             readonly error_rate: number;

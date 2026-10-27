@@ -137,14 +137,18 @@ func (s *RunsSuite) TestARunsSpendIsBrokenDownByItsTags() {
 
 	s.run(CreateRunRequest{ConfigId: s.config("counted/counted-model"), Input: "count me", Tags: &tags})
 
-	// A model call's spend is recorded off the request path, so the run can answer first.
-	s.Require().Eventually(func() bool { return len(s.spend("group_by=review_item")) == 1 },
-		5*time.Second, 20*time.Millisecond)
+	// A model call's spend is recorded off the request path, so the run can answer first. The
+	// session's runtime row carries the tags too and may land before it, so the wait is for
+	// the model call's row: request_count counts it and not the runtime row. The two rows start
+	// at different moments, so across an hour or day boundary they fall in two buckets: read
+	// the sum over buckets.
+	s.Require().Eventually(func() bool {
+		return s.spentBy("review_item")[item].RequestCount == 1
+	}, 5*time.Second, 20*time.Millisecond)
 	for key, value := range tags {
-		buckets := s.spend("group_by=" + key)
-		s.Require().Len(buckets, 1, key)
-		s.Equal(value, buckets[0].Value, key)
-		s.EqualValues(1000, buckets[0].CostMicrosTotal, key)
+		spent := s.spentBy(key)
+		s.Require().Len(spent, 1, key)
+		s.EqualValues(1000, spent[value].CostMicrosTotal, key)
 	}
 }
 
@@ -374,6 +378,19 @@ func (s *RunsSuite) spend(options string) []SpendBucket {
 	var buckets []SpendBucket
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, path, nil, &buckets))
 	return buckets
+}
+
+// spentBy sums the spend grouped by a tag over its buckets, by the tag's value.
+func (s *RunsSuite) spentBy(key string) map[string]SpendBucket {
+	spent := map[string]SpendBucket{}
+	for _, bucket := range s.spend("group_by=" + key) {
+		sum := spent[bucket.Value]
+		sum.Value = bucket.Value
+		sum.CostMicrosTotal += bucket.CostMicrosTotal
+		sum.RequestCount += bucket.RequestCount
+		spent[bucket.Value] = sum
+	}
+	return spent
 }
 
 func (s *RunsSuite) run(body CreateRunRequest) Run {
