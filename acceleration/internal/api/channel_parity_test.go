@@ -178,13 +178,15 @@ func (s *TelnyxSandboxSuite) TestAReplyTelnyxRefusesIsNotCountedAgainstTheDailyL
 	var refused atomic.Bool
 	original := s.telnyx.server.Config.Handler
 	s.telnyx.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if refused.CompareAndSwap(false, true) {
+		if !s.telnyx.earlier(r) && refused.CompareAndSwap(false, true) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		original.ServeHTTP(w, r)
 	})
 
+	s.Equal(http.StatusOK, s.sendsAs(earlierTest(), "late"), "a late send of an earlier test is not the refused one")
+	s.False(refused.Load())
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.Require().Eventually(refused.Load, settleFor, 10*time.Millisecond, "Telnyx was not asked to send the first reply")
 	bridge, ok := s.bridge.(*channelbridge.Bridge)
