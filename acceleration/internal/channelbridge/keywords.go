@@ -100,10 +100,21 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 		return silenced, nil
 	}
 	useCase := b.useCase(ctx, thread)
+	// A chat that is no 1:1 one is a group, whose every answer reaches everyone in it (silenced):
+	// the one STOP confirmation a person is owed goes out, and nothing else while anyone in it is
+	// opted out. muted is whether the answer stays unsent.
+	group := source.chats && thread.ChatPerson == ""
+	muted := false
 	var reply string
 	var err error
 	switch {
 	case stop:
+		if group {
+			muted, err = b.store.OptedOut(ctx, thread.CustomerID, source.recipientOf(message.AuthorID), channel)
+			if err != nil {
+				return false, b.unclaim(ctx, thread, message, err)
+			}
+		}
 		err = b.store.OptOut(ctx, &store.OptOut{
 			CustomerID: thread.CustomerID, Recipient: source.recipientOf(message.AuthorID), Channel: channel, Source: optOutSource,
 		})
@@ -116,6 +127,17 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 	}
 	if err != nil {
 		return false, b.unclaim(ctx, thread, message, err)
+	}
+	if group && !stop {
+		muted, err = b.silenced(ctx, thread)
+		if err != nil {
+			return false, b.unclaim(ctx, thread, message, err)
+		}
+	}
+	if muted {
+		b.logger.Info("dropped a keyword answer to a group with a person who opted out",
+			"connector", message.ConnectorID, "channel", thread.ChannelID)
+		return true, nil
 	}
 	if source.answered != nil && source.answered(message.Raw) {
 		return true, nil
@@ -130,8 +152,8 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 		switch {
 		case errors.As(err, &refused):
 			// Expected, not a failure: Linq refuses every send to a person who texted STOP with
-			// 403, the confirmation included (AI-2016).
-			b.logger.Info("the provider refused a keyword answer: it blocks sends after STOP", "connector", thread.ConnectorID,
+			// 403, the confirmation included (AI-2016). The error carries the cause.
+			b.logger.Info("the provider refused a keyword answer", "connector", thread.ConnectorID,
 				"channel", thread.ChannelID, "error", err)
 		case err != nil:
 			b.logger.Error("could not answer a keyword", "connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)

@@ -600,30 +600,102 @@ func (s *LinqChannelSuite) TestAnAuthorCountsWhenTheChatDoesNotSayItIsAGroup() {
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 }
 
-// A person who texts STOP twice has one live opt-out, confirmed each time as in their own chat.
-// START from someone else does not lift it; their own START does.
+// A person who texts STOP twice has one live opt-out and one confirmation: past it the group
+// gets nothing, not a second confirmation, not an answer to START from someone else, which does
+// not lift it. Their own START does, and is confirmed.
 func (s *LinqChannelSuite) TestAStopSentTwiceInAGroupIsLiftedOnlyByThatPersonsStart() {
-	chat, starter, member := s.utils.uuid(), "+12025550199", "+12025550198"
-	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Hi all"), time.Now()))
+	chat, starter, member := s.silencedGroup()
 	channel := s.threadChannel(chat)
-	s.written(channel, 1)
-	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "STOP"), time.Now()))
-	s.took(1)
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "Stop."), time.Now()))
-	s.Equal(telnyxStopped, s.took(2)[1].text)
 	s.Equal(1, s.liveIMessageOptOuts(member))
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "START"), time.Now()))
-	s.took(3)
 	s.Equal(1, s.liveIMessageOptOuts(member))
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Anyone there?"), time.Now()))
-	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 3 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "START"), time.Now()))
-	s.took(4)
+	s.Equal(telnyxStarted, s.took(2)[1].text)
 	s.Zero(s.liveIMessageOptOuts(member))
 	s.NoError(s.reachable(channel))
+}
+
+// R1.1: HELP from a person who never opted out is not answered in a group another person
+// opted out of: the answer would reach them too.
+func (s *LinqChannelSuite) TestAHelpInAGroupWithAPersonWhoOptedOutIsNotAnswered() {
+	chat, starter, _ := s.silencedGroup()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "HELP"), time.Now()))
+
+	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Contains(s.logged.String(), `level=INFO msg="dropped a keyword answer to a group with a person who opted out" connector=linq channel=`+s.threadChannel(chat))
+}
+
+// R1.1: START from a person who never opted out lifts nothing and is not answered in a group
+// another person opted out of.
+func (s *LinqChannelSuite) TestAStartFromAPersonWhoNeverOptedOutIsNotAnsweredInASilencedGroup() {
+	chat, starter, member := s.silencedGroup()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "START"), time.Now()))
+
+	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Equal(1, s.liveIMessageOptOuts(member))
+}
+
+// R1.1: a person who texts STOP again in a group gets no second confirmation: they had one.
+func (s *LinqChannelSuite) TestASecondStopInAGroupIsNotConfirmedAgain() {
+	chat, _, member := s.silencedGroup()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "STOP"), time.Now()))
+
+	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Equal(1, s.liveIMessageOptOuts(member))
+}
+
+// R1.1: START from one person who opted out is not confirmed in a group a third person stays
+// opted out of; the group stays silent until the last of them texts START, which is confirmed.
+func (s *LinqChannelSuite) TestAStartWhileAnotherPersonStaysOptedOutIsNotAnswered() {
+	chat, starter, member := s.silencedGroup()
+	third := "+12025550197"
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, third, "STOP"), time.Now()))
+	s.Equal(telnyxStopped, s.took(2)[1].text, "a person's first STOP is confirmed, silenced group or not")
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "START"), time.Now()))
+
+	s.Never(func() bool { return len(s.linq.sent()) > 2 }, dropped, 20*time.Millisecond)
+	s.Zero(s.liveIMessageOptOuts(member))
+	channel := s.threadChannel(chat)
+	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, third, "START"), time.Now()))
+	s.Equal(telnyxStarted, s.took(3)[2].text)
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Back again"), time.Now()))
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, s.index(channel, "Back again")))
+	s.Equal("Noted.", s.took(4)[3].text)
+}
+
+// R1.1's control, as on base: in one person's own chat, HELP after STOP and a second STOP are
+// still answered; the answer reaches only them.
+func (s *LinqChannelSuite) TestHelpAndASecondStopInOnePersonsChatAreAnsweredAfterStop() {
+	chat, person := s.utils.uuid(), "+12025550199"
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, person, "STOP"), time.Now()))
+	s.took(1)
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, person, "HELP"), time.Now()))
+	s.Equal(telnyxHelp, s.took(2)[1].text)
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, person, "STOP"), time.Now()))
+	s.Equal(telnyxStopped, s.took(3)[2].text)
+}
+
+// silencedGroup is a group chat a starter opened, in which another member texted STOP and had
+// its one confirmation.
+func (s *LinqChannelSuite) silencedGroup() (chat, starter, member string) {
+	chat, starter, member = s.utils.uuid(), "+12025550199", "+12025550198"
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Hi all"), time.Now()))
+	s.written(s.threadChannel(chat), 1)
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "STOP"), time.Now()))
+	s.Equal(telnyxStopped, s.took(1)[0].text)
+	return chat, starter, member
 }
 
 // A person's STOP in their own chat leaves another person's own chat answered: a 1:1 chat
@@ -680,7 +752,7 @@ func (s *LinqChannelSuite) TestAStopConfirmationLinqRefusesIsLoggedAsExpected() 
 
 	channel := s.threadChannel(chat)
 	s.Require().Eventually(func() bool {
-		return strings.Contains(s.logged.String(), `level=INFO msg="the provider refused a keyword answer: it blocks sends after STOP" connector=linq channel=`+channel)
+		return strings.Contains(s.logged.String(), `level=INFO msg="the provider refused a keyword answer" connector=linq channel=`+channel)
 	}, settleFor, 10*time.Millisecond, "the refused confirmation is logged at INFO")
 	s.NotContains(s.logged.String(), `level=ERROR msg="could not answer a keyword" connector=linq channel=`+channel)
 	s.Empty(s.linq.sent())
