@@ -135,7 +135,7 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ### A bad key that Gemini, xAI, Baseten or Inworld answer with a 400 or 403 is counted as refused
 
-`router_keypool_refused_attempts_total` now also counts a 400 or 403 whose body says the key is not valid, with `status` `400` or `403`: Google's `API_KEY_INVALID` (and the Gemini OpenAI-compatible endpoint's "Please pass a valid API key"), xAI's "Incorrect API key provided", Baseten's "please check the api-key you provided" and Inworld's "Invalid authorization credentials". Any other 400 or 403 is still not counted, and which keys rest is unchanged (AI-2136).
+`router_keypool_refused_attempts_total` now also counts a 400 or 403 whose body says the key is not valid, with `status` `400` or `403`: Google's `API_KEY_INVALID` (and the Gemini OpenAI-compatible endpoint's "Please pass a valid API key"), xAI's "Incorrect API key provided", Baseten's "please check the api-key you provided" and, for a dedicated deployment, "Authentication failed" (403 only), and Inworld's "Invalid authorization credentials" and "API key does not exist or was deleted". Any other 400 or 403 is still not counted, and which keys rest is unchanged (AI-2136).
 
 ### Every 401 and 402 on a pooled key is counted as refused
 
