@@ -7,6 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,6 +48,9 @@ type Grant struct {
 	// Hosts are exact hosts, or *. and a domain, which takes the domain and every name under
 	// it (core.SandboxRule).
 	Hosts []string `json:"hosts"`
+	// Reads are the requests to Hosts that read with a method other than GET and HEAD
+	// (core.SandboxRead): the proxy refuses any other request with such a method.
+	Reads []core.SandboxRead `json:"reads,omitempty"`
 }
 
 // covers says whether host is one of the grant's hosts.
@@ -53,16 +60,21 @@ func (g Grant) covers(host string) bool {
 
 // covers says whether host is one of hosts: exact hosts, or *. and a domain.
 func covers(hosts []string, host string) bool {
-	for _, named := range hosts {
-		if domain, wildcard := strings.CutPrefix(named, "*."); wildcard {
+	return named(hosts, host) != ""
+}
+
+// named is the entry of hosts that covers host, or "" when none does.
+func named(hosts []string, host string) string {
+	for _, entry := range hosts {
+		if domain, wildcard := strings.CutPrefix(entry, "*."); wildcard {
 			if host == domain || strings.HasSuffix(host, "."+domain) {
-				return true
+				return entry
 			}
-		} else if host == named {
-			return true
+		} else if host == entry {
+			return entry
 		}
 	}
-	return false
+	return ""
 }
 
 // granted says whether any grant covers host.
@@ -73,6 +85,43 @@ func (r Record) granted(host string) bool {
 		}
 	}
 	return false
+}
+
+// reads says whether a request with method to target's path on host only reads: a GET or a HEAD,
+// or one of a grant's reads for host. Methods are case-sensitive (RFC 9110 section 9.1), so get
+// is not GET. Only a path as the host gets it, with no escape, dot segment or empty segment, is
+// matched, so no other spelling of a path reaches another resource behind a pattern.
+// git push's first request, a GET of info/refs for git-receive-pack (gitprotocol-http(5),
+// https://git-scm.com/docs/gitprotocol-http, "Smart Clients"), is not a read: git prints the
+// body of a refusal there to the model, and drops the body of a refused POST.
+func (r Record) reads(host, method string, target *url.URL) bool {
+	if method == http.MethodGet || method == http.MethodHead {
+		return !strings.HasSuffix(target.Path, "/info/refs") || !slices.Contains(target.Query()["service"], "git-receive-pack")
+	}
+	at := target.EscapedPath()
+	if at != target.Path || path.Clean(at) != at {
+		return false
+	}
+	for _, grant := range r.Grants {
+		for _, read := range grant.Reads {
+			if matched, _ := path.Match(read.Path, at); matched && read.Method == method && covers([]string{read.Host}, host) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hostLabel is how the metrics name host: the entry of a grant's hosts that covers it, which
+// the connector's manifest wrote, so a wildcard names the domain once whatever the sandbox
+// asks for under it; "other" for a host no grant covers.
+func (r Record) hostLabel(host string) string {
+	for _, grant := range r.Grants {
+		if entry := named(grant.Hosts, host); entry != "" {
+			return entry
+		}
+	}
+	return otherHost
 }
 
 // allowed says whether host is one of the config's allowed domains.

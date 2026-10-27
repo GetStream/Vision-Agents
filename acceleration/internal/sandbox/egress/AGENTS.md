@@ -1,6 +1,6 @@
 # internal/sandbox/egress
 
-The router's egress proxy for code in a sandbox. The sandbox holds a placeholder in an env var; the proxy puts the connection's token in its place on the way out. The token never enters the sandbox. A host of the agent config's `allowed_domains` gets the sandbox's bytes as they are. `cmd/router` serves it on `code_sandbox.proxy_addr` (`ROUTER_CODE_SANDBOX_PROXY_ADDR`) when that is set.
+The router's egress proxy for code in a sandbox. The sandbox holds a placeholder in an env var; the proxy puts the connection's token in its place on the way out. The token never enters the sandbox. A host of the agent config's `allowed_domains` gets the sandbox's bytes as they are. `cmd/router` serves it on `code_sandbox.proxy_addr` (`ROUTER_CODE_SANDBOX_PROXY_ADDR`) when that is set. Under an overlap deploy (the router inherits its public listener, `ROUTER_LISTEN_FD`) the new router finds that address held and tries it again every 100 ms; the old one, when its drain starts, closes only its listener, so the tunnels it holds run until it exits (AI-2030). Otherwise a held address fails the start and the proxy is served until the router exits.
 
 When `code_sandbox.proxy_public_url` is `https://<public IPv4 address>:port`, that listener serves TLS, so the sandbox's proxy credential in `Proxy-Authorization` never crosses the network in the clear. Each handshake gets a certificate for that IP address (an IP SAN, no DNS name), signed by the router CA (`proxy_ca_cert`, `proxy_ca_key`), as each tunnel's is (`Proxy.ListenerTLS`). A plain-HTTP CONNECT on that port gets no answer, and a client that does not trust the CA completes no handshake. With `http://` or no public URL it serves plain HTTP.
 
@@ -20,8 +20,18 @@ Most of a sandbox's clients cannot use a TLS proxy URL (curl, urllib, wget, node
 2. The proxy reads the sandbox's `Record` from Redis under the credential's SHA-256 (`Store`). None, or expired: 407.
 3. The host must be a name one of the record's grants or allowed domains covers, and the port 443. An IP literal, any other host or any other port: 403, nothing is tunnelled. A host the allowed domains cover and no grant does gets a blind tunnel: the proxy dials it only when every address it resolves to is public (else 502), and copies bytes both ways. It reads none of them and puts in no token. A host both cover is a grant's, so steps 4 to 6 follow.
 4. The proxy answers the TLS handshake with a certificate for the host, signed by the router's CA (`code_sandbox.proxy_ca_cert`, `proxy_ca_key`). The sandbox trusts that CA's certificate.
-5. For each request in the tunnel it reads the record again (a `Delete` ends open tunnels too), checks `Host` is the CONNECT host (else 421), and looks for a grant's placeholder in `Authorization`: `Bearer <ph>`, `token <ph>`, or Basic whose password is `<ph>`. Nowhere else: not the body, the query or another header.
+5. For each request in the tunnel it reads the record again (a `Delete` ends open tunnels too), checks `Host` is the CONNECT host (else 421), refuses a method other than GET and HEAD unless one of the grants' reads matches it (403, see «Read-only»), and looks for a grant's placeholder in `Authorization`: `Bearer <ph>`, `token <ph>`, or Basic whose password is `<ph>`. Nowhere else: not the body, the query or another header.
 6. With one, it asks `Tokens` for the token (the connections resolver, on every request: no copy is kept), puts it in the placeholder's place, and sends the request over TLS verified with the system's roots. The response's headers and body have the token turned back into the placeholder: as sent, in a JSON string, URL-encoded, in base64 and in Basic's encoded form. `Range` and `If-Range` are dropped from the request, so no echo comes back in pieces. A response in a `Content-Encoding` the transport did not undo is refused (502), and its trailers and any 1xx response are not sent on.
+
+## Read-only
+
+Code in the sandbox reads a granted host and writes through the connector's tools, which a binding can make ask the user first. So the proxy lets a request to a granted host through only when it is a GET or a HEAD, or one of the grants' `reads` (`core.SandboxRead`) matches it: the method as sent (case-sensitive, RFC 9110 section 9.1), the host, and a `path.Match` pattern over the path. Any other request gets 403, `egress: POST api.github.com/repos/o/r/issues refused: code in the sandbox only reads through a connector; write with the connector's tools`, reaches no host and asks for no token, with the placeholder or without it.
+
+- A read lists a request that reads with another method: GitHub's is `POST github.com/*/*/git-upload-pack`, which git clone and fetch send (gitprotocol-http(5)). A push is refused at its first request, the `GET .../info/refs?service=git-receive-pack`: git prints that refusal's body (the hint) and drops the body of a refused POST.
+- Only a path as the host gets it is matched: one with a percent escape, a dot segment or an empty segment is refused, so no other spelling of a path reaches another resource behind a pattern.
+- A session takes the reads from the connector's latest revision, whatever revision the connection pins (`sandboxGrant`, `lateGrant` in `internal/session/sandbox_grants.go`). `Manifest.ReadsAsConnection` leaves them out, so a new read needs no reconnect.
+- A tunnel to an allowed domain is not read, so it takes any method, as before.
+- Under `code_sandbox.broker: daytona` the egress is Daytona's, which does not see methods: code there can still write with the token. Read-only holds under the proxy broker only.
 
 ## Rules
 
@@ -31,6 +41,8 @@ Most of a sandbox's clients cannot use a TLS proxy URL (curl, urllib, wget, node
 
 ## Known limits
 
+- Read-only trusts a host's methods: a host that writes on a GET or a HEAD, or on a request a read lists, lets code write. A host that takes the method from a header reads it on a POST (Google's `X-HTTP-Method-Override`, https://docs.cloud.google.com/apis/docs/http, «Long request URLs»), which the proxy refuses unless a read lists it.
+- A read that uses POST and is not listed is refused: GraphQL queries (`gh`, Linear) and Git LFS's batch API among them.
 - A host that echoes the token in a form the rewrite does not know (another escape, split across headers, its case changed) gives it to the sandbox. Grant only hosts that do not.
 - A host that keeps the token it was sent and returns it later, in the response to a request that carries no placeholder, gives it to the sandbox: only a response to a request with the token is rewritten.
 - Sandbox code has root (passwordless `sudo`, live probe 2026-10-21). No control inside the sandbox protects anything: code can change its env, its CA files and its routes. The controls are the token, which stays in the router; Daytona's network allow list, which lets the sandbox reach the proxy's address alone (that code with root cannot bypass it by changing its routes, NET_ADMIN: unverified); and the grant check in step 3.
@@ -53,6 +65,24 @@ Most of a sandbox's clients cannot use a TLS proxy URL (curl, urllib, wget, node
 - `BeforeRun` asks `Bind` for each late grant's connection and puts the connection and scheme it gives, alone, in the record entry, so the proxy sends the token from the next request on. It withdraws a grant whose connection needs a reconnect and stores the record again, which renews its TTL. With no grant left and no allowed domain, or after a `Close` the store refused, it deletes the record instead.
 - `Close` deletes the record: the next request through the proxy is a 407.
 
+## Metrics
+
+`metrics.go` holds the proxy's Prometheus metrics, served on the router's `/metrics`.
+
+- `router_sandbox_egress_requests_total{host, method, decision, status}` counts requests. A tunnel to a granted host is counted by the requests in it, not by its CONNECT. A tunnel to an allowed domain is counted by its CONNECT, since the proxy reads nothing in it. `status` is the class the sandbox got (`2xx`, `4xx`).
+- `decision` is one of:
+  - `token`: the placeholder was put in place of the token.
+  - `granted_no_token`: a request to a granted host with no placeholder, sent as it is.
+  - `blind`: a tunnel to an allowed domain.
+  - `denied_host`: a host, a port or a tunnel's `Host` the sandbox has no grant for, or a grant that has ended.
+  - `denied_auth`: no proxy credential, or an unknown or expired one (407).
+  - `denied_method`: a method a granted host does not take.
+  - `denied_request`: a request the proxy does not serve: not a CONNECT, a CONNECT with no port, or an upgrade.
+  - `error`: the proxy could not serve it: the grants unreadable, a connection it could not take over, or a connection that gives no token.
+- `router_sandbox_egress_upstream_seconds{host}` is the time a granted host took to answer a request, to its response header or its failure.
+- `router_sandbox_egress_tunnels_open` is the tunnels open now, to granted hosts and to allowed domains.
+- `host` is the entry of a grant's hosts that covers the request, as the connector's manifest wrote it (`*.example.com` is one value, whatever name under it is asked for), or `other` for any other host: an allowed domain, a refused host or a refused credential. `method` is one of RFC 9110's, else `other`. A token, placeholder, proxy credential, session or user is never a label value: the sandbox chooses its hosts and methods, and the label set must not grow with it.
+
 ## Tests
 
-`proxy_test.go` (tag `integration`, needs `ROUTER_REDIS_ADDR`) runs the attack table A1-A14 of the sandbox broker waves against a proxy whose hosts are `httptest` TLS servers and whose sandbox is a Go `http.Client` with the proxy URL. `broker_test.go` runs `brokertest` and the broker's own tests through the same proxy. `tunnel_test.go` runs the forwarder and its commands in a shell, under a directory that stands for the sandbox's root, against the proxy served over TLS (needs `python3`).
+`proxy_test.go` (tag `integration`, needs `ROUTER_REDIS_ADDR`) runs the attack table A1-A14 of the sandbox broker waves, and reads the metrics after real requests, against a proxy whose hosts are `httptest` TLS servers and whose sandbox is a Go `http.Client` with the proxy URL. `broker_test.go` runs `brokertest` and the broker's own tests through the same proxy. `tunnel_test.go` runs the forwarder and its commands in a shell, under a directory that stands for the sandbox's root, against the proxy served over TLS (needs `python3`).

@@ -405,8 +405,8 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 			"granted against or pinned at, and approving it (POST .../tools/approve), a reconnect or a config "+
 			"saved at its new schema gives it back", "connector", binding.Name, "connection", connection.ID, "tools", changed)
 	}
-	if reason := m.sandboxGrant(binding, connection, manifest, scheme, d); reason != "" || (len(patternMiss) == 0 && len(changed) == 0) {
-		return reason, nil
+	if reason, err := m.sandboxGrant(ctx, binding, connection, manifest, scheme, d); err != nil || reason != "" || (len(patternMiss) == 0 && len(changed) == 0) {
+		return reason, err
 	}
 	// The binding keeps the tools that still match; a call of one left out says why (Run).
 	if d.leftOut == nil {

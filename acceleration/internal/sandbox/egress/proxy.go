@@ -125,24 +125,24 @@ func New(options Options) (*Proxy, error) {
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
 		w.Header().Set("Allow", http.MethodConnect)
-		http.Error(w, "egress: only CONNECT is proxied", http.StatusMethodNotAllowed)
+		refuse(w, otherHost, r.Method, decisionDeniedRequest, http.StatusMethodNotAllowed, "egress: only CONNECT is proxied")
 		return
 	}
 	credential := proxyCredential(r.Header.Get("Proxy-Authorization"))
 	record, found, err := p.lookup(r.Context(), credential)
 	if err != nil {
 		p.logger.Warn("the sandbox egress proxy could not read a sandbox's grants", "error", err)
-		http.Error(w, "egress: the sandbox's grants cannot be read just now", http.StatusServiceUnavailable)
+		refuse(w, otherHost, r.Method, decisionError, http.StatusServiceUnavailable, "egress: the sandbox's grants cannot be read just now")
 		return
 	}
 	if !found {
 		w.Header().Set("Proxy-Authenticate", authenticate)
-		http.Error(w, "egress: no such sandbox", http.StatusProxyAuthRequired)
+		refuse(w, otherHost, r.Method, decisionDeniedAuth, http.StatusProxyAuthRequired, "egress: no such sandbox")
 		return
 	}
 	host, port, err := net.SplitHostPort(r.Host)
 	if err != nil {
-		http.Error(w, "egress: CONNECT takes a host and a port", http.StatusBadRequest)
+		refuse(w, otherHost, r.Method, decisionDeniedRequest, http.StatusBadRequest, "egress: CONNECT takes a host and a port")
 		return
 	}
 	// A name with a trailing dot is the name without it: matching and dialing take the same host.
@@ -151,15 +151,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// host's (core.SandboxRule). A * is no host's name: a wildcard grant would match it, and
 	// its certificate would be one for every name under the domain.
 	granted := record.granted(host)
+	label := record.hostLabel(host)
 	if host == "" || net.ParseIP(host) != nil || strings.Contains(host, "*") || !granted && !record.allowed(host) {
 		p.logger.Warn("the sandbox egress proxy refused a host", "session", record.Session, "host", host)
-		http.Error(w, "egress: the sandbox has no grant for this host", http.StatusForbidden)
+		refuse(w, label, r.Method, decisionDeniedHost, http.StatusForbidden, "egress: the sandbox has no grant for this host")
 		return
 	}
 	// A grant is for a host's HTTPS API; another port is another service on it.
 	if port != httpsPort {
 		p.logger.Warn("the sandbox egress proxy refused a port", "session", record.Session, "host", host, "port", port)
-		http.Error(w, "egress: only port 443 is proxied", http.StatusForbidden)
+		refuse(w, label, r.Method, decisionDeniedHost, http.StatusForbidden, "egress: only port 443 is proxied")
 		return
 	}
 	if !granted {
@@ -168,7 +169,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, buffered, err := http.NewResponseController(w).Hijack()
 	if err != nil {
-		http.Error(w, "egress: the connection cannot be taken over", http.StatusInternalServerError)
+		refuse(w, label, r.Method, decisionError, http.StatusInternalServerError, "egress: the connection cannot be taken over")
 		return
 	}
 	if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
@@ -176,7 +177,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	early, _ := buffered.Reader.Peek(buffered.Reader.Buffered())
-	p.tunnel(&readFirst{Conn: conn, first: bytes.NewReader(early)}, tunnel{credential: credential, host: host})
+	p.tunnel(&readFirst{Conn: conn, first: bytes.NewReader(early)}, tunnel{credential: credential, host: host, label: label})
 }
 
 // passthrough tunnels the sandbox's bytes to port 443 of host, an allowed domain, as they are:
@@ -187,13 +188,13 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, session, hos
 	if err != nil {
 		// A dial's error holds no byte the host sent.
 		p.logger.Warn("the sandbox egress proxy could not reach an allowed host", "session", session, "host", host, "error", err)
-		http.Error(w, "egress: the host cannot be reached", http.StatusBadGateway)
+		refuse(w, otherHost, http.MethodConnect, decisionBlind, http.StatusBadGateway, "egress: the host cannot be reached")
 		return
 	}
 	conn, buffered, err := http.NewResponseController(w).Hijack()
 	if err != nil {
 		_ = upstream.Close()
-		http.Error(w, "egress: the connection cannot be taken over", http.StatusInternalServerError)
+		refuse(w, otherHost, http.MethodConnect, decisionError, http.StatusInternalServerError, "egress: the connection cannot be taken over")
 		return
 	}
 	if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
@@ -201,6 +202,9 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, session, hos
 		_ = upstream.Close()
 		return
 	}
+	count(otherHost, http.MethodConnect, decisionBlind, http.StatusOK)
+	tunnelsOpen.Inc()
+	defer tunnelsOpen.Dec()
 	early, _ := buffered.Reader.Peek(buffered.Reader.Buffered())
 	sandbox := &readFirst{Conn: conn, first: bytes.NewReader(early)}
 	// Either side ending ends the tunnel: closing both stops the other copy.
@@ -212,9 +216,10 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, session, hos
 	_ = upstream.Close()
 }
 
-// tunnel is one CONNECT: the sandbox's credential and the host it asked for.
+// tunnel is one CONNECT: the sandbox's credential, the host it asked for and the host's label
+// in the metrics.
 type tunnel struct {
-	credential, host string
+	credential, host, label string
 }
 
 // tunnel serves conn as host with a certificate the CA signs, and sends each request in it
@@ -233,6 +238,16 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 		// What it logs is the sandbox's side of the tunnel, a failed handshake or a panic in
 		// inner.
 		ErrorLog: slog.NewLogLogger(p.logger.Handler(), slog.LevelInfo),
+		// Serve returns once the connection is taken, so the connection's own states tell
+		// how long the tunnel is open.
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			switch state {
+			case http.StateNew:
+				tunnelsOpen.Inc()
+			case http.StateClosed:
+				tunnelsOpen.Dec()
+			}
+		},
 	}
 	// HTTP/1.1 only: the server here serves no HTTP/2, so a sandbox offering h2 is held to
 	// HTTP/1.1 rather than refused.
@@ -242,8 +257,9 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 	_ = server.Serve(&single{conn: tlsConn})
 }
 
-// inner forwards one request in t's tunnel. It reads the grants again for each, so after
-// Delete no request goes out on a tunnel the credential opened.
+// inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list. It
+// reads the grants again for each, so after Delete no request goes out on a tunnel the
+// credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
@@ -253,29 +269,37 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// Host decides which site of the address gets the request; one other than the
 		// tunnel's could be another tenant's (domain fronting).
 		if host != t.host {
-			http.Error(w, "egress: Host is not the host the tunnel was opened to", http.StatusMisdirectedRequest)
+			refuse(w, t.label, r.Method, decisionDeniedHost, http.StatusMisdirectedRequest, "egress: Host is not the host the tunnel was opened to")
 			return
 		}
 		// An upgraded connection's bytes would pass without the response rewrite.
 		if r.Header.Get("Upgrade") != "" {
-			http.Error(w, "egress: protocol upgrades are not proxied", http.StatusNotImplemented)
+			refuse(w, t.label, r.Method, decisionDeniedRequest, http.StatusNotImplemented, "egress: protocol upgrades are not proxied")
 			return
 		}
 		record, _, err := p.lookup(r.Context(), t.credential)
 		if err != nil {
 			p.logger.Warn("the sandbox egress proxy could not read a sandbox's grants", "error", err)
-			http.Error(w, "egress: the sandbox's grants cannot be read just now", http.StatusServiceUnavailable)
+			refuse(w, t.label, r.Method, decisionError, http.StatusServiceUnavailable, "egress: the sandbox's grants cannot be read just now")
 			return
 		}
 		// No record, after Delete or expiry, grants nothing.
 		if !record.granted(host) {
-			http.Error(w, "egress: the sandbox's grant for this host has ended", http.StatusForbidden)
+			refuse(w, t.label, r.Method, decisionDeniedHost, http.StatusForbidden, "egress: the sandbox's grant for this host has ended")
 			return
 		}
 		logger := p.logger.With("session", record.Session, "host", host)
+		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
+		// a binding can make ask the user first. The answer tells the model so.
+		if !record.reads(host, r.Method, r.URL) {
+			logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
+			refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, fmt.Sprintf("egress: %s %s%s refused: "+
+				"code in the sandbox only reads through a connector; write with the connector's tools", r.Method, host, r.URL.EscapedPath()))
+			return
+		}
 		forward := &httputil.ReverseProxy{
 			Rewrite:   func(pr *httputil.ProxyRequest) { p.toHost(pr, t) },
-			Transport: p.transport,
+			Transport: timed{next: p.transport, host: t.label},
 			// It logs a body lost mid-copy, whose error may quote the host's bytes: a
 			// malformed trailer line that echoes the token.
 			ErrorLog: log.New(fixedLine{logger: logger, message: "the sandbox egress proxy lost a host's response mid-body"}, "", 0),
@@ -286,7 +310,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		}
 		grant, form, placed := record.placed(host, r.Header.Get("Authorization"))
 		if !placed {
-			forward.ServeHTTP(w, r)
+			sent, done := counted(w, t.label, r.Method, decisionGrantedNoToken)
+			defer done()
+			forward.ServeHTTP(sent, r)
 			return
 		}
 		token, err := p.token(r.Context(), grant)
@@ -298,9 +324,11 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			if errors.Is(err, sandbox.ErrNoCredential) {
 				status = http.StatusUnauthorized
 			}
-			http.Error(w, "egress: the connection gives no token: "+grant.Binding, status)
+			refuse(w, t.label, r.Method, decisionError, status, "egress: the connection gives no token: "+grant.Binding)
 			return
 		}
+		sent, done := counted(w, t.label, r.Method, decisionToken)
+		defer done()
 		pairs := echoes(token, grant.Placeholder)
 		if form.basic {
 			pairs = append(pairs, form.credential(token), form.credential(grant.Placeholder))
@@ -345,7 +373,7 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			return nil
 		}
 		// ReverseProxy sends a 1xx's headers on before ModifyResponse sees any.
-		forward.ServeHTTP(finalOnly{w}, r)
+		forward.ServeHTTP(finalOnly{sent}, r)
 	}
 }
 
@@ -363,6 +391,16 @@ func encoded(header http.Header) bool {
 		}
 	}
 	return false
+}
+
+// loggedMethod is method cut to 32 bytes: a method is any token up to the server's 1 MB header
+// limit, and the longest in the IANA HTTP Method Registry
+// (https://www.iana.org/assignments/http-methods), UPDATEREDIRECTREF, has 17.
+func loggedMethod(method string) string {
+	if len(method) > 32 {
+		return method[:32] + "…"
+	}
+	return method
 }
 
 // failed logs why a request got no answer from its host. Only an error from before the

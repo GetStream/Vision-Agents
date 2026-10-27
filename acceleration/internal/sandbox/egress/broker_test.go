@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net"
@@ -35,6 +36,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/brokertest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
@@ -57,7 +59,7 @@ func TestProxyBrokerContract(t *testing.T) {
 			Refuse:  func() { r.gate.shut(true) },
 			Recover: r.recover,
 			Live:    true,
-			Push:    func(ref, content string) ([]string, string, []string) { return r.push(t, mount, ref, content) },
+			Clone:   func(ref, content string) ([]string, string, []string) { return r.clone(t, mount, ref, content) },
 		}
 	}})
 }
@@ -177,15 +179,56 @@ func (s *BrokerSuite) TestEveryRunGoesThroughTheProxyAndTrustsTheCA() {
 // rather than wait for a 407 and connect again (tunnel probe 2, 2026-10-22: without it, a
 // CONNECT with no credential before each one with it).
 func (s *BrokerSuite) TestGitSendsTheProxyCredentialOnItsFirstConnect() {
-	github := github
-	github.Hosts = append(github.Hosts, "github.com")
-	mount, err := s.broker.Prepare(s.ctx, []sandbox.Grant{github})
+	mount, err := s.broker.Prepare(s.ctx, []sandbox.Grant{s.withGit()})
 	s.Require().NoError(err)
 
-	_, _, _ = s.rig.push(s.T(), mount, mount.Env["GITHUB_TOKEN"], "pushed\n")
+	_, _, _ = s.rig.clone(s.T(), mount, mount.Env["GITHUB_TOKEN"], "cloned\n")
 
 	s.NotEmpty(s.rig.connects())
 	s.NotContains(s.rig.connects(), false, "a CONNECT without the proxy credential")
+}
+
+// withGit is the github grant with github.com, and the reads GitHub's manifest lists.
+func (s *BrokerSuite) withGit() sandbox.Grant {
+	raw, err := fs.ReadFile(providers.FS, "github.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	github := github
+	github.Hosts, github.Reads = append(slices.Clone(github.Hosts), "github.com"), manifest.Sandbox.Reads
+	return github
+}
+
+// TestCodeInTheSandboxReadsGitHubAndWritesNothing: code clones with the token, and its push is
+// refused at its first request, info/refs for git-receive-pack, so github.com keeps main as it
+// was and git prints the refusal's hint. A POST to the
+// REST API reaches no host, and its answer tells the model to write with the connector's tools.
+func (s *BrokerSuite) TestCodeInTheSandboxReadsGitHubAndWritesNothing() {
+	mount, err := s.broker.Prepare(s.ctx, []sandbox.Grant{s.withGit()})
+	s.Require().NoError(err)
+	placeholder := mount.Env["GITHUB_TOKEN"]
+	_, cloned, _ := s.rig.clone(s.T(), mount, placeholder, "first\n")
+	s.Require().Equal("first\n", cloned)
+
+	out, err := s.rig.push(s.T(), mount, placeholder, "pushed\n")
+
+	s.Error(err)
+	s.Contains(out, "remote: egress: GET github.com/")
+	s.Contains(out, "/info/refs refused: code in the sandbox only reads through a connector; write with the connector's tools")
+	s.Equal("first\n", s.rig.git.file(s.T(), "token.txt"))
+
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodPost, "https://api.github.com/repos/octo/hello/issues", strings.NewReader(`{"title":"x"}`))
+	s.Require().NoError(err)
+	request.Header.Set("Authorization", "Bearer "+placeholder)
+	response, err := s.rig.sandboxClient(s.T(), mount).Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal("egress: POST api.github.com/repos/octo/hello/issues refused: code in the sandbox only reads through a connector; "+
+		"write with the connector's tools\n", string(body))
+	s.Empty(s.rig.host.authorizations())
 }
 
 // TestTheBundleHoldsTheSandboxsRootsAndTheCA: a host of the config's allowed domains, which
@@ -693,7 +736,7 @@ type rig struct {
 	upstream    *x509.Certificate
 	upstreamKey *ecdsa.PrivateKey
 	mu          sync.Mutex
-	// git is github.com, made by the first push. credentialed is, for each CONNECT the proxy
+	// git is github.com, made by the first clone or push. credentialed is, for each CONNECT the proxy
 	// got, whether it carried Proxy-Authorization.
 	git          *gitHost
 	credentialed []bool
@@ -830,30 +873,21 @@ func (r *rig) connects() []bool {
 	return slices.Clone(r.credentialed)
 }
 
-// push is git as code in the sandbox mount runs it, with each run's env alone: it commits a
-// file holding content and pushes it to github.com with ref as Basic auth's password, which is
-// how GitHub takes a token over git
-// (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation:
-// «git clone https://x-access-token:TOKEN@github.com/owner/repo.git»). The proxy's public
+// gitEnv is the env git runs with in the sandbox mount, each run's env alone. The proxy's public
 // address is not one a test can reach, so the proxy env names the rig's proxy in its place, and
-// the CA files the env names are under a directory standing for the sandbox's root. It returns
-// what github.com got: each request's Authorization, the file, and every other header value and
-// each request's URL. The pack is stored uncompressed (pack.compression=0), so a placeholder in
-// the file is plain text in the push body.
-func (r *rig) push(t *testing.T, mount sandbox.Mount, ref, content string) ([]string, string, []string) {
+// the CA files the env names are under a directory standing for the sandbox's root. The user's
+// own git config stays out (GIT_CONFIG_NOSYSTEM, a HOME of its own), so no credential helper
+// keeps the placeholder. It makes github.com on its first call.
+func (r *rig) gitEnv(t *testing.T, mount sandbox.Mount) []string {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
-	git := r.github()
-	if git == nil {
-		git = newGitHost(t, r.upstream, r.upstreamKey)
-		r.mu.Lock()
-		r.git = git
-		r.mu.Unlock()
+	r.mu.Lock()
+	if r.git == nil {
+		r.git = newGitHost(t, r.upstream, r.upstreamKey)
 	}
-	root, work := t.TempDir(), t.TempDir()
-	// The user's own git config stays out (GIT_CONFIG_NOSYSTEM, a HOME of its own), so no
-	// credential helper keeps the placeholder.
+	r.mu.Unlock()
+	root := t.TempDir()
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0"}
 	for name, value := range mount.RunEnv {
 		switch {
@@ -873,19 +907,58 @@ func (r *rig) push(t *testing.T, mount sandbox.Mount, ref, content string) ([]st
 		}
 		env = append(env, name+"="+value)
 	}
+	return env
+}
+
+// remote is github.com's octo/hello.git with ref as Basic auth's password, which is how GitHub
+// takes a token over git
+// (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation:
+// «git clone https://x-access-token:TOKEN@github.com/owner/repo.git»).
+func remote(ref string) string {
+	return "https://x-access-token:" + ref + "@github.com/octo/hello.git"
+}
+
+// clone is git clone of github.com's octo/hello.git as code in the sandbox mount runs it, after
+// github.com's side committed token.txt holding content to main. It returns what github.com
+// got, each request's Authorization and every other header value and each request's URL, and the
+// file as cloned.
+func (r *rig) clone(t *testing.T, mount sandbox.Mount, ref, content string) ([]string, string, []string) {
+	env := r.gitEnv(t, mount)
+	r.git.commit(t, content)
+	work := t.TempDir()
+	if out, err := gitIn(work, env, "clone", "--quiet", remote(ref), "hello"); err != nil {
+		t.Fatalf("git clone: %v: %s", err, out)
+	}
+	cloned, err := os.ReadFile(filepath.Join(work, "hello", "token.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r.git.requests(), string(cloned), r.git.elsewhere()
+}
+
+// push is git push --force of a commit of token.txt holding content to github.com's
+// octo/hello.git, as code in the sandbox mount runs it: git's output, and its error. --force, so
+// git sends the push whatever main holds there.
+func (r *rig) push(t *testing.T, mount sandbox.Mount, ref, content string) (string, error) {
+	env := r.gitEnv(t, mount)
+	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "token.txt"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"init", "--quiet", "--initial-branch=main"}, {"add", "token.txt"},
-		{"-c", "user.name=sandbox", "-c", "user.email=sandbox@example.com", "commit", "--quiet", "--message=token"},
-		{"-c", "pack.compression=0", "push", "--quiet", "https://x-access-token:" + ref + "@github.com/octo/hello.git", "main"}} {
-		command := exec.Command("git", args...)
-		command.Dir, command.Env = work, env
-		if out, err := command.CombinedOutput(); err != nil {
+		{"-c", "user.name=sandbox", "-c", "user.email=sandbox@example.com", "commit", "--quiet", "--message=token"}} {
+		if out, err := gitIn(work, env, args...); err != nil {
 			t.Fatalf("git %s: %v: %s", args[0], err, out)
 		}
 	}
-	return git.requests(), git.file(t, "token.txt"), git.elsewhere()
+	return gitIn(work, env, "push", "--quiet", "--force", remote(ref), "main")
+}
+
+func gitIn(dir string, env []string, args ...string) (string, error) {
+	command := exec.Command("git", args...)
+	command.Dir, command.Env = dir, env
+	out, err := command.CombinedOutput()
+	return string(out), err
 }
 
 // gitHost is github.com's git over HTTPS as a stand-in: git http-backend
@@ -965,6 +1038,22 @@ func (g *gitHost) file(t *testing.T, name string) string {
 		t.Fatalf("git show: %v", err)
 	}
 	return string(out)
+}
+
+// commit has main hold token.txt with content, committed on github.com's side.
+func (g *gitHost) commit(t *testing.T, content string) {
+	work := t.TempDir()
+	if err := os.WriteFile(filepath.Join(work, "token.txt"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "GIT_CONFIG_NOSYSTEM=1"}
+	for _, args := range [][]string{{"init", "--quiet", "--initial-branch=main"}, {"add", "token.txt"},
+		{"-c", "user.name=github", "-c", "user.email=github@example.com", "commit", "--quiet", "--message=token"},
+		{"push", "--quiet", "--force", g.repo, "main"}} {
+		if out, err := gitIn(work, env, args...); err != nil {
+			t.Fatalf("git %s: %v: %s", args[0], err, out)
+		}
+	}
 }
 
 // keys are every record's key.

@@ -113,8 +113,9 @@ func (s *ConnectorEventsSuite) SetupSuite() {
 		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
 	}
 	environment := map[string]string{
-		"SLACK_MCP_SIGNING_SECRET":           eventsSecret,
-		"EVENTS_TEST_BOT_MCP_SIGNING_SECRET": eventsSecret,
+		"SLACK_MCP_SIGNING_SECRET":                    eventsSecret,
+		"EVENTS_TEST_BOT_MCP_SIGNING_SECRET":          eventsSecret,
+		"EVENTS_TEST_UNVERIFIABLE_MCP_SIGNING_SECRET": eventsSecret,
 	}
 	s.eventSecrets = ConnectorEventSecrets(func(name string) string { return environment[name] })
 	s.delivered = &deliveries{}
@@ -125,6 +126,13 @@ func (s *ConnectorEventsSuite) SetupSuite() {
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(),
 		fstest.MapFS{"events_test_bot.yaml": {Data: []byte(eventsBot)}}))
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), fstest.MapFS{
+		"events_test_secretless.yaml": {Data: []byte(eventsBotAs("events_test_secretless", "EVENTS_TEST_SECRETLESS"))},
+		// ed25519 reads no algorithm, encoding or prefix.
+		"events_test_unverifiable.yaml": {Data: []byte(strings.NewReplacer("kind: hmac_header", "kind: ed25519",
+			"    algorithm: sha256\n", "", "    encoding: hex\n", "", "    prefix: v0=\n", "").
+			Replace(eventsBotAs("events_test_unverifiable", "EVENTS_TEST_UNVERIFIABLE")))},
+	}))
 }
 
 func (s *ConnectorEventsSuite) SetupTest() {
@@ -412,13 +420,30 @@ func uninstall(team string) []byte {
 type deliveries struct {
 	mu       sync.Mutex
 	messages []core.InboundMessage
+	// failure, set by failing, is what Deliver returns.
+	failure error
 }
 
 func (d *deliveries) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage, _ func()) (bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.failure != nil {
+		return false, d.failure
+	}
 	d.messages = append(d.messages, messages...)
 	return true, nil
+}
+
+// failing has Deliver fail with failure until the test ends.
+func (d *deliveries) failing(t *testing.T, failure error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.failure = failure
+	t.Cleanup(func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.failure = nil
+	})
 }
 
 // Reachable keeps no threads, so it reaches none, and neither holds nor sends a reply.

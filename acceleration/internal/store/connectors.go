@@ -31,6 +31,16 @@ const BuiltinCustomer = ""
 // core's custom_crm and custom_mtls_service fixtures already use. The migration checks it too.
 const CustomPrefix = "custom_"
 
+// ConnectorLabel is a connector id as a metric label: a built-in's own id, one of the
+// catalog the router ships, or "custom" for every custom definition, whose id its customer
+// chose, so the label has one value per built-in and one more.
+func ConnectorLabel(id string) string {
+	if strings.HasPrefix(id, CustomPrefix) {
+		return "custom"
+	}
+	return id
+}
+
 // definitionLockSeed is the second argument to hashtextextended for the lock a revision is
 // written under. Any value other than the 731 RecordAgentLog uses would do, so a customer's
 // log writes never wait on its definitions; 833 is this table's issue, AI-833.

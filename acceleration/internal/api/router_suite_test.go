@@ -1561,6 +1561,26 @@ func (s *RouterSuite) quota(liveClient *live.Client, policies *policy.Enforcer, 
 	return limiter
 }
 
+// gateOnClosedStore has the gate every text and call passes read from a store closed for the
+// test, so its opt-out check fails as an unreachable database does, which is no refusal. It
+// returns the way to put the gate back, which the test's end does too.
+func (s *RouterSuite) gateOnClosedStore() (restore func()) {
+	closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	original := *s.gate
+	*s.gate = *dlc.NewGate(closed, s.live.Redis(), s.sandbox, nil)
+	restored := false
+	restore = func() {
+		if !restored {
+			*s.gate = original
+			restored = true
+		}
+	}
+	s.T().Cleanup(restore)
+	return restore
+}
+
 // useFixture points the clients at the app of the fixture called name, with client signed
 // in as the fixture's user.
 func (s *RouterSuite) useFixture(name string) {
