@@ -214,10 +214,14 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		go func() {
 			select {
 			case <-held:
+				script.OutputText("Done.")
+				script.Done()
 			case <-ctx.Done():
+				// A reply cancelled while it waited ends as a provider's would, with nothing
+				// written. Answering it anyway raced the turn being torn down, so a router
+				// stopped mid-turn could read back a reply it never got.
+				script.Fail(ctx.Err(), "scheduling")
 			}
-			script.OutputText("Done.")
-			script.Done()
 		}()
 		return script.Stream(), nil
 	}
