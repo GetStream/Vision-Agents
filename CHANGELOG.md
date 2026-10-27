@@ -48,6 +48,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 A scheduled task created with a repeat whose start has passed, over `POST /v1/agents/scheduled-tasks` or the agent's `schedule_task` tool, now starts at its first occurrence after now: its stored `at` is that occurrence, and its COUNT counts from it. "Daily, three times, from three days ago" is three reminders from tomorrow; before, it was refused as `schedule_in_past`, and one from this morning ran twice. A task stored in the second pass of a fall-back hour keeps that instant when it is read back: its upcoming list starts at its `next_run_at`, and a one-shot paused and resumed inside that hour still runs. The prompt of a one-shot whose occurrence an edit re-dued states the time it was due and how late it is from then, not from the edit (AI-1563, AI-1564, AI-1597).
 
+### A scheduled task whose reply was cut off runs again once
+
+A scheduled task's reply that was cancelled or interrupted, such as by a router restart, made every retry of the occurrence fail with `reply_failed`, and the user got nothing. Its turn now runs again once, under a new command id (`st_<run>_r1`), on the retry or on the next channel. A reply that finished is still read back on a retry, not written again. A reply cut off a second time fails as before. A scheduled message on SMS, WhatsApp or iMessage now carries only the agent's reply, not the raw text of work it delegated, so the first attempt and a retry send the same words (AI-1558, AI-1559).
+
 ### An error in an agent.yaml connector entry names its line in the file
 
 In the Go SDK, a connector entry with a key nobody knows, or a value of the wrong type, named a line counted from the start of the entry. It now names its line in `agent.yaml`, and a key nobody knows is refused with the keys a connector takes (AI-1767).
