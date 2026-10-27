@@ -4051,25 +4051,44 @@ func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
 	s.False(repeated, "a booking that failed may be tried again")
 }
 
-func (s *AgentSuite) TestAVerificationRefusedOnceIsNotSentTheSameValuesAgain() {
-	verify := llm.ToolCall{ID: "c1", Name: "verify_account", Arguments: `{"pin":"1044"}`}
+func (s *AgentSuite) TestACallRefusedIsNotSentTheSameValuesAgainUntilTheCallerSpeaks() {
+	redeem := llm.ToolCall{ID: "c1", Name: "redeem_voucher", Arguments: `{"code":"KX-77"}`}
 	history := []llm.Message{
-		{Role: llm.User, Content: "PIN four four seven one"},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{verify}},
+		{Role: llm.User, Content: "Can you use my voucher, KX-77?"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{redeem}},
 		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":false}`},
-		{Role: llm.User, Content: "I said four four seven one"},
 	}
-	refused, again := refusedBefore(history, llm.ToolCall{ID: "c2", Name: "verify_account", Arguments: `{"pin": "1044"}`})
-	s.True(again)
+	again := llm.ToolCall{ID: "c2", Name: "redeem_voucher", Arguments: `{"code": "KX-77"}`}
+
+	refused, repeated := refusedBefore(history, again)
+	s.True(repeated)
 	s.Equal(`{"ok":false}`, refused)
 	s.True(failedResult(alreadyRefused + refused + tryOtherValues))
+	s.NotContains(tryOtherValues, "digit", "what to ask the caller is the operator's to decide")
 
-	_, again = refusedBefore(history, llm.ToolCall{ID: "c3", Name: "verify_account", Arguments: `{"pin":"4471"}`})
-	s.False(again, "new values are worth trying")
+	_, repeated = refusedBefore(history, llm.ToolCall{ID: "c3", Name: "redeem_voucher", Arguments: `{"code":"KX-78"}`})
+	s.False(repeated, "new values are worth trying")
 
-	history[2].Content = didNotWork + "timeout"
-	_, again = refusedBefore(history, llm.ToolCall{ID: "c4", Name: "verify_account", Arguments: `{"pin":"1044"}`})
-	s.False(again, "a call that could not be made may be tried again")
+	spoke := append(slices.Clone(history), llm.Message{Role: llm.User, Content: "I've just activated it in the app, try again."})
+	_, repeated = refusedBefore(spoke, again)
+	s.False(repeated, "the caller has spoken since, and may have changed what the tool refused")
+
+	for _, failure := range []string{
+		didNotWork + "timeout",
+		`{"error":"upstream request timed out"}`,
+		`{"error":"Rate limit exceeded"}`,
+		`{"status":503,"error":"try later"}`,
+		`{"error":{"code":429,"message":"slow down"}}`,
+	} {
+		history[2].Content = failure
+		_, repeated = refusedBefore(history, again)
+		s.False(repeated, "a call that failed for a reason of the moment may be tried again: %s", failure)
+	}
+	for _, refusal := range []string{`{"error":"voucher expired"}`, `{"status":404,"error":"no such voucher"}`, `{"error":"slot unavailable"}`} {
+		history[2].Content = refusal
+		_, repeated = refusedBefore(history, again)
+		s.True(repeated, refusal)
+	}
 }
 
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
