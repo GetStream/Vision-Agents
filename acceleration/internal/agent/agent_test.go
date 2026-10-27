@@ -2486,6 +2486,32 @@ func (s *AgentSuite) TestAPhotoIsNotShownAgainToALaterTurnsTool() {
 	s.False(llm.HasImage(s.model.requests()[2].Input), "a photo is seen with the turn it came with alone")
 }
 
+func (s *AgentSuite) TestAnAgentWithAVisionSkillSeesImages() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+
+	s.True(s.agent.SeesImages())
+}
+
+func (s *AgentSuite) TestAnAgentWhoseModelAcceptsImagesSeesThem() {
+	s.sees = true
+	s.joinText()
+
+	s.True(s.agent.SeesImages())
+}
+
+// SeesImages says no exactly where RespondTo refuses a turn's images.
+func (s *AgentSuite) TestAnAgentWithNeitherSeesNoImages() {
+	s.joinText()
+
+	s.False(s.agent.SeesImages())
+	_, err := s.agent.RespondTo(s.ctx, "what is this?", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
+	s.ErrorIs(err, ErrCannotSeeImages)
+}
+
 // lastFromCaller is the caller's latest message in a request's input.
 func lastFromCaller(input []llm.Message) llm.Message {
 	for i := len(input) - 1; i >= 0; i-- {
