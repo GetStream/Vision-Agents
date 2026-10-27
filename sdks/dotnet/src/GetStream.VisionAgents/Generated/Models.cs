@@ -9864,7 +9864,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
+        /// False once the health window holds enough requests to judge and their error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("available")]
         public bool Available { get; set; } = default!;

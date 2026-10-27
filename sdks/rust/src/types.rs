@@ -8520,7 +8520,7 @@ pub struct ProviderBenchmark {
 ///`ProviderHealth`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ProviderHealth {
-    ///False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
+    ///False once the health window holds enough requests to judge and their error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
     pub available: bool,
     pub error_rate: f64,
     pub errors: i64,
