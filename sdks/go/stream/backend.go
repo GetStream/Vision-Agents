@@ -50,7 +50,7 @@ const (
 	ClientHeader = "X-Stream-Client"
 	ClientSDK    = "sdk"
 	// DefaultURL is the hosted router.
-	DefaultURL = "https://accelerate.gcp.stream-io-api.com"
+	DefaultURL = "https://accelerate-prod.gcp.stream-io-api.com"
 )
 
 // tokenValidity is how long a minted token lasts. Short, because it is minted per request

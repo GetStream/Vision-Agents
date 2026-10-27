@@ -19,7 +19,7 @@ AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
 CUSTOMER_HEADER = "X-Customer-Id"
 USER_HEADER = "X-Stream-User-Id"
 # Stream's hosted router, which is where a client goes when nothing says otherwise.
-DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com"
+DEFAULT_URL = "https://accelerate-prod.gcp.stream-io-api.com"
 
 # How long a token minted here lasts. Short, because it is minted per request and a stolen
 # one should stop working sooner than the credential behind it.

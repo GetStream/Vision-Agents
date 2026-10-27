@@ -179,6 +179,10 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### The SDKs go to production by default
+
+Every SDK's default router is production, `https://accelerate-prod.gcp.stream-io-api.com`, in place of staging's `https://accelerate.gcp.stream-io-api.com`. Staging is reached with `STREAM_ACCELERATION_URL=https://accelerate.gcp.stream-io-api.com` and, in every server SDK but Go, `STREAM_ACCELERATION_AUTHENTICATE=1`, since only the default router is authenticated through the proxy without being asked; the Kotlin, Swift and Dart SDKs take the URL in their `Backend`. `DEVELOPMENT.md` lists the variables for local, staging and production.
+
 ### Go and Python refuse tool arguments that do not fit the schema
 
 A call whose arguments break the tool's schema, such as a missing required field, a value outside its bounds or one not in its `enum`, now fails without running the function, where it used to run with what was sent. Python converts the arguments it accepts to the annotated types, so a function annotated `int` is handed an `int` when the model sent `"2"`.

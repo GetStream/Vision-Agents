@@ -15,7 +15,7 @@ pub const API_SECRET_ENV: &str = "STREAM_API_SECRET";
 pub const AUTHENTICATE_ENV: &str = "STREAM_ACCELERATION_AUTHENTICATE";
 
 /// Stream's hosted router, which is where a client goes when nothing says otherwise.
-pub const DEFAULT_URL: &str = "https://accelerate.gcp.stream-io-api.com";
+pub const DEFAULT_URL: &str = "https://accelerate-prod.gcp.stream-io-api.com";
 
 /// How long a token minted here lasts. Short, because one is minted per request.
 pub const TOKEN_VALIDITY_SECONDS: u64 = 60 * 60;

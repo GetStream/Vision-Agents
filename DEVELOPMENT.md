@@ -33,6 +33,48 @@ passes that check, so read the database and address it prints first, and start w
 The dashboard is Volt (`GetStream/volt-dashboard`), a sibling checkout. See the `dashboard`
 skill and `acceleration/development_skills/dashboard_skill.md`.
 
+## Pointing an SDK at a router
+
+The SDKs go to production, `https://accelerate-prod.gcp.stream-io-api.com`, when nothing says
+otherwise. The server SDKs (Python, JS, Go, Ruby, PHP, .NET and Rust) read the same variables
+to go anywhere else:
+
+| Variable                           | What it does                                                                                   |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `STREAM_ACCELERATION_URL`          | The router's base URL. Unset is production.                                                    |
+| `STREAM_ACCELERATION_CUSTOMER_ID`  | Who is billed, on a router with no proxy in front of it. Setting it turns authentication off.  |
+| `STREAM_API_KEY`                   | The Stream app a router behind the proxy is reached as.                                        |
+| `STREAM_API_SECRET`                | That app's secret, which signs the token the proxy checks.                                     |
+| `STREAM_ACCELERATION_AUTHENTICATE` | `1` sends the key and a token through the proxy. On by itself only for production.            |
+
+Local, the router from `compose.yaml` above, which trusts the customer header and has no proxy:
+
+```
+STREAM_ACCELERATION_URL=http://localhost:8080
+STREAM_ACCELERATION_CUSTOMER_ID=examples
+```
+
+Staging, `accelerate-staging` in `GetStream/chat`'s `infra/shards/us-east1-acceleration`, sits
+behind the proxy like production does, so it takes an app's key and secret:
+
+```
+STREAM_ACCELERATION_URL=https://accelerate.gcp.stream-io-api.com
+STREAM_ACCELERATION_AUTHENTICATE=1
+STREAM_API_KEY=...
+STREAM_API_SECRET=...
+```
+
+Without `STREAM_ACCELERATION_AUTHENTICATE=1` every SDK but Go sends staging its key the way a
+router with no proxy reads it, and the proxy refuses the request. Go authenticates whenever
+no customer id is set.
+
+Production takes only the key and secret. Leave `STREAM_ACCELERATION_CUSTOMER_ID` unset
+there: a customer id left over from local turns authentication off.
+
+The Kotlin, Swift and Dart SDKs run on a phone and read no environment: pass the URL to
+their `Backend` (`Backend(url = ...)`, `Backend(apiKey:url:)`, `Backend(url: ...)`). The JS
+SDK in a browser has no environment either, so pass `url` there too.
+
 ## Simple voice AI example
 
 With the router up, add to `.env`:

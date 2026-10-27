@@ -202,7 +202,7 @@ import Testing
     }
 
     @Test func anAPIKeyReachesStreamsHostedRouter() {
-        #expect(Backend(apiKey: "key").url.absoluteString == "https://accelerate.gcp.stream-io-api.com")
+        #expect(Backend(apiKey: "key").url.absoluteString == "https://accelerate-prod.gcp.stream-io-api.com")
     }
 
     @Test func anAPIKeyWithNoUserSendsNothing() async {
@@ -259,7 +259,7 @@ import Testing
 
         let url = backend.socketURL(path: "/v1/agents/sessions/s1/events")
 
-        #expect(url.absoluteString == "wss://accelerate.gcp.stream-io-api.com/v1/agents/sessions/s1/events?api_key=key")
+        #expect(url.absoluteString == "wss://accelerate-prod.gcp.stream-io-api.com/v1/agents/sessions/s1/events?api_key=key")
     }
 
     @Test func aKeyBesideACustomerIsStreamsAlone() async throws {

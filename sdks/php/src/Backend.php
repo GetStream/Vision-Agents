@@ -21,7 +21,7 @@ use GetStream\VisionAgents\Exception\ConfigurationException;
 final readonly class Backend
 {
     /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
-    public const string DEFAULT_URL = 'https://accelerate.gcp.stream-io-api.com';
+    public const string DEFAULT_URL = 'https://accelerate-prod.gcp.stream-io-api.com';
     public const string URL_ENV = 'STREAM_ACCELERATION_URL';
     public const string CUSTOMER_ENV = 'STREAM_ACCELERATION_CUSTOMER_ID';
     public const string API_KEY_ENV = 'STREAM_API_KEY';
