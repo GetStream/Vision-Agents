@@ -1085,13 +1085,15 @@ func (rule MessageRule) media(root any, bound []int) ([]Media, error) {
 		if !slices.Equal(at[:len(bound)], bound) {
 			continue
 		}
+		// An element whose url or mime type is not a value is no file; it must not drop the
+		// message's text with it.
 		source, hasURL, err := readPath(root, rule.Media.URL, at)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		mime, hasMIME, err := readPath(root, rule.Media.MIMEType, at)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		if hasURL && hasMIME {
 			media = append(media, Media{URL: source, MIMEType: mime})

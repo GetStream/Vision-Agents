@@ -622,16 +622,28 @@ func (s *ChannelSuite) TestLinqReadsEveryMediaPartAndNoOtherPart() {
 	}
 }
 
-// A body whose media are not values is refused, as a text path to one is.
-func (s *ChannelSuite) TestLinqMediaOfTheWrongShapeIsRefused() {
+// A body whose parts are not an array is refused, as a text path to one is.
+func (s *ChannelSuite) TestLinqPartsThatAreNotAnArrayAreRefused() {
 	m := s.load("linq")
-	for parts, want := range map[string]string{
-		`{"type":"media","url":"https://example.com/a.jpeg","mime_type":"image/jpeg"}`:     "parts is not an array",
-		`[{"type":"media","url":{"href":"x"},"mime_type":"image/jpeg"}]`:                   "$.data.parts[*].url is an object or an array, not a value",
-		`[{"type":"media","url":"https://example.com/a.jpeg","mime_type":["image/jpeg"]}]`: "$.data.parts[*].mime_type is an object or an array, not a value",
+	_, err := m.Channel.Read(m.ID, s.linqParts(`{"type":"media","url":"https://example.com/a.jpeg","mime_type":"image/jpeg"}`))
+	s.ErrorContains(err, "parts is not an array")
+}
+
+// A media part whose url or mime type is not a value is skipped: the text is still read, and
+// the other files with it.
+func (s *ChannelSuite) TestLinqMediaOfTheWrongShapeIsSkipped() {
+	m := s.load("linq")
+	caption := `{"type":"text","value":"What is in this photo?"}`
+	good := `{"type":"media","url":"https://cdn.linqapp.com/attachments/a.jpeg","mime_type":"image/jpeg"}`
+	for _, bad := range []string{
+		`{"type":"media","url":{"href":"x"},"mime_type":"image/jpeg"}`,
+		`{"type":"media","url":"https://example.com/a.jpeg","mime_type":["image/jpeg"]}`,
 	} {
-		_, err := m.Channel.Read(m.ID, s.linqParts(parts))
-		s.ErrorContains(err, want, parts)
+		read, err := m.Channel.Read(m.ID, s.linqParts("["+bad+","+caption+","+good+"]"))
+		s.Require().NoError(err, bad)
+		s.Require().Len(read.Messages, 1, bad)
+		s.Equal("What is in this photo?", read.Messages[0].Text, bad)
+		s.Equal([]Media{{URL: "https://cdn.linqapp.com/attachments/a.jpeg", MIMEType: "image/jpeg"}}, read.Messages[0].Media, bad)
 	}
 }
 
