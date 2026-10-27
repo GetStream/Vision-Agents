@@ -1129,7 +1129,11 @@ func entryOf(p Page, m Message) entry {
 			role = llm.System
 		}
 	}
-	return entry{message: llm.Message{Role: role, Content: content}, turn: turn}
+	message := llm.Message{Role: role, Content: content}
+	if m.written {
+		message.Author = m.authorID
+	}
+	return entry{message: message, turn: turn}
 }
 
 // photoNote follows a person's words in history when they sent photos with them.
