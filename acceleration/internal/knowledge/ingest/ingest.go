@@ -23,20 +23,27 @@ import (
 // enough that a passage still answers the question on its own.
 const DefaultChunk = 1200
 
-// minChunk is the smallest size Split cuts at. Every passage carries its source and its id
-// whatever its size, so tiny passages turn a document into mostly those: one-character
-// paragraphs cut one to a passage grew a document thousands of times.
-const minChunk = 500
+// Limits bound how much larger a document's passages can be than the document. A field
+// left zero or below is DefaultLimits'.
+type Limits struct {
+	// MinChunk is the smallest size Split cuts at. Every passage carries its source and its
+	// id whatever its size, so tiny passages turn a document into mostly those:
+	// one-character paragraphs cut one to a passage grew a document thousands of times.
+	MinChunk int
+	// MaxHeading is how many bytes of a heading are repeated in each later passage of its
+	// section and in every passage's source. A heading of any length repeated in every
+	// passage is the other half of what multiplied a document. It is counted in bytes, as
+	// passages are: 128 four-byte characters repeated in a 500-byte passage would leave no
+	// room for anything else.
+	MaxHeading int
+}
 
-// maxHeading is how many bytes of a heading are repeated in each later passage of its
-// section and in every passage's source. A heading of any length repeated in every
-// passage is the other half of what multiplied a document. It is counted in bytes, as
-// passages are: 128 four-byte characters repeated in a 500-byte passage would leave no
-// room for anything else. With minChunk, a document's passages are at most about
-// (500 + name + 3 + 128 + 63) / (500 - 133) times its size: the passage, its source and
-// its id over what is left once the repeated heading line is in. A name is at most 256
-// characters, which is about 2.6 for 256 bytes and 4.7 for 1,024.
-const maxHeading = 128
+// DefaultLimits are the limits a router has unless configured otherwise. With them, a
+// document's passages are at most about (500 + name + 3 + 128 + 63) / (500 - 133) times
+// its size: the passage, its source and its id over what is left once the repeated
+// heading line is in. A name is at most 256 characters, which is about 2.6 for 256 bytes
+// and 4.7 for 1,024.
+var DefaultLimits = Limits{MinChunk: 500, MaxHeading: 128}
 
 // IDSeparator divides the file a passage came from from its place in that file. Keeping
 // the path in the id is what makes ingesting the same documentation twice an update
@@ -63,7 +70,7 @@ var readable = map[string]struct{}{
 }
 
 // Read turns the named files and directories into passages, ready to be written.
-func Read(paths []string, size int) ([]knowledge.Document, error) {
+func Read(paths []string, size int, limits Limits) ([]knowledge.Document, error) {
 	var documents []knowledge.Document
 	for _, path := range paths {
 		info, err := os.Stat(path)
@@ -71,7 +78,7 @@ func Read(paths []string, size int) ([]knowledge.Document, error) {
 			return nil, err
 		}
 		if !info.IsDir() {
-			found, err := readFile(path, filepath.Base(path), size)
+			found, err := readFile(path, filepath.Base(path), size, limits)
 			if err != nil {
 				return nil, err
 			}
@@ -99,7 +106,7 @@ func Read(paths []string, size int) ([]knowledge.Document, error) {
 			if err != nil {
 				relative = filepath.Base(name)
 			}
-			found, err := readFile(name, filepath.ToSlash(relative), size)
+			found, err := readFile(name, filepath.ToSlash(relative), size, limits)
 			if err != nil {
 				return err
 			}
@@ -115,21 +122,27 @@ func Read(paths []string, size int) ([]knowledge.Document, error) {
 
 // readFile cuts one file into passages. The name is what a passage says it came from, so
 // it is the path as a reader would recognise it rather than wherever the command was run.
-func readFile(path, name string, size int) ([]knowledge.Document, error) {
+func readFile(path, name string, size int, limits Limits) ([]knowledge.Document, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Split(name, string(content), size), nil
+	return Split(name, string(content), size, limits), nil
 }
 
 // Split cuts one document into the passages it will be stored as.
 //
 // The name is what a passage says it came from and what its id is keyed by, so it is the
 // path as a reader would recognise it rather than wherever the file happened to be. A size
-// under minChunk is raised to it.
-func Split(name, content string, size int) []knowledge.Document {
-	pieces := split(name, content, max(size, minChunk))
+// under limits.MinChunk is raised to it.
+func Split(name, content string, size int, limits Limits) []knowledge.Document {
+	if limits.MinChunk <= 0 {
+		limits.MinChunk = DefaultLimits.MinChunk
+	}
+	if limits.MaxHeading <= 0 {
+		limits.MaxHeading = DefaultLimits.MaxHeading
+	}
+	pieces := split(name, content, max(size, limits.MinChunk), limits)
 	documents := make([]knowledge.Document, 0, len(pieces))
 	for index, piece := range pieces {
 		documents = append(documents, knowledge.Document{
@@ -193,10 +206,10 @@ type passage struct {
 //
 // The heading is repeated at the top of every piece of a section it was cut from. Without
 // it the second half of a long section is prose with nothing saying what it is about,
-// which is exactly what full-text search needs to match on. Only its first maxHeading
-// bytes are repeated; the first piece keeps the heading line as it was written, so a
-// heading is never cut away from the paragraph under it.
-func split(name, content string, size int) []passage {
+// which is exactly what full-text search needs to match on. Only its first
+// limits.MaxHeading bytes are repeated; the first piece keeps the heading line as it was
+// written, so a heading is never cut away from the paragraph under it.
+func split(name, content string, size int, limits Limits) []passage {
 	var passages []passage
 	var heading string
 	var current strings.Builder
@@ -220,7 +233,7 @@ func split(name, content string, size int) []passage {
 	for _, block := range blocks(content) {
 		if title, ok := headingOf(block); ok {
 			flush()
-			heading = clip(title, maxHeading)
+			heading = clip(title, limits.MaxHeading)
 			current.WriteString(block + "\n\n")
 			held = prose(block)
 			continue

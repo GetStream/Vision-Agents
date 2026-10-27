@@ -33,6 +33,7 @@ import (
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/knadh/koanf/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
@@ -125,6 +126,12 @@ type Knowledge struct {
 	// attributes.provider_cost_micros; what a customer pays is the price list's. It is here,
 	// not in code, so a change in the provider's prices is a change of config.
 	StreamCost map[string]pricing.Rate `koanf:"stream_cost"`
+	// MinChunk is the smallest size, in bytes, a document is cut at: a smaller chunk_size is
+	// raised to it.
+	MinChunk int `koanf:"min_chunk"`
+	// MaxHeading is how many bytes of a heading are repeated in each later passage of its
+	// section and in every passage's source.
+	MaxHeading int `koanf:"max_heading"`
 }
 
 // LimitsMode is how much of credit, the spend hard limit and the customers' spend limits the
@@ -541,6 +548,9 @@ var variables = map[string]string{
 	"usage.redis_url":  "ROUTER_USAGE_REDIS_URL",
 
 	"limits.mode": "ROUTER_LIMITS_MODE",
+
+	"knowledge.min_chunk":   "ROUTER_KNOWLEDGE_MIN_CHUNK",
+	"knowledge.max_heading": "ROUTER_KNOWLEDGE_MAX_HEADING",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -591,7 +601,7 @@ func Defaults() Config {
 			string(pricing.BytesReturned): {USD: 0.05, Per: 1_000_000_000},
 			string(pricing.BytesWritten):  {USD: 2, Per: 1_000_000_000, Minimum: 10_000},
 			string(pricing.ByteHours):     {USD: 0.33, Per: 730_000_000_000},
-		}},
+		}, MinChunk: ingest.DefaultLimits.MinChunk, MaxHeading: ingest.DefaultLimits.MaxHeading},
 		Limits: Limits{Mode: LimitsEnforce},
 	}
 }
@@ -986,6 +996,9 @@ func (c Config) export() error {
 		"usage.redis_url":  c.Usage.RedisURL,
 
 		"limits.mode": string(c.Limits.Mode),
+
+		"knowledge.min_chunk":   fmt.Sprint(c.Knowledge.MinChunk),
+		"knowledge.max_heading": fmt.Sprint(c.Knowledge.MaxHeading),
 	}
 	for key, value := range values {
 		if value == "" {
