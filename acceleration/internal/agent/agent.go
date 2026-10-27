@@ -813,6 +813,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 		return "", a.respondNative(ctx, text, images)
 	}
 	caller := stt.Participant{ID: typedCaller}
+	author, _ := ctx.Value(authorKey{}).(string)
 	sender, _ := routing.CallerFrom(ctx)
 	scheduled := routing.ScheduledTurn(ctx)
 	// Typed into a call, the words are what the caller said as much as anything transcribed,
@@ -854,17 +855,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", attached, asked, sender, scheduled, "")
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender, scheduled, "")
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", nil, asked, sender, scheduled, "")
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -1801,6 +1802,8 @@ type heard struct {
 	confidence   float64
 	// typed is a turn written rather than spoken, such as the instruction opening a call.
 	typed bool
+	// author is the Stream user who wrote a typed turn in a thread channel (WithAuthor).
+	author string
 }
 
 func lastAssistantSaid(history []llm.Message) string {
@@ -1961,7 +1964,12 @@ func (a *Agent) respondTurn(
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: not joined"))
 	}
-	a.keepTurnLocked(participant, text)
+	said := participant
+	if listened.author != "" {
+		// Counted and named as a speaker is; everything else still answers the typed caller.
+		said = stt.Participant{ID: listened.author, UserID: listened.author}
+	}
+	a.keepTurnLocked(said, text)
 	history := a.replayLocked()
 	// This turn is answered, however it was asked, so what is speculated on next is a turn
 	// of its own.
@@ -2013,6 +2021,20 @@ const typedCaller = "caller"
 // their turns do would be heard saying it.
 const severalSpeakers = "Several people are talking in this call. Each of their messages starts with " +
 	"the name of who said it, then a colon. Never start your reply with such a label."
+
+// severalWriters is severalSpeakers for a conversation in writing, such as a group chat:
+// a reply that opened on a label would read as one of their messages.
+const severalWriters = "Several people are writing in this conversation. Each of their messages starts " +
+	"with the name of who wrote it, then a colon. Never start your reply with such a label."
+
+type authorKey struct{}
+
+// WithAuthor says which Stream user wrote the text a turn on ctx answers, in a thread channel
+// several people may write in. RespondTo counts and names them as it does a speaker on a
+// call; without it a typed turn is the caller's and is never named.
+func WithAuthor(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, authorKey{}, userID)
+}
 
 // userTurnLocked is a participant's words as a turn of the conversation. It names who
 // said them once somebody else in the call has had a turn answered too.
@@ -2285,7 +2307,9 @@ func (a *Agent) instructions() string {
 	if a.voicePrompt != "" {
 		parts = append(parts, a.voicePrompt)
 	}
-	if len(a.speakers) > 1 {
+	if len(a.speakers) > 1 && a.options.Text {
+		parts = append(parts, severalWriters)
+	} else if len(a.speakers) > 1 {
 		parts = append(parts, severalSpeakers)
 	}
 	return strings.Join(parts, "\n\n")
@@ -3616,10 +3640,26 @@ func (a *Agent) Continue(previous *Agent) {
 }
 
 // RestoreHistory seeds a new text session with previously completed conversation turns.
+// The authors of turns read back from a thread channel are counted as speakers, in the order
+// they first wrote, and once two have written each of their turns goes under its label.
 func (a *Agent) RestoreHistory(history []llm.Message) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = append([]llm.Message(nil), history...)
+	for _, message := range a.history {
+		if message.Author != "" {
+			author := stt.Participant{ID: message.Author, UserID: message.Author}
+			a.speakers[personOf(author)] = a.speakerLocked(author)
+		}
+	}
+	if len(a.speakers) < 2 {
+		return
+	}
+	for i, message := range a.history {
+		if message.Author != "" {
+			a.history[i].Speaker = a.speakers[message.Author].label
+		}
+	}
 }
 
 // openSubagent starts the subagent shared by cascade and native conversations, or is nil
