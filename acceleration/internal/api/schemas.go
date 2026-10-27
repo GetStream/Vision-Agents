@@ -921,7 +921,7 @@ func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma
 type SessionCallOutcome struct {
 	Outcome         *CallOutcome `json:"outcome,omitempty" doc:"How the call ended. Absent while it is ringing or under way."`
 	AnsweredAt      *time.Time   `json:"answered_at,omitempty" doc:"When the person picked up: their phone joined the call."`
-	DurationSeconds *int         `json:"duration_seconds,omitempty" doc:"How long they talked, from answered_at to when their phone left. Absent until it has."`
+	DurationSeconds *int         `json:"duration_seconds,omitempty" doc:"How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has."`
 }
 
 func (*SessionCallOutcome) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -948,7 +948,7 @@ func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
 		"no_answer: it rang until the ring timeout.\n"+
 		"failed: the vendor could not place it, for a bad number or a carrier fault.\n"+
 		"canceled: the vendor says the call was hung up before an answer.\n"+
-		"unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.",
+		"unknown: the vendor reports nothing about how it ended, and the phone never joined.",
 		"completed", "busy", "no_answer", "failed", "canceled", "unknown")
 }
 
