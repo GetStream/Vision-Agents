@@ -58,8 +58,10 @@ func TestLinqChannelSuite(t *testing.T) {
 }
 
 // SetupSuite registers standard_webhooks and the real bearer scheme, whose Wrap puts the API
-// key on a reply, and the real channel bridge.
+// key on a reply, and the real channel bridge. The suite has a database of its own: one of its
+// tests renames a table away.
 func (s *LinqChannelSuite) SetupSuite() {
+	s.database = "linq_channel"
 	verifier := standardwebhooks.New()
 	s.connectors = core.Registry{
 		Schemes:   map[string]core.Scheme{bearer.Name: bearer.New()},

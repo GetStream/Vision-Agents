@@ -270,7 +270,9 @@ so `testing.yaml` wins over `ROUTER_POSTGRES_DSN` (`TestTheTestingFileWinsOverTh
    (`model_router_test_<slug>_test` becomes `model_router_store_test_<slug>_test`). They create
    it on first use. `StoreSuite` drops the schema of its own (`internal/store/store_test.go:96`),
    never of yours. `ScheduledTasksSuite` runs on `model_router_scheduled_tasks_test_<slug>_test`
-   and `TelnyxChannelSuite` on `model_router_telnyx_channel_test_<slug>_test`
+   and `TelnyxChannelSuite` on `model_router_telnyx_channel_test_<slug>_test`, and
+   `LinqChannelSuite` on `model_router_linq_channel_test_<slug>_test` (one of its tests renames a
+   table away)
    (`RouterSuite.database`): a worker claims every task due in its database, so a worker of
    another suite or package would take their tasks (AI-1555). Each of their tests deletes its
    tasks when it ends, so the next test's worker finds none.

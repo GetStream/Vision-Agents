@@ -534,3 +534,37 @@ func (s *SlackChannelSuite) TestASlackThreadIsNotOfferedTheTools() {
 		s.False(slices.Contains(offered, name), name)
 	}
 }
+
+// A store that cannot record the chat's person fails the delivery and releases its claim, so
+// Linq's retry of the same event is taken and records the person. The write is made to fail by
+// renaming the table away: the suite's database is its own (SetupSuite), so no other suite sees
+// it, and a defer puts it back.
+func (s *LinqChannelSuite) TestAChatPersonTheStoreCannotWriteLeavesTheMessageToTheRetry() {
+	ctx := context.Background()
+	chat, person := s.utils.uuid(), "+13125550001"
+	body := s.chatSays(s.received(chat, s.line, person, "hello"), false)
+	_, err := s.store.DB().ExecContext(ctx, "ALTER TABLE channel_thread_people RENAME TO channel_thread_people_off")
+	s.Require().NoError(err)
+	restored := false
+	restore := func() {
+		if !restored {
+			restored = true
+			_, err := s.store.DB().ExecContext(ctx, "ALTER TABLE channel_thread_people_off RENAME TO channel_thread_people")
+			s.Require().NoError(err)
+		}
+	}
+	defer restore()
+
+	s.NotEqual(http.StatusOK, s.deliver(body, time.Now()))
+	restore()
+	s.Empty(s.chatPerson(chat))
+
+	s.Require().Equal(http.StatusOK, s.deliver(body, time.Now()))
+	s.Equal(person, s.chatPerson(chat))
+	channel := s.threadChannel(chat)
+	stored := s.written(channel, 1)
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
+	s.answeredAfter(channel, 0)
+	s.took(1)
+	s.threadTurnIsFree(channel)
+}
