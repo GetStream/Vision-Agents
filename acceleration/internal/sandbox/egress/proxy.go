@@ -17,6 +17,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -73,9 +74,9 @@ type Options struct {
 	// public addresses only.
 	Dial   func(ctx context.Context, network, address string) (net.Conn, error)
 	Logger *slog.Logger
-	// HandshakeTimeout, IdleTimeout and HeaderTimeout replace handshakeTimeout, idleTimeout
-	// and headerTimeout when set, for tests.
-	HandshakeTimeout, IdleTimeout, HeaderTimeout time.Duration
+	// HandshakeTimeout, IdleTimeout, HeaderTimeout and DryRunTimeout replace handshakeTimeout,
+	// idleTimeout, headerTimeout and dryRunTimeout when set, for tests.
+	HandshakeTimeout, IdleTimeout, HeaderTimeout, DryRunTimeout time.Duration
 }
 
 // Proxy is an HTTP proxy that takes CONNECT only.
@@ -89,7 +90,7 @@ type Proxy struct {
 	dial      func(ctx context.Context, network, address string) (net.Conn, error)
 	logger    *slog.Logger
 
-	handshakeTimeout, idleTimeout time.Duration
+	handshakeTimeout, idleTimeout, dryRunTimeout time.Duration
 }
 
 func New(options Options) (*Proxy, error) {
@@ -116,7 +117,8 @@ func New(options Options) (*Proxy, error) {
 	}
 	return &Proxy{store: options.Store, tokens: options.Tokens, ca: pair.Leaf, caKey: caKey, leafKey: leafKey,
 		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, dial: dial, logger: options.Logger,
-		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout)}, nil
+		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout),
+		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout)}, nil
 }
 
 // ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants or allowed domains cover,
@@ -258,7 +260,7 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 }
 
 // inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list (to a
-// GraphQL read, with queries alone). It reads the grants again for each, so after Delete no
+// GraphQL read, with queries alone; to a SQL read, one SELECT, as the host's dry run of it says). It reads the grants again for each, so after Delete no
 // request goes out on a tunnel the credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -291,17 +293,22 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		logger := p.logger.With("session", record.Session, "host", host)
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
-		reads, graphQL := record.reads(host, r.Method, r.URL)
+		reads, graphQL, sql := record.reads(host, r.Method, r.URL)
 		if graphQL {
 			// Its error names the check alone, never the body's bytes.
 			if err := onlyQueries(r); err != nil {
 				reads, logger = false, logger.With("why", err.Error())
 			}
 		}
+		var query map[string]json.RawMessage
+		var why error
+		if sql && reads {
+			if query, why = onlyOneQuery(r); why != nil {
+				reads, logger = false, logger.With("why", why.Error())
+			}
+		}
 		if !reads {
-			logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
-			refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, fmt.Sprintf("egress: %s %s%s refused: "+
-				"code in the sandbox only reads through a connector; write with the connector's tools", r.Method, host, r.URL.EscapedPath()))
+			p.refuseWrite(w, r, t, logger, record.readsSQL(host), why)
 			return
 		}
 		forward := &httputil.ReverseProxy{
@@ -317,6 +324,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		}
 		grant, form, placed := record.placed(host, r.Header.Get("Authorization"))
 		if !placed {
+			if err := p.selectsOrRefuse(w, r, t, logger, query, r.Header.Get("Authorization")); err != nil {
+				return
+			}
 			sent, done := counted(w, t.label, r.Method, decisionGrantedNoToken)
 			defer done()
 			forward.ServeHTTP(sent, r)
@@ -332,6 +342,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 				status = http.StatusUnauthorized
 			}
 			refuse(w, t.label, r.Method, decisionError, status, "egress: the connection gives no token: "+grant.Binding)
+			return
+		}
+		if err := p.selectsOrRefuse(w, r, t, logger, query, form.scheme+" "+form.credential(token)); err != nil {
 			return
 		}
 		sent, done := counted(w, t.label, r.Method, decisionToken)
@@ -382,6 +395,43 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// ReverseProxy sends a 1xx's headers on before ModifyResponse sees any.
 		forward.ServeHTTP(finalOnly{sent}, r)
 	}
+}
+
+// sqlHint is how code in the sandbox reads a host with a SQL read, which a refusal there tells the
+// model: google-cloud-bigquery's client.query_and_wait sends jobs.query, and its client.query
+// sends jobs.insert (POST .../jobs), which no read lists (_job_helpers.py, 3.41.0).
+const sqlHint = "code in the sandbox reads BigQuery with one SELECT per request, sent as POST /bigquery/v2/projects/<project>/queries " +
+	"(jobs.query, such as client.query_and_wait in Python); client.query() sends jobs.insert, which is refused, and so are scripts, " +
+	"DML, DDL and EXPORT DATA; write with the connector's tools"
+
+// refuseWrite answers a request that is no read 403, saying how code in the sandbox reads the
+// host: on a host with a SQL read, with why, when a check of the body said it.
+func (p *Proxy) refuseWrite(w http.ResponseWriter, r *http.Request, t tunnel, logger *slog.Logger, sqlHost bool, why error) {
+	logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
+	refused := fmt.Sprintf("egress: %s %s%s refused", r.Method, t.host, r.URL.EscapedPath())
+	switch {
+	case sqlHost && why != nil:
+		refused += " (" + why.Error() + "): " + sqlHint
+	case sqlHost:
+		refused += ": " + sqlHint
+	default:
+		refused += ": code in the sandbox only reads through a connector; write with the connector's tools"
+	}
+	refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, refused)
+}
+
+// selectsOrRefuse asks the host's dry run whether the request to a SQL read, query, is one
+// SELECT, and answers 403 when it is not. No query, the request of any other read, passes.
+func (p *Proxy) selectsOrRefuse(w http.ResponseWriter, r *http.Request, t tunnel, logger *slog.Logger,
+	query map[string]json.RawMessage, authorization string) error {
+	if query == nil {
+		return nil
+	}
+	err := p.selects(r.Context(), r, t, query, authorization)
+	if err != nil {
+		p.refuseWrite(w, r, t, logger.With("why", err.Error()), true, err)
+	}
+	return err
 }
 
 // errEncoded is a substituted request's response in an encoding the rewrite cannot read.
