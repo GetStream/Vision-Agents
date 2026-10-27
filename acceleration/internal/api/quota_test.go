@@ -32,13 +32,14 @@ func (s *QuotaSuite) SetupSuite() {
 	s.RouterSuite.SetupSuite()
 }
 
-// SetupTest gives every test a user of its own and an unspent day. A day is spent by
-// address as well as by user, and every test here calls from the same address.
+// SetupTest gives every test an app and a user of its own, so it starts on an unspent day.
+// A day is spent by address as well as by user, and every test here calls from the same
+// address, but every bucket is keyed by the app too. Nothing is cleared instead: the Redis
+// the limiter counts in is every suite's, and clearing it took another suite's spend with it.
 func (s *QuotaSuite) SetupTest() {
-	s.useFixture("standard")
+	s.useApp(s.data.createApp())
 	s.client = s.data.createUser()
 	s.backend = s.serverClient.actingFor(s.client)
-	s.clearAllowances()
 }
 
 func (s *QuotaSuite) TestAUserWhoHasSpentTheirDayIsRefusedAnotherSession() {
@@ -400,16 +401,4 @@ func (s *QuotaSuite) awaitReplies(sessionID string, replies int) {
 		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(s.T().Context())
 		return err == nil && len(rows) >= replies
 	}, settleFor, 50*time.Millisecond, "the replies of %s were never recorded", sessionID)
-}
-
-// clearAllowances forgets what has been spent today, so that one test's message is not
-// still on the books for the next.
-func (s *QuotaSuite) clearAllowances() {
-	redis := s.live.Redis()
-	spent, err := redis.Do(s.T().Context(), redis.B().Keys().Pattern("quota:*").Build()).AsStrSlice()
-	s.Require().NoError(err)
-	if len(spent) == 0 {
-		return
-	}
-	s.Require().NoError(redis.Do(s.T().Context(), redis.B().Del().Key(spent...).Build()).Error())
 }
