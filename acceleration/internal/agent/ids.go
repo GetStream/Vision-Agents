@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -539,11 +540,20 @@ func handedOut(key string, tools []string) bool {
 }
 
 // walkIDs calls found with every string or number held under "id" or a key ending in "_id",
-// and with every one listed under a plural key as the ID of what that key names: τ-bench's
-// get_user_details lists a user's orders as "orders": ["#W5272531"], each an order_id.
+// with every one listed under a plural key as the ID of what that key names: τ-bench's
+// get_user_details lists a user's orders as "orders": ["#W5272531"], each an order_id; and
+// with every key of a map that holds nothing but records, which is a collection keyed by
+// the records' IDs: {"main_card": {...}} gives the card's ID as main_card, though no field
+// of the card repeats it.
 func walkIDs(value any, at string, found func(at, id string)) {
 	switch typed := value.(type) {
 	case map[string]any:
+		if keyedByID(typed) {
+			at := cmp.Or(listedID(at), "id")
+			for name := range typed {
+				found(at, name)
+			}
+		}
 		for name, inner := range typed {
 			walkIDs(inner, name, found)
 		}
@@ -563,6 +573,36 @@ func walkIDs(value any, at string, found func(at, id string)) {
 			found(at, fmt.Sprint(typed))
 		}
 	}
+}
+
+// keyedByID reports whether a map is a collection of records keyed by their IDs: every value
+// is a record, an object that is not itself such a collection. A record's own fields hold
+// values of every kind, so this is never true of one record; and a wrapper such as
+// {"card_list": {...}} holds a collection rather than records, so its key is not an ID.
+func keyedByID(collection map[string]any) bool {
+	if len(collection) == 0 {
+		return false
+	}
+	for _, value := range collection {
+		record, isObject := value.(map[string]any)
+		if !isObject || allObjects(record) {
+			return false
+		}
+	}
+	return true
+}
+
+// allObjects reports whether every value of a non-empty map is an object.
+func allObjects(fields map[string]any) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	for _, value := range fields {
+		if _, isObject := value.(map[string]any); !isObject {
+			return false
+		}
+	}
+	return true
 }
 
 // holdsValue reports whether a result written as text gives wanted as one of its words, as
