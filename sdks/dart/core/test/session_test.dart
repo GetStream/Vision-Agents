@@ -28,9 +28,39 @@ void main() {
       expect(chat.isConnected, isTrue);
       final upgrade = router.upgrades.single;
       expect(upgrade.path, '/v1/agents/sessions/s1/events');
-      expect(upgrade.query, {'decisions': 'false', 'customer_id': 'acme', 'user_id': 'ada'});
+      expect(upgrade.query, {
+        'decisions': 'false',
+        'tools': '',
+        'customer_id': 'acme',
+        'user_id': 'ada',
+      });
       expect(upgrade.header('Stream-Auth-Type'), isNull);
       await chat.close();
+    });
+
+    test('says on the socket which tools it runs, so their calls are sent here', () async {
+      Future<String> none(Map<String, Object?> _) async => '';
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool(name: 'lookup_order', description: 'Look up an order.', run: none),
+            AgentTool(name: 'issue_refund', description: 'Refund an order.', run: none),
+          ],
+        ),
+      );
+
+      final tools = router.upgrades.single.query['tools']!.split(',');
+      expect(tools, unorderedEquals(['lookup_order', 'issue_refund']));
+      await chat.close();
+    });
+
+    test('attached with no tools, says it runs none, so it never answers a call', () async {
+      router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+
+      final watching = await agents.attach('s1');
+
+      expect(router.upgrades.single.query['tools'], '');
+      await watching.close();
     });
 
     test('shows what was asked at once, and asks with a request rather than a frame', () async {
@@ -520,6 +550,7 @@ void main() {
       socket.send('{"type":"tool_call","id":"c1","name":"now","arguments":"{}"}');
 
       expect(fork.id, 's2');
+      expect(router.upgrades[1].query['tools'], 'now');
       expect((await socket.next())['output'], 'noon');
       await fork.close();
       await chat.close();

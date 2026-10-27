@@ -48,6 +48,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### The Dart SDK's device tools are called again on a router in proxy mode
+
+A Dart or Flutter app's tools (`AgentTool`) were never called on a router running with `ROUTER_AUTH_MODE=proxy`: every call failed at once and the model said it could not do it. Since the router sends a tool's calls only to a socket that runs it, and the Dart socket carries no auth type, the router took it for a backend rather than the device that opened the session. The session socket now names the tools it runs in `tools` (empty when there are none), as the Go SDK does.
+
 ### The agent tells people apart in a group text chat
 
 In a thread several people write in, such as an iMessage group chat or a Slack thread with two people, the reply model is told who wrote each message once a second person has written: `Speaker 1: What are our names?`, each person under `Speaker N` in the order they first wrote, never their phone number or Slack id, with a note that several people are writing. It read every message as one person's, so it answered Kanat as Ana. A 1:1 chat and a session in writing from the dashboard or an SDK send the model what they did (AI-2014).
