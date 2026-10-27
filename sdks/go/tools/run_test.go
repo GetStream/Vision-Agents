@@ -108,7 +108,7 @@ func (s *RunSuite) TestACallWaitingForAPlaceTimesOutOnItsOwnDeadline() {
 func (s *RunSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 	seen := make(chan Call, 1)
 	s.Require().NoError(Register(s.registry, "lookup_order", "Look up an order", func(ctx context.Context, _ struct{}) (any, error) {
-		seen <- *CallFrom(ctx)
+		seen <- *ToolCallContextFrom(ctx)
 		return "ok", nil
 	}))
 	want := Call{ID: "call-1", SessionID: "session-1", TurnID: "turn-1"}
@@ -120,7 +120,7 @@ func (s *RunSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 }
 
 func (s *RunSuite) TestOutsideACallTheCallIsEmptyRatherThanNil() {
-	toolCallContext := CallFrom(context.Background())
+	toolCallContext := ToolCallContextFrom(context.Background())
 
 	s.Require().NotNil(toolCallContext)
 	s.Empty(toolCallContext.ID)

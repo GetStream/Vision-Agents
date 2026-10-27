@@ -7,7 +7,7 @@ import { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbo
 import { createResponse, type AgentResponse } from "./responses.js";
 import type { Session } from "./session.js";
 import { Socket, number as numberOf, text, type Frame } from "./socket.js";
-import { Holds, socketLine, toolCallOf } from "./tool_line.js";
+import { Holds, socketLine, toolCallContextOf } from "./tool_line.js";
 import type { Tools } from "./tools.js";
 
 /** How many calls a worker takes at once when it does not say. */
@@ -413,7 +413,8 @@ export class Dispatch {
     const key = hostedKey(frame);
     const cancel = new AbortController();
     this.hostedCalls.set(key, cancel);
-    const toolCallContext = toolCallOf(frame, "", socketLine((sent) => this.tell(sent), this.holds), signal);
+    const line = socketLine((sent) => this.tell(sent), this.holds);
+    const toolCallContext = toolCallContextOf(frame, "", line, signal);
     this.track(
       (async () => {
         const result: Record<string, unknown> = { type: "tool_result", tool_call_id: id, id };

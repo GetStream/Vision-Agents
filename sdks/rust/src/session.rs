@@ -494,7 +494,7 @@ fn run_tool(frame: Frame, sender: &SocketSender, shared: &Arc<Shared>, tools: &T
     let key = id.clone();
     let task = tokio::spawn(async move {
         match tools
-            .call_as(
+            .call_with_tool_call_context(
                 frame.text("name"),
                 frame.text("arguments"),
                 tool_call_context,

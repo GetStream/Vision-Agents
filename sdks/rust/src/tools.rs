@@ -86,7 +86,7 @@ impl Tools {
     /// talking over the agent cancel the call, `timeout_ms` bounds how long one call may
     /// take, here as well as at the router, and `approval` asks a person to allow each call,
     /// with a title whose `{argument}` placeholders must name parameters.
-    pub fn register_call<F, Fut, O, E>(
+    pub fn register_with_tool_call_context<F, Fut, O, E>(
         &self,
         declaration: types::SessionTool,
         run: F,
@@ -141,12 +141,13 @@ impl Tools {
 
     /// Runs one function with the arguments the model wrote, as the output to send back.
     pub async fn call(&self, name: &str, arguments: &str) -> Result<Value, String> {
-        self.call_as(name, arguments, ToolCall::default()).await
+        self.call_with_tool_call_context(name, arguments, ToolCall::default())
+            .await
     }
 
     /// [`Tools::call`] for one particular call, which the function is handed. A call that
     /// outlasts the tool's `timeout_ms` is stopped and fails.
-    pub async fn call_as(
+    pub async fn call_with_tool_call_context(
         &self,
         name: &str,
         arguments: &str,

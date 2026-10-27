@@ -17,7 +17,7 @@ from vision_agents.core.llm.tool_call import (
     ToolCall,
     ToolConversation,
     ToolUser,
-    current_call,
+    get_tool_call_context,
 )
 from vision_agents.core.llm.remote import (
     RemoteCall,
@@ -839,7 +839,7 @@ class TestAccelerated:
 
         @joined.register_function(description="Look the caller up")
         async def whoami() -> str:
-            seen.append(current_call())
+            seen.append(get_tool_call_context())
             return "ok"
 
         await router.send(
@@ -864,15 +864,15 @@ class TestAccelerated:
             cid="agent:kept", custom={"line": "support"}
         )
         assert seen[0].approved
-        assert current_call() == ToolCall(), "outside a call there is none"
+        assert get_tool_call_context() == ToolCall(), "outside a call there is none"
 
     async def test_a_function_tells_the_caller_how_it_is_going(
         self, router: Router, joined: stream.Accelerated
     ):
         @joined.register_function(description="Search flights")
         async def search() -> str:
-            await current_call().update("checking three airlines")
-            await current_call().say("Still looking, one moment.")
+            await get_tool_call_context().update("checking three airlines")
+            await get_tool_call_context().say("Still looking, one moment.")
             return "found two"
 
         await router.send(
@@ -901,7 +901,7 @@ class TestAccelerated:
 
         @joined.register_function(description="Charge the card")
         async def charge() -> str:
-            await current_call().disallow_interruptions()
+            await get_tool_call_context().disallow_interruptions()
             held.set()
             await release.wait()
             return "charged"
@@ -935,7 +935,7 @@ class TestAccelerated:
         @joined.register_function(description="Charge the card")
         async def charge() -> str:
             try:
-                await current_call().disallow_interruptions()
+                await get_tool_call_context().disallow_interruptions()
                 wrote.set()
                 return "charged"
             finally:

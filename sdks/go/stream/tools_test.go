@@ -226,7 +226,7 @@ func (s *ToolCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
 	s.Require().NoError(tools.Register(pipeline.Functions(), "lookup_order", "Look up an order",
 		func(ctx context.Context, _ struct{}) (any, error) {
-			seen <- *tools.CallFrom(ctx)
+			seen <- *tools.ToolCallContextFrom(ctx)
 			return "found", nil
 		}))
 

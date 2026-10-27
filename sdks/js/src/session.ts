@@ -4,7 +4,7 @@ import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
 import { Speech } from "./speech.js";
 import type { ChatClient, VideoClient } from "./stream.js";
-import { Holds, socketLine, toolCallOf } from "./tool_line.js";
+import { Holds, socketLine, toolCallContextOf } from "./tool_line.js";
 import type { ToolApproval, Tools } from "./tools.js";
 
 /**
@@ -586,7 +586,7 @@ export class Session {
         throw new Error(`${name} was asked for, and no tools are registered`);
       }
       const line = socketLine((sent) => this.socket?.open && this.socket.send(sent), this.holds);
-      const toolCallContext = toolCallOf(frame, this.id, line, this.ending.signal);
+      const toolCallContext = toolCallContextOf(frame, this.id, line, this.ending.signal);
       result["output"] = await this.tools.call(name, text(frame, "arguments"), cancel.signal, toolCallContext);
     } catch (cause) {
       result["error"] = cause instanceof Error ? cause.message : String(cause);

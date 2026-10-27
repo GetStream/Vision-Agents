@@ -50,7 +50,7 @@ class ToolConversation:
 class ToolCall:
     """The call a function is running for.
 
-    Read it inside a function with `current_call()`.
+    Read it inside a function with `get_tool_call_context()`.
     """
 
     # id is the id the model gave the call. A call sent again keeps it, so it is the key to
@@ -105,7 +105,7 @@ _current: contextvars.ContextVar[Optional[ToolCall]] = contextvars.ContextVar(
 )
 
 
-def current_call() -> ToolCall:
+def get_tool_call_context() -> ToolCall:
     """The call the running function is answering.
 
     Outside a call, as in a unit test of the function itself or under a model that does
@@ -115,8 +115,8 @@ def current_call() -> ToolCall:
 
 
 @contextlib.contextmanager
-def calling(tool_call_context: ToolCall) -> Iterator[ToolCall]:
-    """Make `tool_call_context` what `current_call()` returns until the block ends.
+def using_tool_call_context(tool_call_context: ToolCall) -> Iterator[ToolCall]:
+    """Make `tool_call_context` what `get_tool_call_context()` returns until the block ends.
 
     The socket that runs a function sets it, and a test of a function can too.
     """
