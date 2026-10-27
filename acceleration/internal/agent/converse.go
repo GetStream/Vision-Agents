@@ -968,6 +968,20 @@ func (c *converse) Listening() bool {
 	return hearing && time.Since(revised) < callerHold
 }
 
+// Undecided reports whether somebody has said something the agent has not yet dealt with:
+// words still being gathered or put to the controller, however long ago they last changed,
+// or a turn queued behind the reply. A turn nobody asked for waits for them, because it would
+// be said over a caller who spoke first and answer none of what they said. The wait is
+// bounded: every ruling but a wait settles the words, and a wait runs out with patience.
+func (c *converse) Undecided() bool {
+	if _, _, hearing := c.cadence.Active(); hearing {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.queued != nil
+}
+
 // Waiting hands back the turn held while the agent finished speaking, now that it has.
 //
 // A caller who has started talking again keeps the floor: the turn stays queued, so the

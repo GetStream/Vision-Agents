@@ -2748,6 +2748,48 @@ func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainWhenTheCallerSpeaksAft
 	s.NotContains(s.model.requests()[2].Instructions, "12.63", "the caller heard the answer before they spoke")
 }
 
+func (s *AgentSuite) TestAnAnswerComingBackWaitsForWordsStillBeingRuledOn() {
+	// The caller asked something else while the subagent worked, and their words held still
+	// long enough to stop counting as talking but are still with the controller. Passing the
+	// answer on now would be said over them, and the ruling would land mid-reply as though
+	// they had cut in. The reply to their words is the one that passes it on.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63, and we open at nine."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	asked := len(s.flow.requests())
+	s.says(participant, "and when do you open")
+	s.eventually(func() bool { return len(s.flow.requests()) > asked }, "the words were never put to the controller")
+
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
+		callerHold+presenceTick+200*time.Millisecond, 20*time.Millisecond,
+		"an answer must not be passed on over words still being ruled on")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller was never answered")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.",
+		"the reply to the caller's words passes on what came back")
+	s.Zero(countOf[Interrupted](s.reported()))
+}
+
 func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
 	// An utterance the voice has finished sending is still on its way out of the edge.
 	// Starting the follow-up on that word talks over the tail of the reply.

@@ -3142,8 +3142,10 @@ func (a *Agent) follow() error {
 		a.mu.Unlock()
 		return nil
 	}
-	// A turn nobody asked for must not take the floor from a caller who is still talking.
-	if a.converse.Listening() {
+	// A turn nobody asked for must not take the floor from a caller who is still talking,
+	// nor from words the caller finished that are still being ruled on: the reply to them
+	// carries what is owed, and starting first has the ruling land mid-reply as a barge-in.
+	if a.converse.Listening() || a.converse.Undecided() {
 		a.mu.Unlock()
 		return nil
 	}
