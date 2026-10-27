@@ -312,7 +312,6 @@ func (r *recently) forget(key string) {
 // answered, which a vendor does not bill: it is logged, since a call hook that does not deliver
 // call.session_participant_joined would leave every placed call looking so.
 func (s *Service) settleLegs(ctx context.Context, ended []store.CallLeg) {
-	s.told(ctx, ended...)
 	for _, leg := range ended {
 		if !leg.Connected() {
 			s.logger.Warn("a call leg ended without its phone joining the call; it is not billed",
@@ -322,31 +321,41 @@ func (s *Service) settleLegs(ctx context.Context, ended []store.CallLeg) {
 		}
 		s.settleLeg(ctx, leg, true)
 	}
+	s.told(ctx, ended...)
 }
+
+// outcomeTimeout bounds keeping one leg's join or end for its call's outcome, so a slow
+// write does not hold the Stream hook request that reported it.
+const outcomeTimeout = 5 * time.Second
 
 // told tells the outcome keeper when each leg's phone joined and when the leg ended. A leg the
 // keeper has no call for, a transfer's or an inbound one, changes nothing. A failure is logged:
 // the leg is already billed, and its outcome is all that is lost.
 func (s *Service) told(ctx context.Context, legs ...store.CallLeg) {
+	for _, leg := range legs {
+		s.tell(ctx, leg)
+	}
+}
+
+func (s *Service) tell(ctx context.Context, leg store.CallLeg) {
 	// The leg is already ended, so a redelivered event will not tell again: a hook request
 	// canceled now would lose the outcome for good.
-	ctx = context.WithoutCancel(ctx)
-	for _, leg := range legs {
-		key := outcome.Key{
-			CustomerID: leg.CustomerID, StreamAppPK: leg.StreamAppPK, CallType: leg.CallType, CallID: leg.CallID,
-			Local: leg.LocalNumber, Remote: leg.RemoteNumber,
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeTimeout)
+	defer cancel()
+	key := outcome.Key{
+		CustomerID: leg.CustomerID, StreamAppPK: leg.StreamAppPK, CallType: leg.CallType, CallID: leg.CallID,
+		Local: leg.LocalNumber, Remote: leg.RemoteNumber,
+	}
+	if leg.StartedAt != nil {
+		if err := s.outcomes.Answered(ctx, key, *leg.StartedAt); err != nil {
+			s.logger.Error("could not keep that a call was answered", "customer", leg.CustomerID,
+				"call", leg.CallType+":"+leg.CallID, "error", err)
 		}
-		if leg.StartedAt != nil {
-			if err := s.outcomes.Answered(ctx, key, *leg.StartedAt); err != nil {
-				s.logger.Error("could not keep that a call was answered", "customer", leg.CustomerID,
-					"call", leg.CallType+":"+leg.CallID, "error", err)
-			}
-		}
-		if leg.EndedAt != nil {
-			if err := s.outcomes.Ended(ctx, key, *leg.EndedAt); err != nil {
-				s.logger.Error("could not keep that a call ended", "customer", leg.CustomerID,
-					"call", leg.CallType+":"+leg.CallID, "error", err)
-			}
+	}
+	if leg.EndedAt != nil {
+		if err := s.outcomes.Ended(ctx, key, *leg.EndedAt); err != nil {
+			s.logger.Error("could not keep that a call ended", "customer", leg.CustomerID,
+				"call", leg.CallType+":"+leg.CallID, "error", err)
 		}
 	}
 }
@@ -367,7 +376,6 @@ func (s *Service) SweepLegs(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	s.told(ctx, ended...)
 	for _, leg := range ended {
 		if !leg.Connected() {
 			s.logger.Warn("ended a call leg that rang for the longest a call may last without its phone joining",
@@ -379,6 +387,7 @@ func (s *Service) SweepLegs(ctx context.Context) (int, error) {
 			"direction", leg.Direction, "started_at", leg.StartedAt, "recorded", MaxCallLength)
 		s.settleLeg(ctx, leg, true)
 	}
+	s.told(ctx, ended...)
 	if err := s.rebill(ctx, now); err != nil {
 		return len(ended), err
 	}
