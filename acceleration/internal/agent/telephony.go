@@ -179,13 +179,13 @@ const didNotWork = "That did not work: "
 
 // answeredSinceCaller returns the result of an identical call, the same tool with the same
 // arguments, already answered since the caller last spoke, while no call since may have
-// changed something. After a result Gemma often asks for the same call again, and run twice
-// a dispatch or a booking is made twice. A call that failed may be tried again, since what
+// changed something. A model handed a result may ask for the same call again, and run twice
+// an order or a booking is made twice. A call that failed may be tried again, since what
 // failed may not fail twice, and so may one whose result says nothing was done
 // (undoneResult), and code whose result tells the model to run it again now that the user
 // connected what it needed (harness.RunAgain, connected being the bindings the user has
-// connected): answered from that result, the repeat after the user connected got the 401
-// from before.
+// connected): answered from the earlier result, it would repeat the failure the user has
+// since fixed.
 //
 // Once the caller speaks, the same call is theirs to ask for again: a second identical order
 // is a second order. And a call that may have changed something (changedState) ends the
