@@ -10,10 +10,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
 )
 
 // RefusedAttemptsSuite proves each attempt a provider refuses on a pooled key is counted
@@ -347,4 +350,73 @@ func (s *RefusedAttemptsSuite) TestAQuotaFrameIsCountedAndRestsTheKey() {
 
 	s.Equal(map[string]float64{"quota_exceeded": 1}, s.counted(p.keyVars[0]))
 	s.Equal([]string{p.keys[1], p.keys[1]}, []string{p.Next(), p.Next()})
+}
+
+// refusedAlert is the key_refused condition, fresh, after a first check a limit before start
+// that takes in what earlier tests counted, so its next checks hold only what the test did.
+func (s *RefusedAttemptsSuite) refusedAlert(start time.Time) alerts.ItemCheck {
+	conditions := Alerts(time.Hour)
+	s.Require().Len(conditions, 1)
+	s.Equal("key_refused", conditions[0].Name)
+	s.Equal(alerts.Warn, conditions[0].Level, "a refused key does not page")
+	conditions[0].Items(start.Add(-time.Hour))
+	return conditions[0].Items
+}
+
+func (s *RefusedAttemptsSuite) TestARefusedKeyAlertsOncePerVariableAndStatusUntilTheLimitPasses() {
+	start := time.Now()
+	refused := s.refusedAlert(start)
+	p := s.pool("alerted")
+	item := p.keyVars[0] + "/429"
+	s.answer(http.StatusTooManyRequests, p.keys...)
+
+	s.post(p.Pool)
+	held := refused(start.Add(time.Second))
+	s.Equal(map[string]any{"value": 2.0, "increase": 2.0}, held[item])
+	for name := range held {
+		for _, key := range p.keys {
+			s.NotContains(name, key)
+		}
+	}
+
+	s.post(p.Pool)
+	s.NotContains(refused(start.Add(time.Hour)), item, "held back by the limit")
+
+	s.post(p.Pool)
+	s.Contains(refused(start.Add(time.Hour+2*time.Second)), item, "sent again once the limit passed")
+}
+
+func (s *RefusedAttemptsSuite) TestASpentQuotaFrameAlertsUnderItsVariable() {
+	start := time.Now()
+	refused := s.refusedAlert(start)
+	p := s.pool("framed")
+
+	p.QuotaExceeded(p.keys[0])
+
+	s.Contains(refused(start.Add(time.Second)), p.keyVars[0]+"/quota_exceeded")
+}
+
+// The statuses a key is not refused on are the ones the base counted nothing for.
+func (s *RefusedAttemptsSuite) TestWhatIsNotARefusalAlertsNothing() {
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{name: "answered"},
+		{name: "wrong key", status: http.StatusUnauthorized},
+		{name: "server error", status: http.StatusInternalServerError},
+	} {
+		s.Run(tc.name, func() {
+			start := time.Now()
+			refused := s.refusedAlert(start)
+			p := s.pool("quiet")
+			s.answer(tc.status, p.keys[0])
+
+			s.post(p.Pool)
+
+			for item := range refused(start.Add(time.Second)) {
+				s.False(strings.HasPrefix(item, p.keyVars[0]+"/"), item)
+			}
+		})
+	}
 }
