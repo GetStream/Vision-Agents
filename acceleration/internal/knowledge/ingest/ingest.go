@@ -42,10 +42,10 @@ type Limits struct {
 // maxSource is the longest source the API takes, in characters.
 const maxSource = 256
 
-// Growth is how many times larger than a document its passages can be: a passage, its
+// SizeMultiple is how many times larger than a document its passages can be: a passage, its
 // source and its id over what is left of the passage once the repeated heading is in. With
 // no minimum chunk, or no room under the heading, nothing bounds it, and it is +Inf.
-func (l Limits) Growth() float64 {
+func (l Limits) SizeMultiple() float64 {
 	room := l.MinChunk - l.MaxHeading
 	if l.MinChunk == 0 || room <= 0 {
 		return math.Inf(1)

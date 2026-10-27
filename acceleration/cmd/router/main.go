@@ -1981,23 +1981,23 @@ func knowledgeLimits(settings config.Knowledge) ingest.Limits {
 	return ingest.Limits{MinChunk: settings.MinChunk, MaxHeading: settings.MaxHeading}
 }
 
-// maxKnowledgeGrowth is how many times larger than a document its passages may be before
+// maxKnowledgeSizeMultiple is how many times larger than a document its passages may be before
 // the router warns of it at startup.
-const maxKnowledgeGrowth = 4
+const maxKnowledgeSizeMultiple = 4
 
 // warnKnowledgeLimits says at startup when the knowledge limits let one ingest request write
 // many times what it sent.
 func warnKnowledgeLimits(settings config.Config, logger *slog.Logger) {
-	growth := knowledgeLimits(settings.Knowledge).Growth()
+	multiple := knowledgeLimits(settings.Knowledge).SizeMultiple()
 	switch {
-	case math.IsInf(growth, 1):
-		logger.Warn("knowledge has no minimum chunk, so nothing bounds how much a document grows when it is cut "+
-			"into passages", "set", "ROUTER_KNOWLEDGE_MIN_CHUNK")
-	case growth > maxKnowledgeGrowth:
-		logger.Warn("the knowledge limits let a document grow many times when it is cut into passages: lower the "+
+	case math.IsInf(multiple, 1):
+		logger.Warn("knowledge has no minimum chunk, so nothing limits the size of the passages of a document",
+			"set", "ROUTER_KNOWLEDGE_MIN_CHUNK")
+	case multiple > maxKnowledgeSizeMultiple:
+		logger.Warn("the knowledge limits let the passages of a document be many times its size: lower the "+
 			"heading limit or raise the minimum chunk",
-			"growth", fmt.Sprintf("%.1f", growth),
-			"request_bytes", api.MaxKnowledgeBody, "written_bytes", int64(growth*api.MaxKnowledgeBody),
+			"size_multiple", fmt.Sprintf("%.1f", multiple),
+			"request_bytes", api.MaxKnowledgeBody, "written_bytes", int64(multiple*api.MaxKnowledgeBody),
 			"set", "ROUTER_KNOWLEDGE_MAX_HEADING or ROUTER_KNOWLEDGE_MIN_CHUNK")
 	}
 }

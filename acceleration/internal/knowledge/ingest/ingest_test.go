@@ -143,10 +143,10 @@ func (s *DocumentsSuite) TestAHeadingLimitOfZeroRepeatsNoHeading() {
 	}
 }
 
-func (s *DocumentsSuite) TestAPassageGrowsAtMostAsTheLimitsSay() {
-	s.InDelta(2.6, DefaultLimits.Growth(), 0.05)
-	s.InDelta(5.6, Limits{MinChunk: 500, MaxHeading: 300}.Growth(), 0.05)
-	s.True(math.IsInf(Limits{MinChunk: 0, MaxHeading: 0}.Growth(), 1), "no minimum bounds nothing")
+func (s *DocumentsSuite) TestThePassageSizeMultipleStaysInTheLimits() {
+	s.InDelta(2.6, DefaultLimits.SizeMultiple(), 0.05)
+	s.InDelta(5.6, Limits{MinChunk: 500, MaxHeading: 300}.SizeMultiple(), 0.05)
+	s.True(math.IsInf(Limits{MinChunk: 0, MaxHeading: 0}.SizeMultiple(), 1), "no minimum bounds nothing")
 }
 
 func (s *DocumentsSuite) TestASectionThatIsOnlyANameIsNotWorthStoring() {
