@@ -395,6 +395,64 @@ func (s *TelnyxSuite) TestACallWithNoTermsOnlyDialsTheTrunk() {
 	s.NotContains(raw, "password=")
 }
 
+func (s *TelnyxSuite) TestACallWithAStatusURLAsksTelnyxToPostHowItEnded() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+	placing := s.outbound()
+	placing.StatusURL = "https://router.example/v1/phone/status/token-1"
+
+	_, err := s.provider.Dial(s.ctx, placing)
+	s.Require().NoError(err)
+
+	s.Equal(placing.StatusURL, s.seen.body["StatusCallback"])
+	s.Equal(http.MethodPost, s.seen.body["StatusCallbackMethod"])
+}
+
+func (s *TelnyxSuite) TestACallWithoutAStatusURLAsksForNoStatus() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.NotContains(s.seen.body, "StatusCallback")
+	s.NotContains(s.seen.body, "StatusCallbackMethod")
+}
+
+func (s *TelnyxSuite) TestEachFinalStatusIsAnOutcome() {
+	for word, result := range map[string]phone.CallResult{
+		"completed": phone.CallCompleted,
+		"busy":      phone.CallBusy,
+		"no-answer": phone.CallNoAnswer,
+		"failed":    phone.CallFailed,
+		"canceled":  phone.CallCanceled,
+	} {
+		status, err := s.provider.ReadStatus(formType, []byte("CallSid=v3:cc-1&CallStatus="+word))
+		s.Require().NoError(err)
+		s.Equal(phone.CallStatus{Result: result, Word: word}, status, word)
+	}
+}
+
+func (s *TelnyxSuite) TestARingingStatusDecidesNothing() {
+	status, err := s.provider.ReadStatus(formType, []byte("CallSid=v3:cc-1&CallStatus=ringing"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Word: "ringing"}, status)
+}
+
+func (s *TelnyxSuite) TestAStatusWithoutACallStatusIsRefused() {
+	_, err := s.provider.ReadStatus(formType, []byte("CallSid=v3:cc-1"))
+
+	s.ErrorContains(err, "CallStatus")
+}
+
+func (s *TelnyxSuite) TestAStatusThatIsNotAFormIsRefused() {
+	_, err := s.provider.ReadStatus("application/json", []byte(`{"CallStatus":"busy"}`))
+
+	s.Error(err)
+}
+
+// formType is how Telnyx posts a TeXML call's status.
+const formType = "application/x-www-form-urlencoded"
+
 func (s *TelnyxSuite) TestDiallingWithoutAConnectionIDIsRefused() {
 	provider, err := New(Options{APIKey: "KEY123", BaseURL: s.server.URL})
 	s.Require().NoError(err)

@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -43,8 +44,10 @@ type Service struct {
 	recorder  *routing.Recorder
 	gate      *dlc.Gate
 	publicURL string
-	clock     func() time.Time
-	logger    *slog.Logger
+	// outcomes keeps how each placed call ended. Nil without a store.
+	outcomes *outcome.Keeper
+	clock    func() time.Time
+	logger   *slog.Logger
 	// heard is the calls whose participant events this process recorded lately (Heard), and
 	// unhooked the apps it lately logged as not delivering them.
 	heard, unhooked recently
@@ -92,7 +95,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		options.Logger = slog.Default()
 	}
 
-	return &Service{
+	service := &Service{
 		registry:  options.Registry,
 		store:     options.Store,
 		stream:    options.Stream,
@@ -104,7 +107,34 @@ func NewService(options ServiceOptions) (*Service, error) {
 		publicURL: strings.TrimSuffix(options.PublicURL, "/"),
 		clock:     options.Now,
 		logger:    options.Logger,
-	}, nil
+	}
+	if options.Store != nil {
+		service.outcomes = outcome.NewKeeper(options.Store, service.now)
+	}
+	return service, nil
+}
+
+// Outcomes keeps how each placed call ended. Nil without a store.
+func (s *Service) Outcomes() *outcome.Keeper { return s.outcomes }
+
+// outcomeOf is the outcome a vendor's result is. It is the one place a vendor's word for a
+// call meets the router's: an empty result is a report that is not final, and so no outcome.
+func outcomeOf(result CallResult) (outcome.Outcome, error) {
+	switch result {
+	case "":
+		return "", nil
+	case CallCompleted:
+		return outcome.Completed, nil
+	case CallBusy:
+		return outcome.Busy, nil
+	case CallNoAnswer:
+		return outcome.NoAnswer, nil
+	case CallFailed:
+		return outcome.Failed, nil
+	case CallCanceled:
+		return outcome.Canceled, nil
+	}
+	return "", stack.Wrap(fmt.Errorf("phone: no outcome for the call result %q", result))
 }
 
 // Apps says which Stream app a customer's phone lines live in. A trunk and its routing rule
@@ -1007,6 +1037,25 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		}
 	}
 
+	// Only a vendor the router can be reached by can post how the call ended. A call through
+	// a customer's own trunk is told by the router's own bridge.
+	_, reader := provider.(StatusReader)
+	reports := reader && s.publicURL != ""
+	token, err := s.outcomes.Placed(ctx, outcome.Call{
+		Key: outcome.Key{
+			CustomerID: request.Owner.CustomerID, StreamAppPK: pin, CallType: callType, CallID: callID,
+			Local: request.From, Remote: request.To,
+		},
+		Vendor:  held.Vendor,
+		Reports: reports || trunk != nil,
+	})
+	if err != nil {
+		return Placed{}, err
+	}
+	if reports {
+		outbound.StatusURL = s.publicURL + "/v1/phone/status/" + token
+	}
+
 	if trunk != nil {
 		customerID := request.Owner.CustomerID
 		outbound.Connected = func(media sipbridge.MediaAddrs) {
@@ -1027,6 +1076,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	// and the call's app (CallPin) is known before its leg arrives.
 	if shared {
 		if err := s.store.RecordCallResource(ctx, resource); err != nil {
+			s.forgetOutcome(ctx, token, callID)
 			return Placed{}, stack.Wrap(err)
 		}
 	}
@@ -1038,10 +1088,15 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		if shared {
 			s.forgetCallResource(ctx, resource)
 		}
+		s.forgetOutcome(ctx, token, callID)
 		return Placed{}, stack.Wrap(err)
 	}
 
 	committed = true
+	if err := s.outcomes.Dialed(context.WithoutCancel(ctx), token, dialed.VendorCallID); err != nil {
+		s.logger.Error("could not keep a placed call's vendor id", "call", callID,
+			"vendor_call_id", dialed.VendorCallID, "error", err)
+	}
 	// The vendor bills the call from when the person answers, which is when their phone joins
 	// the Stream call: the leg rings until then, and one never answered is not billed.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
@@ -1073,6 +1128,14 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		CallType:     callType,
 		StreamApp:    pin,
 	}, nil
+}
+
+// forgetOutcome drops the row kept for a call that never rang, which has no outcome. It runs
+// on a request that may be gone, and logs a failure rather than mask the one it follows.
+func (s *Service) forgetOutcome(ctx context.Context, token, callID string) {
+	if err := s.outcomes.Failed(context.WithoutCancel(ctx), token); err != nil {
+		s.logger.Error("could not forget a call that did not place", "call", callID, "error", err)
+	}
 }
 
 // placedSites is where a placed call was sent: the Stream SIP host, and the host of the
