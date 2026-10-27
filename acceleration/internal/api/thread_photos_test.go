@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -185,7 +187,7 @@ func (s *SlackChannelSuite) TestAPhotoAnsweredInAThreadIsANoteInTheNextTurnsHist
 	s.answersWith("vision/vision-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	question := "what colour is this bike? " + s.utils.uuid()
-	s.sentInThread(channel, question, s.photo("/photo.png"))
+	author := s.writtenInThread(channel, question, s.photo("/photo.png"))
 	s.posted(1)
 	asked := len(s.vision.requests())
 
@@ -193,7 +195,7 @@ func (s *SlackChannelSuite) TestAPhotoAnsweredInAThreadIsANoteInTheNextTurnsHist
 
 	s.posted(2)
 	input := s.vision.requests()[asked].Input
-	s.Contains(input, llm.Message{Role: llm.User, Content: question + "\n\n[sent with a photo, not shown again]", Author: "U0000ALICE"})
+	s.Contains(input, llm.Message{Role: llm.User, Content: question + "\n\n[sent with a photo, not shown again]", Author: author})
 	s.Contains(input, llm.Message{Role: llm.Assistant, Content: "Two roses."}, "the reply that saw the photo")
 	s.False(llm.HasImage(input), "no photo is handed over again")
 }
@@ -203,7 +205,7 @@ func (s *SlackChannelSuite) TestAPhotoAnsweredInAThreadIsANoteInTheNextTurnsHist
 func (s *SlackChannelSuite) TestAPhotoSentAloneInAThreadIsANoteInTheNextTurnsHistory() {
 	s.answersWith("vision/vision-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	s.sentInThread(channel, "", s.photo("/photo.png"))
+	author := s.writtenInThread(channel, "", s.photo("/photo.png"))
 	s.posted(1)
 	asked := len(s.vision.requests())
 
@@ -211,7 +213,7 @@ func (s *SlackChannelSuite) TestAPhotoSentAloneInAThreadIsANoteInTheNextTurnsHis
 
 	s.posted(2)
 	input := s.vision.requests()[asked].Input
-	s.Contains(input, llm.Message{Role: llm.User, Content: "[sent with a photo, not shown again]", Author: "U0000ALICE"})
+	s.Contains(input, llm.Message{Role: llm.User, Content: "[sent with a photo, not shown again]", Author: author})
 	s.False(llm.HasImage(input))
 }
 
@@ -229,9 +231,36 @@ func (s *SlackChannelSuite) photo(path string) map[string]any {
 // sentInThread delivers the message.new Stream Chat sends for another message of the thread's
 // first author, with text and attachments, signed with the app's secret.
 func (s *SlackChannelSuite) sentInThread(channel, text string, attachments ...map[string]any) {
-	data, _ := s.chat.Channel(channel)
 	message := maps.Clone(s.chat.Delivered(channel)[0])
 	message["id"], message["text"], message["attachments"] = s.utils.uuid(), text, attachments
+	s.hookFor(channel, message)
+}
+
+// writtenInThread writes a message of the thread's first author, with text and attachments,
+// into the thread channel as the channel bridge writes one, delivers the message.new Stream
+// Chat sends for it, and returns the author's Stream user. Unlike sentInThread's, the message
+// is in the channel, so a later turn reads it back.
+func (s *SlackChannelSuite) writtenInThread(channel, text string, attachments ...map[string]any) string {
+	author, _ := s.chat.Delivered(channel)[0]["user"].(map[string]any)["id"].(string)
+	raw, err := json.Marshal(attachments)
+	s.Require().NoError(err)
+	var typed []getstream.Attachment
+	s.Require().NoError(json.Unmarshal(raw, &typed))
+	_, err = s.chat.Client.Chat().SendMessage(context.Background(), "agent", channel, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &author, Attachments: typed},
+	})
+	s.Require().NoError(err)
+	delivered := s.chat.Delivered(channel)
+	message := delivered[len(delivered)-1]
+	message["attachments"] = attachments
+	s.hookFor(channel, message)
+	return author
+}
+
+// hookFor delivers the message.new Stream Chat sends for message in channel, signed with the
+// app's secret.
+func (s *SlackChannelSuite) hookFor(channel string, message map[string]any) {
+	data, _ := s.chat.Channel(channel)
 	payload, err := json.Marshal(map[string]any{
 		"type": "message.new", "cid": "agent:" + channel, "channel_id": channel, "channel_type": "agent",
 		"channel_custom": data["custom"], "message": message,
