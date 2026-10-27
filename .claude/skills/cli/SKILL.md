@@ -17,7 +17,7 @@ curl -fsSL https://getstream.io/cli/beta/install.sh | bash
 
 ```yaml
 agents_base: http://localhost:8080 # the local router
-# agents_base: https://appkey@accelerate.gcp.stream-io-api.com # the hosted one
+# agents_base: https://appkey@accelerate-us-east4.gcp.stream-io-api.com # the hosted one
 ```
 
 - A bare URL names the app by its id in trusted headers (`X-Customer-Id` and `X-Stream-App-Id`), which a local router with no auth reads. The customer id is the app id from the project's `.stream/creds.yaml`.
@@ -28,7 +28,7 @@ There is no flag or env var for it. To run one command elsewhere without editing
 
 ```sh
 mkdir -p /tmp/clihome && cp -R ~/.stream /tmp/clihome/.stream
-echo 'agents_base: https://appkey@accelerate.gcp.stream-io-api.com' > /tmp/clihome/.stream/config.yaml
+echo 'agents_base: https://appkey@accelerate-staging.gcp.stream-io-api.com' > /tmp/clihome/.stream/config.yaml
 HOME=/tmp/clihome getstream agents test my-agent
 ```
 

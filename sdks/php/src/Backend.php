@@ -21,8 +21,10 @@ use GetStream\VisionAgents\Exception\ConfigurationException;
 final readonly class Backend
 {
     /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
-    public const string DEFAULT_URL = 'https://accelerate.gcp.stream-io-api.com';
+    public const string DEFAULT_URL = 'https://accelerate-us-east4.gcp.stream-io-api.com';
     public const string URL_ENV = 'STREAM_ACCELERATION_URL';
+    /** Holds this SDK to the hosted router in one region, such as us-east4. */
+    public const string REGION_ENV = 'STREAM_ACCELERATION_REGION';
     public const string CUSTOMER_ENV = 'STREAM_ACCELERATION_CUSTOMER_ID';
     public const string API_KEY_ENV = 'STREAM_API_KEY';
     public const string API_SECRET_ENV = 'STREAM_API_SECRET';
@@ -30,6 +32,13 @@ final readonly class Backend
 
     /** Short, because a token is minted per request. */
     private const int TOKEN_VALIDITY_SECONDS = 3600;
+
+    /**
+     * The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
+     * which regions are served is the hosted router's to say, so offering another needs no
+     * release of this SDK.
+     */
+    private const string REGION = '/\A[a-z]+-[a-z]+[0-9]+\z/';
 
     public string $url;
     public string $customerId;
@@ -45,8 +54,9 @@ final readonly class Backend
      * Every argument falls back to the environment, so a process deployed next to a router
      * needs none of them.
      *
-     * @param ?string $url the router's base URL; `STREAM_ACCELERATION_URL`, then Stream's hosted
-     *     router, so only a self-hosted or local router needs it
+     * @param ?string $url the router's base URL; `$region`, then `STREAM_ACCELERATION_URL`, then
+     *     `STREAM_ACCELERATION_REGION`, then Stream's hosted router, so only a self-hosted or
+     *     local router needs it
      * @param ?string $customerId who the work is billed to, for a router that trusts the header
      * @param ?string $apiKey the public half of a Stream credential; `STREAM_API_KEY`
      * @param ?string $apiSecret the secret that makes this a backend; `STREAM_API_SECRET`
@@ -54,8 +64,10 @@ final readonly class Backend
      * @param string $userId the end user this is acting for, if it is acting for one
      * @param ?bool $authenticate whether the router sits behind Stream's authenticating proxy,
      *     which wants the credential spelled `api_key` and `stream-auth-type: jwt`. On for the
-     *     hosted router; anywhere else `STREAM_ACCELERATION_AUTHENTICATE`
+     *     hosted router, in any region; anywhere else `STREAM_ACCELERATION_AUTHENTICATE`
      * @param string $onBehalfOf the end user a server-side caller speaks for, keeping its own credential
+     * @param ?string $region holds this to the hosted router in one region, such as us-east4;
+     *     it cannot be passed together with `$url`
      */
     public function __construct(
         ?string $url = null,
@@ -66,8 +78,9 @@ final readonly class Backend
         string $userId = '',
         ?bool $authenticate = null,
         string $onBehalfOf = '',
+        ?string $region = null,
     ) {
-        $this->url = rtrim($url ?? self::env(self::URL_ENV) ?? self::DEFAULT_URL, '/');
+        $this->url = rtrim(self::locate($url, $region), '/');
         $this->customerId = $customerId ?? self::env(self::CUSTOMER_ENV) ?? '';
         // Naming a customer is choosing how a router with nothing in front of it is reached,
         // and a key that happens to be in the environment does not overrule the choice.
@@ -79,7 +92,7 @@ final readonly class Backend
         $this->userId = $userId;
         $this->onBehalfOf = $onBehalfOf;
         $this->authenticate = $authenticate
-            ?? (self::flag(self::env(self::AUTHENTICATE_ENV)) || $this->url === self::DEFAULT_URL);
+            ?? (self::flag(self::env(self::AUTHENTICATE_ENV)) || self::hosted($this->url));
 
         if ($this->authenticate && $this->apiKey === '') {
             throw new ConfigurationException('a router behind the proxy is reached with a credential; pass apiKey, or ' . self::API_KEY_ENV);
@@ -210,6 +223,18 @@ final readonly class Backend
     }
 
     /**
+     * The hosted router held to one region: requests to it are served there and nowhere else,
+     * even when that region is full or down.
+     */
+    public static function regionUrl(string $name): string
+    {
+        if (preg_match(self::REGION, $name) !== 1) {
+            throw new ConfigurationException(var_export($name, true) . ' is not a region, such as us-east4');
+        }
+        return "https://accelerate-{$name}.gcp.stream-io-api.com";
+    }
+
+    /**
      * An environment variable, from wherever this runtime put it.
      */
     public static function env(string $name): ?string
@@ -239,6 +264,44 @@ final readonly class Backend
     {
         $user = $this->onBehalfOf !== '' ? $this->onBehalfOf : $this->userId;
         return $user === '' ? [] : ['X-Stream-User-Id' => $user];
+    }
+
+    /**
+     * A URL or a region passed in beats either in the environment, and a URL beats a region
+     * wherever both are found, except passed in together, where neither can be said to win.
+     */
+    private static function locate(?string $url, ?string $region): string
+    {
+        if ($url !== null && $region !== null) {
+            throw new ConfigurationException('pass a url or a region, not both');
+        }
+        if ($url !== null) {
+            return $url;
+        }
+        if ($region !== null) {
+            return self::regionUrl($region);
+        }
+        $url = self::env(self::URL_ENV);
+        if ($url !== null) {
+            return $url;
+        }
+        $region = self::env(self::REGION_ENV);
+        return $region !== null ? self::regionUrl($region) : self::DEFAULT_URL;
+    }
+
+    /**
+     * Whether `$url` is the hosted router in some region, which is always behind the
+     * proxy.
+     */
+    private static function hosted(string $url): bool
+    {
+        $prefix = 'https://accelerate-';
+        $suffix = '.gcp.stream-io-api.com';
+        if (!str_starts_with($url, $prefix) || !str_ends_with($url, $suffix)) {
+            return false;
+        }
+        $name = substr($url, strlen($prefix), -strlen($suffix));
+        return preg_match(self::REGION, $name) === 1;
     }
 
     private static function base64url(string $bytes): string

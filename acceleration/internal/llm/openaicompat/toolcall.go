@@ -9,12 +9,12 @@ import (
 
 // Gemma 4 writes a tool call as `<|tool_call>call:NAME{key:value,...}<tool_call|>`, with strings
 // between `<|"|>` marks. vLLM's tool parser turns that into a real call, but not when the
-// opening marker goes missing: in Voicebench it went with an empty thought channel, and the
-// rest, `call:check_availability{party_size:4,...}<tool_call|>`, came back as text and was read
-// to the caller. A call written as text is still a call, so it is made, not spoken.
+// opening marker goes missing: it has gone with an empty thought channel, and the rest,
+// `call:check_availability{party_size:4,...}<tool_call|>`, came back as text and was read to
+// the caller. A call written as text is still a call, so it is made, not spoken.
 //
-// Without the marker it does not always keep its own syntax either. Voicebench heard
-// `call_tool: check_outage{}`, `call tool: create_ticket{address: "14 Cedar Lane"}` and
+// Without the marker it does not always keep its own syntax either. Callers have heard
+// `call_tool: check_outage{}`, `call tool: create_ticket{address: "9 Fern Row"}` and
 // `call:check_availability(party_size=4, time="7:30")` read out, so those are calls too.
 const (
 	toolCallOpen  = "<|tool_call>"
@@ -133,7 +133,7 @@ func (c *toolCallSplitter) nextCall() (start, skip, partial int) {
 
 // nextBareCall finds an offered tool's name written straight into the answer with its
 // arguments, `check_outage{}` or `verify_account(pin=4471)`, with no marker or prefix ahead of
-// it: Voicebench heard a whole repair flow read out that way, and none of it was done. The name
+// it: a caller has heard a whole repair flow read out that way, and none of it was done. The name
 // has to start a word and be followed at once by its brace or parenthesis.
 func (c *toolCallSplitter) nextBareCall() int {
 	at := -1

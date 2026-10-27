@@ -202,9 +202,9 @@ STREAM_ACCELERATION_CUSTOMER_ID=examples
 Both configs in `routers/` are stored on every run, by name, so editing a file there edits
 the config rather than storing another copy.
 
-## Run it against staging
+## Run it against the hosted router
 
-`-staging` transcribes on the hosted router at `accelerate.gcp.stream-io-api.com`, which
+`-hosted` transcribes on Stream's router, the SDK's default, which
 needs neither of the two steps above — no database and no local process, since the configs
 are stored there.
 
@@ -219,8 +219,8 @@ STREAM_API_SECRET=...
 Then, from this directory:
 
 ```bash
-go run . -staging
-go run . -staging -use-case stt-realtime-accurate
+go run . -hosted
+go run . -hosted -use-case stt-realtime-accurate
 ```
 
 Half a credential is refused rather than quietly downgraded to an unauthenticated request,
@@ -228,8 +228,8 @@ so a missing secret reports `STREAM_ACCELERATION_AUTHENTICATE needs STREAM_API_K
 STREAM_API_SECRET` before anything is sent.
 
 One caveat while this change is new: a router refuses a config naming a model it does not
-have, and both configs here name Ink 2, Inworld and Scribe. Until staging runs a build with
-those three, `-staging` reports which name it did not recognise rather than transcribing:
+have, and both configs here name Ink 2, Inworld and Scribe. Until the hosted router runs a build
+with those three, `-hosted` reports which name it did not recognise rather than transcribing:
 
 ```
 stream: "elevenlabs/scribe_v2_realtime" is not a provider, a provider/model or a

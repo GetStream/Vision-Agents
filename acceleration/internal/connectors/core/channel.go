@@ -120,6 +120,12 @@ type MessageRule struct {
 	// Text may be absent from a message, such as one that is only a file; the message is
 	// still read, with empty text.
 	Text string `yaml:"text" json:"text"`
+	// TextParts is for a message whose text is in pieces, such as Linq's parts, where a photo
+	// comes before its caption: the path of every piece, starting with Each when there is one
+	// and with a [*] past it. The text is every value found, in order, joined by a newline
+	// (AI-2092). It wins over Text when both are set; Text stays beside it so a build that
+	// does not know TextParts, after a rollback, still reads a stored revision's text.
+	TextParts string `yaml:"text_parts,omitempty" json:"text_parts,omitempty"`
 	// Addressed is when a message speaks to the connection's own account, such as its bot in
 	// a channel of people. A message that does not starts no thread: it is answered only on a
 	// thread already linked. Empty: every message does, as before (AI-989).
@@ -186,7 +192,7 @@ func (rule MessageRule) mention(metadata map[string]string) (string, bool) {
 func (rule MessageRule) IsZero() bool {
 	return rule.Each == "" && len(rule.Match) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
 		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == "" &&
-		rule.Addressed == nil
+		rule.TextParts == "" && rule.Addressed == nil
 }
 
 // ThreadKeyPart is one named part of a thread key.
@@ -522,6 +528,24 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 			fail(field, "%q: %v", path, err)
 		}
 	}
+	// checkParts checks a path that reads every value at its [*] past each, inside the
+	// message each reads.
+	checkParts := func(field, path string) {
+		steps, err := parsePath(path)
+		if err != nil {
+			fail(field, "%v", err)
+			return
+		}
+		if c.Format == FormatForm {
+			fail(field, "%q: a form is flat, so it has no [*] to read every value of", path)
+			return
+		}
+		if len(steps) < len(each) || !slices.Equal(steps[:len(each)], each) {
+			fail(field, "%q does not start with messages.each, so its pieces are not the message's", path)
+		} else if !slices.ContainsFunc(steps[len(each):], func(step pathStep) bool { return step.index == wildcard }) {
+			fail(field, "%q has no [*] past messages.each, so it reads one value: that is text", path)
+		}
+	}
 	if c.Format == FormatForm && msgs.Each != "" {
 		fail("channel.messages.each", "a form holds one message")
 	}
@@ -604,6 +628,9 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 		checkPath("channel.messages.author_id", msgs.AuthorID)
 		checkPath("channel.messages.provider_message_id", msgs.ProviderMessageID)
 		checkPath("channel.messages.text", msgs.Text)
+		if msgs.TextParts != "" {
+			checkParts("channel.messages.text_parts", msgs.TextParts)
+		}
 	}
 	m.checkSignals(fail)
 
@@ -972,7 +999,7 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ski
 	case missingPart != "":
 		return ChannelMessage{}, "no thread_key part " + missingPart, nil
 	}
-	text, _, err := readPath(root, rule.Text, bound)
+	text, err := rule.text(root, bound)
 	if err != nil {
 		return ChannelMessage{}, "", err
 	}
@@ -998,6 +1025,20 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ski
 		ThreadParts: parts,
 		Direct:      direct,
 	}, "", nil
+}
+
+// text is a message's text: every value at text_parts joined by a newline when it is set,
+// else the value at text. A newline, because two pieces are two of the person's bubbles, which a space
+// would run into one sentence: Linq refuses two text parts in a row, so they come with
+// media between them (https://docs.linqapp.com/channel/imessage/guides/messaging/sending-messages/index.md,
+// «Message parts», opened October 27, 2026).
+func (rule MessageRule) text(root any, bound []int) (string, error) {
+	if rule.TextParts == "" {
+		text, _, err := readPath(root, rule.Text, bound)
+		return text, err
+	}
+	pieces, err := readEvery(root, rule.TextParts, bound)
+	return strings.Join(pieces, "\n"), err
 }
 
 // Reply is the URL and JSON body that send one reply, from the channel block's templates. A
@@ -1234,7 +1275,64 @@ func readPath(root any, path string, bound []int) (value string, found bool, err
 		}
 		current = list[n]
 	}
-	switch scalar := current.(type) {
+	return scalarValue(current, path)
+}
+
+// readEvery is every value a path reaches, in order, taking its first [*] as the elements
+// bound gives them and each one after as every element. A value readPath would not find,
+// such as a missing member, is left out. bound is in range: enumerate took it from the lists
+// of each, which Validate makes the path start with.
+func readEvery(root any, path string, bound []int) ([]string, error) {
+	steps, err := parsePath(path)
+	if err != nil {
+		return nil, err
+	}
+	var values []string
+	var walk func(node any, i, wildcards int) error
+	walk = func(node any, i, wildcards int) error {
+		if i == len(steps) {
+			value, found, err := scalarValue(node, path)
+			if found {
+				values = append(values, value)
+			}
+			return err
+		}
+		next, found, err := member(node, steps[i].member, path)
+		if err != nil || !found {
+			return err
+		}
+		if steps[i].index == noIndex {
+			return walk(next, i+1, wildcards)
+		}
+		list, ok := next.([]any)
+		if !ok {
+			return fmt.Errorf("%s: %s is not an array", path, steps[i].member)
+		}
+		switch {
+		case steps[i].index != wildcard:
+			if steps[i].index >= len(list) {
+				return nil
+			}
+			return walk(list[steps[i].index], i+1, wildcards)
+		case wildcards < len(bound):
+			return walk(list[bound[wildcards]], i+1, wildcards+1)
+		}
+		for _, item := range list {
+			if err := walk(item, i+1, wildcards+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(root, 0, 0); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+// scalarValue is a string, a number or a boolean a path reached, as readPath gives it.
+func scalarValue(node any, path string) (value string, found bool, err error) {
+	switch scalar := node.(type) {
 	case nil:
 		return "", false, nil
 	case string:

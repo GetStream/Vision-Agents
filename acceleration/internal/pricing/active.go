@@ -22,7 +22,7 @@ const emptyEvery = time.Minute
 
 // UpcomingEntry is an entry a scheduled change will set, with what the change says.
 type UpcomingEntry struct {
-	// Entry is at the vendor's rates; its Version is the change's name.
+	// Entry's Version is the change's name.
 	Entry
 	EffectiveAt time.Time
 	// Withdrawn stops pricing the item under Entry.When at EffectiveAt.
@@ -31,33 +31,20 @@ type UpcomingEntry struct {
 	Reason string
 }
 
-// UpcomingMarkup is a scheduled change of the list's markup.
-type UpcomingMarkup struct {
-	// Change is the change's name.
-	Change      string
-	EffectiveAt time.Time
-	MarkupBps   int64
-	Reason      string
-}
-
 // Source is where the list in force is read from: the shared database, through the store.
 type Source interface {
-	// Active is every entry in force at at, at the vendor's rates and each with its version,
-	// the list's markup at at, and when the next change not cancelled takes effect after at
-	// (zero when none is scheduled).
-	Active(ctx context.Context, at time.Time) (entries []Entry, markupBps int64, next time.Time, err error)
+	// Active is every entry in force at at, each with its version, and when the next change
+	// not cancelled takes effect after at (zero when none is scheduled).
+	Active(ctx context.Context, at time.Time) (entries []Entry, next time.Time, err error)
 	// Upcoming is every entry of a change not cancelled that takes effect after after.
 	Upcoming(ctx context.Context, after time.Time) ([]UpcomingEntry, error)
-	// UpcomingMarkups is the markup of every change not cancelled that takes effect after
-	// after and sets one, soonest first.
-	UpcomingMarkups(ctx context.Context, after time.Time) ([]UpcomingMarkup, error)
 }
 
 // ActiveOptions configures an Active.
 type ActiveOptions struct {
 	Source Source
 	// Fallback prices until the first read answers any entry: the price files the binary
-	// carries, at the vendors' rates.
+	// carries, priced as a first load would price them.
 	Fallback *List
 	// Local are the items the deployment runs itself, marked local in every list read.
 	Local []Item
@@ -82,7 +69,6 @@ type Active struct {
 
 	current  atomic.Pointer[List]
 	upcoming atomic.Pointer[[]UpcomingEntry]
-	markups  atomic.Pointer[[]UpcomingMarkup]
 	// unpriced is when each unpriced item was last logged, shared by every list read.
 	unpriced *unpricedLog
 	// read is whether any read succeeded, and entries whether one answered an entry.
@@ -117,7 +103,7 @@ func NewActive(ctx context.Context, options ActiveOptions) *Active {
 	fallback := options.Fallback
 	if fallback == nil {
 		// An empty list cannot be refused.
-		fallback, _ = NewList(ActiveVersion, nil, 0, logger)
+		fallback, _ = NewList(ActiveVersion, nil, logger)
 	}
 	// Every list read after the fallback logs an unpriced item as the fallback did, so one
 	// logged a moment ago is not logged again because the list was read again.
@@ -160,18 +146,14 @@ func (a *Active) reload(ctx context.Context, at time.Time) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, reloadTimeout)
 	defer cancel()
-	entries, markup, next, err := a.source.Active(ctx, at)
+	entries, next, err := a.source.Active(ctx, at)
 	var upcoming []UpcomingEntry
-	var markups []UpcomingMarkup
 	if err == nil {
 		upcoming, err = a.source.Upcoming(ctx, at)
 	}
-	if err == nil {
-		markups, err = a.source.UpcomingMarkups(ctx, at)
-	}
 	var list *List
 	if err == nil && len(entries) > 0 {
-		list, err = NewList(ActiveVersion, WithLocal(entries, a.local), markup, a.logger)
+		list, err = NewList(ActiveVersion, WithLocal(entries, a.local), a.logger)
 		if list != nil {
 			list.unpriced = a.unpriced
 		}
@@ -189,7 +171,6 @@ func (a *Active) reload(ctx context.Context, at time.Time) error {
 	}
 	a.read.Store(true)
 	a.upcoming.Store(&upcoming)
-	a.markups.Store(&markups)
 	a.arm(next)
 	if list == nil {
 		if now := time.Now(); now.Sub(a.emptyLogged) >= emptyEvery {
@@ -267,15 +248,6 @@ func (a *Active) Upcoming() []UpcomingEntry {
 	return nil
 }
 
-// UpcomingMarkups is the markups of the changes not cancelled and not yet in force, as the
-// last read found them.
-func (a *Active) UpcomingMarkups() []UpcomingMarkup {
-	if markups := a.markups.Load(); markups != nil {
-		return *markups
-	}
-	return nil
-}
-
 func (a *Active) Quote(item Item, used Quantities) Quote { return a.List().Quote(item, used) }
 
 func (a *Active) Quoted(item Item, micros int64) Quote { return a.List().Quoted(item, micros) }
@@ -283,5 +255,3 @@ func (a *Active) Quoted(item Item, micros int64) Quote { return a.List().Quoted(
 func (a *Active) Billable(item Item) bool { return a.List().Billable(item) }
 
 func (a *Active) Entry(item Item) (Entry, bool) { return a.List().Entry(item) }
-
-func (a *Active) Charged(item Item) (Entry, bool) { return a.List().Charged(item) }

@@ -726,8 +726,10 @@ func (s *Session) chose(name, connectionID string) {
 // FollowUp answers text the way RespondCommand does with no message of the end user's
 // shown for it: the model is told text, and the conversation shows only the reply. The
 // id is the caller's own, so a follow-up delivered twice is started once: when the
-// conversation already holds it, nothing more is done.
-func (s *Session) FollowUp(ctx context.Context, id, text string) error {
+// conversation already holds it, nothing more is done. images go to the model with this
+// reply alone, as RespondCommand's do; none are uploaded, since the message they came on is
+// already in the channel.
+func (s *Session) FollowUp(ctx context.Context, id, text string, images []llm.ImagePart) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
@@ -743,7 +745,7 @@ func (s *Session) FollowUp(ctx context.Context, id, text string) error {
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, nil, options.LLM{})
+	turnID, err := s.current().RespondTo(ctx, text, images, options.LLM{})
 	if err != nil {
 		// No turn started, so a caller retrying the same id must start one, not be told
 		// it is already there.
@@ -978,6 +980,9 @@ func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persist
 // Busy reports whether the agent still has something to finish, which is how anything
 // driving a conversation knows a turn is over rather than merely answered once.
 func (s *Session) Busy() bool { return s.current().Busy() }
+
+// SeesImages reports whether the agent has something that looks at a turn's images.
+func (s *Session) SeesImages() bool { return s.current().SeesImages() }
 
 // settleGap is how long the agent stays quiet, with nothing left to do, before a headless
 // conversation is taken as finished.

@@ -22,6 +22,9 @@ STREAM_ACCELERATION_URL=http://localhost:8080
 STREAM_ACCELERATION_CUSTOMER_ID=acme
 ```
 
+Unset, the hosted router in us-east4 is used. For another region, set
+`STREAM_ACCELERATION_REGION=europe-west4` (or pass `region="europe-west4"`) instead of a URL.
+
 ## The whole pipeline, remotely
 
 ```python

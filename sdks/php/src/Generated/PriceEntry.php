@@ -11,30 +11,28 @@ use GetStream\VisionAgents\Json;
 final readonly class PriceEntry
 {
     public function __construct(
-        // The markup the entry is sold at: its own, else the list's.
-        public int $chargedMarkupBps,
         // Such as llm, stt, tts, sms or phone.
         public string $modality,
         public string $model,
         public string $provider,
-        // What customers are charged: each rate with the markup added, to 12 significant digits.
-        /** @var array<string, mixed>|null */
-        public ?array $chargedRates = null,
-        // What customers are charged for long prompts.
-        /** @var list<PriceTier>|null */
-        public ?array $chargedTiers = null,
         // When the entry took effect, or takes effect.
         public ?\DateTimeImmutable $effectiveAt = null,
         // The vendor charges nothing for it.
         public ?bool $free = null,
-        // The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+        // The deployment runs the model itself, as its routing config says. Local work with no price costs nothing.
         public ?bool $local = null,
-        // The entry's own markup in basis points, replacing the list's. Absent takes the list's.
-        public ?int $markupBps = null,
-        // The vendor's rates, by meter.
+        // What customers are charged for long prompts, at the thresholds of tiers.
+        /** @var list<PriceTier>|null */
+        public ?array $priceTiers = null,
+        // What customers are charged, by the meters of rates.
+        /** @var array<string, mixed>|null */
+        public ?array $prices = null,
+        // The vendor's cost, by meter, for reference: nothing is charged from it.
         /** @var array<string, mixed>|null */
         public ?array $rates = null,
-        // The vendor's rates for long prompts.
+        // The item's SKU, the same across its price changes, which every row it prices records. Absent only on a loca...
+        public ?string $sku = null,
+        // The vendor's cost for long prompts, for reference.
         /** @var list<PriceTier>|null */
         public ?array $tiers = null,
         // The price change that wrote the entry, which every row it prices names as its price_version.
@@ -51,17 +49,16 @@ final readonly class PriceEntry
     public static function fromArray(array $data): self
     {
         return new self(
-            chargedMarkupBps: Json::int($data, 'charged_markup_bps'),
             modality: Json::string($data, 'modality'),
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
-            chargedRates: array_key_exists('charged_rates', $data) && $data['charged_rates'] !== null ? Json::object($data, 'charged_rates') : null,
-            chargedTiers: array_key_exists('charged_tiers', $data) && $data['charged_tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'charged_tiers')) : null,
             effectiveAt: array_key_exists('effective_at', $data) && $data['effective_at'] !== null ? Json::date($data, 'effective_at') : null,
             free: array_key_exists('free', $data) && $data['free'] !== null ? Json::bool($data, 'free') : null,
             local: array_key_exists('local', $data) && $data['local'] !== null ? Json::bool($data, 'local') : null,
-            markupBps: array_key_exists('markup_bps', $data) && $data['markup_bps'] !== null ? Json::int($data, 'markup_bps') : null,
+            priceTiers: array_key_exists('price_tiers', $data) && $data['price_tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'price_tiers')) : null,
+            prices: array_key_exists('prices', $data) && $data['prices'] !== null ? Json::object($data, 'prices') : null,
             rates: array_key_exists('rates', $data) && $data['rates'] !== null ? Json::object($data, 'rates') : null,
+            sku: array_key_exists('sku', $data) && $data['sku'] !== null ? Json::string($data, 'sku') : null,
             tiers: array_key_exists('tiers', $data) && $data['tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'tiers')) : null,
             version: array_key_exists('version', $data) && $data['version'] !== null ? Json::string($data, 'version') : null,
             when: array_key_exists('when', $data) && $data['when'] !== null ? Json::stringMap($data, 'when') : null,
@@ -76,16 +73,9 @@ final readonly class PriceEntry
     public function toArray(): array
     {
         $out = [];
-        $out['charged_markup_bps'] = $this->chargedMarkupBps;
         $out['modality'] = $this->modality;
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
-        if ($this->chargedRates !== null) {
-            $out['charged_rates'] = Json::objectValue($this->chargedRates);
-        }
-        if ($this->chargedTiers !== null) {
-            $out['charged_tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->chargedTiers);
-        }
         if ($this->effectiveAt !== null) {
             $out['effective_at'] = Json::dateValue($this->effectiveAt);
         }
@@ -95,11 +85,17 @@ final readonly class PriceEntry
         if ($this->local !== null) {
             $out['local'] = $this->local;
         }
-        if ($this->markupBps !== null) {
-            $out['markup_bps'] = $this->markupBps;
+        if ($this->priceTiers !== null) {
+            $out['price_tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->priceTiers);
+        }
+        if ($this->prices !== null) {
+            $out['prices'] = Json::objectValue($this->prices);
         }
         if ($this->rates !== null) {
             $out['rates'] = Json::objectValue($this->rates);
+        }
+        if ($this->sku !== null) {
+            $out['sku'] = $this->sku;
         }
         if ($this->tiers !== null) {
             $out['tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->tiers);

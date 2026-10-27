@@ -1,6 +1,8 @@
 package prices
 
 import (
+	"bytes"
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -33,17 +35,54 @@ func llm(model string, input float64) pricing.Entry {
 }
 
 func (s *PricesSuite) TestTheVendorFileIsAValidList() {
-	_, err := pricing.NewList("vendor", Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	_, err := pricing.NewList("vendor", Vendor().Entries, slog.New(slog.DiscardHandler))
 
 	s.Require().NoError(err)
 	s.NotEmpty(Vendor().Entries)
+}
+
+// TestAnEntryWithoutAPriceIsPricedAtTheFactor: a file sets the vendor's rates, and an entry
+// it gives no price is priced at them times pricing.PriceFactorBps; one it gives a price
+// keeps it, and a free one has none.
+func (s *PricesSuite) TestAnEntryWithoutAPriceIsPricedAtTheFactor() {
+	file, err := Parse("own.json", []byte(`{"entries": [
+		{"modality": "llm", "provider": "openai", "model": "plain", "rates": {"input_tokens": {"usd": 2, "per": 1000000}},
+			"tiers": [{"above_input_tokens": 1000, "rates": {"input_tokens": {"usd": 4, "per": 1000000}}}]},
+		{"modality": "llm", "provider": "openai", "model": "own", "sku": "own-model",
+			"rates": {"input_tokens": {"usd": 2, "per": 1000000}}, "prices": {"input_tokens": {"usd": 2.1, "per": 1000000}}},
+		{"modality": "llm", "provider": "openai", "model": "free", "free": true}]}`))
+	s.Require().NoError(err)
+
+	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(2.4)}, file.Entries[0].Prices)
+	s.Equal([]pricing.Tier{{AboveInputTokens: 1_000, Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(4.8)}}},
+		file.Entries[0].PriceTiers)
+	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(2.1)}, file.Entries[1].Prices)
+	s.Equal("own-model", file.Entries[1].SKU)
+	s.Empty(file.Entries[2].Prices)
+}
+
+func (s *PricesSuite) TestAPriceWithOtherMetersThanItsRatesIsRefused() {
+	_, err := Parse("own.json", []byte(`{"entries": [{"modality": "llm", "provider": "openai", "model": "m",
+		"rates": {"input_tokens": {"usd": 1, "per": 1000000}, "output_tokens": {"usd": 2, "per": 1000000}},
+		"prices": {"input_tokens": {"usd": 1.2, "per": 1000000}}}]}`))
+
+	s.ErrorIs(err, pricing.ErrPriceMeters)
+	s.ErrorContains(err, "own.json")
+}
+
+func (s *PricesSuite) TestTwoEntriesWithOneSKUAreRefused() {
+	_, err := Parse("own.json", []byte(`{"entries": [
+		{"modality": "llm", "provider": "openai", "model": "a", "sku": "one", "free": true},
+		{"modality": "llm", "provider": "openai", "model": "b", "sku": "one", "free": true}]}`))
+
+	s.ErrorContains(err, "both have the SKU one")
 }
 
 // TestOnlyALinuxContainerSandboxIsPriced: Daytona prices other classes, such as a Windows
 // vCPU, higher, so a sandbox of any other class is unpriced rather than billed at the
 // container's rates.
 func (s *PricesSuite) TestOnlyALinuxContainerSandboxIsPriced() {
-	list, err := pricing.NewList("vendor", Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList("vendor", Vendor().Entries, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	used := pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600}
 
@@ -60,12 +99,22 @@ func (s *PricesSuite) TestOnlyALinuxContainerSandboxIsPriced() {
 	}
 }
 
-func (s *PricesSuite) TestTheVendorFileHasNoMarkup() {
-	vendor := Vendor()
+// TestTheVendorFileHoldsOnlyTheVendorsRates: vendor.json is public, so no entry in it sets a
+// price, which is the operator's: each is priced at the factor.
+func (s *PricesSuite) TestTheVendorFileHoldsOnlyTheVendorsRates() {
+	var raw struct {
+		MarkupBps *int64 `json:"markup_bps"`
+		Entries   []struct {
+			Prices     json.RawMessage `json:"prices"`
+			PriceTiers json.RawMessage `json:"price_tiers"`
+		} `json:"entries"`
+	}
+	s.Require().NoError(json.Unmarshal(vendorJSON, &raw))
 
-	s.Nil(vendor.MarkupBps, "vendor.json holds the vendors' list prices: a markup is the operator's")
-	for _, entry := range vendor.Entries {
-		s.Nil(entry.MarkupBps, Name(entry))
+	s.Nil(raw.MarkupBps)
+	for i, entry := range raw.Entries {
+		s.Nil(entry.Prices, Name(Vendor().Entries[i]))
+		s.Nil(entry.PriceTiers, Name(Vendor().Entries[i]))
 	}
 }
 
@@ -105,18 +154,26 @@ func (s *PricesSuite) TestAFileMayNotNameAVersion() {
 	s.ErrorContains(err, "own.json: llm/openai/m sets a version")
 }
 
-func (s *PricesSuite) TestAFileMarkupIsBounded() {
-	_, err := Parse("own.json", []byte(`{"markup_bps": 100001, "entries": []}`))
-
-	s.ErrorContains(err, "outside 0 to 100000")
-}
-
-func (s *PricesSuite) TestAFileReadsItsMarkup() {
-	file, err := Parse("own.json", []byte(`{"markup_bps": 1500, "entries": []}`))
-
+// TestAFilesMarkupIsIgnoredWithAWarning: a deployment's file from before prices were stored
+// still says markup_bps. It loads, its entries priced at the factor as any without a price,
+// and the warning names it; a markup out of any range is no error either.
+func (s *PricesSuite) TestAFilesMarkupIsIgnoredWithAWarning() {
+	file, err := Parse("own.json", []byte(`{"markup_bps": 2000, "entries": [
+		{"modality": "llm", "provider": "openai", "model": "m", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}]}`))
 	s.Require().NoError(err)
-	s.Require().NotNil(file.MarkupBps)
-	s.EqualValues(1_500, *file.MarkupBps)
+	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(1.2)}, file.Entries[0].Prices)
+
+	var logs bytes.Buffer
+	IgnoredMarkup(slog.New(slog.NewTextHandler(&logs, nil)), "own.json", file)
+	s.Contains(logs.String(), "level=WARN")
+	s.Contains(logs.String(), "markup_bps in a price file is ignored")
+	s.Contains(logs.String(), "file=own.json markup_bps=2000 factor_bps=12000")
+
+	_, err = Parse("own.json", []byte(`{"markup_bps": 100001, "entries": []}`))
+	s.NoError(err)
+	logs.Reset()
+	IgnoredMarkup(slog.New(slog.NewTextHandler(&logs, nil)), "vendor.json", Vendor())
+	s.Empty(logs.String())
 }
 
 func (s *PricesSuite) TestALocalItemIsMarkedOnEveryEntryOrGivenOne() {

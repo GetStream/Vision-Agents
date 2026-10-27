@@ -115,8 +115,8 @@ func runDigits(run []string) (string, bool) {
 var spokenSeparator = regexp.MustCompile(`(?i)\s+\b(underscore|dash|hyphen)\b\s+`)
 
 // withSpokenSeparators writes the separators a caller named as the characters they named,
-// joining the parts either side: after digitsFor, "omar underscore davis underscore 3817" is
-// omar_davis_3817 and "555 dash 123 dash 2002" is 555-123-2002, one value each, as written.
+// joining the parts either side: after digitsFor, "kit underscore moran underscore 4096" is
+// kit_moran_4096 and "555 dash 019 dash 4416" is 555-019-4416, one value each, as written.
 func withSpokenSeparators(text string) string {
 	return spokenSeparator.ReplaceAllStringFunc(text, func(named string) string {
 		if strings.EqualFold(strings.TrimSpace(named), "underscore") {

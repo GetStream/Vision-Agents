@@ -1,8 +1,12 @@
 package keypool
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
 )
 
 // unnamedKeyVar is the key_var of a pool no FromEnv has named: one from New, or from keys
@@ -17,3 +21,12 @@ var refusedAttempts = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name:      "keypool_refused_attempts_total",
 	Help:      "Requests and handshakes a provider refused on a pooled key, each moved to the next key or, on the last, handed back to fail over; by the variable the keys come from and the refusal's HTTP status, or quota_exceeded for a socket frame",
 }, []string{"key_var", "status"})
+
+// Alerts are the conditions of a provider refusing one of the router's keys, one alert per key
+// variable and status at most every limit of the loop that runs them, such as
+// ELEVENLABS_API_KEY/quota_exceeded: a key is never named. It does not page: the request moves to
+// the next key or fails over, and the key is to top up or replace.
+func Alerts(limit time.Duration) []alerts.Condition {
+	return []alerts.Condition{{Name: "key_refused", Level: alerts.Warn,
+		Items: alerts.IncreasedPer(refusedAttempts, limit, []string{"key_var", "status"}, nil)}}
+}
