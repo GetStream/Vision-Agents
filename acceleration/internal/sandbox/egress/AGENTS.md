@@ -49,7 +49,7 @@ Code in the sandbox reads a granted host and writes through the connector's tool
 
 - Read-only trusts a host's methods: a host that writes on a GET or a HEAD, or on a request a read lists, lets code write. A host that takes the method from a header reads it on a POST (Google's `X-HTTP-Method-Override`, https://docs.cloud.google.com/apis/docs/http, «Long request URLs»), which the proxy refuses unless a read lists it.
 - A read that uses POST and is not listed is refused: Linear's GraphQL (no sandbox block yet) and Git LFS's batch API among them.
-- A GET to a GraphQL read is a read like any GET, its operation in the URL included. GraphQL over HTTP says a GET «MUST NOT be used for executing mutation operations» (4.3 GET); a host that runs one anyway lets code write. Whether GitHub does is `unverified`.
+- A GET to a GraphQL read is a read like any GET, its operation in the URL included. GraphQL over HTTP says a GET «MUST NOT be used for executing mutation operations» (4.3 GET); a host that runs one anyway lets code write. GitHub runs no operation from a GET: `GET /graphql?query=mutation{__typename}` answers with its schema's introspection and runs nothing (live probe 2026-10-27).
 - A GraphQL read trusts the host to parse the document as gqlparser does. A query field that writes is a write the proxy lets through.
 - A host that echoes the token in a form the rewrite does not know (another escape, split across headers, its case changed) gives it to the sandbox. Grant only hosts that do not.
 - A host that keeps the token it was sent and returns it later, in the response to a request that carries no placeholder, gives it to the sandbox: only a response to a request with the token is rewritten.
