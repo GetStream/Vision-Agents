@@ -1298,6 +1298,12 @@ module GetStream
           body: "SessionQuery", body_required: false,
           socket: false, client_accessible: true
         }.freeze,
+        "receiveCallStatus" => {
+          method: :post, path: "/v1/phone/status/{token}",
+          path_params: %w[token].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "receiveChannelMessage" => {
           method: :post, path: "/v1/agents/channels/hooks/{token}",
           path_params: %w[token].freeze, query: [].freeze,

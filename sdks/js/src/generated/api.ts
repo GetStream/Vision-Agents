@@ -3307,6 +3307,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/phone/status/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a placed call's status
+         * @description Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+         */
+        readonly post: operations["receiveCallStatus"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/phone/trunks": {
         readonly parameters: {
             readonly query?: never;
@@ -17861,6 +17881,48 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly receiveCallStatus: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The status is recorded */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The status could not be read */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No placed call is waiting for its status at this token */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The status is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listSipTrunks: {

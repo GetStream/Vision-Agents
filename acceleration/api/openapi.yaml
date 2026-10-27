@@ -21470,6 +21470,29 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Set the sandbox recipients
+  /v1/phone/status/{token}:
+    post:
+      description: 'Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.'
+      operationId: receiveCallStatus
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The status is recorded
+        "400":
+          description: The status could not be read
+        "404":
+          description: No placed call is waiting for its status at this token
+        "413":
+          description: The status is over 64 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a placed call's status
   /v1/phone/trunks:
     get:
       description: Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.

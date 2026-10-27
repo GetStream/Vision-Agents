@@ -13170,6 +13170,13 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 	SetSandboxRecipients(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceiveCallStatus Receive a placed call's status
+	//
+	// Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+	//
+	// Corresponds with POST /v1/phone/status/{token} (the `ReceiveCallStatus` operationId).
+	ReceiveCallStatus(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListSipTrunks The calling customer's own SIP trunks
 	//
 	// Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
@@ -18617,6 +18624,23 @@ func (c *Client) SetSandboxRecipientsWithBody(ctx context.Context, contentType s
 // Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 func (c *Client) SetSandboxRecipients(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSandboxRecipientsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveCallStatus Receive a placed call's status
+//
+// Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+//
+// Corresponds with POST /v1/phone/status/{token} (the `ReceiveCallStatus` operationId).
+func (c *Client) ReceiveCallStatus(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveCallStatusRequest(c.Server, token)
 	if err != nil {
 		return nil, err
 	}
@@ -28614,6 +28638,40 @@ func NewSetSandboxRecipientsRequestWithBody(server string, contentType string, b
 	return req, nil
 }
 
+// NewReceiveCallStatusRequest constructs an http.Request for the ReceiveCallStatus method
+func NewReceiveCallStatusRequest(server string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/status/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSipTrunksRequest constructs an http.Request for the ListSipTrunks method
 func NewListSipTrunksRequest(server string) (*http.Request, error) {
 	var err error
@@ -34318,6 +34376,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 	SetSandboxRecipientsWithResponse(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxRecipientsResponse, error)
+
+	// ReceiveCallStatusWithResponse Receive a placed call's status
+	//
+	// Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/status/{token} (the `ReceiveCallStatus` operationId).
+	ReceiveCallStatusWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveCallStatusResponse, error)
 
 	// ListSipTrunksWithResponse The calling customer's own SIP trunks
 	//
@@ -53931,6 +53998,47 @@ func (r SetSandboxRecipientsResponse) ContentType() string {
 	return ""
 }
 
+type ReceiveCallStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveCallStatusResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveCallStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveCallStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveCallStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveCallStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListSipTrunksResponse200Headers the declared response headers of an HTTP 200 response for ListSipTrunks
 type ListSipTrunksResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -64110,6 +64218,21 @@ func (c *ClientWithResponses) SetSandboxRecipientsWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseSetSandboxRecipientsResponse(rsp)
+}
+
+// ReceiveCallStatusWithResponse Receive a placed call's status
+//
+// Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/status/{token} (the `ReceiveCallStatus` operationId).
+func (c *ClientWithResponses) ReceiveCallStatusWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveCallStatusResponse, error) {
+	rsp, err := c.ReceiveCallStatus(ctx, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveCallStatusResponse(rsp)
 }
 
 // ListSipTrunksWithResponse The calling customer's own SIP trunks
@@ -87291,6 +87414,44 @@ func ParseSetSandboxRecipientsResponse(rsp *http.Response) (*SetSandboxRecipient
 			headers.XStreamBalanceWarning = &value
 		}
 		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReceiveCallStatusResponse parses an HTTP response from a ReceiveCallStatusWithResponse call
+func ParseReceiveCallStatusResponse(rsp *http.Response) (*ReceiveCallStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveCallStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
