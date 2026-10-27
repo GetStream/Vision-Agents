@@ -106,6 +106,23 @@ func (s *ServerSuite) TestTheCustomerViewOfCreditsLeavesOutWhatStaffWrote() {
 	}
 }
 
+func (s *ServerSuite) TestTheCustomerViewOfCreditsLeavesOutReversals() {
+	_, grant := s.grant(s.organization, 10_000_000, uuid.NewString())
+	var revoke usage.CreditEntry
+	s.ok(http.StatusCreated, &revoke, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/credits",
+		server.CreditRequest{Kind: usage.CreditAdjustment, AmountMicros: -10_000_000, ReversesID: grant.ID}, key()...)
+
+	var page usage.CustomerCreditPage
+	answer := s.customerView(usage.PathAccounts+"/"+s.organization+"/credits", &page)
+
+	s.Equal([]usage.CustomerCredit{
+		{ID: revoke.ID, Kind: usage.CreditAdjustment, AmountMicros: -10_000_000, CreatedAt: revoke.CreatedAt},
+		{ID: grant.ID, Kind: usage.CreditGrant, AmountMicros: 10_000_000, CreatedAt: grant.CreatedAt},
+	}, page.Items)
+	s.NotContains(string(answer), "reverses_id")
+	s.NotContains(string(answer), "reversed_by_id")
+}
+
 func (s *ServerSuite) TestTheCustomerViewOfCreditsPages() {
 	for range 3 {
 		s.grant(s.organization, 1_000_000, uuid.NewString())

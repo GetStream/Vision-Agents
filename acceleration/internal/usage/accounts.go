@@ -339,5 +339,7 @@ type CreditEntry struct {
 	Note           string     `json:"note,omitempty"`
 	Actor          string     `json:"actor" doc:"Who wrote it, as X-Stream-Actor-Id named them."`
 	ActorName      string     `json:"actor_name,omitempty" doc:"Their name, as X-Stream-Actor-Name named it."`
+	ReversesID     int64      `json:"reverses_id,omitempty" doc:"The entry this adjustment reverses: a grant it revokes, or the revocation it undoes. Absent on an entry that reverses none."`
+	ReversedByID   int64      `json:"reversed_by_id,omitempty" doc:"The entry that reverses this one. Absent while none does."`
 	CreatedAt      time.Time  `json:"created_at"`
 }

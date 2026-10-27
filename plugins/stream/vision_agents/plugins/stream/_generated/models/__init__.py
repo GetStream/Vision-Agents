@@ -268,6 +268,7 @@ from .limit_grant_input import LimitGrantInput
 from .limit_grant_page import LimitGrantPage
 from .limit_grant_revocation import LimitGrantRevocation
 from .limit_grant_state import LimitGrantState
+from .limit_grant_unrevocation import LimitGrantUnrevocation
 from .limit_in_force import LimitInForce
 from .limit_input import LimitInput
 from .limit_interval import LimitInterval
@@ -826,6 +827,7 @@ __all__ = (
     "LimitGrantPage",
     "LimitGrantRevocation",
     "LimitGrantState",
+    "LimitGrantUnrevocation",
     "LimitInForce",
     "LimitInput",
     "LimitInterval",

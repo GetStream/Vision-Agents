@@ -455,6 +455,156 @@ func (s *LedgerSuite) TestCreditEntriesPageNewestFirst() {
 	s.Equal([]int64{5, 4, 3, 2, 1}, amounts)
 }
 
+// reverse writes an adjustment of the organization reversing the entry of id by amount.
+func (s *LedgerSuite) reverse(organization string, id, amount int64, key string) (ledger.CreditEntry, bool, error) {
+	return s.ledger.AddCredit(s.ctx, ledger.CreditEntry{
+		OrganizationID: organization, Kind: usage.CreditAdjustment, AmountMicros: amount, ReversesID: id,
+		IdempotencyKey: key, Actor: staff.ID, ActorName: staff.Name,
+	})
+}
+
+// balance is the organization's balance, as its account has it.
+func (s *LedgerSuite) balance(organization string) int64 {
+	account := s.account(organization)
+	return account.GrantedMicros - account.SpentMicros
+}
+
+func (s *LedgerSuite) TestAGrantIsRevokedUnrevokedAndRevokedAgain() {
+	grant, _, err := s.credit("o1", usage.CreditGrant, 5_000, "grant")
+	s.Require().NoError(err)
+	s.ingest(usagetest.Event("o1", func(e *usage.Event) { e.CostMicros = 1_000 }))
+
+	revoke, written, err := s.reverse("o1", grant.ID, -5_000, "revoke-1")
+	s.Require().NoError(err)
+	s.True(written)
+	s.Equal(int64(-1_000), s.balance("o1"), "what was spent of it takes the balance below 0")
+	unrevoke, _, err := s.reverse("o1", revoke.ID, 5_000, "unrevoke-1")
+	s.Require().NoError(err)
+	s.Equal(int64(4_000), s.balance("o1"))
+	again, _, err := s.reverse("o1", unrevoke.ID, -5_000, "revoke-2")
+	s.Require().NoError(err)
+	s.Equal(int64(-1_000), s.balance("o1"))
+
+	entries, _, err := s.ledger.CreditEntries(s.ctx, "o1", nil, 10)
+	s.Require().NoError(err)
+	s.Require().Len(entries, 4)
+	reverses := map[int64][2]int64{}
+	for _, entry := range entries {
+		reverses[entry.ID] = [2]int64{entry.ReversesID, entry.ReversedByID}
+	}
+	s.Equal(map[int64][2]int64{
+		grant.ID:    {0, revoke.ID},
+		revoke.ID:   {grant.ID, unrevoke.ID},
+		unrevoke.ID: {revoke.ID, again.ID},
+		again.ID:    {unrevoke.ID, 0},
+	}, reverses)
+}
+
+func (s *LedgerSuite) TestOnlyAGrantOrAReversalCanBeReversed() {
+	topUp, _, err := s.credit("o1", usage.CreditTopUp, 100, "top-up")
+	s.Require().NoError(err)
+	refund, _, err := s.credit("o1", usage.CreditRefund, -10, "refund")
+	s.Require().NoError(err)
+	adjustment, _, err := s.credit("o1", usage.CreditAdjustment, 7, "adjust")
+	s.Require().NoError(err)
+
+	for _, entry := range []ledger.CreditEntry{topUp, refund, adjustment} {
+		_, _, err := s.reverse("o1", entry.ID, -entry.AmountMicros, newKey())
+		s.ErrorIs(err, ledger.ErrNotReversible, "%s", entry.Kind)
+	}
+	s.Equal(int64(97), s.account("o1").GrantedMicros)
+}
+
+func (s *LedgerSuite) TestAnEntryIsReversedOnce() {
+	grant, _, err := s.credit("o1", usage.CreditGrant, 100, "grant")
+	s.Require().NoError(err)
+	_, _, err = s.reverse("o1", grant.ID, -100, "revoke-1")
+	s.Require().NoError(err)
+
+	_, _, err = s.reverse("o1", grant.ID, -100, "revoke-2")
+
+	s.ErrorIs(err, ledger.ErrAlreadyReversed)
+	s.Equal(int64(0), s.account("o1").GrantedMicros)
+	entries, _, err := s.ledger.CreditEntries(s.ctx, "o1", nil, 10)
+	s.Require().NoError(err)
+	s.Len(entries, 2)
+}
+
+func (s *LedgerSuite) TestTwoReversalsOfOneEntryAtOnceWriteOne() {
+	other, err := ledger.Open(ledger.Options{DSN: s.dsn})
+	s.Require().NoError(err)
+	defer other.Close() //nolint:errcheck // a pool the test is done with
+
+	for round := range 10 {
+		grant, _, err := s.credit("o1", usage.CreditGrant, 100, fmt.Sprintf("grant-%d", round))
+		s.Require().NoError(err)
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for i, pool := range []*ledger.Ledger{s.ledger, other} {
+			wg.Go(func() {
+				_, _, errs[i] = pool.AddCredit(s.ctx, ledger.CreditEntry{
+					OrganizationID: "o1", Kind: usage.CreditAdjustment, AmountMicros: -100, ReversesID: grant.ID,
+					IdempotencyKey: fmt.Sprintf("revoke-%d-%d", round, i), Actor: "staff",
+				})
+			})
+		}
+		wg.Wait()
+		s.True((errs[0] == nil) != (errs[1] == nil), "exactly one wrote it, round %d: %v", round, errs)
+		s.True(errors.Is(errs[0], ledger.ErrAlreadyReversed) || errors.Is(errs[1], ledger.ErrAlreadyReversed), "%v", errs)
+	}
+
+	s.Equal(int64(0), s.account("o1").GrantedMicros)
+}
+
+func (s *LedgerSuite) TestAReversalIsAnAdjustmentOfMinusTheAmount() {
+	grant, _, err := s.credit("o1", usage.CreditGrant, 100, "grant")
+	s.Require().NoError(err)
+	var refused *ledger.InvalidError
+
+	_, _, err = s.reverse("o1", grant.ID, -99, newKey())
+	s.Require().ErrorAs(err, &refused)
+	s.Contains(refused.Problem, "amount_micros must be -100, not -99")
+	_, _, err = s.ledger.AddCredit(s.ctx, ledger.CreditEntry{
+		OrganizationID: "o1", Kind: usage.CreditRefund, AmountMicros: -100, ReversesID: grant.ID, IdempotencyKey: newKey(),
+	})
+	s.Require().ErrorAs(err, &refused)
+	s.Contains(refused.Problem, "kind must be adjustment")
+
+	s.Equal(int64(100), s.account("o1").GrantedMicros)
+}
+
+func (s *LedgerSuite) TestAnotherOrganizationsEntryIsNotThereToReverse() {
+	grant, _, err := s.credit("o1", usage.CreditGrant, 100, "grant")
+	s.Require().NoError(err)
+
+	_, _, err = s.reverse("o2", grant.ID, -100, newKey())
+	s.ErrorIs(err, ledger.ErrCreditNotFound)
+	_, _, err = s.reverse("o1", grant.ID+1000, -100, newKey())
+	s.ErrorIs(err, ledger.ErrCreditNotFound)
+
+	s.Equal(int64(100), s.account("o1").GrantedMicros)
+}
+
+func (s *LedgerSuite) TestAReversalIsWrittenOnceUnderItsKey() {
+	grant, _, err := s.credit("o1", usage.CreditGrant, 100, "grant")
+	s.Require().NoError(err)
+	first, _, err := s.reverse("o1", grant.ID, -100, "revoke")
+	s.Require().NoError(err)
+	unrevoke, _, err := s.reverse("o1", first.ID, 100, "unrevoke")
+	s.Require().NoError(err)
+
+	replayed, written, err := s.reverse("o1", grant.ID, -100, "revoke")
+	s.Require().NoError(err)
+	s.False(written)
+	s.Equal(first.ID, replayed.ID)
+	s.Equal(unrevoke.ID, replayed.ReversedByID, "answered as it is now")
+	s.Equal(int64(100), s.account("o1").GrantedMicros)
+	_, _, err = s.credit("o1", usage.CreditAdjustment, -100, "revoke")
+	s.ErrorIs(err, ledger.ErrIdempotencyKeyReused, "the key without reverses_id is another request")
+	_, _, err = s.reverse("o1", grant.ID, 100, "unrevoke")
+	s.ErrorIs(err, ledger.ErrIdempotencyKeyReused, "nor with another reverses_id")
+}
+
 func (s *LedgerSuite) TestAnIngestedEventIsDebitedFromItsOrganization() {
 	s.ingest(
 		usagetest.Event("o1", func(e *usage.Event) { e.CostMicros = 1000 }),

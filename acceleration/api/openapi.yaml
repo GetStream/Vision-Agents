@@ -4882,6 +4882,19 @@ components:
         - LimitGrantStateUsed
         - LimitGrantStateExpired
         - LimitGrantStateRevoked
+    LimitGrantUnrevocation:
+      additionalProperties: false
+      description: Why a revoked grant is live again.
+      properties:
+        reason:
+          description: Why it is live again; more than spaces.
+          maxLength: 500
+          minLength: 1
+          pattern: \S
+          type: string
+      required:
+        - reason
+      type: object
     LimitInForce:
       properties:
         effective_limit_micros:
@@ -20048,7 +20061,7 @@ paths:
   /v1/manage/spend/limits/grants/{grant_id}/revoke:
     post:
       description: |-
-        The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+        The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 
         Stream staff only, for support: it needs the manage key, and is audited with source manage. A grant staff make is the customer's like any other.
       operationId: manageRevokeLimitGrant
@@ -20085,6 +20098,54 @@ paths:
       security:
         - ManageKey: []
       summary: Revoke a grant
+      tags:
+        - Staff
+  /v1/manage/spend/limits/grants/{grant_id}/unrevoke:
+    post:
+      description: |-
+        Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+
+        Stream staff only, for support: it needs the manage key, and is audited with source manage. A grant staff make is the customer's like any other.
+      operationId: manageUnrevokeLimitGrant
+      parameters:
+        - in: path
+          name: grant_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitGrantUnrevocation'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitGrant'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Unrevoke a grant
       tags:
         - Staff
   /v1/manage/spend/limits/usage:
@@ -23160,7 +23221,7 @@ paths:
   /v1/spend/limits/grants/{grant_id}/revoke:
     post:
       description: |-
-        The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+        The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 
         Server-side only: one server-side credential of any app grants for any subject of its organization.
       operationId: revokeLimitGrant
@@ -23208,6 +23269,63 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Revoke a grant
+  /v1/spend/limits/grants/{grant_id}/unrevoke:
+    post:
+      description: |-
+        Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+
+        Server-side only: one server-side credential of any app grants for any subject of its organization.
+      operationId: unrevokeLimitGrant
+      parameters:
+        - in: path
+          name: grant_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitGrantUnrevocation'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LimitGrant'
+          description: OK
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Unrevoke a grant
   /v1/spend/limits/usage:
     get:
       description: |-
