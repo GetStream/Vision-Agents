@@ -66,7 +66,7 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	// The script is kept with the request, under one lock: a test that waits for the request
-	// and then settles it would otherwise find no script yet (AI-2027).
+	// and then settles it would otherwise find no script yet.
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
 	script := llmtest.New(llm.StreamOptions{

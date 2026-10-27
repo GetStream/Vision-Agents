@@ -4,11 +4,9 @@ package api
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -25,17 +23,6 @@ func (s *ScheduledTasksSuite) textsFrom(user *testClient, config, kind string) {
 	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
 		CustomerID: s.customerID(), ConfigID: config, Kind: kind, Address: s.writerNumber(), UserID: user.userID,
 	}))
-}
-
-// gateOnClosedStore has the gate every text passes read from a store closed for the test, so
-// its opt-out check fails as an unreachable database does, which is no refusal.
-func (s *ScheduledTasksSuite) gateOnClosedStore() {
-	closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
-	s.Require().NoError(err)
-	s.Require().NoError(closed.Close())
-	original := *s.gate
-	*s.gate = *dlc.NewGate(closed, s.live.Redis(), s.sandbox, nil)
-	s.T().Cleanup(func() { *s.gate = original })
 }
 
 // agentOnSMS is a scheduling agent answering on the text line number.
