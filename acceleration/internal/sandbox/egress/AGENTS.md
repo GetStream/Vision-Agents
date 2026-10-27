@@ -1,6 +1,6 @@
 # internal/sandbox/egress
 
-The router's egress proxy for code in a sandbox. The sandbox holds a placeholder in an env var; the proxy puts the connection's token in its place on the way out. The token never enters the sandbox. A host of the agent config's `allowed_domains` gets the sandbox's bytes as they are. `cmd/router` serves it on `code_sandbox.proxy_addr` (`ROUTER_CODE_SANDBOX_PROXY_ADDR`) when that is set.
+The router's egress proxy for code in a sandbox. The sandbox holds a placeholder in an env var; the proxy puts the connection's token in its place on the way out. The token never enters the sandbox. A host of the agent config's `allowed_domains` gets the sandbox's bytes as they are. `cmd/router` serves it on `code_sandbox.proxy_addr` (`ROUTER_CODE_SANDBOX_PROXY_ADDR`) when that is set. Under an overlap deploy the new router finds that address held and tries it again every 100 ms; the old one, when its drain starts, closes only its listener, so the tunnels it holds run until it exits (AI-2030).
 
 When `code_sandbox.proxy_public_url` is `https://<public IPv4 address>:port`, that listener serves TLS, so the sandbox's proxy credential in `Proxy-Authorization` never crosses the network in the clear. Each handshake gets a certificate for that IP address (an IP SAN, no DNS name), signed by the router CA (`proxy_ca_cert`, `proxy_ca_key`), as each tunnel's is (`Proxy.ListenerTLS`). A plain-HTTP CONNECT on that port gets no answer, and a client that does not trust the CA completes no handshake. With `http://` or no public URL it serves plain HTTP.
 

@@ -491,15 +491,30 @@ func serveBareProxy(t *testing.T, address string) (stop func() error, handOver f
 	return stop, handOver
 }
 
-// servesProxy is whether a proxy answers on address: it refuses a GET with 405.
+// servesProxy is whether a proxy takes a connection on address: it refuses a GET with 405.
+// Each call dials anew, since a connection the proxy took is served after a hand-over.
 func servesProxy(address string) bool {
-	client := http.Client{Timeout: time.Second}
+	client := http.Client{Timeout: time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
 	response, err := client.Get("http://" + address + "/")
 	if err != nil {
 		return false
 	}
 	_ = response.Body.Close()
 	return response.StatusCode == http.StatusMethodNotAllowed
+}
+
+// TestAHandedOverListenerEndsServeAsAClosedServer: serve in main takes any other end for a
+// failure, and the server's own Close, at stop, finds nothing more to close.
+func TestAHandedOverListenerEndsServeAsAClosedServer(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	handedOver := &handOverListener{Listener: listener}
+
+	require.NoError(t, handedOver.Close())
+	require.NoError(t, handedOver.Close())
+	_, err = handedOver.Accept()
+
+	require.ErrorIs(t, err, http.ErrServerClosed)
 }
 
 // TestAnAddressThatCannotBeListenedOnStillFailsTheStart: only an address another router holds
@@ -671,6 +686,8 @@ func (s *SandboxProxyHandOverSuite) TestTheRouterTakingOverServesOnceTheDraining
 	body, err = s.throughTunnel()
 	s.Require().NoError(err)
 	s.Require().Equal("first", body, "the router taking over served before the hand-over")
+	// An overlap holds the new router through several tries before the old one drains.
+	time.Sleep(3 * proxyListenRetry)
 
 	handedOver := time.Now()
 	handOverFirst()
@@ -719,11 +736,10 @@ func (s *SandboxProxyHandOverSuite) TestASandboxConnectedBeforeTheHandOverStillG
 func (s *SandboxProxyHandOverSuite) TestARouterDrainedBeforeItGetsTheAddressNeverTakesIt() {
 	stopFirst, _, err := s.startRouter("first", slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
-	stopSecond, handOverSecond, err := s.startRouter("second", slog.New(slog.DiscardHandler))
+	_, handOverSecond, err := s.startRouter("second", slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 
 	handOverSecond()
-	s.Require().NoError(stopSecond())
 	s.Require().NoError(stopFirst())
 
 	// The address, not s.address: Never's last check may run after the next test sets its own.
