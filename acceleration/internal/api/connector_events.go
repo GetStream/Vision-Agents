@@ -153,12 +153,14 @@ func (s *Server) receiveConnectorEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	manifest := definition.Manifest
 	if manifest.Channel == nil {
+		countEvent(manifest.ID, eventRefused)
 		writeError(w, errNoConnectorEvents)
 		return
 	}
 	secret, found := s.eventSecrets(manifest)
 	if !found {
 		s.logger.Warn("refused a connector event this deployment has no secret for", "connector", connectorID)
+		countEvent(manifest.ID, eventRefused)
 		writeError(w, errNoConnectorEvents)
 		return
 	}
@@ -210,6 +212,7 @@ func (s *Server) receiveProviderAppEvent(w http.ResponseWriter, r *http.Request)
 	if !readsProviderAppEvents(manifest) {
 		s.logger.Info("dropped a provider app's event: the connector has no channel verified with the app's own secret",
 			"connector", connectorID, "provider_app", appID, "customer", app.CustomerID)
+		countEvent(manifest.ID, eventRefused)
 		writeError(w, errNoConnectorEvents)
 		return
 	}
@@ -313,11 +316,17 @@ func readConnectorEvent(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 //	a provider app's delivery -> eventforward.Forward, queued for the customer's event
 //	  destinations, handled when a signal or an answered message was in it
 //	                                                200, or 500 so the provider retries
+//
+// Each event is counted once, by how it ended (connectorEvents); every return that answers
+// 500 leaves eventFailed.
 func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byte, manifest core.Manifest, secret []byte, app store.ConnectorOAuthClient) {
+	outcome := eventFailed
+	defer func() { countEvent(manifest.ID, outcome) }()
 	verifier, registered := s.connectors.Verifiers[string(manifest.Channel.Verifier.Kind)]
 	if !registered {
 		s.logger.Warn("refused a connector event this deployment cannot verify",
 			"connector", manifest.ID, "verifier", manifest.Channel.Verifier.Kind)
+		outcome = eventRefused
 		writeError(w, errNoConnectorEvents)
 		return
 	}
@@ -325,10 +334,12 @@ func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byt
 	if err != nil {
 		// The reason names no signature or secret (hmacheader.ErrUnsigned, ErrStale).
 		s.logger.Info("refused an unverified connector event", "connector", manifest.ID, "reason", err.Error())
+		outcome = eventRefused
 		writeError(w, errUnsigned)
 		return
 	}
 	if event.Challenge != "" {
+		outcome = eventChallenge
 		writeChallenge(w, event.Challenge)
 		return
 	}
@@ -378,6 +389,10 @@ func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byt
 			writeFailure(w, r, err)
 			return
 		}
+	}
+	outcome = eventUnhandled
+	if handled {
+		outcome = eventHandled
 	}
 	w.WriteHeader(http.StatusOK)
 }

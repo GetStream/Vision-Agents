@@ -198,6 +198,8 @@ func answerOf(exchange *core.Exchange) failure {
 // client's error for it often says only the status, else its provider_message, so the row holds
 // nothing the line does not (AI-1244). Example: a 403 whose body says why keeps that body; an
 // MCP isError, which comes in a 200, keeps the tool's words.
+//
+// Every call is also counted, by its connector and how it ended, and timed (metrics.go).
 func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how failure, err error) {
 	sessionID := d.spec.ID
 	var arguments []store.ArgumentShape
@@ -206,13 +208,17 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how f
 	} else {
 		arguments = argumentShape(call.Arguments, r.declared)
 	}
+	took := time.Since(started)
 	row := store.ConnectorInvocation{
 		ID:         store.NewID(),
 		CustomerID: r.connection.CustomerID, ConnectionID: r.connection.ID, ConnectorID: r.binding.ConnectorID,
 		ConfigID: d.spec.ConfigID, Binding: r.binding.Name, Tool: r.tool, SessionID: sessionID,
-		StartedAt: started, LatencyMs: time.Since(started).Milliseconds(), ErrorType: how.kind,
+		StartedAt: started, LatencyMs: took.Milliseconds(), ErrorType: how.kind,
 		Arguments: arguments,
 	}
+	connector := store.ConnectorLabel(row.ConnectorID)
+	connectorCalls.WithLabelValues(connector, cmp.Or(how.kind, "ok")).Inc()
+	connectorCallSeconds.WithLabelValues(connector).Observe(took.Seconds())
 	message, body := how.message, providerBody(how.body)
 	if message == "" {
 		message = providerMessage(err, how.redact)
