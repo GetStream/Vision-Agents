@@ -281,6 +281,13 @@ func (s *PlivoSuite) TestEachFinalStatusIsAnOutcome() {
 	}
 }
 
+func (s *PlivoSuite) TestAHangupWithoutACauseDecidesNothing() {
+	status, err := s.provider.ReadStatus(formType, []byte("CallUUID=u1&Event=Hangup&CallStatus=completed"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Word: "completed"}, status)
+}
+
 func (s *PlivoSuite) TestAStatusItCannotReadIsRefused() {
 	_, err := s.provider.ReadStatus("application/json", []byte(`{"HangupCause":"USER_BUSY"}`))
 	s.Error(err)

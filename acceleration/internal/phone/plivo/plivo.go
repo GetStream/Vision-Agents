@@ -228,8 +228,8 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	return phone.Dialed{VendorCallID: placed.RequestUUID, Status: "queued"}, nil
 }
 
-// ReadStatus reads the form Plivo posts to a call's hangup_url, which it does once the call is
-// over, so every cause is final.
+// ReadStatus reads the form Plivo posts to a call's hangup_url. Plivo documents no HangupCause
+// there, so a post without one is not final: the call's leg end decides it.
 func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
 	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
 		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("plivo: a call status is a form, not %q", contentType))
@@ -240,7 +240,11 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 	}
 	word := form.Get("HangupCause")
 	if word == "" {
-		return phone.CallStatus{}, stack.Wrap(errors.New("plivo: a call status without a HangupCause"))
+		word = form.Get("CallStatus")
+		if word == "" {
+			return phone.CallStatus{}, stack.Wrap(errors.New("plivo: a call status without a HangupCause or CallStatus"))
+		}
+		return phone.CallStatus{Word: word}, nil
 	}
 	result, ok := finalStatuses[word]
 	if !ok {
@@ -249,7 +253,8 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 	return phone.CallStatus{Result: result, Word: word}, nil
 }
 
-// finalStatuses are the HangupCause words that are not a failure.
+// finalStatuses are the HangupCause words that are not a failure. Only NORMAL_CLEARING and
+// USER_BUSY are documented by Plivo; the rest are unconfirmed.
 var finalStatuses = map[string]phone.CallResult{
 	"NORMAL_CLEARING":   phone.CallCompleted,
 	"USER_BUSY":         phone.CallBusy,
