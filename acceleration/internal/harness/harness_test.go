@@ -994,6 +994,58 @@ func (s *HarnessSuite) TestAnAnswerCutOffBeforeItWasHeardIsStillOwed() {
 	s.Contains(s.fast.requests()[2].Instructions, "12.63")
 }
 
+func (s *HarnessSuite) TestAnAnswerTalkedOverAfterItWasWrittenIsStillOwed() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.False(s.harness.Pending(), "the reply carrying it was written and is playing")
+	s.harness.Release("turn-2")
+	s.True(s.harness.Pending(), "the caller talked over it while it played")
+
+	s.respond("turn-3", "sorry, what were the opening hours")
+	s.Contains(s.fast.requests()[2].Instructions, "12.63")
+	s.Contains(s.fast.requests()[2].Instructions, cutOffNote,
+		"the conversation still holds the reply as written, so the model is told it went unheard")
+	s.Equal(1, strings.Count(s.fast.requests()[2].Instructions, "12.63"))
+}
+
+func (s *HarnessSuite) TestOnlyTheReplyTalkedOverOwesItsAnswerAgain() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.respond("turn-3", "thanks")
+	s.harness.Remember(llm.Response{ID: "turn-3", Status: llm.StatusCompleted})
+	s.harness.Release("turn-2")
+	s.harness.Release("turn-3")
+
+	s.False(s.harness.Pending(), "the reply that carried it was heard in full")
+}
+
+func (s *HarnessSuite) TestACancelledRequestIsNotOwedAgainWhenItsReplyIsTalkedOver() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.harness.CancelTurn("turn-1", ReasonSuperseded)
+	s.harness.Release("turn-2")
+
+	s.False(s.harness.Pending())
+}
+
 func (s *HarnessSuite) TestAnAnswerWhoseReplyFailedIsStillOwed() {
 	s.build(true)
 	s.slow.automatic = "It is 12.63."
