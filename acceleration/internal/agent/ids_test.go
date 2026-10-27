@@ -254,6 +254,28 @@ func TestAnIDThatKeysARecordIsPassedOn(t *testing.T) {
 	assert.True(t, unfound, "the fields of one record are not IDs")
 }
 
+func TestOnlyACollectionsKeysAreItsRecordsIDs(t *testing.T) {
+	// A key is an ID of the records its collection is named for, and of nothing else; a map
+	// nobody named a collection keys nothing.
+	tools := []string{"list_cards", "charge_card", "get_order", "get_hours", "book_slot"}
+	history := []llm.Message{
+		{Role: llm.User, Content: "Charge my card and book me in."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "list_cards"}, {ID: "c2", Name: "get_hours"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"credit_card_list":{"primary":{"last_four":"4242"}}}`},
+		{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"monday":{"open":"9:00"},"tuesday":{"open":"10:00"}}`},
+	}
+	call := func(name, arguments string) llm.ToolCall {
+		return llm.ToolCall{Name: name, Arguments: arguments}
+	}
+
+	_, _, _, unfound := unfoundID(history, call("charge_card", `{"card_id":"primary"}`), tools)
+	assert.False(t, unfound, "a credit card's ID is a card's")
+	_, _, _, unfound = unfoundID(history, call("get_order", `{"order_id":"primary"}`), tools)
+	assert.True(t, unfound, "a card's key is not an order")
+	_, _, _, unfound = unfoundID(history, call("book_slot", `{"slot_id":"monday"}`), tools)
+	assert.True(t, unfound, "days nobody named a collection are not IDs")
+}
+
 func TestAnIDThatKeysARecordAndIsLeftOutIsAskedFor(t *testing.T) {
 	tools := harness.Tools{Tools: []harness.Tool{
 		{Name: "list_cards"},
@@ -269,7 +291,7 @@ func TestAnIDThatKeysARecordAndIsLeftOutIsAskedFor(t *testing.T) {
 
 	assert.True(t, missing)
 	assert.Equal(t, "card_id", key)
-	assert.Equal(t, []string{"primary (id)"}, known)
+	assert.Equal(t, []string{"primary (card_id)"}, known)
 }
 
 func TestAListUnderAPluralKeyHoldsThatKeysIDs(t *testing.T) {

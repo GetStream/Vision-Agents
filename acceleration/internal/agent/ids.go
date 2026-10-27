@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -73,7 +72,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 		var ids []string
 		for _, result := range results {
 			walkIDs(result, "", func(at, id string) {
-				if (at == name || at == "id") && alphanumeric(id) == wanted {
+				if namesID(at, name) && alphanumeric(id) == wanted {
 					returned = true
 				}
 				if entry := fmt.Sprintf("%s (%s)", id, at); !slices.Contains(ids, entry) {
@@ -129,7 +128,7 @@ func missingID(history []llm.Message, call llm.ToolCall, tools harness.Tools) (k
 				continue
 			}
 			walkIDs(result, "", func(at, id string) {
-				if entry := fmt.Sprintf("%s (%s)", id, at); (at == "id" || at == name) && !slices.Contains(ids, entry) {
+				if entry := fmt.Sprintf("%s (%s)", id, at); namesID(at, name) && !slices.Contains(ids, entry) {
 					ids = append(ids, entry)
 				}
 			})
@@ -542,16 +541,15 @@ func handedOut(key string, tools []string) bool {
 // walkIDs calls found with every string or number held under "id" or a key ending in "_id",
 // with every one listed under a plural key as the ID of what that key names: τ-bench's
 // get_user_details lists a user's orders as "orders": ["#W5272531"], each an order_id; and
-// with every key of a map that holds nothing but records, which is a collection keyed by
-// the records' IDs: {"primary": {...}} gives a card's ID as primary, though no field
-// of the card repeats it.
+// and with every key of a map of records under a key that names their collection, which is
+// keyed by the records' IDs: "cards": {"primary": {...}} gives a card_id, primary, though no
+// field of the card repeats it.
 func walkIDs(value any, at string, found func(at, id string)) {
 	switch typed := value.(type) {
 	case map[string]any:
-		if keyedByID(typed) {
-			at := cmp.Or(listedID(at), "id")
+		if keyed := collectionID(at); keyed != "" && keyedByID(typed) {
 			for name := range typed {
-				found(at, name)
+				found(keyed, name)
 			}
 		}
 		for name, inner := range typed {
@@ -573,6 +571,26 @@ func walkIDs(value any, at string, found func(at, id string)) {
 			found(at, fmt.Sprint(typed))
 		}
 	}
+}
+
+// collectionID is the ID key of the records a map under key holds, when key names a
+// collection of them: "card_id" for "cards" or "card_list", "booking_id" for "bookings".
+// A key that names no collection, or no key at all, gives none: the keys of a map nothing
+// calls a collection are not taken for anyone's IDs.
+func collectionID(key string) string {
+	for _, suffix := range []string{"_list", "_map", "_index"} {
+		if entity, ok := strings.CutSuffix(key, suffix); ok && entity != "" {
+			return entity + "_id"
+		}
+	}
+	return listedID(key)
+}
+
+// namesID reports whether an ID found under at is the kind an argument called name takes:
+// at is "id", name itself, or a longer name of the same thing ("credit_card_id" for
+// "card_id").
+func namesID(at, name string) bool {
+	return at == "id" || at == name || strings.HasSuffix(at, "_"+name)
 }
 
 // keyedByID reports whether a map is a collection of records keyed by their IDs: every value
