@@ -42,6 +42,8 @@ channel:
     # [send], «Message parts»: text is a part; consecutive text parts are not allowed, so the
     # text of a message with media first sits in a later part. Every part's value is read,
     # joined by a newline; a media part has a url and no value.
+    # text stays for a build before text_parts, which reads the first part.
+    text: $.data.parts[0].value
     text_parts: $.data.parts[*].value
   reply:
     # [send]: POST https://api.linqapp.com/api/partner/v3/chats/{chatId}/messages.

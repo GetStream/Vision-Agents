@@ -117,7 +117,7 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ### An iMessage photo's caption is answered
 
-A Linq message's text is every part's `value`, joined by a newline: the caption an iPhone sends after a photo was dropped, since only the first part was read, so the message got no reply. `linq` revision 2, which a connection takes at its next write; `messages.text_parts` in a channel manifest reads text in pieces (AI-2092).
+A Linq message's text is now every text part joined by a newline, not only the first part: a caption an iPhone sends after a photo got no reply before. A connection takes `linq` revision 2 at its next write. A channel manifest reads text in pieces with `messages.text_parts` (AI-2092).
 
 ### A photo is still seen after the model calls a tool
 

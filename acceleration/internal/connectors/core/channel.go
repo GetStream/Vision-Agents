@@ -120,10 +120,11 @@ type MessageRule struct {
 	// Text may be absent from a message, such as one that is only a file; the message is
 	// still read, with empty text.
 	Text string `yaml:"text" json:"text"`
-	// TextParts goes instead of Text for a message whose text is in pieces, such as Linq's
-	// parts, where a photo comes before its caption: the path of every piece, starting with
-	// Each when there is one and with a [*] past it. The text is every value found, in order,
-	// joined by a newline (AI-2092).
+	// TextParts is for a message whose text is in pieces, such as Linq's parts, where a photo
+	// comes before its caption: the path of every piece, starting with Each when there is one
+	// and with a [*] past it. The text is every value found, in order, joined by a newline
+	// (AI-2092). It wins over Text when both are set; Text stays beside it so a build that
+	// does not know TextParts, after a rollback, still reads a stored revision's text.
 	TextParts string `yaml:"text_parts,omitempty" json:"text_parts,omitempty"`
 	// Addressed is when a message speaks to the connection's own account, such as its bot in
 	// a channel of people. A message that does not starts no thread: it is answered only on a
@@ -626,12 +627,8 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 	if hasMessages {
 		checkPath("channel.messages.author_id", msgs.AuthorID)
 		checkPath("channel.messages.provider_message_id", msgs.ProviderMessageID)
-		switch {
-		case msgs.TextParts == "":
-			checkPath("channel.messages.text", msgs.Text)
-		case msgs.Text != "":
-			fail("channel.messages.text_parts", "goes instead of text, not beside it")
-		default:
+		checkPath("channel.messages.text", msgs.Text)
+		if msgs.TextParts != "" {
 			checkParts("channel.messages.text_parts", msgs.TextParts)
 		}
 	}
@@ -1030,8 +1027,8 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ski
 	}, "", nil
 }
 
-// text is a message's text: the value at text, or every value at text_parts joined by a
-// newline. A newline, because two pieces are two of the person's bubbles, which a space
+// text is a message's text: every value at text_parts joined by a newline when it is set,
+// else the value at text. A newline, because two pieces are two of the person's bubbles, which a space
 // would run into one sentence: Linq refuses two text parts in a row, so they come with
 // media between them (https://docs.linqapp.com/channel/imessage/guides/messaging/sending-messages/index.md,
 // «Message parts», opened October 27, 2026).

@@ -478,25 +478,50 @@ func (s *ChannelSuite) TestLinqPartsOfTheWrongShapeAreRefused() {
 }
 
 func (s *ChannelSuite) TestTextPartsIsCheckedWhenTheManifestIsParsed() {
+	both := func(parts string) string { return "text: $.text\n    text_parts: " + parts }
 	for _, tc := range []struct {
 		name, old, new, want string
 	}{
-		{"beside text", "text: $.text", "text: $.text\n    text_parts: $.parts[*].value", "channel.messages.text_parts: goes instead of text, not beside it"},
-		{"no [*]", "text: $.text", "text_parts: $.parts[0].value", `channel.messages.text_parts: "$.parts[0].value" has no [*] past messages.each`},
-		{"not a path", "text: $.text", "text_parts: $.parts[?@.type=='text'].value", "channel.messages.text_parts: \"$.parts[?@.type=='text'].value\" is not a path of member names"},
+		{"no [*]", "text: $.text", both("$.parts[0].value"), `channel.messages.text_parts: "$.parts[0].value" has no [*] past messages.each`},
+		{"not a path", "text: $.text", both("$.parts[?@.type=='text'].value"), "channel.messages.text_parts: \"$.parts[?@.type=='text'].value\" is not a path of member names"},
+		{"without text", "text: $.text", "text_parts: $.parts[*].value", `channel.messages.text: "" is not a path of member names`},
 		{"neither", "text: $.text", "", `channel.messages.text: "" is not a path of member names`},
 		{"in a form", "format: json\n", "format: form\n", `channel.messages.text_parts: "$.parts[*].value": a form is flat`},
 	} {
-		channel := strings.Replace(baseChannel, "text: $.text", "text_parts: $.parts[*].value", 1)
-		if tc.name != "in a form" {
-			channel = baseChannel
+		channel := baseChannel
+		if tc.name == "in a form" {
+			channel = strings.Replace(baseChannel, "text: $.text", both("$.parts[*].value"), 1)
 		}
 		s.Require().Contains(channel, tc.old, tc.name)
 		_, err := ParseManifest(minimal(strings.Replace(channel, tc.old, tc.new, 1)))
 		s.ErrorContains(err, tc.want, tc.name)
 	}
-	_, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", "text_parts: $.parts[*].value", 1)))
-	s.NoError(err)
+	_, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", both("$.parts[*].value"), 1)))
+	s.NoError(err, "text_parts beside text is how a stored revision stays readable by an older build")
+}
+
+// A build from before text_parts ignores it and reads text, so after a rollback a stored
+// revision 2 of linq still gives the first part's text instead of an empty path that drops
+// every message (AI-2092 R1.1). The old build is this rule without TextParts.
+func (s *ChannelSuite) TestAStoredLinqRevisionStaysReadableByABuildWithoutTextParts() {
+	m := s.load("linq")
+	s.Equal("$.data.parts[0].value", m.Channel.Messages.Text)
+	s.Require().NotEmpty(m.Channel.Messages.TextParts)
+	older := *m.Channel
+	older.Messages.TextParts = ""
+	read, err := older.Read(m.ID, s.recorded("linq.received.json"))
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 1)
+	s.Equal("Hi, is my order ready?", read.Messages[0].Text)
+}
+
+// text_parts wins when both are set.
+func (s *ChannelSuite) TestTextPartsWinsOverText() {
+	m := s.load("linq")
+	read, err := m.Channel.Read(m.ID, s.linqParts(`[{"type":"text","value":"first"},{"type":"text","value":"second"}]`))
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 1)
+	s.Equal("first\nsecond", read.Messages[0].Text)
 }
 
 // With each, text_parts reads every piece of the message each binds, so it starts with each.
@@ -507,10 +532,10 @@ func (s *ChannelSuite) TestTextPartsReadsThePiecesOfEachMessageOfABatch() {
 			"$.chat", "$.messages[*].chat",
 			"$.from", "$.messages[*].from",
 			"$.id", "$.messages[*].id",
-			"text: $.text", text,
+			"text: $.text", "text: $.messages[*].text\n    text_parts: "+text,
 		).Replace(baseChannel)
 	}
-	m, err := ParseManifest(minimal(batch("text_parts: $.messages[*].parts[*].value")))
+	m, err := ParseManifest(minimal(batch("$.messages[*].parts[*].value")))
 	s.Require().NoError(err)
 	read, err := m.Channel.Read(m.ID, []byte(`{"messages":[
 		{"chat":"c","from":"u","id":"1","parts":[{"url":"https://example.com/a.jpg"},{"value":"one"},{"value":"two"}]},
@@ -530,7 +555,7 @@ func (s *ChannelSuite) TestTextPartsReadsThePiecesOfEachMessageOfABatch() {
 		"$.messages[*].value":          "has no [*] past messages.each",
 		"$.messages[*].parts[0].value": "has no [*] past messages.each",
 	} {
-		_, err := ParseManifest(minimal(batch("text_parts: " + path)))
+		_, err := ParseManifest(minimal(batch(path)))
 		s.ErrorContains(err, want, path)
 	}
 }
@@ -538,7 +563,7 @@ func (s *ChannelSuite) TestTextPartsReadsThePiecesOfEachMessageOfABatch() {
 // An element number after the [*] reads that element of each, and an element that is not
 // there is left out.
 func (s *ChannelSuite) TestTextPartsReadsOneElementOfEveryPart() {
-	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", "text_parts: $.parts[*].lines[1]", 1)))
+	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", "text: $.text\n    text_parts: $.parts[*].lines[1]", 1)))
 	s.Require().NoError(err)
 	read, err := m.Channel.Read(m.ID, []byte(`{"chat":"c","from":"u","id":"1","parts":[{"lines":["a","b"]},{"lines":["c"]},{"lines":["d","e"]}]}`))
 	s.Require().NoError(err)

@@ -75,6 +75,9 @@ channel:
     # value is its URL ([webhooks reference], «Link»), which the agent gets as the person's
     # text, as revision 1 did when it was the first part.
     #   [webhooks reference] https://docs.linqapp.com/channel/imessage/api/resources/webhooks/index.md, opened October 27, 2026
+    # text stays for a build before text_parts (a rollback): it reads the stored revision's
+    # first part, as it did on revision 1, and ignores text_parts. A newer build reads text_parts.
+    text: $.data.parts[0].value
     text_parts: $.data.parts[*].value
   reply:
     # [send]: POST https://api.linqapp.com/api/partner/v3/chats/{chatId}/messages. Linq
