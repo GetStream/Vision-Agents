@@ -105,8 +105,11 @@ func TestConnectorEventsSuite(t *testing.T) {
 
 // SetupSuite registers hmac_header and a scheme named oauth2_code, which the built-ins name;
 // it connects nothing, so a resolve that reaches it fails with its own error, not
-// ErrNotConnected. The operator's signing secrets are in the suite's environment.
+// ErrNotConnected. The operator's signing secrets are in the suite's environment. The suite has
+// a database of its own: seeding never removes a built-in, so the ones it adds for its tests
+// would be listed to every suite sharing the database.
 func (s *ConnectorEventsSuite) SetupSuite() {
+	s.database = "connector_events"
 	verifier := hmacheader.New()
 	s.connectors = core.Registry{
 		Schemes:   map[string]core.Scheme{oauth2code.Name: namedScheme(oauth2code.Name)},
