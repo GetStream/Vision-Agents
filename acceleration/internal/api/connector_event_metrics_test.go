@@ -111,8 +111,7 @@ func (s *SlackChannelSuite) TestAMessageOnTheProviderAppRouteIsCountedHandledUnd
 
 // The ids in the path of a provider app's route are the sender's choice: a request naming a
 // provider app nobody holds, or one whose connector has no definition for its customer, leaves
-// no series under the id it names. The second is a race the store's cascade makes rare: the
-// definition went after the client was read.
+// no series under the id it names.
 func (s *SlackChannelSuite) TestAnEventOnTheProviderAppRouteOfAnIdNobodyDefinedIsNotCounted() {
 	unknown := "no_such_connector_" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	status, _ := s.slack.Deliver(s.server.URL+providerAppEventsPath+unknown+"/A"+s.utils.uuid(), s.secret,
@@ -120,33 +119,28 @@ func (s *SlackChannelSuite) TestAnEventOnTheProviderAppRouteOfAnIdNobodyDefinedI
 	s.Equal(http.StatusNotFound, status)
 	s.Zero(eventSeries(unknown), "a provider app nobody holds")
 
-	connector := store.CustomPrefix + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	manifest, err := core.ParseManifest([]byte("id: " + connector + "\nrevision: 1\nname: Metrics probe\n" +
-		"endpoints:\n  mcp: https://crm.example/mcp\nschemes: [oauth2_code]\nclient:\n  registration: [customer]\n"))
-	s.Require().NoError(err)
-	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
-	s.Require().NoError(err)
+	// Not a custom_ id, so the label of a counted event would be the id itself, which no other
+	// suite sends: no series under it proves the event was not counted, whatever runs beside.
+	connector := "no_such_definition_" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	appID, secret := "synthetic-gone-"+s.utils.uuid(), "synthetic-gone-signing-"+s.utils.uuid()
-	record := &store.ConnectorOAuthClient{CustomerID: s.customerID(), ConnectorID: connector,
-		Registration: core.ClientCustomer, ClientID: "synthetic-client", ProviderAppID: appID}
-	record.SigningSecretSealed, err = s.sealer.SealWithAAD(secret, providerAppAAD(record.CustomerID, connector, appID))
+	sealed, err := s.sealer.SealWithAAD(secret, providerAppAAD(s.customerID(), connector, appID))
 	s.Require().NoError(err)
-	record.SigningKEKVersion = s.sealer.CurrentVersion()
-	_, err = s.store.PutConnectorOAuthClient(context.Background(), record)
-	s.Require().NoError(err)
-	_, err = s.store.DB().NewRaw(`DELETE FROM connector_definitions WHERE customer_id = ? AND id = ?`,
-		s.customerID(), connector).Exec(context.Background())
+	// Put refuses a client whose connector has no definition, so the row is written as it was
+	// before the definition went: the race the store's cascade makes rare.
+	_, err = s.store.DB().NewRaw(`INSERT INTO connector_oauth_clients (customer_id, connector_id, registration, client_id,
+provider_app_id, signing_secret_sealed, signing_kek_version) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		s.customerID(), connector, core.ClientCustomer, "synthetic-client", appID, sealed, s.sealer.CurrentVersion()).Exec(context.Background())
 	s.Require().NoError(err)
 	s.T().Cleanup(func() {
-		s.Require().NoError(s.store.DeleteConnectorOAuthClient(context.Background(), s.customerID(), connector, core.ClientCustomer))
+		_, err := s.store.DB().NewRaw(`DELETE FROM connector_oauth_clients WHERE customer_id = ? AND connector_id = ?`,
+			s.customerID(), connector).Exec(context.Background())
+		s.Require().NoError(err)
 	})
-	custom := eventsOf("custom", eventRefused)
 
 	status, _ = s.slack.Deliver(s.server.URL+providerAppEventsPath+connector+"/"+appID, secret, []byte(`{"synthetic":"gone"}`), 0)
 
 	s.Equal(http.StatusNotFound, status)
-	s.Equal(custom, eventsOf("custom", eventRefused), "an event no definition reads is not counted")
-	s.Zero(eventSeries(connector))
+	s.Zero(eventSeries(connector), "an event no definition reads is not counted")
 }
 
 // An event the forwarder fails to queue is answered 500 so the provider delivers it again, and
