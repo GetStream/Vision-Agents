@@ -163,8 +163,9 @@ Two rules decide. The first final outcome wins, and a later post changes nothing
 `completed`: once Stream saw the phone in the call, no vendor's word outranks it. A call that
 ends without a join or a report is `no_answer` when its vendor reports, else `unknown`.
 
-Without `ROUTER_PUBLIC_URL` no status URL is sent. Then only the join and leave are known, and
-an unanswered call is `unknown`.
+Without `ROUTER_PUBLIC_URL` no status URL is sent. A call through Twilio, Telnyx, Vonage, Plivo
+or Bandwidth then knows only the join and leave, and an unanswered one is `unknown`. A
+`sip_trunk` call is told by the bridge, so it keeps its outcome.
 
 A busy, unanswered, failed or canceled call ends its session at once, rather than leaving the
 agent to wait out its start timeout. It is ended off the vendor's request, on this router or
