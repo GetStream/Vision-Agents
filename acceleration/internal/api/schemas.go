@@ -945,7 +945,7 @@ func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "CallOutcome", "How a placed call ended.\n"+
 		"completed: the person answered and the call ended.\n"+
 		"busy: the line was busy or the person declined.\n"+
-		"no_answer: it rang until the ring timeout.\n"+
+		"no_answer: it rang and nobody answered.\n"+
 		"failed: the vendor could not place it, for a bad number or a carrier fault.\n"+
 		"canceled: the vendor says the call was hung up before an answer.\n"+
 		"unknown: the vendor reports nothing about how it ended, and the phone never joined.",
