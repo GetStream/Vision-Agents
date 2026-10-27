@@ -95,11 +95,11 @@ func (s *telnyxLine) SetupSuite() {
 
 func (s *telnyxLine) SetupTest() {
 	s.useApp(s.data.createApp())
-	s.telnyx = newFakeTelnyx(s.T())
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	s.Require().NoError(err)
 	s.app, s.private = "profile-"+s.utils.uuid(), private
 	s.apiKey, s.line = "synthetic-telnyx-key-"+s.utils.uuid(), "+17735550002"
+	s.telnyx = newFakeTelnyx(s.T(), "Bearer "+s.apiKey)
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, oauthClientPath("telnyx"),
 		ConnectorOAuthClientRequest{ProviderAppID: s.app, SigningSecret: base64.StdEncoding.EncodeToString(public)}, nil))
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections",
@@ -541,7 +541,7 @@ func (s *telnyxLine) streamDelivers(channel string, index int) int {
 	return s.signedly("/v1/chat/hooks/stream", string(payload))
 }
 
-// took waits until the test's Telnyx took count messages, and returns them.
+// took waits until the test's Telnyx took count of its messages, and returns them.
 func (s *telnyxLine) took(count int) []telnyxMessage {
 	s.Require().Eventually(func() bool { return len(s.telnyx.sent()) >= count }, settleFor, 10*time.Millisecond,
 		"Telnyx took %d messages, not %d", len(s.telnyx.sent()), count)
@@ -552,6 +552,10 @@ func (s *telnyxLine) took(count int) []telnyxMessage {
 // API key, and from, to and text. It answers 200 with the message queued.
 type fakeTelnyx struct {
 	server *httptest.Server
+	// authorization is the header the test's own number sends with. A send with another is a
+	// reply an earlier test's bridge finished late (it sends off the request,
+	// channelbridge/keywords.go): it is answered as Telnyx would and not taken.
+	authorization string
 
 	mu       sync.Mutex
 	messages []telnyxMessage
@@ -581,8 +585,8 @@ func (m telnyxMessage) withoutAuthorization() telnyxMessage {
 	return m
 }
 
-func newFakeTelnyx(t *testing.T) *fakeTelnyx {
-	telnyx := &fakeTelnyx{}
+func newFakeTelnyx(t *testing.T, authorization string) *fakeTelnyx {
+	telnyx := &fakeTelnyx{authorization: authorization}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v2/messages", telnyx.send)
 	telnyx.server = httptest.NewTLSServer(mux)
@@ -611,7 +615,9 @@ func (f *fakeTelnyx) send(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		return
 	}
-	f.messages = append(f.messages, telnyxMessage{from: sent.From, to: sent.To, text: sent.Text, authorization: r.Header.Get("Authorization")})
+	if r.Header.Get("Authorization") == f.authorization {
+		f.messages = append(f.messages, telnyxMessage{from: sent.From, to: sent.To, text: sent.Text, authorization: r.Header.Get("Authorization")})
+	}
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
