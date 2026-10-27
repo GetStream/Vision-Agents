@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -87,6 +88,8 @@ func (s *Service) OpenLeg(ctx context.Context, owner routing.Owner, leg store.Ca
 	case leg.EndedAt != nil:
 		// Its phone joined and left before it was recorded.
 		s.settleLegs(ctx, []store.CallLeg{leg})
+	case leg.StartedAt != nil:
+		s.told(ctx, leg)
 	}
 }
 
@@ -132,16 +135,19 @@ func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, c
 	}
 	if leg.EndedAt != nil {
 		s.settleLegs(ctx, []store.CallLeg{leg})
-	} else if left, err = s.store.ParticipantLeft(ctx, scope, callType, callID, participant); err != nil {
-		return err
-	} else if left != nil {
-		// The phone's leave was kept between the first look and the connect, which did not
-		// see it: the leg ends at it, before the leave is forgotten.
-		ended, err := s.store.EndParticipantLeg(ctx, scope, callType, callID, participant, *left)
-		if err != nil {
+	} else {
+		s.told(ctx, leg)
+		if left, err = s.store.ParticipantLeft(ctx, scope, callType, callID, participant); err != nil {
 			return err
+		} else if left != nil {
+			// The phone's leave was kept between the first look and the connect, which did not
+			// see it: the leg ends at it, before the leave is forgotten.
+			ended, err := s.store.EndParticipantLeg(ctx, scope, callType, callID, participant, *left)
+			if err != nil {
+				return err
+			}
+			s.settleLegs(ctx, ended)
 		}
-		s.settleLegs(ctx, ended)
 	}
 	return s.store.ForgetParticipant(ctx, scope, callType, callID, participant, left)
 }
@@ -306,6 +312,7 @@ func (r *recently) forget(key string) {
 // answered, which a vendor does not bill: it is logged, since a call hook that does not deliver
 // call.session_participant_joined would leave every placed call looking so.
 func (s *Service) settleLegs(ctx context.Context, ended []store.CallLeg) {
+	s.told(ctx, ended...)
 	for _, leg := range ended {
 		if !leg.Connected() {
 			s.logger.Warn("a call leg ended without its phone joining the call; it is not billed",
@@ -314,6 +321,28 @@ func (s *Service) settleLegs(ctx context.Context, ended []store.CallLeg) {
 			continue
 		}
 		s.settleLeg(ctx, leg, true)
+	}
+}
+
+// told tells the outcome keeper when each leg's phone joined and when the leg ended. A leg the
+// keeper has no call for, a transfer's or an inbound one, changes nothing. A failure is logged:
+// the leg is already billed, and its outcome is all that is lost.
+func (s *Service) told(ctx context.Context, legs ...store.CallLeg) {
+	for _, leg := range legs {
+		key := outcome.Key{
+			CustomerID: leg.CustomerID, StreamAppPK: leg.StreamAppPK, CallType: leg.CallType, CallID: leg.CallID,
+			Local: leg.LocalNumber, Remote: leg.RemoteNumber,
+		}
+		if leg.StartedAt != nil {
+			if err := s.outcomes.Answered(ctx, key, *leg.StartedAt); err != nil {
+				s.logger.Error("could not keep that a placed call was answered", "call", leg.CallType+":"+leg.CallID, "error", err)
+			}
+		}
+		if leg.EndedAt != nil {
+			if err := s.outcomes.Ended(ctx, key, *leg.EndedAt); err != nil {
+				s.logger.Error("could not keep that a placed call ended", "call", leg.CallType+":"+leg.CallID, "error", err)
+			}
+		}
 	}
 }
 
@@ -333,6 +362,7 @@ func (s *Service) SweepLegs(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	s.told(ctx, ended...)
 	for _, leg := range ended {
 		if !leg.Connected() {
 			s.logger.Warn("ended a call leg that rang for the longest a call may last without its phone joining",

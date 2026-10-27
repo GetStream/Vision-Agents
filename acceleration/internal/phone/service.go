@@ -1347,6 +1347,19 @@ func (s *Service) SweepBridges(ctx context.Context) (int64, error) {
 	return s.store.SweepBridges(ctx)
 }
 
+// statusTokenLifetime is how long a placed call's status URL takes posts: past the longest a
+// call may last, with an hour for a vendor's late post.
+const statusTokenLifetime = MaxCallLength + time.Hour
+
+// SweepStatusTokens retires the status URLs of calls placed longer than statusTokenLifetime
+// ago, keeping their outcomes. It reports how many it retired.
+func (s *Service) SweepStatusTokens(ctx context.Context) (int64, error) {
+	if s.outcomes == nil {
+		return 0, nil
+	}
+	return s.outcomes.Sweep(ctx, s.now().Add(-statusTokenLifetime))
+}
+
 // ReleaseCall deletes the per-call Stream trunks and routes an ended call left behind in one
 // app, each in the app it was made in. A call's id is only unique within an app, so the
 // event that ended it releases only what that app holds; unpinned also releases what was

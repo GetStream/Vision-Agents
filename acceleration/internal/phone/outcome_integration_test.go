@@ -26,8 +26,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
-// OutcomeSuite is what a placed call keeps for its outcome, in real Postgres: the row, and the
-// status URL its vendor is given. The vendor is a stub named telnyx.
+// OutcomeSuite is what a placed call keeps for its outcome, in real Postgres: the row, the
+// status URL its vendor is given, and what Stream says of its phone. The vendor is a stub named
+// telnyx, and the service's clock is the suite's.
 type OutcomeSuite struct {
 	suite.Suite
 	ctx      context.Context
@@ -35,6 +36,7 @@ type OutcomeSuite struct {
 	redis    rueidis.Client
 	service  *Service
 	vendor   *stub
+	clock    *meteringClock
 	customer string
 	e164     string
 }
@@ -59,6 +61,7 @@ func (s *OutcomeSuite) SetupSuite() {
 
 func (s *OutcomeSuite) SetupTest() {
 	s.vendor = &stub{vendor: "telnyx"}
+	s.clock = &meteringClock{at: time.Now().UTC().Truncate(time.Second)}
 	s.build(s.vendor, "https://router.example")
 }
 
@@ -81,14 +84,14 @@ func (s *OutcomeSuite) build(vendor Provider, publicURL string) {
 	}
 	deployment := chattest.NewServer(s.T())
 	s.service, err = NewService(ServiceOptions{
-		Registry: registry, Store: s.store, Recorder: recorder, PublicURL: publicURL,
+		Registry: registry, Store: s.store, Recorder: recorder, PublicURL: publicURL, Now: s.clock.now,
 		Apps:   &testApps{deployment: deployment, own: map[string]*chattest.Server{}, pins: map[string]int64{}, blocked: map[string]bool{}},
 		Gate:   dlc.NewGate(s.store, s.redis, dlc.Sandbox{}, nil),
 		Logger: slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
-		E164: s.e164, Vendor: "telnyx", Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+		E164: s.e164, Vendor: "telnyx", Country: "US", CustomerID: s.customer, PurchasedAt: s.clock.now(),
 	}))
 }
 
@@ -167,11 +170,36 @@ func (s *OutcomeSuite) report(token string, result CallResult, word string) erro
 	return s.service.ReportStatus(s.ctx, token, "application/x-www-form-urlencoded", []byte(body))
 }
 
-// answered is the placed call's phone joining its Stream call.
+// answered is the placed call's phone joining its Stream call, as the participant event says.
 func (s *OutcomeSuite) answered(placed Placed) {
-	call, err := s.service.Outcomes().Read(s.ctx, s.customer, placed.CallID)
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, placed.CallType, placed.CallID, "session-1", "phone-1",
+		"+15125550123", time.Time{}))
+}
+
+// left is the placed call's phone leaving its Stream call, as the participant event says.
+func (s *OutcomeSuite) left(placed Placed) {
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, placed.CallType, placed.CallID, "phone-1", time.Time{}))
+}
+
+// ended is the Stream call ending, as session_ended says.
+func (s *OutcomeSuite) ended(callType, callID string) {
+	s.Require().NoError(s.service.EndLegs(s.ctx, everyApp, callType, callID, time.Time{}))
+}
+
+// transfer rings human into the call, from the suite's number.
+func (s *OutcomeSuite) transfer(callID, human string) {
+	_, err := s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: human, CallID: callID,
+	})
 	s.Require().NoError(err)
-	s.Require().NoError(s.service.Outcomes().Answered(s.ctx, call.Key, time.Now()))
+}
+
+// arrived opens the inbound leg of a call to the suite's number, as a session_started that
+// lists no caller does.
+func (s *OutcomeSuite) arrived(callID string) {
+	s.service.OpenLeg(s.ctx, routing.Owner{CustomerID: s.customer, Attribution: routing.Attribution{APIKey: routing.OriginPhoneInbound}},
+		store.CallLeg{CallType: defaultCallType, CallID: callID, StreamSessionID: "session-1", Vendor: "telnyx",
+			Direction: store.Inbound, LocalNumber: s.e164, Country: "US"}, true)
 }
 
 // read reads back how the placed call ended.
@@ -246,4 +274,108 @@ func (s *OutcomeSuite) TestABadTokenChangesNothing() {
 
 	s.ErrorIs(err, ErrUnknownStatus)
 	s.Empty(s.read(placed.CallID).Outcome)
+}
+
+func (s *OutcomeSuite) TestACallAnsweredAndEndedIsCompleted() {
+	placed := s.place()
+	s.clock.advance(20 * time.Second)
+	s.answered(placed)
+	s.clock.advance(61 * time.Second)
+
+	s.left(placed)
+
+	call := s.read(placed.CallID)
+	s.Equal(outcome.Completed, call.Outcome)
+	s.Require().NotNil(call.AnsweredAt)
+	duration, ok := call.Duration()
+	s.True(ok)
+	s.Equal(61*time.Second, duration, "from the join, not the dial")
+}
+
+func (s *OutcomeSuite) TestACallNeverAnsweredIsNoAnswerWhenItEnds() {
+	placed := s.place()
+	s.clock.advance(time.Minute)
+
+	s.ended(placed.CallType, placed.CallID)
+
+	call := s.read(placed.CallID)
+	s.Equal(outcome.NoAnswer, call.Outcome)
+	s.True(call.NobodyAnswered())
+}
+
+func (s *OutcomeSuite) TestACallAtAVendorThatReportsNothingIsUnknownWhenUnanswered() {
+	s.build(silent{s.vendor}, "https://router.example")
+	placed := s.place()
+	s.clock.advance(time.Minute)
+
+	s.ended(placed.CallType, placed.CallID)
+
+	s.Equal(outcome.Unknown, s.read(placed.CallID).Outcome)
+}
+
+func (s *OutcomeSuite) TestAVendorsBusyStaysWhenTheUnansweredCallEnds() {
+	placed, token := s.placeReported()
+	s.Require().NoError(s.report(token, CallBusy, "busy"))
+
+	s.ended(placed.CallType, placed.CallID)
+
+	call := s.read(placed.CallID)
+	s.Equal(outcome.Busy, call.Outcome)
+	s.NotNil(call.EndedAt)
+}
+
+func (s *OutcomeSuite) TestAVendorsBusyBecomesCompletedWhenThePhoneJoins() {
+	placed, token := s.placeReported()
+	s.Require().NoError(s.report(token, CallBusy, "busy"))
+
+	s.answered(placed)
+
+	call := s.read(placed.CallID)
+	s.Equal(outcome.Completed, call.Outcome)
+	s.Equal("busy", call.VendorStatus)
+}
+
+func (s *OutcomeSuite) TestATransferLegDoesNotChangeThePlacedCall() {
+	placed := s.place()
+	s.transfer(placed.CallID, "+15125550124")
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, placed.CallType, placed.CallID, "session-1", "human-1",
+		"+15125550124", time.Time{}))
+	s.clock.advance(time.Minute)
+
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, placed.CallType, placed.CallID, "human-1", time.Time{}))
+
+	call := s.read(placed.CallID)
+	s.Nil(call.AnsweredAt, "the human the agent transferred to is not the person the call rang")
+	s.Nil(call.EndedAt)
+	s.Empty(call.Outcome)
+}
+
+func (s *OutcomeSuite) TestAnInboundCallHasNoRow() {
+	callID := "call-" + uuid.NewString()
+	s.arrived(callID)
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, defaultCallType, callID, "session-1", "caller-1",
+		"+15125550199", time.Time{}))
+	s.clock.advance(time.Minute)
+
+	s.ended(defaultCallType, callID)
+
+	_, err := s.service.Outcomes().Read(s.ctx, s.customer, callID)
+	s.ErrorIs(err, outcome.ErrUnknownCall)
+}
+
+func (s *OutcomeSuite) TestAStatusAfterTheTokenIsSweptIs404AndKeepsTheOutcome() {
+	placed, token := s.placeReported()
+	s.answered(placed)
+	s.clock.advance(time.Minute)
+	s.ended(placed.CallType, placed.CallID)
+	s.clock.advance(statusTokenLifetime + time.Minute)
+
+	swept, err := s.service.SweepStatusTokens(s.ctx)
+	s.Require().NoError(err)
+	s.Positive(swept)
+
+	s.ErrorIs(s.report(token, CallBusy, "busy"), ErrUnknownStatus)
+	call := s.read(placed.CallID)
+	s.Equal(outcome.Completed, call.Outcome)
+	s.NotNil(call.EndedAt)
 }
