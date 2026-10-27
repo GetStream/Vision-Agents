@@ -228,6 +228,67 @@ func TestAnIDListedUnderAPluralKeyIsPassedOn(t *testing.T) {
 	assert.True(t, unfound, "a reservation is not an order")
 }
 
+func TestAnIDThatKeysARecordIsPassedOn(t *testing.T) {
+	// A collection keyed by its records' IDs gives each ID only as a key: no field of the
+	// card says "primary", yet that is the card a charge names.
+	tools := []string{"list_cards", "charge_card", "list_bookings", "cancel_booking"}
+	history := []llm.Message{
+		{Role: llm.User, Content: "Charge it to my primary card, and cancel the old booking."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "list_cards"}, {ID: "c2", Name: "list_bookings"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"card_list":{"primary":{"last_four":"4242","balance":120.5},` +
+			`"travel":{"last_four":"0005","balance":30}}}`},
+		{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"bookings":{"B-1742":{"from":"SFO","to":"SEA"}},` +
+			`"owner":{"name":"Ana","tier":"gold"}}`},
+	}
+	call := func(name, arguments string) llm.ToolCall {
+		return llm.ToolCall{Name: name, Arguments: arguments}
+	}
+
+	_, _, _, unfound := unfoundID(history, call("charge_card", `{"card_id":"primary","amount":40}`), tools)
+	assert.False(t, unfound)
+	_, _, _, unfound = unfoundID(history, call("cancel_booking", `{"booking_id":"B-1742"}`), tools)
+	assert.False(t, unfound)
+	_, _, _, unfound = unfoundID(history, call("charge_card", `{"card_id":"business","amount":40}`), tools)
+	assert.True(t, unfound, "a card the collection does not hold is still one nothing gave")
+	_, _, _, unfound = unfoundID(history, call("cancel_booking", `{"booking_id":"name"}`), tools)
+	assert.True(t, unfound, "the fields of one record are not IDs")
+}
+
+func TestAnIDTheCallerSaidWholeIsPassedOn(t *testing.T) {
+	// An identifier of letters and digits said whole is the caller's own, even when they do
+	// not say what it is. A number needs that said, because numbers come up by chance.
+	tools := []string{"get_user_id", "login", "create_ticket", "update_ticket"}
+	history := []llm.Message{{Role: llm.User, Content: "Logging in as USR001. The code on screen was 840."}}
+	call := func(name, arguments string) llm.ToolCall {
+		return llm.ToolCall{Name: name, Arguments: arguments}
+	}
+
+	_, _, _, unfound := unfoundID(history, call("login", `{"user_id":"USR001"}`), tools)
+	assert.False(t, unfound)
+	_, _, _, unfound = unfoundID(history, call("update_ticket", `{"ticket_id":"840"}`), tools)
+	assert.True(t, unfound, "a number said as something else is not a ticket")
+	_, _, _, unfound = unfoundID(history, call("login", `{"user_id":"USR0012"}`), tools)
+	assert.True(t, unfound, "only the identifier said whole")
+}
+
+func TestAnIDThatKeysARecordAndIsLeftOutIsAskedFor(t *testing.T) {
+	tools := harness.Tools{Tools: []harness.Tool{
+		{Name: "list_cards"},
+		{Name: "charge_card", Parameters: map[string]any{"properties": map[string]any{
+			"card_id": map[string]any{"type": "string"}, "amount": map[string]any{"type": "number"}}}},
+	}}
+	history := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "list_cards"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"card_list":{"primary":{"last_four":"4242"}}}`},
+	}
+
+	key, known, missing := missingID(history, llm.ToolCall{Name: "charge_card", Arguments: `{"amount":40}`}, tools)
+
+	assert.True(t, missing)
+	assert.Equal(t, "card_id", key)
+	assert.Equal(t, []string{"primary (id)"}, known)
+}
+
 func TestAListUnderAPluralKeyHoldsThatKeysIDs(t *testing.T) {
 	assert.Equal(t, "order_id", listedID("orders"))
 	assert.Equal(t, "order_id", listedID("order_ids"))

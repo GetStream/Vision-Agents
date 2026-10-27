@@ -286,7 +286,7 @@ func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
 		// id is tool_call_id under the name a router from before it reads.
 		result := Frame{"type": "tool_result", "tool_call_id": id, "id": id}
 		line := tools.WithLine(ctx, toolLine{send: d.send, holds: &d.holds})
-		output, err := functions.Run(line, toolCallOf(frame, ""), name, frame.String("arguments"))
+		output, err := functions.Run(line, toolCallContextOf(frame, ""), name, frame.String("arguments"))
 		if err != nil {
 			d.logger.Error("a hosted tool failed", "tool", name, "error", err)
 			result["error"] = err.Error()

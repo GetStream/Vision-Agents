@@ -89,24 +89,24 @@ tools.Register(agent.Tools(), "book_flight", "Book a flight", bookFlight,
 
 The router asks the question, with each `{argument}` filled in from the call, and runs the
 function only once the caller says yes within 15 seconds of the question ending. The function
-sees `tools.CallFrom(ctx).Approved` set, and its timeout starts then. A no or silence declines
-the call, and it never runs. A speech-to-speech model asks in its own voice and may not say the
-question word for word. Registering a question that names an argument the function does not
-take is an error. Only voice calls ask: in writing, the question goes out as the tool's
+sees `tools.ToolCallContextFrom(ctx).Approved` set, and its timeout starts then. A no or silence
+declines the call, and it never runs. A speech-to-speech model asks in its own voice and may not
+say the question word for word. Registering a question that names an argument the function does
+not take is an error. Only voice calls ask: in writing, the question goes out as the tool's
 `approval` for the app to show, and the call runs as it comes.
 
 Its `ctx` is cancelled when the router cancels the call: its timeout passed, or, for an
-interruptible tool, the caller interrupted. `tools.CallFrom(ctx)` is the call being run, whose
-`ID` is the same when the router sends a call again, so a function that changes something can
-key on it. A call sent again while it is still running joins it, and one that finished is answered
-with what it returned, without running twice.
+interruptible tool, the caller interrupted. `tools.ToolCallContextFrom(ctx)` is the call being
+run, whose `ID` is the same when the router sends a call again, so a function that changes
+something can key on it. A call sent again while it is still running joins it, and one that
+finished is answered with what it returned, without running twice.
 
 A call that takes a while can say how it is going, and protect a write from the caller
 talking over the agent:
 
 ```go
 func(ctx context.Context, args RebookFlight) (any, error) {
-    toolCallContext := tools.CallFrom(ctx)
+    toolCallContext := tools.ToolCallContextFrom(ctx)
     toolCallContext.Update(ctx, "Checking seats on the new flight")
 
     // Read only: the caller interrupting cancels ctx, and nothing has changed.
@@ -129,10 +129,48 @@ model may paraphrase them. `DisallowInterruptions` returns a context only the ca
 the socket ending cancel. When the call was already stopped, that context comes back cancelled,
 so the write never starts. Outside a call, all three do nothing.
 
-Struct tags describe arguments beyond `schema`: `enum:"economy,business"`, `minimum:"1"`,
-`maximum:"9"`, `pattern`, `format` and `example`. A type that describes itself implements
-`JSONSchema() map[string]any`, and `tools.RegisterSchema` takes a schema as written and hands the
-function the raw arguments.
+Struct tags describe arguments beyond `schema`:
+
+```go
+type BookFlight struct {
+	FlightID string `json:"flight_id" schema:"e.g. LH400" pattern:"^[A-Z]{2}[0-9]{1,4}$"`
+	Seats    int    `json:"seats" minimum:"1" maximum:"9"`
+	Cabin    string `json:"cabin,omitempty" enum:"economy,business,first" default:"economy"`
+}
+```
+
+The tags are `enum`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`,
+`multipleOf`, `minLength`, `maxLength`, `minItems`, `maxItems`, `pattern`, `format`, `default`
+and `example`. A struct already written for another Go JSON Schema library can keep its
+`jsonschema:"description=Full name,minLength=1,enum=a,enum=b"` tag, with `\,` for a comma in a
+value. A type that describes itself implements `JSONSchema() map[string]any`.
+
+Every call's arguments are held to the schema the model was told before the function runs.
+Arguments it refuses fail the call with what was wrong, such as `/seats: maximum: got 12, want
+9`, and the model can try again; the function never sees them.
+
+`tools.RegisterSchema` takes a schema written by hand, for a shape no struct says, such as a
+`oneOf`: a `map[string]any`, raw JSON, or another library's schema type, such as
+`google/jsonschema-go`'s, taken as the JSON it marshals to. Its function is handed the
+arguments as raw JSON. `tools.RegisterWithSchema` takes a schema the same way and decodes the
+arguments into a struct:
+
+```go
+schema := []byte(`{
+  "type": "object",
+  "properties": {
+    "flight_id": {"type": "string", "pattern": "^[A-Z]{2}[0-9]{1,4}$", "description": "e.g. LH400"},
+    "seats":     {"type": "integer", "minimum": 1, "maximum": 9},
+    "cabin":     {"type": "string", "enum": ["economy", "business", "first"], "default": "economy"}
+  },
+  "required": ["flight_id", "seats"]
+}`)
+
+tools.RegisterWithSchema(registry, "book_flight", "Book a flight for the caller", schema,
+	func(ctx context.Context, in BookFlight) (any, error) {
+		return airline.Book(ctx, in.FlightID, in.Seats, in.Cabin)
+	})
+```
 
 ## Conversations somebody comes back to
 

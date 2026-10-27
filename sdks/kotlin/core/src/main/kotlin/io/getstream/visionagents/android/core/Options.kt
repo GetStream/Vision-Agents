@@ -4,8 +4,13 @@ import io.getstream.visionagents.android.core.generated.Equals
 import io.getstream.visionagents.android.core.generated.Greeting as GreetingSchema
 import io.getstream.visionagents.android.core.generated.GreetingMode
 import io.getstream.visionagents.android.core.generated.SessionFilter
+import io.getstream.visionagents.android.core.generated.SessionMemory
 import io.getstream.visionagents.android.core.generated.SessionQuery as QuerySchema
+import io.getstream.visionagents.android.core.generated.SessionSort
+import io.getstream.visionagents.android.core.generated.SessionSortField
 import io.getstream.visionagents.android.core.generated.TextMatch
+import io.getstream.visionagents.android.core.generated.TimeRange
+import kotlin.time.Instant
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -57,7 +62,43 @@ public data class SessionOptions(
     val tools: List<AgentTool> = emptyList(),
     /** Cost labels, carried onto every request the session makes. */
     val tags: Map<String, String> = emptyMap(),
-)
+    /**
+     * Where a sign-in the conversation asks for goes back to. Name the app's own scheme in
+     * reverse domain form, such as `com.example.app:/connected`, and the router hands the
+     * browser back to the app. It is kept with the session, so a conversation carried on later
+     * goes back there too. Null sends the sign-in back to the dashboard, which a phone cannot
+     * open.
+     */
+    val returnUrl: String? = null,
+    /**
+     * Has the agent remember the signed-in user: what it learned about them before is recalled
+     * here, and what it learns here is kept for their next session. Null remembers nothing, and
+     * an [incognito] session never does.
+     */
+    val memory: Memory? = null,
+    /**
+     * The user's IANA zone, such as `TimeZone.getDefault().id`, which the device knows and the
+     * router does not. The agent reads dates in it, and it is remembered as the user's for the
+     * scheduled tasks that follow. Null sends none, and a zone the router does not know is
+     * refused.
+     */
+    val timezone: String? = null,
+) {
+    /**
+     * What a session remembers about the user [Backend.setUser] named. It is always theirs: a
+     * device recalls nobody else's.
+     */
+    public data class Memory(
+        /** Your own labels, which narrow what is recalled. They cannot widen it past the user. */
+        val filter: Map<String, String> = emptyMap(),
+        /** Separates two of your apps sharing one memory account. */
+        val appId: String? = null,
+    ) {
+        /** The router remembers only for a user id, and a device only ever means its own user. */
+        internal fun schema(userId: String?): SessionMemory =
+            SessionMemory(appId = appId?.ifEmpty { null }, filter = filter.ifEmpty { null }, userId = userId)
+    }
+}
 
 /** What the agent says as it joins a call, before anyone speaks. */
 public data class Greeting(
@@ -132,11 +173,34 @@ public data class SessionQuery(
     val limit: Int? = null,
     /** The [Page.nextCursor] of the page before, asked with the same filters. Omitted is the first page. */
     val cursor: String? = null,
+    /** Only those started at or after this. */
+    val createdSince: Instant? = null,
+    /** Only those started before this. */
+    val createdBefore: Instant? = null,
+    /** Only those whose [SessionOptions.custom] labels hold every one of these pairs. */
+    val custom: Map<String, String> = emptyMap(),
+    /** The order. Omitted is most recently active first, or best match first for a search. */
+    val sort: Sort? = null,
 ) {
+    /** An order to list in. Every one is descending: the router offers no ascending one. */
+    public enum class Sort {
+        /** Most recently active first. */
+        UpdatedAt,
+
+        /** Best match first, which only sorts a search. */
+        Relevance,
+    }
+
     internal fun schema(text: String): QuerySchema = QuerySchema(
         filter = SessionFilter(
             agent = equals(agent),
             agentId = equals(agentId),
+            createdAt = if (createdSince == null && createdBefore == null) {
+                null
+            } else {
+                TimeRange(dollarGte = createdSince?.toString(), dollarLt = createdBefore?.toString())
+            },
+            custom = custom.ifEmpty { null },
             projectId = equals(projectId),
             modality = equals(
                 when (modality) {
@@ -149,6 +213,16 @@ public data class SessionQuery(
         ),
         limit = limit?.toLong(),
         cursor = cursor?.ifEmpty { null },
+        sort = sort?.let {
+            listOf(
+                SessionSort(
+                    when (it) {
+                        Sort.UpdatedAt -> SessionSortField.updated_at
+                        Sort.Relevance -> SessionSortField.relevance
+                    },
+                ),
+            )
+        },
     )
 
     private fun equals(value: String?): Equals? = value?.ifEmpty { null }?.let(::Equals)

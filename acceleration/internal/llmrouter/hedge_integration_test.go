@@ -132,7 +132,7 @@ func (s *HedgeRecordingSuite) TestEveryHedgeAttemptIsTagged() {
 		withoutEstimate(loser.Attributes), "the original was thrown away the moment the hedge spoke")
 	s.Equal(map[string]string{routing.AttributeHedge: "turn-1", routing.AttributeKept: "true"},
 		withoutEstimate(winner.Attributes))
-	s.Equal(routing.ErrorCancelled, loser.ErrorCode)
+	s.Equal(routing.ErrorTimeout, loser.ErrorCode, "it said nothing until the hedge answered, so it stalled")
 	for _, row := range []store.Request{loser, winner} {
 		s.Equal("reply", row.Purpose, "thrown away or not, it was a reply")
 		s.True(row.Billable, "both are billed")

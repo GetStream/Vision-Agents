@@ -919,16 +919,21 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			id = parts[len(parts)-2]
 		} else if r.Method == http.MethodPut {
 			stored := db.messages[id]
-			if stored["custom"] == nil {
-				stored["custom"] = map[string]any{}
+			// The custom fields are set on a copy, not in place: Stored hands a test the
+			// message's custom map, which a later update must not write under it.
+			custom, _ := stored["custom"].(map[string]any)
+			custom = maps.Clone(custom)
+			if custom == nil {
+				custom = map[string]any{}
 			}
 			for key, value := range body["set"].(map[string]any) {
 				if key == "text" || key == "attachments" {
 					stored[key] = value
 				} else {
-					stored["custom"].(map[string]any)[key] = value
+					custom[key] = value
 				}
 			}
+			stored["custom"] = custom
 		}
 		result["message"] = db.messages[id]
 	}

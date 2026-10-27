@@ -126,6 +126,18 @@ func (s *KnowledgeSuite) TestABodyThatIsNotJSONIsRefusedWithoutRepeatingTheDocum
 	s.NotContains(string(answer), text[len(text)-36:])
 }
 
+func (s *KnowledgeSuite) TestASourceLongerThan256CharactersIsRefused() {
+	s.source = strings.Repeat("a", 257)
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/knowledge", map[string]any{
+		"namespace": s.namespace,
+		"documents": []map[string]string{{"source": s.source, "text": "# Pricing\n\nA penny."}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected length <= 256")
+	s.Empty(s.documents())
+}
+
 func (s *KnowledgeSuite) TestOnlyTheAppsOwnBackendMayPostADocument() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		return as.do(http.MethodPost, "/v1/agents/knowledge", map[string]any{

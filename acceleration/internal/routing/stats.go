@@ -212,14 +212,15 @@ func (s *Stat) ProviderCost(work any) {
 
 // ErrorCancelled is the ErrorCode of work its caller gave up on, whether before the provider
 // answered or by closing the stream it had opened: a reply superseded by newer words, the
-// slower of two hedged requests, or one cut off by the caller speaking. It is not successful,
-// but the provider did nothing wrong, so it is kept out of its health. What it generated
-// before it was cut off is still billed.
+// slower of two hedged requests unless it is a timeout (below), or one cut off by the caller
+// speaking. It is not successful, but the provider did nothing wrong, so it is kept out of
+// its health. What it generated before it was cut off is still billed.
 const ErrorCancelled = store.ErrorCancelled
 
 // ErrorTimeout is the ErrorCode of work that ran past a deadline, its caller's or the router's
-// own limit on a provider, before it finished. It failed, and what the provider generated
-// until then is billed.
+// own limit on a provider, before it finished: the first of two hedged requests that still
+// had said nothing when the other answered included. It failed, and what the provider
+// generated until then is billed.
 const ErrorTimeout = "timeout"
 
 // Recorder prices stats and hands them to a Writer, which writes them to Postgres and Redis

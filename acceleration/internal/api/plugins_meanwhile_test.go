@@ -24,12 +24,14 @@ func (s *PluginsSuite) meanwhile(configID string, first, then func() int) (int, 
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, "SELECT 1 FROM agent_configs WHERE id = ? FOR UPDATE", configID)
 	s.Require().NoError(err)
+	var holder int
+	s.Require().NoError(tx.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&holder))
 
 	firsts, thens := make(chan int, 1), make(chan int, 1)
 	go func() { firsts <- first() }()
-	s.waitForLockWaiters(1, "the first write waits on the row")
+	s.waitForLockWaiters(holder, 1, "the first write waits on the row")
 	go func() { thens <- then() }()
-	s.waitForLockWaiters(2, "the second write waits behind the first")
+	s.waitForLockWaiters(holder, 2, "the second write waits behind the first")
 	s.Require().NoError(tx.Commit())
 	return <-firsts, <-thens
 }
@@ -52,12 +54,18 @@ func (s *PluginsSuite) auditedFields(configID, action string) []string {
 	return fields
 }
 
-// waitForLockWaiters waits until n statements of the suite's database wait on a lock.
-func (s *PluginsSuite) waitForLockWaiters(n int, what string) {
+// waitForLockWaiters waits until n statements wait on the lock holder holds, directly or
+// queued behind one that does. Only those: the database is shared with the work other suites
+// leave running, and a lock one of them waited on let the second write start before the first
+// was queued, so the two ran the other way round.
+func (s *PluginsSuite) waitForLockWaiters(holder, n int, what string) {
 	s.Require().Eventually(func() bool {
 		var waiting int
-		s.Require().NoError(s.store.DB().QueryRowContext(s.T().Context(),
-			"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting))
+		s.Require().NoError(s.store.DB().QueryRowContext(s.T().Context(), `
+			WITH behind AS (SELECT pid FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)))
+			SELECT count(*) FROM pg_stat_activity
+			WHERE pid IN (SELECT pid FROM behind)
+			   OR pg_blocking_pids(pid) && ARRAY(SELECT pid FROM behind)`, holder).Scan(&waiting))
 		return waiting >= n
 	}, 5*time.Second, 10*time.Millisecond, what)
 }

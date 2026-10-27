@@ -50,7 +50,12 @@ export function socketLine(send: (frame: Record<string, unknown>) => void, holds
  * The call a `tool_call` frame asks for, as the function is handed it. `sessionId` stands in
  * for a frame that does not name its session, as a router's from before it said does not.
  */
-export function toolCallOf(frame: Frame, sessionId: string, line: ToolLine, lasting: AbortSignal): ToolCall {
+export function toolCallContextOf(
+  frame: Frame,
+  sessionId: string,
+  line: ToolLine,
+  lasting: AbortSignal,
+): ToolCall {
   const user = nested(frame, "user");
   const conversation = nested(frame, "conversation");
   return new ToolCall(

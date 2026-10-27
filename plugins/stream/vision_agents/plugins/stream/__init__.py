@@ -3,7 +3,7 @@ from vision_agents.core.llm.tool_call import (
     ToolCall,
     ToolConversation,
     ToolUser,
-    current_call,
+    get_tool_call_context,
 )
 from vision_agents.core.messaging import InboundMessage, MessageContext
 from vision_agents.core.telephony import CallContext, InboundCall
@@ -123,7 +123,7 @@ __all__ = [
     "Track",
     "Tracks",
     "Voice",
-    "current_call",
+    "get_tool_call_context",
     "define_agent",
     "define_router",
     "define_skills",

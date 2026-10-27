@@ -137,7 +137,8 @@ import Testing
     /// under the names in `readCommands`.
     @Test(arguments: [
         (Command.say("welcome"), #"{"text":"welcome","type":"say"}"#),
-        (Command.interrupt, #"{"type":"interrupt"}"#),
+        (Command.interrupt(), #"{"type":"interrupt"}"#),
+        (Command.interrupt(requestID: "m1"), #"{"request_id":"m1","type":"interrupt"}"#),
         (Command.close, #"{"type":"close"}"#),
         (
             Command.toolResult(id: "c1", output: "20 degrees", error: nil),

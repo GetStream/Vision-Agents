@@ -94,6 +94,8 @@ export {
   Tools,
   render,
   type ParameterSchema,
+  type StandardIssue,
+  type StandardToolSchema,
   type Tool,
   type ToolApproval,
   type ToolCallFields,
@@ -103,6 +105,10 @@ export {
 } from "./tools.js";
 
 export { LiveReasoning } from "./reasoning.js";
+
+export { ConversationState, type AgentState, type ConversationSnapshot } from "./state.js";
+
+export { CameraFrames, NoFrames, type CameraFrame } from "./frames.js";
 
 export type { ChatClient, StreamClients, VideoClient } from "./stream.js";
 

@@ -41,8 +41,10 @@ type stubLLM struct {
 	// calls are tool calls to ask for, one queue entry per request, which is what lets a
 	// test answer with a tool once and with words the next time it is asked.
 	calls [][]llm.ToolCall
-	// failing makes every request report a provider failure before it settles.
-	failing bool
+	// failing makes every request report a provider failure before it settles, and
+	// failures makes only that many of the next requests do so.
+	failing  bool
+	failures int
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can Cancel while Create has not come back.
 	holdCreate <-chan struct{}
@@ -92,7 +94,10 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if !queued && s.automatic != "" {
 		answer, queued = s.automatic, true
 	}
-	failing := s.failing
+	failing := s.failing || s.failures > 0
+	if s.failures > 0 {
+		s.failures--
+	}
 	var calls []llm.ToolCall
 	if len(s.calls) > 0 {
 		calls, s.calls = s.calls[0], s.calls[1:]
@@ -994,6 +999,58 @@ func (s *HarnessSuite) TestAnAnswerCutOffBeforeItWasHeardIsStillOwed() {
 	s.Contains(s.fast.requests()[2].Instructions, "12.63")
 }
 
+func (s *HarnessSuite) TestAnAnswerTalkedOverAfterItWasWrittenIsStillOwed() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.False(s.harness.Pending(), "the reply carrying it was written and is playing")
+	s.harness.Release("turn-2")
+	s.True(s.harness.Pending(), "the caller talked over it while it played")
+
+	s.respond("turn-3", "sorry, what were the opening hours")
+	s.Contains(s.fast.requests()[2].Instructions, "12.63")
+	s.Contains(s.fast.requests()[2].Instructions, cutOffNote,
+		"the conversation still holds the reply as written, so the model is told it went unheard")
+	s.Equal(1, strings.Count(s.fast.requests()[2].Instructions, "12.63"))
+}
+
+func (s *HarnessSuite) TestOnlyTheReplyTalkedOverOwesItsAnswerAgain() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.respond("turn-3", "thanks")
+	s.harness.Remember(llm.Response{ID: "turn-3", Status: llm.StatusCompleted})
+	s.harness.Release("turn-2")
+	s.harness.Release("turn-3")
+
+	s.False(s.harness.Pending(), "the reply that carried it was heard in full")
+}
+
+func (s *HarnessSuite) TestACancelledRequestIsNotOwedAgainWhenItsReplyIsTalkedOver() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.harness.CancelTurn("turn-1", ReasonSuperseded)
+	s.harness.Release("turn-2")
+
+	s.False(s.harness.Pending())
+}
+
 func (s *HarnessSuite) TestAnAnswerWhoseReplyFailedIsStillOwed() {
 	s.build(true)
 	s.slow.automatic = "It is 12.63."
@@ -1594,9 +1651,27 @@ func (s *HarnessSuite) TestWorkThatFailsStillTellsTheCallerSomething() {
 	s.Equal(Failed, settled.State)
 	s.ErrorIs(settled.Err, errModelDown)
 	s.True(settled.Actionable())
+	s.Len(s.slow.requests(), 2, "asked once more after the first failure, and no more")
 
 	s.respond("turn-2", "")
 	s.Contains(s.fast.requests()[1].Instructions, "think you asked for failed")
+}
+
+func (s *HarnessSuite) TestWorkWhoseProviderFailsMidAnswerIsAskedAgain() {
+	// An overloaded provider ending the stream is a failed attempt, not failed work: the
+	// caller hears only the settled answer, so asking again costs them nothing they heard.
+	s.build(true)
+	s.slow.failures = 1
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+
+	s.reply("turn-1", `Let me check. <ask skill="think">15% of 84.20</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Done, settled.State)
+	s.Equal("It is 12.63.", settled.Text)
+	s.Require().Len(s.slow.requests(), 2)
+	s.Equal(s.slow.requests()[0].Input, s.slow.requests()[1].Input, "the same question is put again")
 }
 
 func (s *HarnessSuite) TestWorkThatComesBackEmptyIsReportedAsFailed() {

@@ -1338,7 +1338,11 @@ func (s *StoreSuite) TestMigrateRebuildsAGrantsIndexLeftInvalid() {
 func (s *StoreSuite) TestTheGrantReconcileReadsByTheGrantsIndex() {
 	var plan []string
 	err := s.store.ShardDB().RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+		// A table this small costs any index read and a sort about the same, so which one the
+		// planner takes moved with whatever rows other tests had left. The grants index is the
+		// one that reads in the order the reconcile pages by, so with no sort to fall back on
+		// the plan says whether the query can be served by it at all.
+		if _, err := tx.ExecContext(ctx, "SET LOCAL enable_seqscan = off; SET LOCAL enable_sort = off; SET LOCAL enable_incremental_sort = off"); err != nil {
 			return err
 		}
 		return tx.NewRaw("EXPLAIN "+reconcileGrantsQuery, time.Now(), 0, grantReconcilePage).Scan(ctx, &plan)

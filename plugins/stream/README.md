@@ -45,10 +45,51 @@ async def weather(city: str) -> str:
 `register_function` works as it does with any other LLM. The model asks for the function
 over the session's socket, this plugin runs it here and sends back what it returned.
 
+What the model is told a function takes is its signature, read by Pydantic: a parameter can
+be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit.
+A function that takes one Pydantic model is given the model's fields as its arguments:
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class BookFlight(BaseModel):
+    flight_id: str = Field(pattern=r"^[A-Z]{2}\d{1,4}$", description="e.g. LH400")
+    seats: int = Field(ge=1, le=9)
+    cabin: Literal["economy", "business", "first"] = "economy"
+
+
+@agent.llm.register_function(description="Book a flight for the caller")
+async def book_flight(booking: BookFlight) -> str:
+    return await bookings.book(booking.flight_id, booking.seats, booking.cabin)
+```
+
+```python
+from typing import Annotated
+
+from pydantic import Field
+
+
+@agent.llm.register_function(description="Book a flight for the caller")
+async def book_flight(
+    flight_id: Annotated[str, Field(pattern=r"^[A-Z]{2}\d{1,4}$", description="e.g. LH400")],
+    seats: Annotated[int, Field(ge=1, le=9)],
+) -> str:
+    return await bookings.book(flight_id, seats)
+```
+
+The arguments the model sends are checked and converted before the function runs, so
+`booking` is a `BookFlight` and `seats` an `int`. Arguments that do not fit are refused with
+a `ToolArgumentsError` naming each one and why, which the model is told so it can ask again.
+`parameters_schema=` still takes a JSON Schema as it is, for a function that reads its own
+arguments.
+
 A function can say how the backend treats its calls, and read the call it is running for:
 
 ```python
-from vision_agents.core.llm import current_call
+from vision_agents.core.llm import get_tool_call_context
 
 
 @agent.llm.register_function(
@@ -57,7 +98,7 @@ from vision_agents.core.llm import current_call
     needs_approval="Book flight {flight_id}?",
 )
 async def book_flight(flight_id: str) -> str:
-    tool_call_context = current_call()
+    tool_call_context = get_tool_call_context()
     await tool_call_context.update("checking seats")
     await tool_call_context.disallow_interruptions()
     return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
@@ -69,18 +110,18 @@ async def book_flight(flight_id: str) -> str:
   `tool_timeout`. A call that takes longer fails with a `TimeoutError`.
 - `needs_approval` is a question the caller answers before each call runs, where each
   `{name}` is one of the function's arguments. On a voice call the agent asks it out loud
-  and waits 15 seconds for a yes; `current_call().approved` is then true. In writing the
+  and waits 15 seconds for a yes; `get_tool_call_context().approved` is then true. In writing the
   question goes to the app, which asks. A `{name}` the function does not take is refused
   when it is registered.
 
-`current_call()` is the call being answered: its `id`, which a call sent again keeps, so it
+`get_tool_call_context()` is the call being answered: its `id`, which a call sent again keeps, so it
 is the key to make a side effect happen once; `session_id`, `turn_id`, the `user` whose turn
 asked, and the `conversation`. `update(text)` says how the call is going: a voice agent
 tells the caller in its own words once nobody is talking. `say(text)` has it say `text` as
 written, which a speech-to-speech model may paraphrase. `disallow_interruptions()` keeps the
 call going from then on, for a write that must not stop halfway, and raises `CallNotHeld`
 when the call had already been stopped. Outside a call, as in a unit test of the function,
-it is an empty call whose methods do nothing; `calling(ToolCall(...))` sets one.
+it is an empty call whose methods do nothing; `using_tool_call_context(ToolCall(...))` sets one.
 
 A call the router addresses to another watcher of the session (`run: false`), or for a
 function this process does not hold, is left for whoever runs it.
@@ -286,7 +327,7 @@ await dispatch.run()
 
 `tool_timeout` is how long the router gives one call, in seconds; zero takes its default
 of 30. A hosted function takes the same `interruptible`, `timeout` and `needs_approval` as
-`register_function`, reads its call with `current_call()`, and is cancelled when the router
+`register_function`, reads its call with `get_tool_call_context()`, and is cancelled when the router
 gives up on it. The worker declares its tools again whenever it reconnects, and `run` raises `RouterError` if the
 router refuses them.
 

@@ -316,7 +316,7 @@ func TestWordsAloneStayAString(t *testing.T) {
 
 func TestOutsideACallItsProgressGoesNowhere(t *testing.T) {
 	ctx := context.Background()
-	toolCallContext := CallFrom(ctx)
+	toolCallContext := ToolCallContextFrom(ctx)
 
 	if err := toolCallContext.Update(ctx, "working"); err != nil {
 		t.Errorf("an update outside a toolCallContext failed: %v", err)

@@ -923,11 +923,17 @@ func (s *EpisodeReadingSuite) TestAFollowUpWhoseTurnCouldNotStartLeavesOneCancel
 
 	s.Require().Error(created.FollowUp(s.ctx, "thread_message", "carry on"))
 
+	// The outbox writes the reply and its cancelling as two Chat calls, so the reply may be
+	// stored still thinking: it is read once it is no longer generating.
 	var stored []map[string]any
 	s.Require().Eventually(func() bool {
 		stored = s.chat.Stored(strings.TrimPrefix(thread, "agent:"))
-		return len(stored) > 0
-	}, settleFor, 10*time.Millisecond, "the refused follow-up wrote no reply")
+		if len(stored) == 0 {
+			return false
+		}
+		custom, _ := stored[0]["custom"].(map[string]any)
+		return custom["generating"] == false
+	}, settleFor, 10*time.Millisecond, "the refused follow-up wrote no finished reply")
 	s.Len(stored, 1)
 	custom, _ := stored[0]["custom"].(map[string]any)
 	message, _ := custom["support_message"].(map[string]any)
