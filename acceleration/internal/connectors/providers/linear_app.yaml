@@ -9,6 +9,10 @@
 #   [oauth] https://linear.app/developers/oauth-2-0-authentication
 #   [mcp]   https://linear.app/docs/mcp
 #   [rate]  https://linear.app/developers/rate-limiting
+# Opened October 27, 2026:
+#   [graphql] https://linear.app/developers/graphql
+#   [files]   https://linear.app/developers/file-storage-authentication
+#   [secrets] https://www.daytona.io/docs/en/secrets.md
 # And Linear's authorization server metadata (RFC 8414), «[as]»:
 #   [as] GET https://api.linear.app/.well-known/oauth-authorization-server at
 #        2026-10-15T20:54:40Z: issuer https://api.linear.app, authorization_endpoint
@@ -17,8 +21,9 @@
 #        token_endpoint_auth_methods_supported [client_secret_post, client_secret_basic,
 #        none], code_challenge_methods_supported [S256], no registration_endpoint.
 id: linear_app
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 (AI-2082) adds sandbox,
+# so code in a session's sandbox reads Linear's GraphQL API with the connection's token.
+revision: 2
 name: Linear (own OAuth app)
 category: Project management
 description: Search issues and projects, read workspace context, update work, and call Linear's GraphQL API with your own Linear OAuth app.
@@ -74,3 +79,34 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+# Code in a session's sandbox reads a placeholder from LINEAR_ACCESS_TOKEN, and the sandbox's
+# egress puts the connection's token in its place only in a request header to these hosts
+# ([secrets]), so code sends «Authorization: Bearer $LINEAR_ACCESS_TOKEN», the header [oauth]
+# («Make an API request») and [graphql] give an OAuth access token. The name says it is one: a
+# personal API key goes as «Authorization: <API_KEY>» with no Bearer ([graphql]), and this
+# connector holds only oauth2_code's token. linear.yaml has no block: its DCR token, issued for
+# mcp.linear.app, got 401 AUTHENTICATION_ERROR from POST api.linear.app/graphql with Bearer and
+# raw (probe 2026-10-27T14:52:21Z, AI-2082).
+sandbox:
+  env: LINEAR_ACCESS_TOKEN
+  hosts:
+    # [oauth] and [graphql]: «curl https://api.linear.app/graphql» with «Authorization: Bearer
+    # <ACCESS_TOKEN>».
+    - api.linear.app
+    # [files]: uploaded files «are accessible from the https://uploads.linear.app hostname», and
+    # «You can pass the same access token and authorization header as you would when making
+    # requests to our GraphQL API»; its example is a GET with «Authorization: Bearer». A GET
+    # reads, so no read below is needed for it.
+    - uploads.linear.app
+  # Under the proxy broker a request to these hosts with a method other than GET or HEAD is
+  # refused, except these, which only read. [oauth] and [graphql] send every operation as
+  # «-X POST» with a JSON body to /graphql; the proxy lets that POST through only when every
+  # operation in its body is a query. A GET carrying a mutation reaches Linear, which refuses it:
+  # «GET requests only support query operations, not mutation operations», 405
+  # (2026-10-27T14:52:33Z, AI-2082), and without a preflight header 400 CSRF
+  # (2026-10-27T14:52:22Z). Both probes ran with no valid token (the query beside them got
+  # 401); the 405 holds, since it precedes auth.
+  reads:
+    - host: api.linear.app
+      path: /graphql
+      graphql: true

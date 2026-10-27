@@ -15,6 +15,11 @@ dependencyResolutionManagement {
         maven("https://stream-io-repo.com") {
             content { includeGroup("io.getstream") }
         }
+        // The sign-in card and AIConversation's contentPadding are not in a release of Stream
+        // Chat yet, only in a snapshot.
+        maven("https://snapshots.stream-io-repo.com") {
+            content { includeGroup("io.getstream") }
+        }
     }
 }
 

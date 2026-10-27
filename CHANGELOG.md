@@ -14,6 +14,10 @@ Every call's arguments are checked against the schema the model was told before 
 
 A function registered with `register_function` is described to the model by Pydantic from its signature: a parameter can be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit. A function that takes one Pydantic model is given the model's fields as its arguments, and is handed the parsed model. Each call's arguments are checked and converted before the function runs; arguments that do not fit raise `ToolArgumentsError`, a `TypeError`, naming each one and why, which the model is told. `parameters_schema=` is unchanged. `pydantic>=2.7` is now a dependency.
 
+### Sandbox code reads Linear
+
+A `linear_app` binding with `sandbox: true` lets code in the session's sandbox call Linear's GraphQL API (`https://api.linear.app/graphql`) and file storage (`https://uploads.linear.app`) with `Authorization: Bearer $LINEAR_ACCESS_TOKEN`. The sandbox holds a placeholder, never the token. Behind the egress proxy, a POST to `/graphql` passes only when every operation is a query; a mutation gets 403, so code writes through the connector's tools. A `linear_app` connection made at revision 1 gives the sandbox nothing until it connects again. A `linear` (DCR) connection gets no sandbox access: Linear's API refuses its token (AI-2082).
+
 ### A 1:1 iMessage chat can schedule reminders
 
 An agent answering a Linq (iMessage) chat is now offered the scheduling tools when the chat is 1:1: the latest message says `data.chat.is_group` `false`. The task belongs to the person who wrote, and comes back into the chat, `delivered_to` `imessage`. A group chat, a chat whose message does not say, and a chat linked before this release get no tools; a chat that becomes a group loses them, and its tasks fail `thread_gone`. Migration `20261116100000_channel_thread_people` adds the table `channel_thread_people` (AI-1867).
@@ -44,6 +48,15 @@ with Stream's voice glow, captions, and a camera button with a preview of what J
 new conversation's session names `io.getstream.visionagents.androidassistant:/connected` as its
 `return_url`, and the app opens a connector's sign-in in an Auth Tab, though Stream's Android AI
 components have no sign-in card to start one from yet. CI builds it beside the Kotlin SDK.
+
+### Kotlin apps manage the user's scheduled tasks
+
+`agents.scheduledTasks` in the Kotlin SDK lists, reads, changes, pauses, resumes and deletes the
+tasks agents hold for the user `setUser` named, and reads their runs, as Swift's does: `list`
+(filtered by `ScheduledTaskQuery`'s `state`, `configId` and `sessionId`, paged by cursor), `get`,
+`update` (title, schedule, `next` to snooze or skip one occurrence, `deliverTo` and
+`quietHours`), `pause`, `resume`, `delete` and `runs`. A schedule's `in` is spelled `after`,
+`in` being a Kotlin keyword. Making a task and running one by hand stay server-side only.
 
 ### Kotlin sessions name where a sign-in goes back to
 
@@ -101,6 +114,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 A daily job on every router deletes the runs of scheduled tasks that finished more than 90 days ago, and the tasks that completed or failed more than 90 days ago with their runs. An active or paused task is never deleted, however old; its old runs are. Each row copies the user's instructions, and a daily task added a run a day for good. `router replicate` now imports every scheduled task that is active on the source as paused, with its worker's claim cleared: the source goes on delivering it until the move is cut over, so the copy would have delivered it twice. Resume the tasks at cut-over.
 
 ## Bug Fixes
+
+### OpenAI Realtime bills a caller turn's transcription when the session closes right after it
+
+A session closed as soon as the caller's transcript arrived could lose the row for that transcription: the transcript was passed on before its usage, and closing the session dropped the usage. The usage now goes first, so a transcript that was passed on always has its row (AI-2062).
 
 ### A photo is still seen after the model calls a tool
 

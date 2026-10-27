@@ -217,6 +217,25 @@ cannot be rewound, since its transcript would bring the turns back: the router a
 fork it at the response instead. An open `AgentSession` keeps the transcript it already showed, so reload it from
 `responses` after a rewind.
 
+### Reminders
+
+An agent with `scheduling.enabled` in its config can schedule tasks for the user it talks to.
+The app lists them and does what a person does with a reminder; making one, and what the agent
+is told when it comes due, is your backend's:
+
+```kotlin
+val tasks = agents.scheduledTasks
+val page = tasks.list(ScheduledTaskQuery(state = ScheduledTask.State.Active))
+tasks.update(page.items[0].id, next = ScheduledTask.Next.After("PT15M"))   // snooze
+tasks.pause(page.items[0].id)
+val runs = tasks.runs(page.items[0].id)
+```
+
+`update` also replaces the schedule, the title, where an occurrence is delivered (`deliverTo`,
+empty for the conversation alone) and the quiet hours (both ends empty clears them); `resume`
+starts a paused or failed task again and `delete` cancels it. A task runs on the user's clock,
+so a schedule's `at` is a local time in the task's zone.
+
 ### Guests, and who this device is
 
 ```kotlin
@@ -233,7 +252,7 @@ when one is needed and again after a 401, never on every request.
 ## What is deliberately not here
 
 The router is server-side only by default: a handful of operations are marked
-`x-client-accessible` in the spec and everything else answers a device 403. This SDK uses thirteen
+`x-client-accessible` in the spec and everything else answers a device 403. This SDK uses twenty-two
 of them plus the event socket, and `generate.py` fails if the list names anything the spec does
 not open.
 
@@ -244,6 +263,7 @@ not open.
 | Moving a guest's history onto the account they signed up with | Nothing: the backend that authenticated them does it |
 | Changing a session's models or voice | Your backend, which has the Go or Node SDK's `update` |
 | Interrupting over HTTP | Nothing: `interrupt()` goes over the socket |
+| Making a scheduled task, changing its instructions, or running one by hand | Your backend, acting for the user |
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which is what declares this
 caller a device. Credentials go in handshake headers, never in the socket's query string.
