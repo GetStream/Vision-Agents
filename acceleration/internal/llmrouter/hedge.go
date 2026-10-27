@@ -49,7 +49,7 @@ func (s *Session) hedges(params llm.ResponseParams) bool {
 // outcome stands: what a request that was never hedged would have had.
 func (s *Session) hedged(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	asked := &hedging{id: params.ID}
-	first, second := &hedgeAttempt{hedging: asked}, &hedgeAttempt{hedging: asked}
+	first, second := &hedgeAttempt{hedging: asked, late: true}, &hedgeAttempt{hedging: asked}
 	original := race(ctx, func(ctx context.Context) (*llm.Stream, func(), error) {
 		stream, err := s.attempt(ctx, params, first)
 		return stream, nil, err
@@ -111,6 +111,9 @@ type hedging struct {
 // hedgeAttempt is one of a hedged request's attempts.
 type hedgeAttempt struct {
 	hedging *hedging
+	// late is set on the attempt asked first: the one that said nothing for as long as a
+	// request may before it is asked again.
+	late bool
 }
 
 // again says the request is being asked a second time.
@@ -141,6 +144,18 @@ func (a *hedgeAttempt) outcome() (id string, kept, hedged bool) {
 		return "", false, false
 	}
 	return a.hedging.id, a.hedging.kept == a, true
+}
+
+// stalled reports whether the attempt was the late one and the caller was given the other's
+// response instead. Unlike a caller who hung up, that says something about its provider: it
+// was silent past the router's own limit, and still was when another provider answered.
+func (a *hedgeAttempt) stalled() bool {
+	if a == nil || !a.late {
+		return false
+	}
+	a.hedging.mu.Lock()
+	defer a.hedging.mu.Unlock()
+	return a.hedging.kept != nil && a.hedging.kept != a
 }
 
 // askAnother opens the response on another candidate of the same target, which is a child of
