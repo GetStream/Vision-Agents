@@ -11136,6 +11136,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("call_id")]
         public string CallId { get; set; } = default!;
 
+        /// <summary>
+        /// How the call the router placed for this session ended. Read by a backend only.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call_outcome")]
+        public SessionCallOutcome? CallOutcome { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("call_type")]
         public string CallType { get; set; } = default!;
 
@@ -11318,6 +11324,42 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("type")]
         public string Type { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// How the call the router placed for a session ended.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SessionCallOutcome
+    {
+
+        /// <summary>
+        /// When the person picked up: their phone joined the call.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("answered_at")]
+        public System.DateTimeOffset? AnsweredAt { get; set; } = default!;
+
+        /// <summary>
+        /// How long they talked, from answered_at to when their phone left. Absent until it has.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("duration_seconds")]
+        public long? DurationSeconds { get; set; } = default!;
+
+        /// <summary>
+        /// How the call ended. Absent while it is ringing or under way.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("outcome")]
+        public string? Outcome { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

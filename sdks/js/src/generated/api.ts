@@ -4961,6 +4961,17 @@ export type components = {
             /** @description The exchange it was about, which lines it up against that turn's timings. */
             readonly turn_id?: string;
         };
+        /**
+         * @description How a placed call ended.
+         *     completed: the person answered and the call ended.
+         *     busy: the line was busy or the person declined.
+         *     no_answer: it rang until the ring timeout.
+         *     failed: the vendor could not place it, for a bad number or a carrier fault.
+         *     canceled: the vendor says the call was hung up before an answer.
+         *     unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+         * @enum {string}
+         */
+        readonly CallOutcome: "completed" | "busy" | "no_answer" | "failed" | "canceled" | "unknown";
         readonly CallToken: {
             /** @description The Stream app the call is in, which the browser SDK joins against. */
             readonly api_key: string;
@@ -8457,6 +8468,8 @@ export type components = {
             readonly agent_id: string;
             /** @description The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing. */
             readonly call_id: string;
+            /** @description How the call the router placed for this session ended. Read by a backend only. */
+            readonly call_outcome?: components["schemas"]["SessionCallOutcome"];
             readonly call_type: string;
             /**
              * Format: date-time
@@ -8527,6 +8540,21 @@ export type components = {
             readonly id: string;
             /** @description The call type, such as default. */
             readonly type: string;
+        };
+        /** @description How the call the router placed for a session ended. */
+        readonly SessionCallOutcome: {
+            /**
+             * Format: date-time
+             * @description When the person picked up: their phone joined the call.
+             */
+            readonly answered_at?: string;
+            /**
+             * Format: int64
+             * @description How long they talked, from answered_at to when their phone left. Absent until it has.
+             */
+            readonly duration_seconds?: number;
+            /** @description How the call ended. Absent while it is ringing or under way. */
+            readonly outcome?: components["schemas"]["CallOutcome"];
         };
         /** @description The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection. */
         readonly SessionConnectorBinding: {

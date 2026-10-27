@@ -1522,6 +1522,23 @@ components:
         - kind
         - reason
       type: object
+    CallOutcome:
+      description: |-
+        How a placed call ended.
+        completed: the person answered and the call ended.
+        busy: the line was busy or the person declined.
+        no_answer: it rang until the ring timeout.
+        failed: the vendor could not place it, for a bad number or a carrier fault.
+        canceled: the vendor says the call was hung up before an answer.
+        unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+      enum:
+        - completed
+        - busy
+        - no_answer
+        - failed
+        - canceled
+        - unknown
+      type: string
     CallToken:
       properties:
         api_key:
@@ -7581,6 +7598,9 @@ components:
         call_id:
           description: 'The call the agent is on while voice is started: the session''s id unless a call was named. Empty while the conversation is held in writing.'
           type: string
+        call_outcome:
+          $ref: '#/components/schemas/SessionCallOutcome'
+          description: How the call the router placed for this session ended. Read by a backend only.
         call_type:
           type: string
         closed_at:
@@ -7693,6 +7713,21 @@ components:
       required:
         - type
         - id
+      type: object
+    SessionCallOutcome:
+      description: How the call the router placed for a session ended.
+      properties:
+        answered_at:
+          description: 'When the person picked up: their phone joined the call.'
+          format: date-time
+          type: string
+        duration_seconds:
+          description: How long they talked, from answered_at to when their phone left. Absent until it has.
+          format: int64
+          type: integer
+        outcome:
+          $ref: '#/components/schemas/CallOutcome'
+          description: How the call ended. Absent while it is ringing or under way.
       type: object
     SessionConnectorBinding:
       additionalProperties: false

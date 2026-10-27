@@ -2096,6 +2096,79 @@ pub struct CallEvent {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub turn_id: ::std::option::Option<::std::string::String>,
 }
+/**How a placed call ended.
+completed: the person answered and the call ended.
+busy: the line was busy or the person declined.
+no_answer: it rang until the ring timeout.
+failed: the vendor could not place it, for a bad number or a carrier fault.
+canceled: the vendor says the call was hung up before an answer.
+unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.*/
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CallOutcome {
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "busy")]
+    Busy,
+    #[serde(rename = "no_answer")]
+    NoAnswer,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "canceled")]
+    Canceled,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+impl ::std::fmt::Display for CallOutcome {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Completed => f.write_str("completed"),
+            Self::Busy => f.write_str("busy"),
+            Self::NoAnswer => f.write_str("no_answer"),
+            Self::Failed => f.write_str("failed"),
+            Self::Canceled => f.write_str("canceled"),
+            Self::Unknown => f.write_str("unknown"),
+        }
+    }
+}
+impl ::std::str::FromStr for CallOutcome {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "completed" => Ok(Self::Completed),
+            "busy" => Ok(Self::Busy),
+            "no_answer" => Ok(Self::NoAnswer),
+            "failed" => Ok(Self::Failed),
+            "canceled" => Ok(Self::Canceled),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CallOutcome {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CallOutcome {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`CallToken`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CallToken {
@@ -9672,6 +9745,9 @@ pub struct Session {
     pub agent_id: ::std::string::String,
     ///The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
     pub call_id: ::std::string::String,
+    ///How the call the router placed for this session ended. Read by a backend only.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call_outcome: ::std::option::Option<SessionCallOutcome>,
     pub call_type: ::std::string::String,
     ///When the session ended. Absent while it is still running.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -9758,6 +9834,19 @@ pub struct SessionCall {
     ///The call type, such as default.
     #[serde(rename = "type")]
     pub type_: ::std::string::String,
+}
+///How the call the router placed for a session ended.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct SessionCallOutcome {
+    ///When the person picked up: their phone joined the call.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub answered_at: ::std::option::Option<::std::string::String>,
+    ///How long they talked, from answered_at to when their phone left. Absent until it has.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub duration_seconds: ::std::option::Option<i64>,
+    ///How the call ended. Absent while it is ringing or under way.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub outcome: ::std::option::Option<CallOutcome>,
 }
 ///The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]

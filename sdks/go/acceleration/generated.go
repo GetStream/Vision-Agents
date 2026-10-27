@@ -481,6 +481,36 @@ func (e CallDirection) Valid() bool {
 	}
 }
 
+// Defines values for CallOutcome.
+const (
+	CallOutcomeBusy      CallOutcome = "busy"
+	CallOutcomeCanceled  CallOutcome = "canceled"
+	CallOutcomeCompleted CallOutcome = "completed"
+	CallOutcomeFailed    CallOutcome = "failed"
+	CallOutcomeNoAnswer  CallOutcome = "no_answer"
+	CallOutcomeUnknown   CallOutcome = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the CallOutcome enum.
+func (e CallOutcome) Valid() bool {
+	switch e {
+	case CallOutcomeBusy:
+		return true
+	case CallOutcomeCanceled:
+		return true
+	case CallOutcomeCompleted:
+		return true
+	case CallOutcomeFailed:
+		return true
+	case CallOutcomeNoAnswer:
+		return true
+	case CallOutcomeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CampaignState.
 const (
 	CampaignStateDraft    CampaignState = "draft"
@@ -3848,6 +3878,15 @@ type CallEvent struct {
 	// TurnId The exchange it was about, which lines it up against that turn's timings.
 	TurnId *string `json:"turn_id,omitempty"`
 }
+
+// CallOutcome How a placed call ended.
+// completed: the person answered and the call ended.
+// busy: the line was busy or the person declined.
+// no_answer: it rang until the ring timeout.
+// failed: the vendor could not place it, for a bad number or a carrier fault.
+// canceled: the vendor says the call was hung up before an answer.
+// unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+type CallOutcome string
 
 // CallToken defines model for CallToken.
 type CallToken struct {
@@ -7671,8 +7710,11 @@ type Session struct {
 	AgentId string  `json:"agent_id"`
 
 	// CallId The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
-	CallId   string `json:"call_id"`
-	CallType string `json:"call_type"`
+	CallId string `json:"call_id"`
+
+	// CallOutcome How the call the router placed for a session ended.
+	CallOutcome *SessionCallOutcome `json:"call_outcome,omitempty"`
+	CallType    string              `json:"call_type"`
 
 	// ClosedAt When the session ended. Absent while it is still running.
 	ClosedAt *time.Time `json:"closed_at,omitempty"`
@@ -7760,6 +7802,24 @@ type SessionCall struct {
 
 	// Type The call type, such as default.
 	Type string `json:"type"`
+}
+
+// SessionCallOutcome How the call the router placed for a session ended.
+type SessionCallOutcome struct {
+	// AnsweredAt When the person picked up: their phone joined the call.
+	AnsweredAt *time.Time `json:"answered_at,omitempty"`
+
+	// DurationSeconds How long they talked, from answered_at to when their phone left. Absent until it has.
+	DurationSeconds *int64 `json:"duration_seconds,omitempty"`
+
+	// Outcome How a placed call ended.
+	// completed: the person answered and the call ended.
+	// busy: the line was busy or the person declined.
+	// no_answer: it rang until the ring timeout.
+	// failed: the vendor could not place it, for a bad number or a carrier fault.
+	// canceled: the vendor says the call was hung up before an answer.
+	// unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.
+	Outcome *CallOutcome `json:"outcome,omitempty"`
 }
 
 // SessionConnectorBinding The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.

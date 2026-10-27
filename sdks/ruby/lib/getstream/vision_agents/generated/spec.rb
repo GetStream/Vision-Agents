@@ -2680,12 +2680,16 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[agent agent_id call_id call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
+          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
         "SessionCall" => {
           properties: %w[id type].freeze,
           required: %w[type id].freeze, open: false
+        }.freeze,
+        "SessionCallOutcome" => {
+          properties: %w[answered_at duration_seconds outcome].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "SessionConnectorBinding" => {
           properties: %w[connection_id name].freeze,
