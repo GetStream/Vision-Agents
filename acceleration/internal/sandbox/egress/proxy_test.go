@@ -654,15 +654,16 @@ func (s *ProxySuite) TestAGraphQLReadTakesADocumentOfQueriesAlone() {
 	})
 }
 
-// TestAGraphQLReadTakesOneJSONRequestOrABatchOfThemAlone: the body is a JSON request with query
-// and only the members the proxy reads, once each, or a batch of such requests. Anything else
-// could hold an operation the host reads another way than the proxy: a persisted document's id,
-// a key the host takes the first of, a second JSON value.
-func (s *ProxySuite) TestAGraphQLReadTakesOneJSONRequestOrABatchOfThemAlone() {
+// TestAGraphQLReadTakesOneJSONRequestAlone: the body is one JSON request with query and only the
+// members the proxy reads, once each. Anything else could hold an operation the host reads
+// another way than the proxy: a persisted document's id, a key the host takes the first of, a
+// second JSON value. A batch is refused, as GitHub refuses it (400 «Body should be a JSON
+// object», live probe 2026-10-27).
+func (s *ProxySuite) TestAGraphQLReadTakesOneJSONRequestAlone() {
 	s.readGraphQL()
 
 	s.sendGraphQL([]graphQLRequest{
-		graphQLCase("a batch of queries", ` [{"query":"{ a }"},{"query":"query { b }"}]`, http.StatusOK),
+		graphQLCase("a batch of queries", ` [{"query":"{ a }"},{"query":"query { b }"}]`, http.StatusForbidden),
 		graphQLCase("a batch with a mutation", `[{"query":"{ a }"},{"query":"mutation { b }"}]`, http.StatusForbidden),
 		graphQLCase("an empty batch", `[]`, http.StatusForbidden),
 		graphQLCase("a batch of strings", `["{ a }"]`, http.StatusForbidden),
@@ -684,6 +685,7 @@ func (s *ProxySuite) TestAGraphQLReadTakesOneJSONRequestOrABatchOfThemAlone() {
 		graphQLCase("a second JSON value", `{"query":"{ a }"}{"query":"mutation { b }"}`, http.StatusForbidden),
 		graphQLCase("a JSON object cut short", `{"query":"{ a }"`, http.StatusForbidden),
 	})
+	s.Contains(s.logs.String(), `why="a GraphQL request that is no JSON object"`)
 }
 
 // TestAGraphQLReadTakesAJSONBodyOfAMiBAtMost: the proxy reads a body as application/json in UTF-8

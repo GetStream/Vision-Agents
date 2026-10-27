@@ -25,8 +25,8 @@ const maxGraphQLBody = 1 << 20
 // it cannot see.
 var graphQLKeys = map[string]bool{"query": true, "operationName": true, "variables": true}
 
-// onlyQueries says whether r is a GraphQL request, or a batch of them, whose every operation is a
-// query, or why not. It reads the body and puts back the same bytes, so the host gets them as
+// onlyQueries says whether r is one GraphQL request whose every operation is a query, or why
+// not. It reads the body and puts back the same bytes, so the host gets them as
 // the sandbox sent them. Each check refuses a request whose operation the host could read
 // another way than the proxy: from the URL, another media type or charset, a member the proxy
 // does not read, or a key sent twice.
@@ -48,24 +48,9 @@ func onlyQueries(r *http.Request) error {
 	case !json.Valid(body):
 		return errors.New("a GraphQL POST whose body is not JSON")
 	}
-	requests := []json.RawMessage{body}
-	if trimmed := bytes.TrimLeft(body, " \t\r\n"); trimmed[0] == '[' {
-		// Into a new slice: Unmarshal would copy the batch's first element over body's bytes,
-		// which the host gets, through the RawMessage requests holds. A valid array always
-		// unmarshals.
-		var batch []json.RawMessage
-		_ = json.Unmarshal(trimmed, &batch)
-		if len(batch) == 0 {
-			return errors.New("a GraphQL batch that is no array of requests")
-		}
-		requests = batch
-	}
-	for _, request := range requests {
-		if err := queries(request); err != nil {
-			return err
-		}
-	}
-	return nil
+	// One request object: GitHub answers a batch (an array) 400 «Body should be a JSON object»
+	// (live probe 2026-10-27, AI-2033 review), so the proxy refuses one too.
+	return queries(body)
 }
 
 // queries says whether raw is one GraphQL request whose every operation is a query, or why not.
