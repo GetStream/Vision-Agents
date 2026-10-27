@@ -204,7 +204,7 @@ func (s *SlackChannelSuite) sentInThread(channel, text string, attachments ...ma
 }
 
 // turnWithImages is the last caller's turn carrying images among requests.
-func (s *SlackChannelSuite) turnWithImages(requests []llm.ResponseParams) llm.Message {
+func (s *RouterSuite) turnWithImages(requests []llm.ResponseParams) llm.Message {
 	for index := len(requests) - 1; index >= 0; index-- {
 		for _, message := range requests[index].Input {
 			if message.Role == llm.User && len(imagesIn(message)) > 0 {
@@ -218,7 +218,7 @@ func (s *SlackChannelSuite) turnWithImages(requests []llm.ResponseParams) llm.Me
 
 // lastTurn is the caller's last turn in the first of requests, the reply's: the ones after it
 // read the conversation back as a whole.
-func (s *SlackChannelSuite) lastTurn(requests []llm.ResponseParams) llm.Message {
+func (s *RouterSuite) lastTurn(requests []llm.ResponseParams) llm.Message {
 	s.Require().NotEmpty(requests, "the model was never asked")
 	input := requests[0].Input
 	for index := len(input) - 1; index >= 0; index-- {
