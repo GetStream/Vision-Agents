@@ -328,6 +328,9 @@ func (s *Service) settleLegs(ctx context.Context, ended []store.CallLeg) {
 // keeper has no call for, a transfer's or an inbound one, changes nothing. A failure is logged:
 // the leg is already billed, and its outcome is all that is lost.
 func (s *Service) told(ctx context.Context, legs ...store.CallLeg) {
+	// The leg is already ended, so a redelivered event will not tell again: a hook request
+	// canceled now would lose the outcome for good.
+	ctx = context.WithoutCancel(ctx)
 	for _, leg := range legs {
 		key := outcome.Key{
 			CustomerID: leg.CustomerID, StreamAppPK: leg.StreamAppPK, CallType: leg.CallType, CallID: leg.CallID,
@@ -335,12 +338,14 @@ func (s *Service) told(ctx context.Context, legs ...store.CallLeg) {
 		}
 		if leg.StartedAt != nil {
 			if err := s.outcomes.Answered(ctx, key, *leg.StartedAt); err != nil {
-				s.logger.Error("could not keep that a placed call was answered", "call", leg.CallType+":"+leg.CallID, "error", err)
+				s.logger.Error("could not keep that a call was answered", "customer", leg.CustomerID,
+					"call", leg.CallType+":"+leg.CallID, "error", err)
 			}
 		}
 		if leg.EndedAt != nil {
 			if err := s.outcomes.Ended(ctx, key, *leg.EndedAt); err != nil {
-				s.logger.Error("could not keep that a placed call ended", "call", leg.CallType+":"+leg.CallID, "error", err)
+				s.logger.Error("could not keep that a call ended", "customer", leg.CustomerID,
+					"call", leg.CallType+":"+leg.CallID, "error", err)
 			}
 		}
 	}
