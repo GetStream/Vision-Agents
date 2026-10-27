@@ -292,9 +292,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
 		if !record.reads(host, r.Method, r.URL) {
-			logger.Warn("the sandbox egress proxy refused a request that may write", "method", r.Method)
-			http.Error(w, fmt.Sprintf("egress: %s %s%s refused: code in the sandbox only reads through a connector; "+
-				"write with the connector's tools", r.Method, host, r.URL.EscapedPath()), http.StatusForbidden)
+			logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
+			refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, fmt.Sprintf("egress: %s %s%s refused: "+
+				"code in the sandbox only reads through a connector; write with the connector's tools", r.Method, host, r.URL.EscapedPath()))
 			return
 		}
 		forward := &httputil.ReverseProxy{
@@ -391,6 +391,16 @@ func encoded(header http.Header) bool {
 		}
 	}
 	return false
+}
+
+// loggedMethod is method cut to 32 bytes: a method is any token up to the server's 1 MB header
+// limit, and the longest in the IANA HTTP Method Registry
+// (https://www.iana.org/assignments/http-methods), UPDATEREDIRECTREF, has 17.
+func loggedMethod(method string) string {
+	if len(method) > 32 {
+		return method[:32] + "…"
+	}
+	return method
 }
 
 // failed logs why a request got no answer from its host. Only an error from before the

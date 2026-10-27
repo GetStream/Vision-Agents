@@ -478,6 +478,25 @@ func (s *ProxySuite) TestAGrantedHostTakesOnlyAGetOrAHead() {
 	s.Contains(s.logs.String(), "refused a request that may write")
 }
 
+// TestARefusedMethodIsCountedAndLoggedBounded: a method a granted host does not take is
+// counted as denied_method under its bounded label, and the log keeps only its first 32 bytes.
+func (s *ProxySuite) TestARefusedMethodIsCountedAndLoggedBounded() {
+	long := strings.Repeat("WRITE", 200)
+	posted := s.requestCount("api.github.test", "POST", "denied_method", "4xx")
+	odd := s.requestCount("api.github.test", "other", "denied_method", "4xx")
+
+	for _, method := range []string{http.MethodPost, long} {
+		response, _, err := s.send(s.sandbox(s.credential), s.request(method, "https://api.github.test/echo", "", "{}"))
+		s.Require().NoError(err)
+		s.Equal(http.StatusForbidden, response.StatusCode)
+	}
+
+	s.Equal(posted+1, s.requestCount("api.github.test", "POST", "denied_method", "4xx"))
+	s.Equal(odd+1, s.requestCount("api.github.test", "other", "denied_method", "4xx"))
+	s.Contains(s.logs.String(), long[:32]+"…")
+	s.NotContains(s.logs.String(), long[:33])
+}
+
 // TestGitPushIsRefusedAtItsFirstRequest: git push first GETs info/refs for git-receive-pack,
 // and git shows the model the body of a refusal there; a clone's GET for git-upload-pack
 // reads.
@@ -1581,8 +1600,14 @@ func (s *ProxySuite) TestGrantsThatCannotBeReadInAnOpenTunnelAreCountedAsAnError
 	s.Equal(counted+1, s.requestCount("api.github.test", "GET", "error", "5xx"))
 }
 
-// TestEveryStandardMethodIsItsOwnLabel: RFC 9110 section 9.1's methods, in a tunnel.
+// TestEveryStandardMethodIsItsOwnLabel: RFC 9110 section 9.1's methods, in a tunnel, each one
+// the grant reads with.
 func (s *ProxySuite) TestEveryStandardMethodIsItsOwnLabel() {
+	grant := s.grant(s.placeholder, "api.github.test")
+	for _, method := range []string{"POST", "PUT", "DELETE", "OPTIONS", "TRACE", "PATCH"} {
+		grant.Reads = append(grant.Reads, core.SandboxRead{Host: "api.github.test", Method: method, Path: "/echo"})
+	}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
 	client := s.sandbox(s.credential)
 	for _, method := range []string{"GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "TRACE", "PATCH"} {
 		counted := s.requestCount("api.github.test", method, "granted_no_token", "2xx")
@@ -1632,9 +1657,11 @@ func (s *ProxySuite) TestTheStatusIsTheClassTheSandboxGot() {
 
 // TestTheLabelsHoldNoNameTheSandboxChoosesNorAnySecret: a wildcard grant is one host label
 // whatever name under it is asked for, an unknown method is "other", and no token,
-// placeholder, credential or session is a label value.
+// placeholder, credential or session is a label value. The grant reads with the unknown method.
 func (s *ProxySuite) TestTheLabelsHoldNoNameTheSandboxChoosesNorAnySecret() {
-	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "*.github.test")}})
+	grant := s.grant(s.placeholder, "*.github.test")
+	grant.Reads = []core.SandboxRead{{Host: "*.github.test", Method: "BREW", Path: "/echo"}}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
 	wildcard := s.requestCount("*.github.test", "GET", "token", "2xx")
 	odd := s.requestCount("*.github.test", "other", "granted_no_token", "2xx")
 	client := s.sandbox(s.credential)
