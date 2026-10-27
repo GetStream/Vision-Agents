@@ -89,6 +89,17 @@ func messageFromThread(wire getstream.MessageResponse, thread bool) (Message, bo
 	return m, m.Text != "" || len(m.Files) > 0
 }
 
+// ThreadPhotoNote is what history says of the photos a person sent with a thread channel's
+// message (threadPhotos), as entryOf writes it, or "" for a message with none: the episode
+// cards' lines (omnichannel) write it so a photo-only message is a line too.
+func ThreadPhotoNote(attachments []getstream.Attachment) string {
+	photos := threadPhotos(attachments)
+	if len(photos) == 0 {
+		return ""
+	}
+	return photoNote(len(photos))
+}
+
 // threadPhotos are the photos sent with a person's message in a thread channel, at most
 // maxFiles: the attachments the message hook answers as photos (api messageEvent.photos), an
 // image with its URL in image_url or asset_url that is no preview of a link in the text.
