@@ -1,7 +1,8 @@
 import { ConfigurationError } from "./errors.js";
 
 /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
-export const DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com";
+export const DEFAULT_URL = "https://accelerate-us-east4.gcp.stream-io-api.com";
+const GLOBAL_URL = "https://accelerate.gcp.stream-io-api.com";
 
 /** The environment the same variables are read from as in the Go and Python clients. */
 export const URL_ENV = "STREAM_ACCELERATION_URL";
@@ -37,7 +38,7 @@ export function regionUrl(name: string): string {
 
 /** Whether url is the hosted router, in any region or none, which is always behind the proxy. */
 function hosted(url: string): boolean {
-  if (url === DEFAULT_URL) {
+  if (url === GLOBAL_URL) {
     return true;
   }
   if (!url.startsWith(REGION_PREFIX) || !url.endsWith(REGION_SUFFIX)) {

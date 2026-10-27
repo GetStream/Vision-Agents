@@ -2,10 +2,6 @@
 
 ## Features
 
-### The SDKs can hold a session to one region
-
-`STREAM_ACCELERATION_REGION=us-east4`, or the `region` option (`Region` in Go and .NET), points a server SDK at `https://accelerate-us-east4.gcp.stream-io-api.com`: production served from that region only, with no spilling into another (GetStream/chat#19561). It authenticates the way the default router does. A URL, passed in or in `STREAM_ACCELERATION_URL`, wins over a region in the environment; a URL and a region both passed in are refused, as is a name that is not shaped like a region. The Kotlin, Swift and Dart SDKs build the URL with `Backend.regionUrl` (`Backend.regionURL` in Swift). Today us-east4 is the only region offered; another is added in the load balancer, with no SDK release.
-
 ### A Node.js tool's parameters can be a Zod schema
 
 `parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.
@@ -183,9 +179,11 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
-### The SDKs' default router is production
+### The SDKs go to production in us-east4 by default
 
-`https://accelerate.gcp.stream-io-api.com`, every SDK's default, is production, and staging moves to `https://accelerate-staging.gcp.stream-io-api.com` (GetStream/chat#19561). Staging is reached with `STREAM_ACCELERATION_URL=https://accelerate-staging.gcp.stream-io-api.com` and, in every server SDK but Go, `STREAM_ACCELERATION_AUTHENTICATE=1`, since only the default router is authenticated through the proxy without being asked; the Kotlin, Swift and Dart SDKs take the URL in their `Backend`. `perfbench` drops its `staging` target and defaults to `benchmark`, `stt_realtime_example`'s `-staging` is `-hosted` (the SDK's default router), and the JS `staging.test.ts` is `hosted.test.ts`, reading `QA_ACCELERATION_URL` and `QA_DOCS_SEARCH_URL` and skipping without the first. `DEVELOPMENT.md` lists the variables for local, staging and production.
+Every SDK's default router is `https://accelerate-us-east4.gcp.stream-io-api.com` in place of `https://accelerate.gcp.stream-io-api.com`, which GetStream/chat#19561 makes production and moves staging off, to `https://accelerate-staging.gcp.stream-io-api.com`. `STREAM_ACCELERATION_URL` names any router, and the new `STREAM_ACCELERATION_REGION` (or the `region` option, `Region` in Go and .NET) another production region by name: `europe-west4` is `https://accelerate-europe-west4.gcp.stream-io-api.com`. Every `accelerate-<region>` host and `accelerate.gcp` authenticate through the proxy without being asked. A URL, passed in or in `STREAM_ACCELERATION_URL`, wins over a region in the environment; a URL and a region both passed in are refused, as is a name that is not shaped like a region. The Kotlin, Swift and Dart SDKs default to us-east4 too, and build another region's URL with `Backend.regionUrl` (`Backend.regionURL` in Swift). Which regions are served is the load balancer's to say, so another needs no SDK release.
+
+Staging is reached with `STREAM_ACCELERATION_URL=https://accelerate-staging.gcp.stream-io-api.com` and, in every server SDK but Go, `STREAM_ACCELERATION_AUTHENTICATE=1`. `perfbench` drops its `staging` target and defaults to `benchmark`, `stt_realtime_example`'s `-staging` is `-hosted` (the SDK's default router), and the JS `staging.test.ts` is `hosted.test.ts`, reading `QA_ACCELERATION_URL` and `QA_DOCS_SEARCH_URL` and skipping without the first. `DEVELOPMENT.md` lists the variables for local, staging and production.
 
 ### Go and Python refuse tool arguments that do not fit the schema
 

@@ -104,8 +104,8 @@ agent = api.agent("support", cost_tracking: { env: "production" })
 With no arguments the client reads its credentials from the environment: `url` from
 `STREAM_ACCELERATION_URL`, then Stream's hosted router, and the rest from
 `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`. Pass them only
-when they come from somewhere else. `region: "us-east4"` or `STREAM_ACCELERATION_REGION`
-holds the client to the hosted router in that one region. The hosted router is reached through Stream's
+when they come from somewhere else. The hosted router is us-east4's unless
+`region: "europe-west4"` or `STREAM_ACCELERATION_REGION` names another region. The hosted router is reached through Stream's
 authenticating proxy, which is on by default for it; a self-hosted deployment behind the
 same proxy passes `authenticate: true` or sets `STREAM_ACCELERATION_AUTHENTICATE`. A monitoring link needs
 `STREAM_API_KEY` and `STREAM_API_SECRET` whichever way the router is reached.

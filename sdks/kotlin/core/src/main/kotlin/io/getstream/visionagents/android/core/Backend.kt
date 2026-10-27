@@ -70,7 +70,7 @@ public class Backend(
 ) : AutoCloseable {
     public companion object {
         /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
-        public const val DEFAULT_URL: String = "https://accelerate.gcp.stream-io-api.com"
+        public const val DEFAULT_URL: String = "https://accelerate-us-east4.gcp.stream-io-api.com"
 
         /**
          * The shape of a region name, such as us-east4 or europe-west4. Only the shape is

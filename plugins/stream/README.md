@@ -22,8 +22,8 @@ STREAM_ACCELERATION_URL=http://localhost:8080
 STREAM_ACCELERATION_CUSTOMER_ID=acme
 ```
 
-To hold requests to the hosted router in one region, set `STREAM_ACCELERATION_REGION=us-east4`
-(or pass `region="us-east4"` to `Backend`) instead of a URL.
+Unset, the hosted router in us-east4 is used. For another region, set
+`STREAM_ACCELERATION_REGION=europe-west4` (or pass `region="europe-west4"`) instead of a URL.
 
 ## The whole pipeline, remotely
 

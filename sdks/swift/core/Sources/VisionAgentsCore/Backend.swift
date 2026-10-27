@@ -24,7 +24,7 @@ public typealias TokenProvider = @Sendable () async throws -> String
 /// id instead.
 public struct Backend: Sendable {
     /// Stream's hosted router.
-    public static let defaultURL = URL(string: "https://accelerate.gcp.stream-io-api.com")!
+    public static let defaultURL = URL(string: "https://accelerate-us-east4.gcp.stream-io-api.com")!
 
     /// Stream's hosted router held to one region, such as us-east4: requests to it are served
     /// there and nowhere else, even when that region is full or down.

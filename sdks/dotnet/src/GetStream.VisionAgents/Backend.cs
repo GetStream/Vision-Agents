@@ -72,7 +72,8 @@ public sealed record VisionAgentsOptions
 internal sealed class Backend
 {
     /// <summary>Stream's hosted router, which is where a client goes when nothing says otherwise.</summary>
-    public const string DefaultUrl = "https://accelerate.gcp.stream-io-api.com";
+    public const string DefaultUrl = "https://accelerate-us-east4.gcp.stream-io-api.com";
+    private const string GlobalUrl = "https://accelerate.gcp.stream-io-api.com";
     public const string UrlEnv = "STREAM_ACCELERATION_URL";
     /// <summary>Holds this SDK to the hosted router in one region, such as <c>us-east4</c>.</summary>
     public const string RegionEnv = "STREAM_ACCELERATION_REGION";
@@ -295,7 +296,7 @@ internal sealed class Backend
     private static bool Hosted(string url)
     {
         const string prefix = "https://accelerate-", suffix = ".gcp.stream-io-api.com";
-        return url == DefaultUrl
+        return url == GlobalUrl
             || (url.StartsWith(prefix, StringComparison.Ordinal)
                 && url.EndsWith(suffix, StringComparison.Ordinal)
                 && url.Length > prefix.Length + suffix.Length

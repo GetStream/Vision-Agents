@@ -35,8 +35,8 @@ const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token"
 ```
 
 `url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
-passed for a self-hosted or local one. To hold requests to the hosted router in one region,
-pass `region: "us-east4"` or set `STREAM_ACCELERATION_REGION` instead. `customerId`, `apiKey` and `apiSecret` fall back to
+passed for a self-hosted or local one. The hosted router is us-east4's; for another region,
+pass `region: "europe-west4"` or set `STREAM_ACCELERATION_REGION` instead. `customerId`, `apiKey` and `apiSecret` fall back to
 `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`.
 
 The hosted router is reached through Stream's authenticating proxy, which wants the

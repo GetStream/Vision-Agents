@@ -35,8 +35,9 @@ skill and `acceleration/development_skills/dashboard_skill.md`.
 
 ## Pointing an SDK at a router
 
-The SDKs go to production, `https://accelerate.gcp.stream-io-api.com`, when nothing says
-otherwise. Staging is `https://accelerate-staging.gcp.stream-io-api.com`, and the load
+Out of the box the SDKs go to production in us-east4,
+`https://accelerate-us-east4.gcp.stream-io-api.com`. `STREAM_ACCELERATION_URL` or
+`STREAM_ACCELERATION_REGION` sends them anywhere else. Staging is `https://accelerate-staging.gcp.stream-io-api.com`, and the load
 balancer in `GetStream/chat`'s `infra/dns/gcp-stream-io-api-com` tells them apart by hostname.
 
 The server SDKs (Python, JS, Go, Ruby, PHP, .NET and Rust) read the same variables to go
@@ -44,8 +45,8 @@ anywhere else:
 
 | Variable                           | What it does                                                                                   |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `STREAM_ACCELERATION_URL`          | The router's base URL. Unset is production.                                                    |
-| `STREAM_ACCELERATION_REGION`       | Production held to one region, such as `us-east4`. A URL, in code or here, wins over it.       |
+| `STREAM_ACCELERATION_URL`          | The router's base URL. Unset is production in us-east4.                                        |
+| `STREAM_ACCELERATION_REGION`       | Production in another region, such as `europe-west4`. A URL, in code or here, wins over it.    |
 | `STREAM_ACCELERATION_CUSTOMER_ID`  | Who is billed, on a router with no proxy in front of it. Setting it turns authentication off.  |
 | `STREAM_API_KEY`                   | The Stream app a router behind the proxy is reached as.                                        |
 | `STREAM_API_SECRET`                | That app's secret, which signs the token the proxy checks.                                     |
@@ -75,16 +76,18 @@ no customer id is set.
 Production takes only the key and secret. Leave `STREAM_ACCELERATION_CUSTOMER_ID` unset
 there: a customer id left over from local turns authentication off.
 
-Production in one region is `https://accelerate-<region>.gcp.stream-io-api.com`. The short
-hostname sends each request to the closest region with room; a regional one keeps it in that
-region, and fails rather than spill into another when that region is full or down. Ask for
-one with a region rather than a URL, and it authenticates the way production does:
+Each production region is `https://accelerate-<region>.gcp.stream-io-api.com`, and keeps a
+request in that region: it fails rather than spill into another when that region is full or
+down. Pick another one by name, and it authenticates the way the default does:
 
 ```
-STREAM_ACCELERATION_REGION=us-east4
+STREAM_ACCELERATION_REGION=europe-west4
 STREAM_API_KEY=...
 STREAM_API_SECRET=...
 ```
+
+`STREAM_ACCELERATION_URL=https://accelerate.gcp.stream-io-api.com` is production in whichever
+region is closest with room, and authenticates by itself too.
 
 The regions on offer are `local.accelerate_prod_regions` in `GetStream/chat`'s
 `infra/dns/gcp-stream-io-api-com/accelerate_global_lb.tf`, today `us-east4`. The SDKs check
@@ -92,8 +95,8 @@ only that a name looks like a region, so offering another needs no SDK release. 
 the `region` option (`Region` in Go and .NET); passing a URL as well is refused.
 
 The Kotlin, Swift and Dart SDKs run on a phone and read no environment: pass the URL to
-their `Backend` (`Backend(url = ...)`, `Backend(apiKey:url:)`, `Backend(url: ...)`), or a
-region's through `Backend.regionUrl("us-east4")` (`Backend.regionURL(_:)` in Swift). The JS
+their `Backend` (`Backend(url = ...)`, `Backend(apiKey:url:)`, `Backend(url: ...)`), which
+defaults to us-east4, or another region's through `Backend.regionUrl("us-east4")` (`Backend.regionURL(_:)` in Swift). The JS
 SDK in a browser has no environment either, so pass `url` or `region` there too.
 
 ## Simple voice AI example

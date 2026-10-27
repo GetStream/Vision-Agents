@@ -20,7 +20,9 @@ module GetStream
       API_SECRET_ENV = "STREAM_API_SECRET"
       AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
       # Stream's hosted router, which is where a client goes when nothing says otherwise.
-      DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com"
+      DEFAULT_URL = "https://accelerate-us-east4.gcp.stream-io-api.com"
+      GLOBAL_URL = "https://accelerate.gcp.stream-io-api.com"
+      private_constant :GLOBAL_URL
       CUSTOMER_HEADER = "X-Customer-Id"
       # The shape of a region name, such as us-east4 or europe-west4. Only the shape is
       # checked: which regions are served is the hosted router's to say, so offering another
@@ -164,7 +166,7 @@ module GetStream
       # Whether url is the hosted router, in any region or none, which is always behind the
       # proxy.
       def hosted?(url)
-        return true if url == DEFAULT_URL
+        return true if url == GLOBAL_URL
 
         name = url.delete_prefix("https://accelerate-")
         return false if name == url

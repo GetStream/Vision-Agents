@@ -29,8 +29,8 @@ var pooled = new VisionAgentsClient(factory.CreateClient("vision-agents"));
 Every option left null falls back to the environment the other SDKs read:
 `STREAM_ACCELERATION_URL`, `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY`,
 `STREAM_API_SECRET` and `STREAM_ACCELERATION_AUTHENTICATE`. With no URL at all the client goes
-to Stream's hosted router; `Region = "us-east4"`, or `STREAM_ACCELERATION_REGION`, holds it to
-the hosted router in that one region. A failure raises
+to Stream's hosted router in us-east4; `Region = "europe-west4"`, or `STREAM_ACCELERATION_REGION`,
+sends it to the hosted router in another region. A failure raises
 `RouterException`, carrying the `Status`, the `Operation` and what the router `Said`, with its
 `Type` and `Code` to branch on (expect codes this SDK does not know), the `DocUrl` explaining
 the code, and the `RequestId` to quote to support when a 500 says only "something went wrong".

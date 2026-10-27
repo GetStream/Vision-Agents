@@ -52,8 +52,9 @@ const (
 	// directory is this one; the dashboard and the CLI name themselves.
 	ClientHeader = "X-Stream-Client"
 	ClientSDK    = "sdk"
-	// DefaultURL is the hosted router.
-	DefaultURL = "https://accelerate.gcp.stream-io-api.com"
+	// DefaultURL is the hosted router in us-east4. STREAM_ACCELERATION_URL or
+	// STREAM_ACCELERATION_REGION moves it.
+	DefaultURL = "https://accelerate-us-east4.gcp.stream-io-api.com"
 )
 
 // tokenValidity is how long a minted token lasts. Short, because it is minted per request
@@ -77,10 +78,13 @@ func RegionURL(name string) (string, error) {
 	return "https://accelerate-" + name + ".gcp.stream-io-api.com", nil
 }
 
+// globalURL is the hosted router in whichever region is closest with room.
+const globalURL = "https://accelerate.gcp.stream-io-api.com"
+
 // hosted says whether url is the hosted router, in any region or none, which is always
 // behind the proxy.
 func hosted(url string) bool {
-	if url == DefaultURL {
+	if url == globalURL {
 		return true
 	}
 	name, ok := strings.CutPrefix(url, "https://accelerate-")

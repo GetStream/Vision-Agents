@@ -82,7 +82,7 @@ void main() {
       final backend = Backend(apiKey: 'key', token: () async => 'token');
 
       expect(backend.url, Backend.defaultUrl);
-      expect(backend.url.toString(), 'https://accelerate.gcp.stream-io-api.com');
+      expect(backend.url.toString(), 'https://accelerate-us-east4.gcp.stream-io-api.com');
     });
 
     test('a region is the hosted router there', () {

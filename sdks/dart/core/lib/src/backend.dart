@@ -47,7 +47,7 @@ final class Backend {
   }
 
   /// Stream's hosted router, which is where a client goes when nothing says otherwise.
-  static final Uri defaultUrl = Uri.parse('https://accelerate.gcp.stream-io-api.com');
+  static final Uri defaultUrl = Uri.parse('https://accelerate-us-east4.gcp.stream-io-api.com');
 
   /// The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
   /// which regions are served is the hosted router's to say, so offering another needs no
