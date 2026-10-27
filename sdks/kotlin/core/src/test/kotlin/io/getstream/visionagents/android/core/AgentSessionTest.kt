@@ -332,6 +332,16 @@ class AgentSessionTest {
     }
 
     @Test
+    fun `declining a sign-in tells the router the call is not allowed`() = runBlocking {
+        val chat = agents.chat(SessionOptions())
+
+        chat.declineLogin("c9")
+
+        assertEquals("""{"type":"tool_approval","tool_call_id":"c9","allowed":false}""", router.nextSent())
+        chat.close()
+    }
+
+    @Test
     fun `a cancelled call stops waiting for the person`() = runBlocking {
         val chat = agents.chat(SessionOptions(tools = listOf(refund(CopyOnWriteArrayList()))))
 

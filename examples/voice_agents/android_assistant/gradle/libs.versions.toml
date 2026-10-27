@@ -1,0 +1,29 @@
+[versions]
+kotlin = "2.4.20"
+agp = "9.4.1"
+compose-bom = "2026.09.00"
+material-icons = "1.7.8"
+activity = "1.11.0"
+lifecycle = "2.11.0"
+okhttp = "5.5.0"
+stream-chat-ai-compose = "7.16.0"
+browser = "1.10.0"
+
+[libraries]
+vision-agents-core = { module = "io.getstream:vision-agents-core", version = "0.1.0-SNAPSHOT" }
+stream-chat-ai-compose = { module = "io.getstream:stream-chat-android-ai-compose", version.ref = "stream-chat-ai-compose" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-material-icons = { module = "androidx.compose.material:material-icons-extended", version.ref = "material-icons" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+browser = { module = "androidx.browser:browser", version.ref = "browser" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

@@ -784,7 +784,7 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	}
 
 	line := tools.WithLine(ctx, toolLine{send: p.command, holds: &p.holds})
-	output, err := p.functions.Run(line, toolCallOf(frame, p.sessionID()), name, frame.String("arguments"))
+	output, err := p.functions.Run(line, toolCallContextOf(frame, p.sessionID()), name, frame.String("arguments"))
 	if err != nil {
 		p.logger.Error("the tool failed", "tool", name, "error", err)
 		result["error"] = err.Error()
@@ -803,10 +803,11 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	}
 }
 
-// toolCallOf is the call a tool_call frame asks for, as tools.CallFrom gives it to the function.
+// toolCallContextOf is the call a tool_call frame asks for, as tools.ToolCallContextFrom
+// gives it to the function.
 // sessionID stands in for a frame that does not name its session, as a router's from before
 // session_id did not.
-func toolCallOf(frame Frame, sessionID string) tools.Call {
+func toolCallContextOf(frame Frame, sessionID string) tools.Call {
 	call := tools.Call{ID: frame.String("id"), SessionID: frame.String("session_id"), TurnID: frame.String("turn_id"), Approved: frame.Bool("approved")}
 	if call.SessionID == "" {
 		call.SessionID = sessionID

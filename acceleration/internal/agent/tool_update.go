@@ -65,10 +65,11 @@ func (a *Agent) ToolUpdate(id, text string, verbatim bool) {
 }
 
 // sayToolUpdate says one update waiting for the line, when it is free: the agent is not
-// speaking or writing, owes no reply, and the caller is not talking.
+// speaking or writing, owes no reply, and the caller is neither talking nor waiting on a
+// ruling about what they said.
 func (a *Agent) sayToolUpdate() {
 	state := a.floor()
-	if state.Talking || state.Owed || state.Composing || a.converse.Listening() {
+	if state.Talking || state.Owed || state.Composing || a.converse.Listening() || a.converse.Undecided() {
 		return
 	}
 	a.mu.Lock()

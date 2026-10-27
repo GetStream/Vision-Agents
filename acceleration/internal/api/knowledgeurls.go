@@ -371,7 +371,7 @@ type KnowledgeUrlRequest struct {
 	Namespace    string  `json:"namespace" doc:"The knowledge base to fill, which is what a config's knowledge_namespace names." example:"docs"`
 	RefreshHours *int    `json:"refresh_hours,omitempty" doc:"How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it." minimum:"0" example:"24"`
 	Title        *string `json:"title,omitempty" doc:"What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read." example:"Pricing"`
-	Url          string  `json:"url" doc:"The page to read. It must be http or https: this is handed to a crawler and then used to key the passages it becomes." example:"https://example.com/pricing"`
+	Url          string  `json:"url" maxLength:"2048" doc:"The page to read. It must be http or https: this is handed to a crawler and then used to key the passages it becomes." example:"https://example.com/pricing"`
 }
 
 func (*KnowledgeUrlRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

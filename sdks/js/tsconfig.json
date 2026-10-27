@@ -19,7 +19,8 @@
     // are checked against the source rather than against a build that may not be there.
     "paths": {
       "@stream-io/calypso": ["./src/index.ts"],
-      "@stream-io/calypso/node": ["./src/node.ts"]
+      "@stream-io/calypso/node": ["./src/node.ts"],
+      "@stream-io/calypso/video": ["./src/video.ts"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts"]

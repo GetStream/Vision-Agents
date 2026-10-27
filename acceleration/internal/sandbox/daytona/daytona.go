@@ -549,10 +549,10 @@ func (s *Sandbox) discard(ctx context.Context) {
 // lost forgets a sandbox Daytona has deleted, so the next one is made. The caller holds the
 // gate.
 func (s *Sandbox) lost() {
+	s.letGo()
 	if !s.gone {
 		s.meter.Gone()
 	}
-	s.letGo()
 	s.box = nil
 	s.stoppedAt, s.confirmed, s.gone = time.Time{}, false, false
 }
@@ -617,13 +617,15 @@ func (s *Sandbox) lapse(epoch int) {
 		if s.closed.Load() && s.retryDelete() {
 			return
 		}
+		// The slot is given back before the stop is reported, so whoever reads the stop
+		// finds the slot free rather than racing its release.
 		s.stoppedAt = now
-		s.meter.Stopped()
 		s.letGo()
+		s.meter.Stopped()
 	case s.lifecycle.StoppedDelete > 0 && now.Sub(s.stoppedAt) >= s.lifecycle.StoppedDelete:
 		s.gone = true
-		s.meter.Gone()
 		s.letGo()
+		s.meter.Gone()
 		if s.closed.Load() {
 			s.box = nil
 			s.released(context.Background())
@@ -674,10 +676,10 @@ func (s *Sandbox) remove(ctx context.Context) error {
 	if err := s.box.Delete(ctx); err != nil && !errors.Is(err, sdkerrors.ErrNotFound) {
 		return err
 	}
+	s.letGo()
 	if !s.gone {
 		s.meter.Gone()
 	}
-	s.letGo()
 	s.box = nil
 	s.stoppedAt, s.confirmed, s.gone = time.Time{}, false, false
 	return nil

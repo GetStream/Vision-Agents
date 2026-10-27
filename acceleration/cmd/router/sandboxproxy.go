@@ -147,20 +147,28 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 			return
 		}
 		finished = true
-		if !handingOver {
-			return
+		if handingOver {
+			logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", addr,
+				"setting", "code_sandbox.proxy_addr")
 		}
-		logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", addr,
-			"setting", "code_sandbox.proxy_addr")
 		// The listener alone: the connections the proxy took are still served, a request
 		// they have yet to send included, which a Shutdown would drop. Serve ends with the
-		// closed listener's error, which no one reads once the router drains.
+		// closed listener's error, which no one reads once the router drains. A stop closes
+		// it too, because Serve runs on its own goroutine and the server only closes a
+		// listener Serve has already started on: one it has not keeps the address held.
 		if serving != nil {
 			_ = serving.Close()
 		}
 	}
 	// Close, not a drain: a tunnel is the sandbox's to reopen.
-	stop = func() error { finish(false); return server.Close() }
+	// finish has closed the listener already, so Close finding it closed is no failure.
+	stop = func() error {
+		finish(false)
+		if err := server.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			return err
+		}
+		return nil
+	}
 	if !overlap {
 		return stop, func() {}, nil
 	}

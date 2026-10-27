@@ -57,6 +57,14 @@ public data class SessionOptions(
     val tools: List<AgentTool> = emptyList(),
     /** Cost labels, carried onto every request the session makes. */
     val tags: Map<String, String> = emptyMap(),
+    /**
+     * Where a sign-in the conversation asks for goes back to. Name the app's own scheme in
+     * reverse domain form, such as `com.example.app:/connected`, and the router hands the
+     * browser back to the app. It is kept with the session, so a conversation carried on later
+     * goes back there too. Null sends the sign-in back to the dashboard, which a phone cannot
+     * open.
+     */
+    val returnUrl: String? = null,
 )
 
 /** What the agent says as it joins a call, before anyone speaks. */

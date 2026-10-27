@@ -410,6 +410,9 @@ func (s *ConnectorsSuite) TestTheListIsTheBuiltInsThenTheAppsOwnEachById() {
 }
 
 func (s *ConnectorsSuite) TestPagingWalksTheWholeListWithoutRepeatingOrSkipping() {
+	// An app of its own: the fixture's app is shared, and a connector another suite made there
+	// between the whole list and the walk showed up as one the walk did not expect.
+	s.useApp(s.data.createApp())
 	for range 3 {
 		s.create(s.customConnector(s.customID()))
 	}

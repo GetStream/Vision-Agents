@@ -80,7 +80,7 @@ func (s *HostedCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 	seen := make(chan tools.Call, 1)
 	functions := tools.NewRegistry()
 	s.Require().NoError(tools.Register(functions, "photograph_room", "Photograph the room", func(ctx context.Context, _ struct{}) (any, error) {
-		seen <- *tools.CallFrom(ctx)
+		seen <- *tools.ToolCallContextFrom(ctx)
 		return "the kitchen", nil
 	}))
 	worker := waiting(s.T(), router, DispatchOptions{})
@@ -144,7 +144,7 @@ func (s *HostedCallSuite) TestAHostedFunctionSaysHowItIsGoingAndHoldsItsWrite() 
 	})
 	functions := tools.NewRegistry()
 	s.Require().NoError(tools.Register(functions, "rebook_flight", "Move a booking", func(ctx context.Context, _ struct{}) (any, error) {
-		toolCallContext := tools.CallFrom(ctx)
+		toolCallContext := tools.ToolCallContextFrom(ctx)
 		if err := toolCallContext.Update(ctx, "Checking seats"); err != nil {
 			return nil, err
 		}

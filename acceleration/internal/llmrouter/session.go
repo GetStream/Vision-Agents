@@ -205,7 +205,7 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 		// The provider took nothing on, so nothing it would bill is held.
 		s.recorder.Release(reserved)
 		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
-		code := createErrorCode(ctx)
+		code := outrun(createErrorCode(ctx), true, hedge)
 		stat := routing.Stat{
 			Owner:        owner,
 			StartedAt:    startedAt,
@@ -332,6 +332,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	headersMs := float64(createdAt.Sub(startedAt).Microseconds()) / 1000
 	ttftMs := measuredLatency(response, headersMs+response.TimeToFirstTokenMs)
 	durationMs := headersMs + response.DurationMs
+	code := outrun(errorCode(response), response.TimeToFirstTokenMs <= 0, hedge)
 	stat := reported(response)
 	estimated := unreported(response)
 	if estimated {
@@ -351,7 +352,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		"output_tokens", stat.OutputTokens,
 		"reasoning_tokens", response.Usage.OutputTokensDetails.ReasoningTokens,
 		"estimated", estimated,
-		"success", served(response), "error_code", errorCode(response))
+		"success", served(response), "error_code", code)
 	composed := llm.Compose(params).Scaled(stat.InputTokens)
 	usage := stat.Usage
 	stat.Owner = owner
@@ -374,13 +375,13 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	// arrives while they are already reading or hearing it.
 	stat.LatencyMs = measuredLatency(response, ttftMs)
 	stat.Success = served(response)
-	stat.ErrorCode = errorCode(response)
+	stat.ErrorCode = code
 	label(&stat, params, hedge)
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
 			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
 			TTFTMs: ttftMs, DurationMs: durationMs,
-			Success: served(response), ErrorCode: errorCode(response),
+			Success: served(response), ErrorCode: code,
 			InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
 			OutputTokens: usage.OutputTokens, CostMicros: s.recorder.QuoteStat(s.config, stat).CostMicros})
 	}
@@ -458,6 +459,16 @@ func errorCode(response llm.Response) string {
 		return routing.ErrorCancelled
 	}
 	return ""
+}
+
+// outrun is code, unless the attempt was cancelled because it lost its hedge without having
+// said anything: then it ran past the router's own limit on silence, a timeout, which counts
+// against its provider's health where a cancellation would not.
+func outrun(code string, silent bool, hedge *hedgeAttempt) string {
+	if code == routing.ErrorCancelled && silent && hedge.stalled() {
+		return routing.ErrorTimeout
+	}
+	return code
 }
 
 // measuredLatency is the time the caller waited for the first token, or nothing when none

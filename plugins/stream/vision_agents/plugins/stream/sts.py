@@ -10,13 +10,13 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
-from vision_agents.core.llm.tool_call import calling
+from vision_agents.core.llm.tool_call import using_tool_call_context
 from vision_agents.core.utils.utils import cancel_and_wait
 
 from ._backend import Backend
 from ._routerconfig import ensure_router
 from ._socket import Socket
-from ._tool_line import Holds, SocketLine, call_of
+from ._tool_line import Holds, SocketLine, tool_call_context_of
 
 logger = logging.getLogger(__name__)
 
@@ -343,9 +343,11 @@ class STS(realtime.Realtime):
             "arguments_json": arguments,
         }
 
-        tool_call_context = call_of(frame, "", SocketLine(self._send, self._holds))
+        tool_call_context = tool_call_context_of(
+            frame, "", SocketLine(self._send, self._holds)
+        )
         try:
-            with calling(tool_call_context):
+            with using_tool_call_context(tool_call_context):
                 _, result, error = await self._run_one_tool(
                     tool_call, timeout_s=TOOL_TIMEOUT
                 )

@@ -373,8 +373,8 @@ class TestSessions:
 
         @agent.register(description="Look up an order", timeout=2.5)
         async def lookup_order() -> str:
-            seen.append(stream.current_call())
-            await stream.current_call().update("searching the archive")
+            seen.append(stream.get_tool_call_context())
+            await stream.get_tool_call_context().update("searching the archive")
             return "found"
 
         router.frames = [

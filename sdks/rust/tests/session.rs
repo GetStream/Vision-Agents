@@ -722,7 +722,7 @@ fn tool(name: &str) -> types::SessionTool {
 fn holding() -> Tools {
     let tools = Tools::new();
     tools
-        .register_call(tool("pay"), |_, tool_call_context: ToolCall| async move {
+        .register_with_tool_call_context(tool("pay"), |_, tool_call_context: ToolCall| async move {
             tool_call_context.disallow_interruptions().await?;
             tokio::time::sleep(Duration::from_millis(200)).await;
             Ok::<_, Error>("paid")
@@ -739,7 +739,7 @@ async fn a_function_is_told_who_its_call_answers_and_can_say_how_it_is_going() {
     let server = Server::start().await;
     let tools = Tools::new();
     tools
-        .register_call(tool("book"), |_, tool_call_context: ToolCall| async move {
+        .register_with_tool_call_context(tool("book"), |_, tool_call_context: ToolCall| async move {
             tool_call_context.update("Looking at flights")
                 .await
                 .map_err(|error| error.to_string())?;
@@ -854,7 +854,7 @@ async fn a_call_that_outlasts_its_timeout_is_stopped_and_fails() {
     let server = Server::start().await;
     let tools = Tools::new();
     tools
-        .register_call(
+        .register_with_tool_call_context(
             types::SessionTool {
                 timeout_ms: Some(50),
                 ..tool("slow")
@@ -882,7 +882,7 @@ async fn a_tool_is_declared_with_only_the_policies_it_sets() {
     let server = Server::start().await;
     let tools = Tools::new();
     tools
-        .register_call(
+        .register_with_tool_call_context(
             types::SessionTool {
                 interruptible: Some(true),
                 timeout_ms: Some(5000),
@@ -915,7 +915,7 @@ fn a_policy_that_cannot_work_is_refused_when_it_is_registered() {
     let tools = Tools::new();
     let refused = |declaration: types::SessionTool| {
         tools
-            .register_call(declaration, |_, _| async { Ok::<_, String>("") })
+            .register_with_tool_call_context(declaration, |_, _| async { Ok::<_, String>("") })
             .err()
             .map(|error| error.to_string())
     };
