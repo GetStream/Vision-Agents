@@ -35,7 +35,8 @@ const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token"
 ```
 
 `url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
-passed for a self-hosted or local one. `customerId`, `apiKey` and `apiSecret` fall back to
+passed for a self-hosted or local one. The hosted router is us-east4's; for another region,
+pass `region: "europe-west4"` or set `STREAM_ACCELERATION_REGION` instead. `customerId`, `apiKey` and `apiSecret` fall back to
 `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`.
 
 The hosted router is reached through Stream's authenticating proxy, which wants the
@@ -142,6 +143,31 @@ with `agent.sync()`: a session runs on the stored config's.
 The model asks for a tool over the session socket, this process runs it, and the answer
 goes back the same way. A tool that throws is reported to the model, because the model is
 mid-sentence waiting for it and can only say something useful if it is told.
+
+`parameters` can also be a Zod 4 schema, or any schema that implements
+[Standard JSON Schema](https://standardschema.dev), such as ArkType's or Valibot's:
+
+```ts
+import { z } from "zod";
+
+agent.tools.register({
+  name: "book_flight",
+  description: "Book a flight for the caller",
+  parameters: z.object({
+    flight_id: z.string().regex(/^[A-Z]{2}\d{1,4}$/).describe("e.g. LH400"),
+    seats: z.number().int().min(1).max(9),
+    cabin: z.enum(["economy", "business", "first"]).default("economy"),
+  }),
+  run: async ({ flight_id, seats, cabin }) => bookings.book(flight_id, seats, cabin),
+});
+```
+
+The model is told the JSON Schema the Zod schema describes, and each call's arguments are
+parsed by it before `run`, which is handed what it parsed, typed from the schema. Arguments it
+refuses fail the call with what was wrong, such as `seats: Too big: expected number to be
+<=9`, and the model can try again. A rule JSON Schema cannot say, such as a `refine`, still
+holds; the model is just not told it. A JSON Schema written out is told to the model as it is,
+and its arguments reach `run` unchecked. The package does not depend on Zod.
 
 A tool can say how the backend treats its calls, and read the call it is running for:
 
@@ -300,6 +326,48 @@ point rather than an override.
 point rather than the main one. It hands `sync` the stamp to read and write, so `sync`
 itself touches no filesystem.
 
+## Talking to an agent from a browser
+
+`VoiceSession` puts the agent on a call and this page on the same call. It lives in the
+`/video` entry point, which is what brings `@stream-io/video-client` in:
+
+```ts
+import { VoiceSession } from "@stream-io/calypso/video";
+
+const voice = await VoiceSession.start(api.agent("my-agent"));
+await voice.join(); // the microphone on; { camera: true } for the back lens
+
+const { call, client, muted, status } = voice.get();
+voice.subscribe(() => render(voice.get()));
+
+await voice.setMuted(true);
+await voice.leave(); // and closes the session start() made; end() always does
+```
+
+`start` opens a session with voice on, so the agent is on the call before this page joins.
+`join` creates the call rather than only joining it, since which of the two gets there first
+is a race, and rejects when it fails, for example when the person denies the microphone.
+Asking twice joins once. `VoiceSession.of(session)` joins a session that already has voice
+on, one switched over with `session.voice.start()`; leaving it leaves the session running.
+
+`status` is what the agent is doing in the states `VoiceGlow` and `VoiceWave` in
+`stream-chat-react/ai-components` take: `connecting` until joined, `speaking` while the agent
+is heard on the call, `listening`, `thinking` and `idle`. Speaking comes from the call
+because a reply is written before it is spoken. Playing the agent is the page's:
+`<ParticipantsAudio />` from `@stream-io/video-react-sdk`, or `call.bindAudioElement` per
+remote participant. Start from a click, since a browser plays audio and asks for the
+microphone only after one. In React, `get` and `subscribe` are bound, so they go straight
+into `useSyncExternalStore(voice.subscribe, voice.get)`.
+
+With the camera on, the agent can look through it: the page keeps a frame twice a second, and
+the session answers the router's `get_video_frames` with the ones taken when the question was
+put. A session with no camera on leaves that request to whoever else on the call owns it.
+
+What the agent is doing is on every session, voice or not, as `session.state`: `idle`,
+`listening`, `responding`, `working` (with the `skills` thinking) and `ended`. It is fed from
+the socket beside `events()`, so it takes nothing from a loop reading them, and has the same
+`get` and `subscribe`. It is not the session's lifecycle, which is `session.created.state`.
+
 ## A reply as it is heard
 
 The Chat channel has the agent's reply as fast as the model writes it, seconds ahead of the
@@ -423,7 +491,7 @@ not in CI: they talk to a deployment, and they skip rather than fail when there 
 talk to — a laptop with no router up, or a checkout with no credentials, is not a broken
 build. `test:local` wants a router on `LOCAL_ACCELERATION_URL`, default
 `http://127.0.0.1:8098`. `test:qa` wants `STREAM_API_KEY` and `STREAM_API_SECRET`, and
-reaches `STAGING_ACCELERATION_URL` and `STAGING_DOCS_SEARCH_URL`. They are the only place
+reaches `QA_ACCELERATION_URL`, which it skips without, and `QA_DOCS_SEARCH_URL`. They are the only place
 the claims above are checked against a real backend rather than against a test one, which
 is worth running before trusting any of them: three of them are `todo` there today, each
 naming what the deployment does instead.

@@ -3,7 +3,7 @@ package routing
 import "github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 
 // The usages below are what each vendor reported for real calls on 2026-10-20, and the
-// costs what its published prices make of them: what vendor.json must charge.
+// costs what its published prices make of them: what vendor.json's rates must cost.
 
 // builtIn is the built-in config's provider for that modality and model, and the price
 // list it is priced by.
@@ -18,9 +18,9 @@ func (s *RoutingSuite) builtIn(modality Modality, name string) (ProviderConfig, 
 	return ProviderConfig{}, nil
 }
 
-// charged is what a row recording the stat on the provider costs.
-func charged(list *pricing.List, modality Modality, provider ProviderConfig, stat Stat) int64 {
-	return quote(list, modality, provider, stat.Attributes, row(modality, provider, stat).Quantities()).CostMicros
+// vendorCost is what a row recording the stat on the provider costs at the vendor's rates.
+func vendorCost(list *pricing.List, modality Modality, provider ProviderConfig, stat Stat) int64 {
+	return quote(list, modality, provider, stat.Attributes, row(modality, provider, stat).Quantities()).BaseCostMicros
 }
 
 // realtimeTurn is one reply as OpenAI Realtime reported it: input by modality with its
@@ -57,7 +57,7 @@ func (s *RoutingSuite) TestARealtimeTurnCostsWhatOpenAIBills() {
 			pricing.OutputAudioTokens:     turn.outputAudio,
 		}
 
-		s.EqualValuesf(turn.billed, charged(list, STS, provider, Stat{Usage: totals, Meters: split}), "%+v", turn)
+		s.EqualValuesf(turn.billed, vendorCost(list, STS, provider, Stat{Usage: totals, Meters: split}), "%+v", turn)
 	}
 }
 
@@ -103,7 +103,7 @@ func (s *RoutingSuite) TestAGeminiLiveTurnCostsWhatGoogleBills() {
 			pricing.OutputAudioTokens: turn.responseAudio,
 		}
 
-		s.EqualValuesf(turn.billed, charged(list, STS, provider, Stat{Usage: totals, Meters: split}), "%+v", turn)
+		s.EqualValuesf(turn.billed, vendorCost(list, STS, provider, Stat{Usage: totals, Meters: split}), "%+v", turn)
 	}
 }
 
@@ -114,7 +114,7 @@ func (s *RoutingSuite) TestAnOpenAICacheWriteCostsWhatOpenAIBills() {
 		Meters: pricing.Quantities{pricing.CacheWriteInputTokens: 2_386},
 	}
 
-	s.EqualValues(6_235, charged(list, LLM, terra, first), "3 fresh, 2,386 written at 1.25 times and 22 generated")
+	s.EqualValues(6_235, vendorCost(list, LLM, terra, first), "3 fresh, 2,386 written at 1.25 times and 22 generated")
 }
 
 func (s *RoutingSuite) TestALongOpenAIPromptIsPricedAtItsTier() {
@@ -125,15 +125,15 @@ func (s *RoutingSuite) TestALongOpenAIPromptIsPricedAtItsTier() {
 	}
 	short := Stat{Usage: Usage{InputTokens: 272_000}}
 
-	s.EqualValues(69_760, charged(list, LLM, luna, long), "twice the input and write rates, 1.5 times the output")
-	s.EqualValues(27_200, charged(list, LLM, luna, short), "272,000 tokens are not over the threshold")
+	s.EqualValues(69_760, vendorCost(list, LLM, luna, long), "twice the input and write rates, 1.5 times the output")
+	s.EqualValues(27_200, vendorCost(list, LLM, luna, short), "272,000 tokens are not over the threshold")
 }
 
 func (s *RoutingSuite) TestTheTierOpenAIServedATurnAtPricesIt() {
 	luna, list := s.builtIn(LLM, "openai/gpt-6-luna")
 	astra, _ := s.builtIn(LLM, "openai/gpt-6-astra")
 	at := func(provider ProviderConfig, tier string) int64 {
-		return charged(list, LLM, provider, Stat{
+		return vendorCost(list, LLM, provider, Stat{
 			Usage:      Usage{InputTokens: 9, OutputTokens: 5},
 			Attributes: map[string]string{"service_tier": tier},
 		})
@@ -156,18 +156,18 @@ func (s *RoutingSuite) TestGPT56SolIsPricedAtItsPromotion() {
 	sol, list := s.builtIn(LLM, "openai/gpt-5.6-sol")
 	plain := Stat{Usage: Usage{InputTokens: 23, OutputTokens: 6}}
 
-	s.EqualValues(212, charged(list, LLM, sol, plain))
+	s.EqualValues(212, vendorCost(list, LLM, sol, plain))
 }
 
 func (s *RoutingSuite) TestGrokAndHaikuLongPromptsArePricedAtTheirTiers() {
 	grok, list := s.builtIn(LLM, "xai/grok-4.7")
 	haiku, _ := s.builtIn(LLM, "anthropic/claude-haiku-5-5")
 
-	s.EqualValues(405_998, charged(list, LLM, grok, Stat{Usage: Usage{InputTokens: 199_999, OutputTokens: 1_000}}))
-	s.EqualValues(812_000, charged(list, LLM, grok, Stat{Usage: Usage{InputTokens: 200_000, OutputTokens: 1_000}}),
+	s.EqualValues(405_998, vendorCost(list, LLM, grok, Stat{Usage: Usage{InputTokens: 199_999, OutputTokens: 1_000}}))
+	s.EqualValues(812_000, vendorCost(list, LLM, grok, Stat{Usage: Usage{InputTokens: 200_000, OutputTokens: 1_000}}),
 		"200,000 tokens and more are billed at twice the rates")
-	s.EqualValues(10_500, charged(list, LLM, haiku, Stat{Usage: Usage{InputTokens: 100_000, OutputTokens: 1_000}}))
-	s.EqualValues(52_501, charged(list, LLM, haiku, Stat{Usage: Usage{InputTokens: 100_001, OutputTokens: 1_000}}),
+	s.EqualValues(10_500, vendorCost(list, LLM, haiku, Stat{Usage: Usage{InputTokens: 100_000, OutputTokens: 1_000}}))
+	s.EqualValues(52_501, vendorCost(list, LLM, haiku, Stat{Usage: Usage{InputTokens: 100_001, OutputTokens: 1_000}}),
 		"over 100,000 tokens is billed at five times the rates")
 }
 
@@ -188,7 +188,7 @@ func (s *RoutingSuite) TestTheDecisionModelsCostWhatOpenRouterCharged() {
 		provider, list := s.builtIn(DecisionModel, "openrouter/"+answer.model)
 		used := Stat{Usage: Usage{InputTokens: answer.inputTokens, OutputTokens: 1}}
 
-		s.InDeltaf(answer.cost, float64(charged(list, DecisionModel, provider, used)), 0.5,
+		s.InDeltaf(answer.cost, float64(vendorCost(list, DecisionModel, provider, used)), 0.5,
 			"%s, which cost %v µ$ at the old rate", answer.model, answer.before)
 	}
 }

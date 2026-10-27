@@ -1,6 +1,6 @@
 {
   "name": "@stream-io/calypso",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "JavaScript client for the Stream acceleration backend: agents that run there, and the conversations they hold.",
   "license": "Apache-2.0",
   "repository": {
@@ -59,7 +59,7 @@
     "types": "node scripts/generate.mjs",
     "test": "tsc -p tsconfig.json && node --test --test-timeout 20000 \"build/tests/*.test.js\"",
     "test:local": "tsc -p tsconfig.json && node --env-file-if-exists=../../.env --test --test-timeout 180000 \"build/tests/live/local.test.js\"",
-    "test:qa": "tsc -p tsconfig.json && node --env-file-if-exists=../../.env --test --test-timeout 180000 \"build/tests/live/staging.test.js\"",
+    "test:qa": "tsc -p tsconfig.json && node --env-file-if-exists=../../.env --test --test-timeout 180000 \"build/tests/live/hosted.test.js\"",
     "test:integration": "tsc -p tsconfig.json && node --env-file-if-exists=../../.env --test --test-timeout 180000 \"build/tests/live/integration.test.js\"",
     "example": "npm run build && tsc -p tsconfig.json && node",
     "prepublishOnly": "rm -rf dist && tsc -p tsconfig.build.json"
@@ -71,7 +71,8 @@
     "openapi-typescript": "^7.13.0",
     "stream-chat": "^9.54.0",
     "typescript": "^5.7.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "@stream-io/video-client": ">=1.0.0",

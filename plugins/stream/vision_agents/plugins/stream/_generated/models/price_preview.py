@@ -25,16 +25,12 @@ class PricePreview:
         confirmation_required (bool): createPriceChange answers 409 confirmation_required without confirm: true.
         effective_at (datetime.datetime): When the change would take effect.
         items (list[PricePreviewItem]):
-        markup_bps_after (int):
-        markup_bps_before (int):
         needs_confirmation (list[PriceItem] | None | Unset): The items that make it so.
     """
 
     confirmation_required: bool
     effective_at: datetime.datetime
     items: list[PricePreviewItem]
-    markup_bps_after: int
-    markup_bps_before: int
     needs_confirmation: list[PriceItem] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -47,10 +43,6 @@ class PricePreview:
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
             items.append(items_item)
-
-        markup_bps_after = self.markup_bps_after
-
-        markup_bps_before = self.markup_bps_before
 
         needs_confirmation: list[dict[str, Any]] | None | Unset
         if isinstance(self.needs_confirmation, Unset):
@@ -73,8 +65,6 @@ class PricePreview:
                 "confirmation_required": confirmation_required,
                 "effective_at": effective_at,
                 "items": items,
-                "markup_bps_after": markup_bps_after,
-                "markup_bps_before": markup_bps_before,
             }
         )
         if needs_confirmation is not UNSET:
@@ -98,10 +88,6 @@ class PricePreview:
             items_item = PricePreviewItem.from_dict(items_item_data)
 
             items.append(items_item)
-
-        markup_bps_after = d.pop("markup_bps_after")
-
-        markup_bps_before = d.pop("markup_bps_before")
 
         def _parse_needs_confirmation(data: object) -> list[PriceItem] | None | Unset:
             if data is None:
@@ -133,8 +119,6 @@ class PricePreview:
             confirmation_required=confirmation_required,
             effective_at=effective_at,
             items=items,
-            markup_bps_after=markup_bps_after,
-            markup_bps_before=markup_bps_before,
             needs_confirmation=needs_confirmation,
         )
 

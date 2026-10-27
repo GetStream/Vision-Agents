@@ -11,7 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.price_tier import PriceTier
-    from ..models.priced_entry_charged_rates import PricedEntryChargedRates
+    from ..models.priced_entry_prices import PricedEntryPrices
     from ..models.priced_entry_rates import PricedEntryRates
 
 
@@ -22,52 +22,52 @@ T = TypeVar("T", bound="PricedEntry")
 class PricedEntry:
     """
     Attributes:
-        markup_bps (int): The markup it is sold at.
-        charged_rates (PricedEntryChargedRates | Unset):
-        charged_tiers (list[PriceTier] | None | Unset):
         free (bool | Unset):
         local (bool | Unset):
-        rates (PricedEntryRates | Unset): The vendor's rates.
+        price_tiers (list[PriceTier] | None | Unset):
+        prices (PricedEntryPrices | Unset): What customers are charged.
+        rates (PricedEntryRates | Unset): The vendor's cost, for reference.
+        sku (str | Unset): The SKU it is priced under.
         tiers (list[PriceTier] | None | Unset):
         version (str | Unset): The change that wrote it. Absent for the change previewed.
     """
 
-    markup_bps: int
-    charged_rates: PricedEntryChargedRates | Unset = UNSET
-    charged_tiers: list[PriceTier] | None | Unset = UNSET
     free: bool | Unset = UNSET
     local: bool | Unset = UNSET
+    price_tiers: list[PriceTier] | None | Unset = UNSET
+    prices: PricedEntryPrices | Unset = UNSET
     rates: PricedEntryRates | Unset = UNSET
+    sku: str | Unset = UNSET
     tiers: list[PriceTier] | None | Unset = UNSET
     version: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        markup_bps = self.markup_bps
-
-        charged_rates: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.charged_rates, Unset):
-            charged_rates = self.charged_rates.to_dict()
-
-        charged_tiers: list[dict[str, Any]] | None | Unset
-        if isinstance(self.charged_tiers, Unset):
-            charged_tiers = UNSET
-        elif isinstance(self.charged_tiers, list):
-            charged_tiers = []
-            for charged_tiers_type_0_item_data in self.charged_tiers:
-                charged_tiers_type_0_item = charged_tiers_type_0_item_data.to_dict()
-                charged_tiers.append(charged_tiers_type_0_item)
-
-        else:
-            charged_tiers = self.charged_tiers
-
         free = self.free
 
         local = self.local
 
+        price_tiers: list[dict[str, Any]] | None | Unset
+        if isinstance(self.price_tiers, Unset):
+            price_tiers = UNSET
+        elif isinstance(self.price_tiers, list):
+            price_tiers = []
+            for price_tiers_type_0_item_data in self.price_tiers:
+                price_tiers_type_0_item = price_tiers_type_0_item_data.to_dict()
+                price_tiers.append(price_tiers_type_0_item)
+
+        else:
+            price_tiers = self.price_tiers
+
+        prices: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.prices, Unset):
+            prices = self.prices.to_dict()
+
         rates: dict[str, Any] | Unset = UNSET
         if not isinstance(self.rates, Unset):
             rates = self.rates.to_dict()
+
+        sku = self.sku
 
         tiers: list[dict[str, Any]] | None | Unset
         if isinstance(self.tiers, Unset):
@@ -85,21 +85,19 @@ class PricedEntry:
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "markup_bps": markup_bps,
-            }
-        )
-        if charged_rates is not UNSET:
-            field_dict["charged_rates"] = charged_rates
-        if charged_tiers is not UNSET:
-            field_dict["charged_tiers"] = charged_tiers
+        field_dict.update({})
         if free is not UNSET:
             field_dict["free"] = free
         if local is not UNSET:
             field_dict["local"] = local
+        if price_tiers is not UNSET:
+            field_dict["price_tiers"] = price_tiers
+        if prices is not UNSET:
+            field_dict["prices"] = prices
         if rates is not UNSET:
             field_dict["rates"] = rates
+        if sku is not UNSET:
+            field_dict["sku"] = sku
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
         if version is not UNSET:
@@ -110,20 +108,15 @@ class PricedEntry:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.price_tier import PriceTier
-        from ..models.priced_entry_charged_rates import PricedEntryChargedRates
+        from ..models.priced_entry_prices import PricedEntryPrices
         from ..models.priced_entry_rates import PricedEntryRates
 
         d = dict(src_dict)
-        markup_bps = d.pop("markup_bps")
+        free = d.pop("free", UNSET)
 
-        _charged_rates = d.pop("charged_rates", UNSET)
-        charged_rates: PricedEntryChargedRates | Unset
-        if isinstance(_charged_rates, Unset):
-            charged_rates = UNSET
-        else:
-            charged_rates = PricedEntryChargedRates.from_dict(_charged_rates)
+        local = d.pop("local", UNSET)
 
-        def _parse_charged_tiers(data: object) -> list[PriceTier] | None | Unset:
+        def _parse_price_tiers(data: object) -> list[PriceTier] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -131,25 +124,28 @@ class PricedEntry:
             try:
                 if not isinstance(data, list):
                     raise TypeError()
-                charged_tiers_type_0 = []
-                _charged_tiers_type_0 = data
-                for charged_tiers_type_0_item_data in _charged_tiers_type_0:
-                    charged_tiers_type_0_item = PriceTier.from_dict(
-                        charged_tiers_type_0_item_data
+                price_tiers_type_0 = []
+                _price_tiers_type_0 = data
+                for price_tiers_type_0_item_data in _price_tiers_type_0:
+                    price_tiers_type_0_item = PriceTier.from_dict(
+                        price_tiers_type_0_item_data
                     )
 
-                    charged_tiers_type_0.append(charged_tiers_type_0_item)
+                    price_tiers_type_0.append(price_tiers_type_0_item)
 
-                return charged_tiers_type_0
+                return price_tiers_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
             return cast(list[PriceTier] | None | Unset, data)
 
-        charged_tiers = _parse_charged_tiers(d.pop("charged_tiers", UNSET))
+        price_tiers = _parse_price_tiers(d.pop("price_tiers", UNSET))
 
-        free = d.pop("free", UNSET)
-
-        local = d.pop("local", UNSET)
+        _prices = d.pop("prices", UNSET)
+        prices: PricedEntryPrices | Unset
+        if isinstance(_prices, Unset):
+            prices = UNSET
+        else:
+            prices = PricedEntryPrices.from_dict(_prices)
 
         _rates = d.pop("rates", UNSET)
         rates: PricedEntryRates | Unset
@@ -157,6 +153,8 @@ class PricedEntry:
             rates = UNSET
         else:
             rates = PricedEntryRates.from_dict(_rates)
+
+        sku = d.pop("sku", UNSET)
 
         def _parse_tiers(data: object) -> list[PriceTier] | None | Unset:
             if data is None:
@@ -183,12 +181,12 @@ class PricedEntry:
         version = d.pop("version", UNSET)
 
         priced_entry = cls(
-            markup_bps=markup_bps,
-            charged_rates=charged_rates,
-            charged_tiers=charged_tiers,
             free=free,
             local=local,
+            price_tiers=price_tiers,
+            prices=prices,
             rates=rates,
+            sku=sku,
             tiers=tiers,
             version=version,
         )

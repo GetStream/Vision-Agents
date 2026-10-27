@@ -27,7 +27,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -672,7 +671,7 @@ func New(options Options) (*Agent, error) {
 	if options.Knowledge != nil && options.KnowledgeNamespace != "" {
 		agent.knowledge = newKnowledgeReader(
 			options.Knowledge.For(owner),
-			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
+			options.KnowledgeNamespace,
 			options.KnowledgeLimit,
 		)
 	}
@@ -857,7 +856,12 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				metadata, _ := json.Marshal(described)
 				parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 			}
-			if _, err := current.Delegate(ctx, visionSkill, text, id, parts, nil); err != nil {
+			// The skill is handed no work without a prompt, and a photo sent alone asks something.
+			prompt := text
+			if strings.TrimSpace(prompt) == "" {
+				prompt = imagesAlone
+			}
+			if _, err := current.Delegate(ctx, visionSkill, prompt, id, parts, nil); err != nil {
 				return "", err
 			}
 			typed()
@@ -872,6 +876,19 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	id := replyPrefix + turnStamp()
 	typed()
 	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", nil, asked, sender, scheduled, "")
+}
+
+// imagesAlone is what the vision skill is asked about images sent with no text.
+const imagesAlone = "The caller sent these images without a message. Describe what they show."
+
+// SeesImages reports whether a turn's images reach something that looks at them: a vision
+// skill, or a conversation model that accepts images. RespondTo refuses a turn with images
+// with ErrCannotSeeImages when neither is there.
+func (a *Agent) SeesImages() bool {
+	a.mu.Lock()
+	current, model := a.harness, a.llm
+	a.mu.Unlock()
+	return current != nil && current.Offers(visionSkill) || model != nil && model.Capabilities().Accepts(llm.ModalityImage)
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change

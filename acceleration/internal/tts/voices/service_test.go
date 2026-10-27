@@ -102,7 +102,7 @@ func (s *ServiceSuite) SetupTest() {
 
 	_, err = s.store.ShardDB().ExecContext(s.ctx, "DELETE FROM requests WHERE customer_id = 'acme'")
 	s.Require().NoError(err)
-	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	s.recorder = routing.NewRecorder(routing.TTS, s.store, nil, list, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(s.recorder.Close)

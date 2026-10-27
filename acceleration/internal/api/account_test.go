@@ -252,7 +252,7 @@ func (s *AccountSuite) TestUsageEventsAreTheAppsOwnAsTheCustomerMaySeeThem() {
 	at := time.Now().UTC().Truncate(time.Second)
 	own := s.spend(1_500_000, func(event *usage.Event) {
 		event.OccurredAt, event.UserID, event.UsageCategories = at, "u1", []string{"support", "team:finance"}
-		event.PriceVersion, event.Tags = "prices-v7", map[string]string{"project": "alpha"}
+		event.PriceVersion, event.Tags, event.SKU = "prices-v7", map[string]string{"project": "alpha"}, "llm-openai-m"
 	})
 	older := s.spend(500_000, func(event *usage.Event) { event.OccurredAt = at.Add(-time.Minute) })
 	theirs := s.spend(2_000_000, func(event *usage.Event) { event.AppID, event.OccurredAt = sibling.ID, at.Add(-time.Second) })
@@ -274,8 +274,10 @@ func (s *AccountSuite) TestUsageEventsAreTheAppsOwnAsTheCustomerMaySeeThem() {
 	s.True(event.OccurredAt.Equal(at))
 	s.Equal(own.Quantities, event.Quantities)
 	s.Equal(map[string]string{"project": "alpha"}, event.Tags)
+	s.Equal("llm-openai-m", event.Sku)
 	s.True(event.Billable)
 	s.Empty(page.Items[1].Team)
+	s.Empty(page.Items[1].Sku)
 	s.Equal([]string{}, page.Items[1].UsageCategories)
 	for _, hidden := range []string{"organization_tier", "base_cost_micros", "price_version", "prices-v7", "source", "router/test/pod"} {
 		s.NotContains(string(payload), hidden)

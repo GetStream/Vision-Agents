@@ -127,6 +127,45 @@ func (s *LinqChannelSuite) TestAnIMessageIsAnsweredInTheSameChatOnTheCustomersLi
 	s.True(sent.authorization == "Bearer "+s.apiKey, "sent with the line's API key")
 }
 
+// AI-2088: an iPhone sends a photo with its caption as [media, text] (staging, 2026-10-27),
+// and revision 1 read only the first part, so the message reached the agent without text and
+// went unanswered. Revision 2 reads every text part, so the caption is answered, in a chat
+// with one person and in a group.
+func (s *LinqChannelSuite) TestAPhotosCaptionIsAnsweredInAChatAndInAGroup() {
+	for i, isGroup := range []bool{false, true} {
+		chat := s.utils.uuid()
+		body := s.chatSays(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{linqPhoto, {"type": "text", "value": "What is in this photo?"}}), isGroup)
+		s.Require().Equal(http.StatusOK, s.deliver(body, time.Now()))
+		channel := s.threadChannel(chat)
+		s.Equal("What is in this photo?", s.written(channel, 1)[0]["text"], "is_group %v", isGroup)
+
+		s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+		sent := s.took(i + 1)[i]
+		s.Equal(chat, sent.chat)
+		s.Equal("Noted.", sent.text)
+	}
+}
+
+// The false positive: a photo without a caption has no text, so it is written as before and
+// reaches no agent (messagehooks addressed).
+func (s *LinqChannelSuite) TestAPhotoWithoutACaptionIsNotAnswered() {
+	chat := s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{linqPhoto}), time.Now()))
+	channel := s.threadChannel(chat)
+	s.Empty(s.written(channel, 1)[0]["text"])
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Never(func() bool { return len(s.linq.sent()) > 0 }, dropped, 20*time.Millisecond)
+}
+
+// linqPhoto is a media part as Linq's events page shows one (events, message.received).
+var linqPhoto = map[string]any{
+	"type": "media", "id": "f13dda7d-ecac-49eb-b3fe-16fe286abf19", "filename": "IMG_7564.jpeg", "mime_type": "image/jpeg",
+	"size_bytes": 245678, "url": "https://cdn.linqapp.com/attachments/a1b2c3d4/IMG_7564.jpeg?signature=synthetic",
+}
+
 // A chat is one thread, so its messages are one thread channel and one episode card, in the
 // omni-channel the contact map gives the sender's number (T41).
 func (s *LinqChannelSuite) TestAChatIsOneThreadChannelAndOneIMessageCardInTheSendersOmniChannel() {
@@ -291,6 +330,11 @@ func (s *LinqChannelSuite) TestAReplyLinqRefusesIsSentByTheNextHandOff() {
 // received is a message.received of the 2026-02-03 version (events) in chat, to line, from
 // sender, with one text part.
 func (s *LinqChannelSuite) received(chat, line, sender, text string) []byte {
+	return s.receivedParts(chat, line, sender, []map[string]any{{"type": "text", "value": text}})
+}
+
+// receivedParts is received with parts as they are.
+func (s *LinqChannelSuite) receivedParts(chat, line, sender string, parts []map[string]any) []byte {
 	raw, err := json.Marshal(map[string]any{
 		"api_version": "v3", "webhook_version": "2026-02-03", "event_type": "message.received",
 		"event_id": s.utils.uuid(), "created_at": time.Now().UTC().Format(time.RFC3339Nano), "partner_id": "synthetic-partner",
@@ -299,7 +343,7 @@ func (s *LinqChannelSuite) received(chat, line, sender, text string) []byte {
 				"owner_handle": map[string]any{"handle": line, "is_me": true, "service": "iMessage", "status": "active"}},
 			"id": s.utils.uuid(), "direction": "inbound",
 			"sender_handle": map[string]any{"handle": sender, "is_me": false, "service": "iMessage", "status": "active"},
-			"parts":         []map[string]any{{"type": "text", "value": text}},
+			"parts":         parts,
 		},
 	})
 	s.Require().NoError(err)

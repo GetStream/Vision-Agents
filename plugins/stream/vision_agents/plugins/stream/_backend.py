@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional, Union
@@ -11,6 +12,8 @@ from ._errors import raise_refusal
 from ._generated import AuthenticatedClient
 
 URL_ENV = "STREAM_ACCELERATION_URL"
+# Holds this client to the hosted router in one region, such as us-east4.
+REGION_ENV = "STREAM_ACCELERATION_REGION"
 CUSTOMER_ENV = "STREAM_ACCELERATION_CUSTOMER_ID"
 API_KEY_ENV = "STREAM_API_KEY"
 API_SECRET_ENV = "STREAM_API_SECRET"
@@ -19,11 +22,36 @@ AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
 CUSTOMER_HEADER = "X-Customer-Id"
 USER_HEADER = "X-Stream-User-Id"
 # Stream's hosted router, which is where a client goes when nothing says otherwise.
-DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com"
+DEFAULT_URL = "https://accelerate-us-east4.gcp.stream-io-api.com"
 
 # How long a token minted here lasts. Short, because it is minted per request and a stolen
 # one should stop working sooner than the credential behind it.
 TOKEN_VALIDITY_SECONDS = 60 * 60
+
+# The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
+# which regions are served is the hosted router's to say, so offering another needs no
+# release of this plugin.
+_REGION = re.compile(r"[a-z]+-[a-z]+[0-9]+")
+_REGION_PREFIX = "https://accelerate-"
+_REGION_SUFFIX = ".gcp.stream-io-api.com"
+
+
+def region_url(name: str) -> str:
+    """The hosted router held to one region.
+
+    Requests to it are served there and nowhere else, even when that region is full or down.
+    """
+    if not _REGION.fullmatch(name):
+        raise ValueError(f"{name!r} is not a region, such as us-east4")
+    return _REGION_PREFIX + name + _REGION_SUFFIX
+
+
+def _hosted(url: str) -> bool:
+    """Whether url is the hosted router in some region, which is always behind the proxy."""
+    if not url.startswith(_REGION_PREFIX) or not url.endswith(_REGION_SUFFIX):
+        return False
+    name = url[len(_REGION_PREFIX) : -len(_REGION_SUFFIX)]
+    return bool(_REGION.fullmatch(name))
 
 
 @dataclass
@@ -36,8 +64,11 @@ class Backend:
     anything acting on one person's behalf.
 
     Attributes:
-        url: The router's base URL. Defaults to ``STREAM_ACCELERATION_URL``, then Stream's
+        url: The router's base URL. Defaults to ``region``, then
+            ``STREAM_ACCELERATION_URL``, then ``STREAM_ACCELERATION_REGION``, then Stream's
             hosted router, so only a self-hosted or local router needs it.
+        region: Holds this client to the hosted router in one region, such as ``us-east4``.
+            It cannot be passed together with a different ``url``.
         customer_id: Who the work is billed to, taken at face value. What a router running
             without keys in front of it reads. Defaults to
             ``STREAM_ACCELERATION_CUSTOMER_ID``.
@@ -70,9 +101,21 @@ class Backend:
     authenticate: Optional[bool] = None
     user: dict[str, object] = field(default_factory=dict)
     acting_for: str = ""
+    region: Optional[str] = None
 
     def __post_init__(self):
-        self.url = (self.url or os.environ.get(URL_ENV) or DEFAULT_URL).rstrip("/")
+        # A URL that is the region's own router is not a contradiction, and has to be let
+        # through: ``dataclasses.replace`` builds a copy from the resolved fields, which hold
+        # both.
+        if self.url and self.region and self.url.rstrip("/") != region_url(self.region):
+            raise ValueError("pass a url or a region, not both")
+        if not self.url and not self.region:
+            self.url = os.environ.get(URL_ENV) or None
+        if not self.url and not self.region:
+            self.region = os.environ.get(REGION_ENV) or None
+        if not self.url and self.region:
+            self.url = region_url(self.region)
+        self.url = (self.url or DEFAULT_URL).rstrip("/")
         self.customer_id = self.customer_id or os.environ.get(CUSTOMER_ENV, "")
         # Naming a customer is choosing how a router with nothing in front of it is reached,
         # and a key that happens to be in the environment does not overrule the choice.
@@ -88,8 +131,8 @@ class Backend:
         if self.api_secret is None:
             self.api_secret = "" if self.token else os.environ.get(API_SECRET_ENV, "")
         if self.authenticate is None:
-            self.authenticate = (
-                _flag(os.environ.get(AUTHENTICATE_ENV)) or self.url == DEFAULT_URL
+            self.authenticate = _flag(os.environ.get(AUTHENTICATE_ENV)) or _hosted(
+                self.url
             )
 
         if self.user and not self.user_id:

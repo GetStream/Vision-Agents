@@ -27,6 +27,9 @@ const settleFor = 3 * time.Second
 
 var errModelDown = errors.New("the model is down")
 
+// overloaded is a failure the provider named as its own and passing.
+var overloaded = &llm.ProviderFailure{Err: errModelDown, Code: "overloaded", Transient: true}
+
 // stubLLM answers whatever it is asked with whatever the test has queued, and only when
 // the test says so, which is what lets a task be caught mid-flight.
 type stubLLM struct {
@@ -41,8 +44,12 @@ type stubLLM struct {
 	// calls are tool calls to ask for, one queue entry per request, which is what lets a
 	// test answer with a tool once and with words the next time it is asked.
 	calls [][]llm.ToolCall
-	// failing makes every request report a provider failure before it settles.
-	failing bool
+	// failing makes every request report a provider failure before it settles, and
+	// failures makes only that many of the next requests do so.
+	failing  bool
+	failures int
+	// failure is what a failing request reports, errModelDown when unset.
+	failure error
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can Cancel while Create has not come back.
 	holdCreate <-chan struct{}
@@ -92,7 +99,11 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if !queued && s.automatic != "" {
 		answer, queued = s.automatic, true
 	}
-	failing := s.failing
+	failing := s.failing || s.failures > 0
+	if s.failures > 0 {
+		s.failures--
+	}
+	failure := cmp.Or(s.failure, errModelDown)
 	var calls []llm.ToolCall
 	if len(s.calls) > 0 {
 		calls, s.calls = s.calls[0], s.calls[1:]
@@ -101,7 +112,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 
 	switch {
 	case failing:
-		script.Fail(errModelDown, "stream")
+		script.Fail(failure, "stream")
 	case len(calls) > 0:
 		script.OutputText(answer)
 		script.ToolCalls(calls...)
@@ -1491,8 +1502,8 @@ func (s *HarnessSuite) TestASkillTheModelInventedIsIgnored() {
 }
 
 func (s *HarnessSuite) TestAMistakeRepeatedInTheFollowUpDoesNotEarnAnother() {
-	// Voicebench: Gemma answered each correction with the same skill tag, and every answer
-	// earned another turn, so the agent talked to itself for two minutes to a silent caller.
+	// A model can answer each correction with the same skill tag. If every answer earned
+	// another turn, the agent would talk to itself for as long as the caller stayed silent.
 	s.build(true)
 	s.respond("turn-1", "hello")
 	s.reply("turn-1", `One moment. <ask skill="teleport">do the thing</ask>`)
@@ -1638,6 +1649,7 @@ func (s *HarnessSuite) TestWorkThatFailsStillTellsTheCallerSomething() {
 	// an option.
 	s.build(true)
 	s.slow.failing = true
+	s.slow.failure = overloaded
 	s.respond("turn-1", "what is 15% of 84.20")
 
 	s.reply("turn-1", `Let me check. <ask skill="think">15% of 84.20</ask>`)
@@ -1646,9 +1658,59 @@ func (s *HarnessSuite) TestWorkThatFailsStillTellsTheCallerSomething() {
 	s.Equal(Failed, settled.State)
 	s.ErrorIs(settled.Err, errModelDown)
 	s.True(settled.Actionable())
+	s.Len(s.slow.requests(), 2, "asked once more after the first failure, and no more")
 
 	s.respond("turn-2", "")
 	s.Contains(s.fast.requests()[1].Instructions, "think you asked for failed")
+}
+
+func (s *HarnessSuite) TestWorkWhoseProviderFailsMidAnswerIsAskedAgain() {
+	// An overloaded provider ending the stream is a failed attempt, not failed work: the
+	// caller hears only the settled answer, so asking again costs them nothing they heard.
+	s.build(true)
+	s.slow.failures = 1
+	s.slow.failure = overloaded
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+
+	s.reply("turn-1", `Let me check. <ask skill="think">15% of 84.20</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Done, settled.State)
+	s.Equal("It is 12.63.", settled.Text)
+	s.Require().Len(s.slow.requests(), 2)
+	s.Equal(s.slow.requests()[0].Input, s.slow.requests()[1].Input, "the same question is put again")
+}
+
+func (s *HarnessSuite) TestWorkWhoseRequestTheProviderRefusesIsNotAskedAgain() {
+	// A refusal of the request itself, its credentials, credit or content, would only be
+	// refused again, and each attempt is paid for.
+	s.build(true)
+	s.slow.failures = 1
+	s.slow.failure = &llm.ProviderFailure{Err: errors.New("the request was refused"), Code: "invalid_request"}
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+
+	s.reply("turn-1", `Let me check. <ask skill="think">15% of 84.20</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Failed, settled.State)
+	s.ErrorContains(settled.Err, "the request was refused")
+	s.Len(s.slow.requests(), 1)
+}
+
+func (s *HarnessSuite) TestWorkThatFailsForAReasonNothingNamesIsNotAskedAgain() {
+	s.build(true)
+	s.slow.failures = 1
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+
+	s.reply("turn-1", `Let me check. <ask skill="think">15% of 84.20</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Failed, settled.State)
+	s.ErrorIs(settled.Err, errModelDown)
+	s.Len(s.slow.requests(), 1)
 }
 
 func (s *HarnessSuite) TestWorkThatComesBackEmptyIsReportedAsFailed() {

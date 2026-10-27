@@ -9,6 +9,7 @@ from .remote import (
     RemotePipelineError,
 )
 from .function_registry import FunctionRegistry, ToolPolicy, function_registry
+from .tool_arguments import ToolArgumentsError
 from .tool_call import (
     CallNotHeld,
     ToolCall,
@@ -36,6 +37,7 @@ __all__ = [
     "RemotePipelineError",
     "FunctionRegistry",
     "ToolPolicy",
+    "ToolArgumentsError",
     "function_registry",
     "CallNotHeld",
     "ToolCall",

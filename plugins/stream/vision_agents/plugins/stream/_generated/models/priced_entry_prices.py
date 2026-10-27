@@ -11,12 +11,12 @@ if TYPE_CHECKING:
     from ..models.price_rate import PriceRate
 
 
-T = TypeVar("T", bound="UpcomingPriceEntryChargedRates")
+T = TypeVar("T", bound="PricedEntryPrices")
 
 
 @_attrs_define
-class UpcomingPriceEntryChargedRates:
-    """What customers are charged: each rate with the markup added, to 12 significant digits."""
+class PricedEntryPrices:
+    """What customers are charged."""
 
     additional_properties: dict[str, PriceRate] = _attrs_field(init=False, factory=dict)
 
@@ -33,7 +33,7 @@ class UpcomingPriceEntryChargedRates:
         from ..models.price_rate import PriceRate
 
         d = dict(src_dict)
-        upcoming_price_entry_charged_rates = cls()
+        priced_entry_prices = cls()
 
         additional_properties = {}
         for prop_name, prop_dict in d.items():
@@ -41,8 +41,8 @@ class UpcomingPriceEntryChargedRates:
 
             additional_properties[prop_name] = additional_property
 
-        upcoming_price_entry_charged_rates.additional_properties = additional_properties
-        return upcoming_price_entry_charged_rates
+        priced_entry_prices.additional_properties = additional_properties
+        return priced_entry_prices
 
     @property
     def additional_keys(self) -> list[str]:

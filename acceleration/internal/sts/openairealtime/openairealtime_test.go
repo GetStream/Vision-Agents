@@ -490,6 +490,25 @@ func (s *RealtimeSuite) TestOpenAIsTranscriptionReportsWhatItCost() {
 	}}, reported)
 }
 
+// TestATranscriptComesAfterItsBill: a session can be closed the moment its transcript is
+// passed on, and closing drops every later event, so the usage must already be out.
+func (s *RealtimeSuite) TestATranscriptComesAfterItsBill() {
+	provider := s.newProvider(OpenAI)
+
+	provider.handleMessage(transcribed("item_1"))
+
+	var order []string
+	for _, event := range s.drain(provider) {
+		switch event.(type) {
+		case sts.TranscriptionUsage:
+			order = append(order, "usage")
+		case sts.InputTranscript:
+			order = append(order, "transcript")
+		}
+	}
+	s.Equal([]string{"usage", "transcript"}, order)
+}
+
 func (s *RealtimeSuite) TestATranscriberBilledByTheSecondReportsTheSecondsItHeard() {
 	provider, err := New(Options{Vendor: OpenAI, APIKey: "test-key", InputTranscript: true, TranscriptionModel: "whisper-1",
 		Logger: slog.New(slog.DiscardHandler)})

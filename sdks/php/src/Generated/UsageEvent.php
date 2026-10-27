@@ -54,6 +54,8 @@ final readonly class UsageEvent
         public ?string $purpose = null,
         // The session the work was done in.
         public ?string $sessionId = null,
+        // The SKU of the item the work was priced as, as getPrices lists it: the same across its price changes. Absen...
+        public ?string $sku = null,
         // The cost labels the request carried.
         /** @var array<string, string>|null */
         public ?array $tags = null,
@@ -88,6 +90,7 @@ final readonly class UsageEvent
             provider: array_key_exists('provider', $data) && $data['provider'] !== null ? Json::string($data, 'provider') : null,
             purpose: array_key_exists('purpose', $data) && $data['purpose'] !== null ? Json::string($data, 'purpose') : null,
             sessionId: array_key_exists('session_id', $data) && $data['session_id'] !== null ? Json::string($data, 'session_id') : null,
+            sku: array_key_exists('sku', $data) && $data['sku'] !== null ? Json::string($data, 'sku') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
             team: array_key_exists('team', $data) && $data['team'] !== null ? Json::string($data, 'team') : null,
             userId: array_key_exists('user_id', $data) && $data['user_id'] !== null ? Json::string($data, 'user_id') : null,
@@ -135,6 +138,9 @@ final readonly class UsageEvent
         }
         if ($this->sessionId !== null) {
             $out['session_id'] = $this->sessionId;
+        }
+        if ($this->sku !== null) {
+            $out['sku'] = $this->sku;
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;

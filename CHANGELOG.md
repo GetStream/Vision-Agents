@@ -6,6 +6,26 @@
 
 `examples/voice_agents/flutter_assistant` is the Flutter half of swift_assistant: Juno, talked to from a Flutter app on iOS and Android with swift_assistant's agent, `configure` and backend, on the Dart SDK and Stream's Flutter AI components (`stream_chat_flutter_ai`). Its conversations are the router's, in a drawer that lists, searches, opens and deletes them, and a new one has no session until it is first written to. The chat is `AIConversationView`, with the reply's reasoning and steps, copy and rating under it, photos from the composer, Think harder, and the composer floating over the conversation. The phone answers `get_local_context`, `get_location`, `list_events`, `add_reminder` (Reminders on iOS, a calendar event with an alert on Android) and `send_email`, asking for each permission the first time a tool needs it. Voice mode starts voice on the open conversation, with Stream's voice glow, paced captions, the approval card over the call and a camera preview, and says which part of the agent failed, as the Android app does. Connector sign-in, the camera seen by the agent, sharing a reply and an install id wait on the Dart SDK and the Flutter AI components.
 
+### A photo in a thread channel reaches the agent
+
+A message in a `thread-` channel with an image attachment (`type: image`, `image_url` or `asset_url`), with or without text, is answered, and the agent sees the photo; an agent with no vision skill and a model that takes text alone says it cannot see it rather than staying silent (AI-2093).
+
+### A Node.js tool's parameters can be a Zod schema
+
+`parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.
+
+### Go holds a tool's arguments to its JSON Schema
+
+Every call's arguments are checked against the schema the model was told before the function runs, and arguments that do not fit fail the call with each one and why, such as `/seats: maximum: got 12, want 9`. Struct tags describe more than `schema`: `enum`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`, `minItems`, `maxItems`, `pattern`, `format`, `default` and `example`, and an invopop-style `jsonschema:"..."` tag. `tools.RegisterSchema` takes the schema as a `map[string]any`, raw JSON or another library's schema type, and the new `tools.RegisterWithSchema` takes one the same way and decodes the arguments into a struct.
+
+### Python describes a tool's arguments with Pydantic
+
+A function registered with `register_function` is described to the model by Pydantic from its signature: a parameter can be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit. A function that takes one Pydantic model is given the model's fields as its arguments, and is handed the parsed model. Each call's arguments are checked and converted before the function runs; arguments that do not fit raise `ToolArgumentsError`, a `TypeError`, naming each one and why, which the model is told. `parameters_schema=` is unchanged. `pydantic>=2.7` is now a dependency.
+
+### Sandbox code reads Linear
+
+A `linear_app` binding with `sandbox: true` lets code in the session's sandbox call Linear's GraphQL API (`https://api.linear.app/graphql`) and file storage (`https://uploads.linear.app`) with `Authorization: Bearer $LINEAR_ACCESS_TOKEN`. The sandbox holds a placeholder, never the token. Behind the egress proxy, a POST to `/graphql` passes only when every operation is a query; a mutation gets 403, so code writes through the connector's tools. A `linear_app` connection made at revision 1 gives the sandbox nothing until it connects again. A `linear` (DCR) connection gets no sandbox access: Linear's API refuses its token (AI-2082).
+
 ### A 1:1 iMessage chat can schedule reminders
 
 An agent answering a Linq (iMessage) chat is now offered the scheduling tools when the chat is 1:1: the latest message says `data.chat.is_group` `false`. The task belongs to the person who wrote, and comes back into the chat, `delivered_to` `imessage`. A group chat, a chat whose message does not say, and a chat linked before this release get no tools; a chat that becomes a group loses them, and its tasks fail `thread_gone`. Migration `20261116100000_channel_thread_people` adds the table `channel_thread_people` (AI-1867).
@@ -37,6 +57,15 @@ new conversation's session names `io.getstream.visionagents.androidassistant:/co
 `return_url`, and the app opens a connector's sign-in in an Auth Tab, though Stream's Android AI
 components have no sign-in card to start one from yet. CI builds it beside the Kotlin SDK.
 
+### Kotlin apps manage the user's scheduled tasks
+
+`agents.scheduledTasks` in the Kotlin SDK lists, reads, changes, pauses, resumes and deletes the
+tasks agents hold for the user `setUser` named, and reads their runs, as Swift's does: `list`
+(filtered by `ScheduledTaskQuery`'s `state`, `configId` and `sessionId`, paged by cursor), `get`,
+`update` (title, schedule, `next` to snooze or skip one occurrence, `deliverTo` and
+`quietHours`), `pause`, `resume`, `delete` and `runs`. A schedule's `in` is spelled `after`,
+`in` being a Kotlin keyword. Making a task and running one by hand stay server-side only.
+
 ### Kotlin sessions name where a sign-in goes back to
 
 `SessionOptions.returnUrl` in the Kotlin SDK is sent as the session's `return_url`, as Swift's
@@ -50,6 +79,19 @@ not connect.
 ### The Swift SDK catches up with the other client SDKs
 
 `SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.
+
+### Kotlin sessions remember the user and name their timezone, lists filter by date and label, and say can interrupt
+
+`SessionOptions.memory` in the Kotlin SDK (a `SessionOptions.Memory` of `filter` and `appId`)
+sends `memory` with `user_id` set to the user `setUser` named, as Swift's `memory` does, so a
+phone's session recalls what the agent learned about them and keeps what it learns; an
+incognito session still remembers nothing. `SessionQuery` takes `createdSince` and
+`createdBefore` (`kotlin.time.Instant`, sent as `filter.created_at` `$gte` and `$lt`),
+`custom` (sent as `filter.custom`, every pair held) and `sort` (`SessionQuery.Sort.UpdatedAt`
+or `Relevance`, sent as `sort: [{"field": ...}]`). `AgentSession.say(text, interrupt = true)`
+sends `interrupt` and then `say`, so the reply in flight stops before the words are spoken. `SessionOptions.timezone`
+(an IANA zone, such as `TimeZone.getDefault().id`) is sent as `timezone`, so the agent reads dates
+in the user's zone and remembers it for the scheduled tasks that follow.
 
 ### A tool on a speech-to-speech conversation can say how it is going
 
@@ -81,9 +123,21 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### An iMessage photo's caption is answered
+
+A Linq message's text is now every text part joined by a newline, not only the first part: a caption an iPhone sends after a photo got no reply before. A connection takes `linq` revision 2 at its next write. A channel manifest reads text in pieces with `messages.text_parts` (AI-2092).
+
+### OpenAI Realtime bills a caller turn's transcription when the session closes right after it
+
+A session closed as soon as the caller's transcript arrived could lose the row for that transcription: the transcript was passed on before its usage, and closing the session dropped the usage. The usage now goes first, so a transcript that was passed on always has its row (AI-2062).
+
 ### A photo is still seen after the model calls a tool
 
 A question asked with photos was answered as though none came when the model called a tool before answering, such as loading the `vision` skill: the photos went only with the turn's first model call. They now go with every reply of that turn, the replies to its tool results included, on the person's message, and the next turn drops them.
+
+### A knowledge document no longer grows thousands of times when it is cut into passages
+
+Only the first 128 bytes of a heading, cut between characters, are now repeated at the top of each later passage of its section and in each passage's `source`; the first passage keeps the heading as written. A `chunk_size` under 500 on `POST /v1/agents/knowledge` is raised to 500, and so is the URL crawler's and `cmd/knowledge`'s. Before, a long heading over one-character paragraphs with `chunk_size` 1 turned 1 MiB into about 1 GB of passages, and an 8 MiB request could run a router out of memory (AI-1988).
 
 ### The agent tells people apart in a group text chat
 
@@ -167,9 +221,27 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### The SDKs go to production in us-east4 by default
+
+Every SDK's default router is `https://accelerate-us-east4.gcp.stream-io-api.com` in place of `https://accelerate.gcp.stream-io-api.com`, which GetStream/chat#19561 removes along with `accelerate-prod.gcp.stream-io-api.com`: production is only `accelerate-<region>`, and staging moves to `https://accelerate-staging.gcp.stream-io-api.com`. `STREAM_ACCELERATION_URL` names any router, and the new `STREAM_ACCELERATION_REGION` (or the `region` option, `Region` in Go and .NET) another production region by name: `europe-west4` is `https://accelerate-europe-west4.gcp.stream-io-api.com`. Every `accelerate-<region>` host authenticates through the proxy without being asked. A URL, passed in or in `STREAM_ACCELERATION_URL`, wins over a region in the environment; a URL and a region both passed in are refused, as is a name that is not shaped like a region. The Kotlin, Swift and Dart SDKs default to us-east4 too, and build another region's URL with `Backend.regionUrl` (`Backend.regionURL` in Swift). Which regions are served is the load balancer's to say, so another needs no SDK release.
+
+Staging is reached with `STREAM_ACCELERATION_URL=https://accelerate-staging.gcp.stream-io-api.com` and, in every server SDK but Go, `STREAM_ACCELERATION_AUTHENTICATE=1`. `perfbench` drops its `staging` target and defaults to `benchmark`, `stt_realtime_example`'s `-staging` is `-hosted` (the SDK's default router), and the JS `staging.test.ts` is `hosted.test.ts`, reading `QA_ACCELERATION_URL` and `QA_DOCS_SEARCH_URL` and skipping without the first. `DEVELOPMENT.md` lists the variables for local, staging and production.
+
+### Go and Python refuse tool arguments that do not fit the schema
+
+A call whose arguments break the tool's schema, such as a missing required field, a value outside its bounds or one not in its `enum`, now fails without running the function, where it used to run with what was sent. Python converts the arguments it accepts to the annotated types, so a function annotated `int` is handed an `int` when the model sent `"2"`.
+
 ### The helpers that read and set a tool's call are named after the tool call context
 
 Python's `current_call()` is `get_tool_call_context()` and `calling(...)` is `using_tool_call_context(...)`. Go's `tools.CallFrom(ctx)` is `tools.ToolCallContextFrom(ctx)` and `tools.WithCall` is `tools.WithToolCallContext`. Rust's `Tools::register_call` is `Tools::register_with_tool_call_context` and `Tools::call_as` is `Tools::call_with_tool_call_context`. The JS, .NET, PHP and Ruby SDKs hand the call to the function as an argument, so nothing they export changes.
+
+### Every price is stored, under a SKU, and no markup is added
+
+Each entry of the router's price list now stores what its item is charged, `prices` and `price_tiers` (the shape of `rates` and `tiers`, at the same thresholds), and a quote charges that alone: `rates` and `tiers` stay the vendor's cost, kept for reference, and `base_cost_micros` is still the work at them. No markup is stored or added when a row is priced. An entry written without a price, which only happens when a router's first load seeds an empty list from its price files and when a release adds an item the database has never priced, is priced at its rates times `pricing.PriceFactorBps` (12000, so 1.2), each rate kept to 12 significant digits; an amount a vendor quotes outright, such as a number's monthly rental, is charged at that amount times the same factor. Every item (modality, provider, model and `when`) has a SKU, kept across its price changes, made from its name for a new item (`llm-openai-gpt-5-6-luna`, numbered `-2` past one another item has had), and recorded on every row it prices (`requests.sku`) and usage event (`sku`, shown on `UsageEvent` and the usage service's customer usage). A change may give a new item an existing SKU, as a renamed model keeps the old name's, only when that SKU's item is withdrawn by the same change or no longer in force.
+
+Migration `20261118120000_price_entry_prices` adds `price_entries.sku`, `prices` and `price_tiers` and `requests.sku`, stores every existing entry's price as what it was charged (its rates times its own markup, else the list's in force when it is or was) and gives every item its SKU; the immutability trigger covers the new columns. The usage service's migration `00005_usage_event_sku` adds `usage_events.sku`. `markup_bps` on `price_changes` and `price_entries` is read by nothing and left `NULL` on new rows, and goes in a later release. A router built before this one cannot write a price change against the new schema, and its reads of the list fail until it is replaced, while it keeps pricing with the list it last read.
+
+In the management API, `PriceEntry` and `UpcomingPriceEntry` gain `sku`, `prices` and `price_tiers` and lose `markup_bps`, `charged_markup_bps`, `charged_rates` and `charged_tiers`; `PriceChangeEntry` gains `sku`, `prices` and `price_tiers` and loses `markup_bps`; `PriceList`, `PriceChange` and `PriceChangeInput` lose `markup_bps`; `PriceEntryInput` gains `sku`, `prices` and `price_tiers` and loses `markup_bps`; `PricedEntry` gains `sku`, `prices` and `price_tiers` and loses `markup_bps`, `charged_rates` and `charged_tiers`; `PricePreviewItem` replaces `rate_factors` and `markup_factor` with `price_factors`; `PricePreview` loses `markup_bps_before` and `markup_bps_after`. A change's entry that is neither free nor withdrawn needs `rates` and `prices` with the same meters (else 400 `price_meters_mismatch`) and a price tier for each tier (else 400 `price_tiers_mismatch`); a SKU another item has in force is 400 `sku_in_use`, and another SKU for an item in force 400 `sku_changed`. `confirmation_required` is worked out on prices. `getPrices` gains each item's `sku`; its `rates` and `tiers` are the price, as before. A price file may set `prices`, `price_tiers` and `sku` on an entry; its top-level `markup_bps` is ignored with a warning (AI-2083).
 
 ### The call a tool function is handed is named toolCallContext
 

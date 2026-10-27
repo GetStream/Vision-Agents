@@ -65,7 +65,7 @@ func (s *MeteredSuite) SetupSuite() {
 	s.Require().NoError(opened.Migrate(s.ctx))
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
-	s.prices, err = pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	s.prices, err = pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 }
 
@@ -94,7 +94,7 @@ func (s *MeteredSuite) fixture() (*Knowledge, *turbopuffertest.Server) {
 func (s *MeteredSuite) TestEachKnowledgeCallWritesOneRowOfWhatItWasBilled() {
 	base, _ := s.fixture()
 	owned := base.For(s.owner)
-	namespace := knowledge.Scoped(s.owner.CustomerID, "docs")
+	namespace := "docs"
 
 	s.Require().NoError(owned.Upsert(s.ctx, namespace, []knowledge.Document{
 		{ID: "pricing.md#0", Text: "A call costs a penny.", Source: "pricing.md"},
@@ -142,13 +142,12 @@ func (s *MeteredSuite) TestEachKnowledgeCallWritesOneRowOfWhatItWasBilled() {
 func (s *MeteredSuite) TestALookupOnALargeNamespaceSellsAtTheMinimumAndKeepsWhatItCost() {
 	base, server := s.fixture()
 	owned := base.For(s.owner)
-	namespace := knowledge.Scoped(s.owner.CustomerID, "docs")
-	s.Require().NoError(owned.Upsert(s.ctx, namespace, []knowledge.Document{
+	s.Require().NoError(owned.Upsert(s.ctx, "docs", []knowledge.Document{
 		{ID: "pricing.md#0", Text: "A call costs a penny.", Source: "pricing.md"},
 	}))
-	server.Holds(namespace, 10_000_000_000)
+	server.Holds(knowledge.Scoped(s.owner.CustomerID, "docs"), 10_000_000_000)
 
-	_, err := owned.Search(s.ctx, knowledge.Query{Namespace: namespace, Text: "penny"})
+	_, err := owned.Search(s.ctx, knowledge.Query{Namespace: "docs", Text: "penny"})
 	s.Require().NoError(err)
 
 	rows := s.rows()
@@ -159,6 +158,36 @@ func (s *MeteredSuite) TestALookupOnALargeNamespaceSellsAtTheMinimumAndKeepsWhat
 	s.EqualValues(1, lookup.CostMicros, "priced per lookup, at turbopuffer's minimum, until a large-namespace rate exists")
 	s.Equal("10.002", lookup.Attributes[routing.AttributeProviderCostMicros],
 		"10 GB queried at $1 a PB, and 43 bytes returned: what shows a namespace costing more than it pays")
+}
+
+func (s *MeteredSuite) TestTwoCustomersNamingTheSameBaseReadOnlyTheirOwn() {
+	base, _ := s.fixture()
+	other := routing.Owner{CustomerID: uuid.NewString()}
+	s.Require().NoError(base.For(s.owner).Upsert(s.ctx, "docs", []knowledge.Document{
+		{ID: "pricing.md#0", Text: "A call costs a penny.", Source: "pricing.md"},
+	}))
+	s.Require().NoError(base.For(other).Upsert(s.ctx, "docs", []knowledge.Document{
+		{ID: "pricing.md#0", Text: "A call costs a pound.", Source: "pricing.md"},
+	}))
+
+	found, err := base.For(s.owner).Search(s.ctx, knowledge.Query{Namespace: "docs", Text: "penny pound"})
+	s.Require().NoError(err)
+	s.Require().Len(found, 1)
+	s.Equal("A call costs a penny.", found[0].Text)
+	fetched, err := base.For(other).Fetch(s.ctx, "docs", []string{"pricing.md#0"})
+	s.Require().NoError(err)
+	s.Require().Len(fetched, 1)
+	s.Equal("A call costs a pound.", fetched[0].Text)
+}
+
+func (s *MeteredSuite) TestAnEmptyNamespaceIsRefused() {
+	base, _ := s.fixture()
+
+	err := base.For(s.owner).Upsert(s.ctx, "", []knowledge.Document{
+		{ID: "pricing.md#0", Text: "A call costs a penny.", Source: "pricing.md"},
+	})
+
+	s.Require().Error(err)
 }
 
 func (s *MeteredSuite) TestAFailedLookupIsRecordedAndNotBilled() {
@@ -210,14 +239,13 @@ func (s *MeteredSuite) TestAnEmptyKnowledgeBaseWritesNoStorageRow() {
 
 func (s *MeteredSuite) TestAWriteThatFailsPartwayBillsTheRequestsThatSucceeded() {
 	base, server := s.fixture()
-	namespace := knowledge.Scoped(s.owner.CustomerID, "docs")
 	passages := make([]knowledge.Document, knowledge.WriteBatch+1)
 	for i := range passages {
 		passages[i] = knowledge.Document{ID: fmt.Sprintf("handbook.md#%d", i), Text: "A passage.", Source: "handbook.md"}
 	}
 	server.RefuseWritesAfter(1)
 
-	err := base.For(s.owner).Upsert(s.ctx, namespace, passages)
+	err := base.For(s.owner).Upsert(s.ctx, "docs", passages)
 
 	s.Require().Error(err, "the caller hears the write failed")
 	rows := s.rows()
@@ -286,7 +314,8 @@ func (s *MeteredSuite) TestEachMemoryCallIsARowOfItsRequests() {
 }
 
 // TestEveryKnowledgeCallIsRecorded makes each call against turbopuffer itself, in a scratch
-// namespace emptied after. Its name has no customer in it, so no storage run bills it.
+// namespace emptied after. Its customer is a random id no deployment knows, so no storage
+// run bills it.
 func (s *MeteredSuite) TestEveryKnowledgeCallIsRecorded() {
 	if os.Getenv("TURBOPUFFER_API_KEY") == "" {
 		s.T().Skip("TURBOPUFFER_API_KEY not set")

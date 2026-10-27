@@ -41,6 +41,7 @@ class TTS(tts.TTS):
         config_id: str = "",
         options: Optional[dict[str, Any]] = None,
         backend: Optional[Backend] = None,
+        region: Optional[str] = None,
     ):
         """Route speech to `target`.
 
@@ -53,6 +54,8 @@ class TTS(tts.TTS):
             language: A language hint, which narrows the candidates.
             tags: Cost labels carried onto every request.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+            region: The hosted router in one region, such as `us-east4`, instead of
+                a URL. Defaults to `STREAM_ACCELERATION_REGION`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
             config_id: A stored router config to take the options from, by name or by id.
@@ -68,7 +71,9 @@ class TTS(tts.TTS):
         self.tags = tags or {}
         self.config_id = config_id
         self.options = options or {}
-        self.backend = backend or Backend(url=url, customer_id=customer_id)
+        self.backend = backend or Backend(
+            url=url, customer_id=customer_id, region=region
+        )
 
         self._socket: Optional[Socket] = None
         self._reader: Optional[asyncio.Task] = None
