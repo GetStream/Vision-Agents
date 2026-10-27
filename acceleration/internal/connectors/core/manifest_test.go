@@ -201,6 +201,7 @@ var readsAsConnectionIgnores = map[string]bool{
 	"Revision": true, "BrokenRevisions": true, "Sensitive": true,
 	"Category": true, "Description": true, "Setup": true,
 	"SourceRule.Outbound": true, "SourceRule.ReadOnlyTools": true,
+	"SandboxRule.Reads": true,
 }
 
 // filled is a non-zero value of t, every field of a struct set.
@@ -266,6 +267,16 @@ func (s *ManifestSuite) TestEveryFieldCountsForAConnectionUnlessItIsNamedAsIgnor
 			reflect.ValueOf(&m.Sources[0]).Elem().Field(i).Set(filled(f.Type))
 		})
 	}
+	sb := reflect.TypeFor[SandboxRule]()
+	for i := range sb.NumField() {
+		f := sb.Field(i)
+		name := "SandboxRule." + f.Name
+		seen[name] = true
+		base, changed := Manifest{Sandbox: &SandboxRule{}}, Manifest{Sandbox: &SandboxRule{}}
+		reflect.ValueOf(changed.Sandbox).Elem().Field(i).Set(filled(f.Type))
+		s.Equal(readsAsConnectionIgnores[name], base.ReadsAsConnection(changed), name)
+		s.Equal(readsAsConnectionIgnores[name], changed.ReadsAsConnection(base), name)
+	}
 	for name := range readsAsConnectionIgnores {
 		s.True(seen[name], "%s is named as ignored but is no field", name)
 	}
@@ -280,6 +291,11 @@ func (s *ManifestSuite) TestReadsAsConnectionLeavesBothManifestsAsTheyWere() {
 
 	s.Equal(s.pinned(), pinned)
 	s.Equal([]string{"list_tables"}, later.Sources[0].ReadOnlyTools)
+
+	reads := []SandboxRead{{Host: "api.example.com", Method: "POST", Path: "/search"}}
+	sandboxed := Manifest{Sandbox: &SandboxRule{Env: "EXAMPLE_TOKEN", Hosts: []string{"api.example.com"}, Reads: reads}}
+	s.True(sandboxed.ReadsAsConnection(Manifest{Sandbox: &SandboxRule{Env: "EXAMPLE_TOKEN", Hosts: []string{"api.example.com"}}}))
+	s.Equal(reads, sandboxed.Sandbox.Reads)
 }
 
 // A manifest that says neither marshals as it did before the fields existed, so the seeder
@@ -1114,6 +1130,60 @@ func (s *ManifestSuite) TestASandboxHostIsALowercaseHostNameOrAWildcardDomain() 
 
 		s.NoError(err, host)
 	}
+}
+
+// A read names a host of the block, a method in upper case as a client sends it (RFC 9110
+// section 9.1), and a path.Match pattern from the path's leading slash. A GraphQL read takes a
+// POST and leaves its method out, so a router that predates it matches it to no request.
+func (s *ManifestSuite) TestASandboxReadIsAMethodToAPathOfOneOfItsHosts() {
+	block := "sandbox:\n  env: EXAMPLE_TOKEN\n  hosts: [api.example.com, \"*.example.org\"]\n  reads:\n"
+	parsed, err := ParseManifest(minimal(block + "    - {host: api.example.com, method: POST, path: /*/*/git-upload-pack}\n" +
+		"    - {host: \"*.example.org\", method: QUERY, path: /search}\n" +
+		"    - {host: api.example.com, path: /graphql, graphql: true}\n"))
+	s.Require().NoError(err)
+	s.Equal([]SandboxRead{{Host: "api.example.com", Method: "POST", Path: "/*/*/git-upload-pack"},
+		{Host: "*.example.org", Method: "QUERY", Path: "/search"},
+		{Host: "api.example.com", Path: "/graphql", GraphQL: true}}, parsed.Sandbox.Reads)
+
+	for read, field := range map[string]string{
+		"{host: other.example.com, method: POST, path: /x}":                    "sandbox.reads[0].host:",
+		"{host: example.org, method: POST, path: /x}":                          "sandbox.reads[0].host:",
+		"{host: \"\", method: POST, path: /x}":                                 "sandbox.reads[0].host:",
+		"{method: POST, path: /x}":                                             "sandbox.reads[0].host:",
+		"{host: api.example.com, method: post, path: /x}":                      "sandbox.reads[0].method:",
+		"{host: api.example.com, method: \"PO ST\", path: /x}":                 "sandbox.reads[0].method:",
+		"{host: api.example.com, method: \"\", path: /x}":                      "sandbox.reads[0].method:",
+		"{host: api.example.com, path: /x}":                                    "sandbox.reads[0].method:",
+		"{host: api.example.com, method: POST, path: x/y}":                     "sandbox.reads[0].path:",
+		"{host: api.example.com, method: POST, path: \"\"}":                    "sandbox.reads[0].path:",
+		"{host: api.example.com, method: POST, path: \"/[\"}":                  "sandbox.reads[0].path:",
+		"{host: api.example.com, method: POST}":                                "sandbox.reads[0].path:",
+		"{host: api.example.com, method: POST, path: /graphql, graphql: true}": "sandbox.reads[0].method:",
+		"{host: api.example.com, method: GET, path: /graphql, graphql: true}":  "sandbox.reads[0].method:",
+		"{host: api.example.com, path: /graphql, graphql: false}":              "sandbox.reads[0].method:",
+		"{host: other.example.com, path: /graphql, graphql: true}":             "sandbox.reads[0].host:",
+		"{host: api.example.com, path: graphql, graphql: true}":                "sandbox.reads[0].path:",
+	} {
+		_, err := ParseManifest(minimal(block + "    - " + read + "\n"))
+
+		s.ErrorContains(err, field, read)
+	}
+	_, err = ParseManifest(minimal(block + "    - {host: api.example.com, method: POST, path: /x, body: query}\n"))
+	s.ErrorContains(err, "field body not found", "an unknown field")
+	_, err = ParseManifest(minimal(block + "    - {host: api.example.com, method: [POST], path: /x}\n"))
+	s.Error(err, "a method that is no string")
+	_, err = ParseManifest(minimal(block + "    - {host: api.example.com, path: /x, graphql: queries}\n"))
+	s.Error(err, "graphql that is no bool")
+}
+
+// A block without reads marshals as it did before the field existed, so the seeder finds
+// Google Drive's revision 6 unchanged (store.sameManifest).
+func (s *ManifestSuite) TestASandboxWithoutReadsMarshalsWithoutThem() {
+	parsed, err := ParseManifest(minimal("sandbox:\n  env: EXAMPLE_TOKEN\n  hosts: [api.example.com]\n"))
+	s.Require().NoError(err)
+	raw, err := json.Marshal(parsed.Sandbox)
+	s.Require().NoError(err)
+	s.JSONEq(`{"env":"EXAMPLE_TOKEN","hosts":["api.example.com"]}`, string(raw))
 }
 
 // A manifest without sandbox marshals as it did before the field existed, so the seeder finds

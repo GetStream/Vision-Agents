@@ -85,9 +85,24 @@ const maxAnswerBytes = 1 << 20
 // none of them itself (keywords.go).
 var episodeSources = map[string]episodeSource{
 	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
-	"linq":      {source: store.EpisodeIMessage, person: byNumber, optOuts: dlc.IMessage, chats: true},
+	"linq":      {source: store.EpisodeIMessage, person: byNumber, optOuts: dlc.IMessage, chats: true, oneToOne: linqOneToOne},
 	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS, answered: telnyxAnswered},
 	"whatsapp":  {source: store.EpisodeWhatsApp, person: byWhatsAppNumber, optOuts: dlc.WhatsApp, recipient: whatsAppNumber, window: whatsAppWindow},
+}
+
+// linqOneToOne is whether a Linq event's chat is one person's: data.chat.is_group false, as the
+// 2026-02-03 payload in linq.yaml's [events] shows it. That page shows the field in its example
+// only, so an event that leaves it out, or writes it as anything but a boolean, is taken as a
+// group's: a task scheduled there would reach everyone in the chat.
+func linqOneToOne(raw []byte) bool {
+	var event struct {
+		Data struct {
+			Chat struct {
+				IsGroup *bool `json:"is_group"`
+			} `json:"chat"`
+		} `json:"data"`
+	}
+	return json.Unmarshal(raw, &event) == nil && event.Data.Chat.IsGroup != nil && !*event.Data.Chat.IsGroup
 }
 
 // whatsAppWindow is Meta's customer service window: free text may be sent within 24 hours of
@@ -112,8 +127,14 @@ type episodeSource struct {
 	// E.164»). Nil is the id as the provider wrote it.
 	recipient func(id string) string
 	// chats is a thread key that is a chat, not the person a reply reaches: a Linq chat id
-	// (linq.yaml). Its replies reach the person who started the thread (replyTo).
+	// (linq.yaml). Its replies reach the person who started the thread (replyTo) and everyone
+	// else in the chat, its members as far as their messages show them
+	// (store.AddChannelThreadMember), so one of them who opted out silences it (refusesReply).
 	chats bool
+	// oneToOne is whether a chat's raw event says the chat is one person's, not a group, so the
+	// thread records its author as the chat's person (store.SetChannelThreadChatPerson). Nil is
+	// never.
+	oneToOne func(raw []byte) bool
 	// window is how long after the person's last message the provider takes free text, when
 	// it limits that; zero is no limit. A manifest whose reply has an after_window template
 	// still reaches the person past it (Reachable).
@@ -537,6 +558,25 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	if !fresh {
 		b.logger.Info("dropped a retried inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
 			"customer", app.CustomerID, "connection", connection.ID, "config", configs[0].ID, "channel", thread.ChannelID)
+	}
+	// After the claim, so a retried delivery of an older message, such as a 1:1 one after the
+	// chat became a group, does not name the chat's person again. A store that fails releases
+	// the claim, so the provider's retry records it.
+	if source := episodeSources[message.ConnectorID]; fresh && source.oneToOne != nil {
+		if source.oneToOne(message.Raw) {
+			thread.ChatPerson = message.AuthorID
+		}
+		if err := b.store.SetChannelThreadChatPerson(ctx, thread.ChannelID, thread.ChatPerson); err != nil {
+			return store.ChannelThread{}, store.AgentConfig{}, false, nil, b.unclaim(ctx, thread, *message, err)
+		}
+	}
+	// Before the keywords, so a person who opted out silences the chat with their STOP and with
+	// any message after it (refusesReply). Every author counts, whatever data.chat.is_group
+	// says: a reply reaches whoever is in the chat.
+	if source := episodeSources[message.ConnectorID]; fresh && source.chats {
+		if err := b.store.AddChannelThreadMember(ctx, thread.ChannelID, source.recipientOf(message.AuthorID)); err != nil {
+			return store.ChannelThread{}, store.AgentConfig{}, false, nil, b.unclaim(ctx, thread, *message, err)
+		}
 	}
 	// Every reply in a thread comes after the message that started it, so the replies that
 	// waited for that message are all to be answered. A link made by a reply, such as a

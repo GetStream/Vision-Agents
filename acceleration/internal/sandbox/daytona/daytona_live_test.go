@@ -23,7 +23,9 @@ import (
 
 // LiveSuite runs the attacks of the wave's table that need Daytona's real egress, against
 // Daytona with DAYTONA_API_KEY: go test -tags daytona_live -run TestLiveSuite
-// ./internal/sandbox/daytona. Every secret holds a random canary, never a real token.
+// ./internal/sandbox/daytona. Every secret holds a random canary, never a real token. Each
+// sandbox is labelled stream.env=live-test and stream.session=<prefix>_<session>, the names
+// of its secrets, so one left behind, even in Daytona's error state, is known as this run's.
 //
 // Daytona scrubs a secret's value out of every response back to its placeholder
 // (https://www.daytona.io/docs/en/secrets.md, «Response scrubbing»), so an echo shows the
@@ -78,7 +80,8 @@ func (s *LiveSuite) box(session string) *Sandbox {
 		}})
 	s.Require().NoError(err)
 	box, err := New(Options{Config: sandbox.Config{AllowedDomains: []string{"httpbingo.org"}, TimeoutMs: 240_000},
-		Grants: []sandbox.Grant{grant("probe", "PROBE_TOKEN"), grant("plain", "PLAIN_TOKEN")}, Broker: broker})
+		Grants: []sandbox.Grant{grant("probe", "PROBE_TOKEN"), grant("plain", "PLAIN_TOKEN")}, Broker: broker,
+		Labels: map[string]string{"stream.env": "live-test", "stream.session": s.prefix + "_" + session}})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
 	return box
@@ -171,6 +174,10 @@ func (s *LiveSuite) TestTheAttacksOnDaytonasEgress() {
 			s.T().Logf("%s: %s", id, response)
 		}
 	}
+	held, err := s.client.Get(s.ctx, first.box.ID)
+	s.Require().NoError(err)
+	s.Equal("live-test", held.Labels["stream.env"])
+	s.Equal(s.prefix+"_live-a", held.Labels["stream.session"])
 	placeholders := strings.Fields(a["env"])
 	s.Require().Len(placeholders, 2)
 	probe, plain := placeholders[0], placeholders[1]

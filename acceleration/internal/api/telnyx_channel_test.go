@@ -139,6 +139,10 @@ func (s *TelnyxChannelSuite) TestAnSMSIsAnsweredFromTheCustomersNumber() {
 	sent := s.took(1)[0]
 	s.Equal(telnyxMessage{from: s.line, to: person, text: "Noted."}, sent.withoutAuthorization())
 	s.True(sent.authorization == "Bearer "+s.apiKey, "sent with the number's API key")
+	var members int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_members WHERE channel_id = ?", channel).Scan(&members))
+	s.Zero(members, "an SMS thread's key is its person, so it records no members (AI-2015)")
 }
 
 // A person's number is one thread, so their texts are one thread channel and one episode card,

@@ -44,17 +44,23 @@ The tools also need (`Manager.schedulingRunner`, `internal/session/schedule_tool
 - a router with a database;
 - a session that is not incognito, opened on a config;
 - a caller that is a verified user or a backend acting for one (`X-Stream-User-Id`), or the
-  person who wrote in an SMS (Telnyx) or WhatsApp thread, and only when that person writes,
-  not someone else in the thread (the task is theirs and keeps the thread; a Linq chat and a
-  Slack thread get no tools). A guest or an anonymous caller gets no tools.
+  person who wrote in an SMS (Telnyx) or WhatsApp thread or a 1:1 iMessage (Linq) chat, and
+  only when that person writes, not someone else in the thread (the task is theirs and keeps
+  the thread). A Linq chat is 1:1 only while its latest message says `data.chat.is_group`
+  `false`: the bridge then records the sender as the chat's person
+  (`channel_thread_people`). A group chat, a chat whose message does not say, a thread
+  linked before that table, and a Slack thread get no tools. A guest or an anonymous caller
+  gets no tools.
 
-A task made in an SMS or WhatsApp thread comes back in that thread: the router opens the
-thread's conversation, the agent answers the task there, and the reply is texted to the
-person from the line. Its run says `delivered_to` `sms` or `whatsapp` once the line took the
+A task made in an SMS or WhatsApp thread or a 1:1 iMessage chat comes back in that thread:
+the router opens the thread's conversation, the agent answers the task there, and the reply is
+texted to the person from the line. Its run says `delivered_to` `sms`, `whatsapp` or
+`imessage` once the line took the
 reply; a reply the line refused is `delivery_failed`, and the retry sends the same reply,
 files included, without a second turn; a thread removed while the turn ran is `thread_gone`,
-final (`internal/api/scheduled_thread_delivery.go`). Such a task's
-`deliver_to` reads `sms` or `whatsapp` and cannot be changed.
+final (`internal/api/scheduled_thread_delivery.go`); a Linq chat that became a group is
+`thread_gone`, final, too. Such a task's `deliver_to` reads `sms`, `whatsapp` or `imessage`
+and cannot be changed.
 
 The REST create does not need `scheduling.enabled` (`internal/api/scheduled_tasks.go:752`).
 
@@ -170,10 +176,11 @@ Read the task, then its runs, then the logs, in that order.
 | `schedule.timezone` | same | Resolved at create from the call, the session, `users.timezone`, then `default_timezone`. A session opened with a zone moves `users.timezone` (`internal/api/session_create.go:76`) |
 | `quiet_hours` | same | An occurrence due inside them is held to their end: its run stays `running` with nothing sent. A run by hand is never held |
 | The runs | `GET /v1/agents/scheduled-tasks/{id}/runs` | No run at all: the occurrence was never claimed (worker logs). `running` long after `scheduled_for`: held, or a worker is on it |
-| Run `state` `missed` | same | Too late: a one-shot over 24 h, a repeat over 1 h (`scheduler.go:51`), a call over 15 min. Or `error` `task_paused`: a one-shot resumed after its time |
+| Run `state` `missed` | same | Too late: a one-shot over 24 h, a repeat over 1 h (`scheduler.go:51`), a call over 15 min (a run by hand too), or with under 11.5 min of the occurrence left. Or `error` `task_paused`: a one-shot resumed after its time |
 | Run `error` | same | See the reason table below |
 | Limit | create answers 409 `too_many_tasks` | The user holds `max_tasks_per_user` active tasks on this config |
 | The tools | the model never calls `schedule_task` | `scheduling.enabled` off, incognito, a guest or anonymous caller, or a `noauth` router |
+| Old history gone | a completed or failed task 404, or old runs missing | A daily job deletes runs finished over 90 days ago, and completed or failed tasks over 90 days old (`ScheduledTasksKept`); active and paused tasks stay |
 | Session deleted | task 404 | Deleting a session deletes the tasks made in it or following up in it (`internal/api/session_delete.go:47`) |
 
 Run `error` codes (`internal/scheduling/scheduler.go:105`):
@@ -189,9 +196,9 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `thread_gone` | A thread task's thread no longer exists, or is not its user's thread of its customer | no |
 | `connection_removed` | A thread task's line (its connection) was removed | no |
 | `no_reply` | The agent said nothing and made no file to carry | yes |
-| `reply_failed` | The reply was cancelled, interrupted or failed | yes |
-| `no_phone_number` | The user never texted this agent, so there is no number to ring | yes |
-| `no_agent_number` | The config has no SMS or WhatsApp line to ring from | yes |
+| `reply_failed` | The reply failed, or was cancelled or interrupted and, when run once more under `st_<run>_r1`, was cut off again (a thread task's first cut-off also gives it, and the retry runs it again) | yes |
+| `no_phone_number` | The user never texted this agent by SMS; a number used only on WhatsApp is not rung | yes |
+| `no_agent_number` | The config has no SMS line to ring from | yes |
 | `not_answered` | Nobody picked up within the 90 s ring | no |
 | `already_called` | A call was placed for this occurrence already | no |
 | `task_paused` | On a `missed` run: a one-shot whose time came while it was paused | — |

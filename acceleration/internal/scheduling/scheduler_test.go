@@ -501,7 +501,7 @@ func (s *SchedulerSuite) TestAHeldOccurrenceIsCountedFromTheHoldAndNotFromWhenIt
 	now := time.Now().UTC().Truncate(time.Second)
 	scheduler := NewScheduler(s.db, nil, slog.New(slog.DiscardHandler))
 	scheduler.now = func() time.Time { return now }
-	schedule, err := FromStored(now.Add(-48*time.Hour), "UTC", "FREQ=DAILY", time.Time{})
+	schedule, err := FromStored(store.ScheduledTask{StartLocal: now.Add(-48 * time.Hour), Timezone: "UTC", RRule: "FREQ=DAILY"})
 	s.Require().NoError(err)
 
 	heldUntil := now.Add(-5 * time.Minute)

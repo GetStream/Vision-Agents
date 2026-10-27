@@ -14,8 +14,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// A task made in an SMS or WhatsApp thread (store.ScheduledTask.ChannelThread) is carried out
-// in that thread: the Router opens the thread's conversation as a person's message there
+// A task made in an SMS, WhatsApp or 1:1 iMessage thread (store.ScheduledTask.ChannelThread) is
+// carried out in that thread: the Router opens the thread's conversation as a person's message there
 // opens it (answerThread), and the reply leaves for the thread through the channel bridge, as
 // every reply in a thread channel does (conversation.Service.OnFinishedReply).
 //
@@ -28,11 +28,12 @@ import (
 //	lease the thread's turn (store.TakeChannelThreadTurn)       another turn: wait
 //	the session on the channel, else threadSpec on the task's config
 //	Session.FollowUp("st_<run>"), wait for its reply            no_reply, reply_failed
+//	  ("st_<run>_r1" once st_<run> was cancelled or interrupted: replyCommand)
 //	Bridge.Send the reply, held from Bridge.Reply                opted out: channel_unreachable, final
 //	                                                            thread removed meanwhile: thread_gone, final
 //	                                                            refused: delivery_failed
 //	close the session it opened; let go of the lease
-//	delivered_to sms | whatsapp
+//	delivered_to sms | whatsapp | imessage
 
 // deliverOnThread carries out an occurrence of a task made in a thread in that thread, and
 // answers where it landed once the bridge sent the agent's reply: the delivery holds the reply
@@ -83,6 +84,7 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 			}
 		}()
 	}
+	delivery.CommandID = replyCommand(found, delivery.CommandID)
 	// The delivery sends the reply itself, to settle the run on whether it went out.
 	replies, release := s.channelBridge.Hold(delivery.CommandID)
 	defer release()

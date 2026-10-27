@@ -85,7 +85,7 @@ type ScheduledTask struct {
 	Title           string `bun:"title,notnull"`
 	Instructions    string `bun:"instructions,notnull"`
 	// ChannelThread is the thread channel of the external thread the task was
-	// made in (channel_threads.channel_id): an SMS or WhatsApp thread.
+	// made in (channel_threads.channel_id): an SMS, WhatsApp or 1:1 iMessage thread.
 	// Empty for a task made anywhere else.
 	ChannelThread string `bun:"channel_thread,notnull"`
 	// StartLocal is the first occurrence as the user's clock reads it, held in
@@ -348,7 +348,9 @@ func (s *Store) ScheduledTasks(ctx context.Context, customerID string, filter Sc
 // worker is delivering under a live lease, not held, keeps that claim and
 // run: the delivery under way completes with the text it has, since bringing
 // the one-shot forward would deliver it a second time. The caller reads the
-// task, changes it, and saves it back.
+// task, changes it, and saves it back. An active one-shot whose settled
+// occurrence placed a call is completed instead: a second call is worse than
+// an edit missed.
 func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	if task.CustomerID == "" || task.ID == "" {
 		return stack.Wrap(errors.New("store: a customer and a task id are required"))
@@ -400,17 +402,21 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 		if len(delivering) > 0 {
 			settle = settle.Where("id NOT IN (?)", bun.In(delivering))
 		}
-		var settled []time.Time
-		if err := settle.Returning("scheduled_for").Scan(ctx, &settled); err != nil {
+		var settled []ScheduledTaskRun
+		if err := settle.Returning("scheduled_for, session_id").Scan(ctx, &settled); err != nil {
 			return fmt.Errorf("store: settle scheduled task runs: %w", err)
 		}
 		// The occurrence keeps its run, so a one-shot left at it would only
 		// be advanced past it: it comes due again at the save instead, on the
 		// database's clock, which the claim compares against.
 		if oneShot {
-			for _, scheduledFor := range settled {
-				if !scheduledFor.Equal(*task.NextRunAt) {
+			for _, run := range settled {
+				if !run.ScheduledFor.Equal(*task.NextRunAt) {
 					continue
+				}
+				if run.SessionID != "" {
+					task.State, task.NextRunAt = ScheduledTaskCompleted, nil
+					break
 				}
 				var again time.Time
 				if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&again); err != nil {
@@ -606,18 +612,18 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 					lost = true
 				default:
 					// Stale: take it over under the same run, so the same
-					// command id, so a copy that did land is refused.
+					// command id, so a copy that did land is refused. The
+					// reason a call it placed ended under stays for the
+					// worker taking over (SetScheduledTaskRunCallReason).
 					if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 						Set("attempts = attempts + 1").
 						Set("started_at = ?", now).
-						Set("error = NULL").
 						Where("id = ?", run.ID).
 						Exec(ctx); err != nil {
 						return fmt.Errorf("store: reclaim scheduled task run: %w", err)
 					}
 					run.Attempts++
 					run.StartedAt = &now
-					run.Error = nil
 				}
 				if run.State != ScheduledTaskRunRunning {
 					// The worker settles the task from the run as it stands,
@@ -867,8 +873,9 @@ func (s *Store) FinishManualScheduledTaskRun(ctx context.Context, runID, state, 
 // TakeScheduledTaskRunCall records on a running run the session of the call
 // about to be placed for it, and reports false when the run already has one:
 // an earlier attempt, or a worker that stopped, placed a call for this
-// occurrence, so the user is not rung again.
-func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID, sessionID string) (bool, error) {
+// occurrence, so the user is not rung again. reason is then the one the run
+// records, such as how that call ended (SetScheduledTaskRunCallReason), if any.
+func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID, sessionID string) (took bool, reason string, err error) {
 	result, err := s.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 		Set("session_id = ?", sessionID).
 		Where("customer_id = ?", customerID).
@@ -877,13 +884,41 @@ func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID,
 		Where("session_id = ''").
 		Exec(ctx)
 	if err != nil {
-		return false, stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+		return false, "", stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return false, stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+		return false, "", stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
 	}
-	return affected > 0, nil
+	if affected > 0 {
+		return true, "", nil
+	}
+	err = s.db.NewSelect().Model((*ScheduledTaskRun)(nil)).
+		ColumnExpr("coalesce(error, '')").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", runID).
+		Scan(ctx, &reason)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, "", stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+	}
+	return false, reason, nil
+}
+
+// SetScheduledTaskRunCallReason records on a running run the reason the call
+// sessionID, which it took, ended under, so a worker that takes the run over
+// records that reason, not only that a call was placed.
+func (s *Store) SetScheduledTaskRunCallReason(ctx context.Context, customerID, runID, sessionID, reason string) error {
+	_, err := s.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("error = ?", reason).
+		Where("customer_id = ?", customerID).
+		Where("id = ?", runID).
+		Where("state = ?", ScheduledTaskRunRunning).
+		Where("session_id = ?", sessionID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set scheduled task run call reason: %w", err))
+	}
+	return nil
 }
 
 // ReleaseScheduledTaskRunCall gives back a call TakeScheduledTaskRunCall
@@ -1011,6 +1046,67 @@ func (s *Store) UserTimezone(ctx context.Context, customerID, userID string) (st
 		return "", stack.Wrap(fmt.Errorf("store: user timezone: %w", err))
 	}
 	return user.Timezone, nil
+}
+
+const (
+	// ScheduledTasksKept is how long a finished run, and a task that completed or failed, is
+	// kept: each row copies the user's instructions, and a daily task adds a run a day.
+	ScheduledTasksKept = 90 * 24 * time.Hour
+	// scheduledTaskRunsPruned and scheduledTasksPruned are how many rows one statement of
+	// PruneScheduledTasks deletes. A task takes its runs with it, so fewer tasks go at once.
+	scheduledTaskRunsPruned = 5_000
+	scheduledTasksPruned    = 500
+)
+
+// PruneScheduledTasks deletes the runs that finished, and the tasks that completed or failed,
+// more than ScheduledTasksKept ago, in batches until none is left, and says how many of each.
+// A task counts from updated_at, which the finish of its last run sets as the task leaves
+// active, but is kept while a run of it is unfinished or finished within ScheduledTasksKept:
+// a completed task can be run by hand without its row changing. An active or paused task is
+// never deleted, whatever its age; its old runs are.
+//
+// SKIP LOCKED keeps two routers pruning at once off each other's rows. The runs batch locks
+// only run rows, and the tasks batch takes the task row before the runs it cascades to, as
+// every writer of both does (lockScheduledTask), so neither can deadlock with
+// FinishScheduledTaskRun.
+func (s *Store) PruneScheduledTasks(ctx context.Context) (runs, tasks int64, err error) {
+	runs, err = s.pruneInBatches(ctx, scheduledTaskRunsPruned, `
+DELETE FROM scheduled_task_runs WHERE id IN (
+    SELECT id FROM scheduled_task_runs
+    WHERE finished_at < now() - make_interval(secs => ?)
+    LIMIT ? FOR UPDATE SKIP LOCKED)`)
+	if err != nil {
+		return runs, 0, stack.Wrap(fmt.Errorf("store: prune scheduled task runs: %w", err))
+	}
+	tasks, err = s.pruneInBatches(ctx, scheduledTasksPruned, `
+DELETE FROM scheduled_tasks WHERE (customer_id, id) IN (
+    SELECT customer_id, id FROM scheduled_tasks
+    WHERE state IN ('completed', 'failed') AND updated_at < now() - make_interval(secs => ?0)
+    AND NOT EXISTS (
+        SELECT 1 FROM scheduled_task_runs r
+        WHERE r.customer_id = scheduled_tasks.customer_id AND r.task_id = scheduled_tasks.id
+        AND (r.finished_at IS NULL OR r.finished_at >= now() - make_interval(secs => ?0)))
+    LIMIT ?1 FOR UPDATE SKIP LOCKED)`)
+	if err != nil {
+		return runs, tasks, stack.Wrap(fmt.Errorf("store: prune scheduled tasks: %w", err))
+	}
+	return runs, tasks, nil
+}
+
+// pruneInBatches runs a delete taking the retention and the batch size until a batch is short.
+func (s *Store) pruneInBatches(ctx context.Context, batch int, query string) (int64, error) {
+	var pruned int64
+	for {
+		result, err := s.db.ExecContext(ctx, query, ScheduledTasksKept.Seconds(), batch)
+		if err != nil {
+			return pruned, err
+		}
+		n, err := result.RowsAffected()
+		pruned += n
+		if err != nil || n < int64(batch) {
+			return pruned, err
+		}
+	}
 }
 
 // PauseScheduledTasksForConfig pauses a config's active tasks, as deleting that

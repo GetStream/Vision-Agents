@@ -2,6 +2,10 @@
 
 ## Features
 
+### A 1:1 iMessage chat can schedule reminders
+
+An agent answering a Linq (iMessage) chat is now offered the scheduling tools when the chat is 1:1: the latest message says `data.chat.is_group` `false`. The task belongs to the person who wrote, and comes back into the chat, `delivered_to` `imessage`. A group chat, a chat whose message does not say, and a chat linked before this release get no tools; a chat that becomes a group loses them, and its tasks fail `thread_gone`. Migration `20261116100000_channel_thread_people` adds the table `channel_thread_people` (AI-1867).
+
 ### Customers list their usage events
 
 `GET /v1/usage/events` (`listUsageEvents`, server-side only) pages the usage events of the calling app, or with `scope=organization` of every app of its organization (`app_id` narrows it to one), newest first by `occurred_at` then `usage_id`: `UsageEventPage` (`items`, `has_more`, `next_cursor`) of `UsageEvent`, each with its `usage_id`, `occurred_at`, `app_id`, `api_key` (or the origin of work no key started, such as `hook:chat`), `user_id`, `team` (read off its `team:<name>` category), `usage_categories`, `agent_id`, `call_id`, `session_id`, `meter`, `provider`, `model`, `purpose`, `quantities`, `attributes`, `cost_micros`, `billable`, `success`, `error_code` and `tags`; never the tier, the cost at the vendor's rates, the price version or the producer. It filters by `from` (inclusive), `to` (exclusive), `meter`, `api_key`, `user_id`, and `team` or `category`, up to 200 a page (`limit`, 50 by default) continued by `cursor`. With `scope=app`, the default, an `app_id` other than the caller's is a 400, as are `user_id` with `scope=organization` and no `app_id`, `team` with `category`, and a cursor this list did not answer; with no usage service, or for an app in no organization, it answers 404 `billing_not_enabled`. A server-side caller's `api_key` and `user_id` query parameters filter, as on `getSpend`. The usage service's customer view gains `GET /v1/accounts/{organization_id}/usage` (`readAccountUsage`), `listUsage`'s filters and cursor without what only the operator reads, which the router reads (AI-1985).
@@ -38,11 +42,43 @@ Before billable work starts the router now reserves what it may cost: a search, 
 
 A `session` binding with `sandbox: true` whose user has no connection yet, in a chat session, now gives the sandbox its env var at once. A request with it is refused with a 401 until the user connects; `run_code`'s description tells the model to call `<alias>__list_tools`, which shows the user the connect card and waits. After the consent, the next run sends the user's token, within about 20 seconds under the Daytona broker. A required binding still refuses the session, and a voice session gets nothing, as before (AI-1960). Each `run_code` result also names, until the user logs in, every such binding not yet connected and tells the model, if the code needed it (a 401 from its hosts), to call its `<alias>__list_tools`; under the Daytona broker the run that binds the login says to wait 20 seconds on a 401 (AI-1969). In a chat, a run of code that finds such a binding not connected now shows the user its connect card itself, without waiting and with no tool call by the model, once per open consent; once the user connects, the agent is told to carry on, and the next run sends their token (AI-1982).
 
+### Finished scheduled-task history is deleted after 90 days
+
+A daily job on every router deletes the runs of scheduled tasks that finished more than 90 days ago, and the tasks that completed or failed more than 90 days ago with their runs. An active or paused task is never deleted, however old; its old runs are. Each row copies the user's instructions, and a daily task added a run a day for good. `router replicate` now imports every scheduled task that is active on the source as paused, with its worker's claim cleared: the source goes on delivering it until the move is cut over, so the copy would have delivered it twice. Resume the tasks at cut-over.
+
 ## Bug Fixes
+
+### The agent tells people apart in a group text chat
+
+In a thread several people write in, such as an iMessage group chat or a Slack thread with two people, the reply model is told who wrote each message once a second person has written: `Speaker 1: What are our names?`, each person under `Speaker N` in the order they first wrote, never their phone number or Slack id, with a note that several people are writing. It read every message as one person's, so it answered Kanat as Ana. A 1:1 chat and a session in writing from the dashboard or an SDK send the model what they did (AI-2014).
+
+### Scheduled calls ring only SMS numbers, and say why they ended
+
+A scheduled call rings only a number the user texts the agent from, from the agent's SMS line; a WhatsApp-only number is not rung (`no_phone_number`, `no_agent_number`). A call with less than its ring and call limit left in the occurrence, or a run by hand over 15 min late, is `missed`. A run taken over after its call keeps the call's reason, such as `not_answered`, and an edited one-shot whose call was placed is completed rather than rung again. A text channel's own failure, such as a store or line credential error, is `delivery_failed`, not `channel_unreachable`.
+
+### A repeat created with its start passed runs its whole COUNT from now
+
+A scheduled task created with a repeat whose start has passed, over `POST /v1/agents/scheduled-tasks` or the agent's `schedule_task` tool, now starts at its first occurrence after now: its stored `at` is that occurrence, and its COUNT counts from it. "Daily, three times, from three days ago" is three reminders from tomorrow; before, it was refused as `schedule_in_past`, and one from this morning ran twice. A task stored in the second pass of a fall-back hour keeps that instant when it is read back: its upcoming list starts at its `next_run_at`, and a one-shot paused and resumed inside that hour still runs. The prompt of a one-shot whose occurrence an edit re-dued states the time it was due and how late it is from then, not from the edit (AI-1563, AI-1564, AI-1597).
+
+### A scheduled task whose reply was cut off runs again once
+
+A scheduled task's reply that was cancelled or interrupted, such as by a router restart, made every retry of the occurrence fail with `reply_failed`, and the user got nothing. Its turn now runs again once, under a new command id (`st_<run>_r1`), on the retry or on the next channel. A reply that finished is still read back on a retry, not written again. A reply cut off a second time fails as before. A scheduled message on SMS, WhatsApp or iMessage now carries only the agent's reply, not the raw text of work it delegated, so the first attempt and a retry send the same words (AI-1558, AI-1559).
+
+### An error in an agent.yaml connector entry names its line in the file
+
+In the Go SDK, a connector entry with a key nobody knows, or a value of the wrong type, named a line counted from the start of the entry. It now names its line in `agent.yaml`, and a key nobody knows is refused with the keys a connector takes (AI-1767).
+
+### The check before a sandbox run no longer shortens the code's run
+
+Under the egress proxy broker with an `https://` proxy, the check of the TLS tunnel before each `run_code` used up part of the code's run timeout, so code that ended within its timeout could be cut short. The check is now bounded on its own, by the sandbox's timeout for any call to Daytona, and the code has its whole run timeout (AI-1777).
 
 ### Code run again after the user connects a connector runs, instead of returning the old 401
 
 When sandbox code got a 401 because the user had not connected a connector, its result tells the model to run the code again once they connect. The agent's repeat-call guard answered that identical second `run_code` from the first result, so the turn ended on the old 401 although the connection was live. A `run_code` result that says a connector was just connected, or that it is not connected and the user has connected it since, no longer answers a repeat; while the user has not connected it, the repeat is still answered from that result. Every other repeated call is still answered from its earlier result (AI-1987).
+
+### An iMessage group stays silent while one of its people is opted out
+
+A reply to a Linq (iMessage) group reaches everyone in it, so after STOP from any person in the chat the agent sends the group nothing: no answer, no resend, no scheduled delivery, and the others' messages reach no agent (logged at INFO). That person's STOP and START are still confirmed in the group, and their START lifts the silence once nobody in it is opted out. An opt-out from elsewhere, such as STOP in their own chat, silences a group they write in. Linq refusing a keyword confirmation (403 after STOP) is logged at INFO, not as an error. Migration `20261117110000_channel_thread_members` adds the table `channel_thread_members` (AI-2015, AI-2016).
 
 ### A thread message the session refuses is given up at once
 
