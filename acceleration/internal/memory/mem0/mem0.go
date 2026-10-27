@@ -194,6 +194,9 @@ func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm
 }
 
 // Truncate deletes everything mem0 knows about one user of one app.
+//
+// What mem0 filed under the agent instead, what the agent said in the user's sessions, has no
+// user id and is left: it is never recalled, and ForgetRun deletes it with its session.
 func (s *Store) Truncate(ctx context.Context, appID, userID string) (memory.Billed, error) {
 	if appID == "" || userID == "" {
 		return memory.Billed{}, stack.Wrap(errors.New("mem0: truncating needs an app id and a user id"))
