@@ -1013,6 +1013,67 @@ func (s *Store) UserTimezone(ctx context.Context, customerID, userID string) (st
 	return user.Timezone, nil
 }
 
+const (
+	// ScheduledTasksKept is how long a finished run, and a task that completed or failed, is
+	// kept: each row copies the user's instructions, and a daily task adds a run a day.
+	ScheduledTasksKept = 90 * 24 * time.Hour
+	// scheduledTaskRunsPruned and scheduledTasksPruned are how many rows one statement of
+	// PruneScheduledTasks deletes. A task takes its runs with it, so fewer tasks go at once.
+	scheduledTaskRunsPruned = 5_000
+	scheduledTasksPruned    = 500
+)
+
+// PruneScheduledTasks deletes the runs that finished, and the tasks that completed or failed,
+// more than ScheduledTasksKept ago, in batches until none is left, and says how many of each.
+// A task counts from updated_at, which the finish of its last run sets as the task leaves
+// active, but is kept while a run of it is unfinished or finished within ScheduledTasksKept:
+// a completed task can be run by hand without its row changing. An active or paused task is
+// never deleted, whatever its age; its old runs are.
+//
+// SKIP LOCKED keeps two routers pruning at once off each other's rows. The runs batch locks
+// only run rows, and the tasks batch takes the task row before the runs it cascades to, as
+// every writer of both does (lockScheduledTask), so neither can deadlock with
+// FinishScheduledTaskRun.
+func (s *Store) PruneScheduledTasks(ctx context.Context) (runs, tasks int64, err error) {
+	runs, err = s.pruneInBatches(ctx, scheduledTaskRunsPruned, `
+DELETE FROM scheduled_task_runs WHERE id IN (
+    SELECT id FROM scheduled_task_runs
+    WHERE finished_at < now() - make_interval(secs => ?)
+    LIMIT ? FOR UPDATE SKIP LOCKED)`)
+	if err != nil {
+		return runs, 0, stack.Wrap(fmt.Errorf("store: prune scheduled task runs: %w", err))
+	}
+	tasks, err = s.pruneInBatches(ctx, scheduledTasksPruned, `
+DELETE FROM scheduled_tasks WHERE (customer_id, id) IN (
+    SELECT customer_id, id FROM scheduled_tasks
+    WHERE state IN ('completed', 'failed') AND updated_at < now() - make_interval(secs => ?0)
+    AND NOT EXISTS (
+        SELECT 1 FROM scheduled_task_runs r
+        WHERE r.customer_id = scheduled_tasks.customer_id AND r.task_id = scheduled_tasks.id
+        AND (r.finished_at IS NULL OR r.finished_at >= now() - make_interval(secs => ?0)))
+    LIMIT ?1 FOR UPDATE SKIP LOCKED)`)
+	if err != nil {
+		return runs, tasks, stack.Wrap(fmt.Errorf("store: prune scheduled tasks: %w", err))
+	}
+	return runs, tasks, nil
+}
+
+// pruneInBatches runs a delete taking the retention and the batch size until a batch is short.
+func (s *Store) pruneInBatches(ctx context.Context, batch int, query string) (int64, error) {
+	var pruned int64
+	for {
+		result, err := s.db.ExecContext(ctx, query, ScheduledTasksKept.Seconds(), batch)
+		if err != nil {
+			return pruned, err
+		}
+		n, err := result.RowsAffected()
+		pruned += n
+		if err != nil || n < int64(batch) {
+			return pruned, err
+		}
+	}
+}
+
 // PauseScheduledTasksForConfig pauses a config's active tasks, as deleting that
 // config must: an occurrence of one would only fail. It clears their claims, so
 // a worker finishing an occurrence in flight cannot make one active again, and

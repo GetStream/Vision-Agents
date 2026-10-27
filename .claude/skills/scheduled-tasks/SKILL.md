@@ -180,6 +180,7 @@ Read the task, then its runs, then the logs, in that order.
 | Run `error` | same | See the reason table below |
 | Limit | create answers 409 `too_many_tasks` | The user holds `max_tasks_per_user` active tasks on this config |
 | The tools | the model never calls `schedule_task` | `scheduling.enabled` off, incognito, a guest or anonymous caller, or a `noauth` router |
+| Old history gone | a completed or failed task 404, or old runs missing | A daily job deletes runs finished over 90 days ago, and completed or failed tasks over 90 days old (`ScheduledTasksKept`); active and paused tasks stay |
 | Session deleted | task 404 | Deleting a session deletes the tasks made in it or following up in it (`internal/api/session_delete.go:47`) |
 
 Run `error` codes (`internal/scheduling/scheduler.go:105`):
