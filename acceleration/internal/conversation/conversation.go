@@ -1081,7 +1081,11 @@ func entryOf(p Page, m Message) entry {
 	if m.Role == "user" && len(m.Files) > 0 {
 		// The model saw the photos with the reply to this message alone, as it does while
 		// a session is open, so history says they were sent rather than sending them again.
-		said += "\n\n" + photoNote(len(m.Files))
+		// A message of photos alone is the note alone.
+		if said != "" {
+			said += "\n\n"
+		}
+		said += photoNote(len(m.Files))
 	}
 	content := said
 	var artifacts []ArtifactAttachment

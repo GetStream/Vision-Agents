@@ -13,6 +13,8 @@ package knowledge
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -165,11 +167,48 @@ type Writer interface {
 	Fetch(ctx context.Context, namespace string, ids []string) ([]Document, error)
 }
 
+// maxNamespace is the longest name turbopuffer accepts for a namespace, which may hold only
+// letters, digits, -, _ and . (https://turbopuffer.com/docs/write).
+const maxNamespace = 128
+
+// namespaceHash is how many hex characters of the SHA-256 of a base's name end the
+// provider's name for it.
+const namespaceHash = 16
+
 // Scoped is the provider's name for one customer's knowledge base. A config names its base
 // with a word like "default" that any customer may choose, so every read and write goes
 // through this: without the customer in it, two apps would answer out of one handbook.
+//
+// A base may be named anything, an agent's name included, and the provider refuses most
+// of that. So the name is carried as a readable slug of it, cut to fit, and a hash of it as
+// given: "Support Bot" and "support-bot" read alike and stay two bases.
 func Scoped(customerID, namespace string) string {
-	return customerID + "__" + namespace
+	sum := sha256.Sum256([]byte(namespace))
+	hash := hex.EncodeToString(sum[:])[:namespaceHash]
+	prefix := customerID + "__"
+	readable := slug(namespace, maxNamespace-len(prefix)-len(hash)-1)
+	if readable == "" {
+		return prefix + hash
+	}
+	return prefix + readable + "-" + hash
+}
+
+// slug is name in lowercase ASCII letters and digits, at most limit of them, with one -
+// where anything else stands between two of them.
+func slug(name string, limit int) string {
+	var readable strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if readable.Len() >= limit {
+			break
+		}
+		switch {
+		case 'a' <= r && r <= 'z', '0' <= r && r <= '9':
+			readable.WriteRune(r)
+		case readable.Len() > 0 && !strings.HasSuffix(readable.String(), "-"):
+			readable.WriteByte('-')
+		}
+	}
+	return strings.TrimSuffix(readable.String(), "-")
 }
 
 // Prompt renders passages as the answer to a lookup, which is what the model is handed.

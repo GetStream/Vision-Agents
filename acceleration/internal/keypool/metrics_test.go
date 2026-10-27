@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,14 +28,20 @@ type RefusedAttemptsSuite struct {
 	suite.Suite
 
 	// server answers each key in statuses with its status: 429 with a Retry-After, 401 as a
-	// wrong key, 402 as a spent quota, any other as is. Every other key is answered, and a
-	// websocket handshake on it accepted.
+	// wrong key, 402 as a spent quota, any other as is, each with the key's body in bodies
+	// instead when it has one. Every other key is answered, and a websocket handshake on it
+	// accepted.
 	server *httptest.Server
 
 	mu       sync.Mutex
 	statuses map[string]int
+	bodies   map[string]string
 	seen     []string
 }
+
+// outOfCreditBody is how Gemini refused the staging router's key once its prepaid credits ran
+// out (router log 2026-10-27 21:27Z): a 402 that does not say quota_exceeded.
+const outOfCreditBody = `[{"error":{"code":402,"message":"Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing. Learn more at https://ai.google.dev/gemini-api/docs/billing#prepay. ","status":"RESOURCE_EXHAUSTED"}}]`
 
 func TestRefusedAttemptsSuite(t *testing.T) {
 	suite.Run(t, new(RefusedAttemptsSuite))
@@ -47,10 +54,14 @@ func (s *RefusedAttemptsSuite) SetupSuite() {
 		s.mu.Lock()
 		s.seen = append(s.seen, key)
 		status := s.statuses[key]
+		body, hasBody := s.bodies[key]
 		s.mu.Unlock()
 
-		switch status {
-		case 0:
+		switch {
+		case hasBody:
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, body)
+		case status == 0:
 			if websocket.IsWebSocketUpgrade(r) {
 				if conn, err := upgrader.Upgrade(w, r, nil); err == nil {
 					_ = conn.Close()
@@ -58,13 +69,13 @@ func (s *RefusedAttemptsSuite) SetupSuite() {
 				return
 			}
 			_, _ = io.WriteString(w, "answered")
-		case http.StatusTooManyRequests:
+		case status == http.StatusTooManyRequests:
 			w.Header().Set("Retry-After", "10")
 			w.WriteHeader(status)
-		case http.StatusUnauthorized:
+		case status == http.StatusUnauthorized:
 			w.WriteHeader(status)
 			_, _ = io.WriteString(w, invalidKeyBody)
-		case http.StatusPaymentRequired:
+		case status == http.StatusPaymentRequired:
 			w.WriteHeader(status)
 			_, _ = io.WriteString(w, `{"detail":{"code":"quota_exceeded"}}`)
 		default:
@@ -79,6 +90,7 @@ func (s *RefusedAttemptsSuite) SetupTest() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.statuses = map[string]int{}
+	s.bodies = map[string]string{}
 	s.seen = nil
 }
 
@@ -87,6 +99,15 @@ func (s *RefusedAttemptsSuite) answer(status int, keys ...string) {
 	defer s.mu.Unlock()
 	for _, key := range keys {
 		s.statuses[key] = status
+	}
+}
+
+func (s *RefusedAttemptsSuite) answerWith(status int, body string, keys ...string) {
+	s.answer(status, keys...)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, key := range keys {
+		s.bodies[key] = body
 	}
 }
 
@@ -115,13 +136,24 @@ func (s *RefusedAttemptsSuite) pool(name string) pooled {
 
 // post sends a request through pool and returns the status it ended with.
 func (s *RefusedAttemptsSuite) post(pool *Pool) int {
+	status, _ := s.postAs(pool, "Bearer placeholder")
+	return status
+}
+
+// postAs sends a request with the Authorization header authorization, none when it is "",
+// through pool and returns the status and the body it ended with.
+func (s *RefusedAttemptsSuite) postAs(pool *Pool, authorization string) (int, string) {
 	request, err := http.NewRequest(http.MethodPost, s.server.URL, strings.NewReader("body"))
 	s.Require().NoError(err)
-	request.Header.Set("Authorization", "Bearer placeholder")
+	if authorization != "" {
+		request.Header.Set("Authorization", authorization)
+	}
 	response, err := pool.WrapClient(nil, Bearer).Do(request)
 	s.Require().NoError(err)
 	defer response.Body.Close()
-	return response.StatusCode
+	body, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return response.StatusCode, string(body)
 }
 
 func (s *RefusedAttemptsSuite) dial(pool *Pool) (*http.Response, string, error) {
@@ -216,18 +248,57 @@ func (s *RefusedAttemptsSuite) TestASpentQuotaIsCountedUnderItsStatus() {
 	s.Equal(http.StatusOK, s.post(p.Pool))
 
 	s.Equal(p.keys, s.keysSeen())
-	s.Equal(p.keys[1], p.Next())
+	s.Equal([]string{p.keys[1], p.keys[1]}, []string{p.Next(), p.Next()}, "the spent key rests")
 	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
 }
 
-func (s *RefusedAttemptsSuite) TestAWrongKeyCountsNoRefusal() {
+// A wrong key is not rested or moved past, as on the base; it is now counted.
+func (s *RefusedAttemptsSuite) TestAWrongKeyIsCountedAndHandedBack() {
 	p := s.pool("wrong")
 	s.answer(http.StatusUnauthorized, p.keys[0])
 
-	s.Equal(http.StatusUnauthorized, s.post(p.Pool))
+	status, body := s.postAs(p.Pool, "Bearer placeholder")
+
+	s.Equal(http.StatusUnauthorized, status)
+	s.Equal(invalidKeyBody, body)
+	s.Equal(p.keys[:1], s.keysSeen())
+	s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the wrong key does not rest")
+	s.Equal(map[string]float64{"401": 1}, s.counted(p.keyVars[0]))
+}
+
+func (s *RefusedAttemptsSuite) TestAnOutOfCreditKeyIsCountedAndItsRefusalHandedBackWhole() {
+	p := s.pool("credit")
+	s.answerWith(http.StatusPaymentRequired, outOfCreditBody, p.keys[0])
+
+	status, body := s.postAs(p.Pool, "Bearer placeholder")
+
+	s.Equal(http.StatusPaymentRequired, status)
+	s.Equal(outOfCreditBody, body)
+	s.Equal(p.keys[:1], s.keysSeen())
+	s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the key does not rest")
+	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
+}
+
+func (s *RefusedAttemptsSuite) TestAForbiddenKeyCountsNoRefusal() {
+	p := s.pool("forbidden")
+	s.answer(http.StatusForbidden, p.keys[0])
+
+	s.Equal(http.StatusForbidden, s.post(p.Pool))
 
 	s.Equal(p.keys[:1], s.keysSeen())
-	s.Equal(p.keys[1], p.Next())
+	s.Empty(s.counted(p.keyVars[0]))
+}
+
+// A request that carries no key is sent as it is, never on a pooled key, so its 401 says
+// nothing of the pool's keys.
+func (s *RefusedAttemptsSuite) TestAWrongKeyOnARequestWithoutAPooledKeyCountsNothing() {
+	p := s.pool("keyless")
+	s.answer(http.StatusUnauthorized, "")
+
+	status, _ := s.postAs(p.Pool, "")
+
+	s.Equal(http.StatusUnauthorized, status)
+	s.Equal([]string{""}, s.keysSeen())
 	s.Empty(s.counted(p.keyVars[0]))
 }
 
@@ -257,6 +328,45 @@ func (s *RefusedAttemptsSuite) TestEveryRefusedHandshakeIsCountedWhenNoKeyIsLeft
 	s.Equal(p.keys, s.keysSeen())
 	s.Equal(p.keys[0], p.Next())
 	s.Equal(map[string]float64{"429": 2}, s.counted(p.keyVars[0]))
+}
+
+func (s *RefusedAttemptsSuite) TestAHandshakeOnAWrongOrOutOfCreditKeyIsCountedAndNotDialledAgain() {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"wrong key", http.StatusUnauthorized, invalidKeyBody},
+		{"out of credit", http.StatusPaymentRequired, outOfCreditBody},
+	} {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			p := s.pool("plaindial")
+			s.answerWith(tc.status, tc.body, p.keys[0])
+
+			response, key, err := s.dial(p.Pool)
+
+			s.Require().Error(err)
+			s.Equal(tc.status, response.StatusCode)
+			s.Equal(p.keys[0], key)
+			s.Equal(p.keys[:1], s.keysSeen())
+			s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the key does not rest")
+			s.Equal(map[string]float64{strconv.Itoa(tc.status): 1}, s.counted(p.keyVars[0]))
+		})
+	}
+}
+
+func (s *RefusedAttemptsSuite) TestAHandshakeOnASpentKeyIsCountedOnceAndDialledOnTheNextKey() {
+	p := s.pool("spentdial")
+	s.answer(http.StatusPaymentRequired, p.keys[0])
+
+	response, key, err := s.dial(p.Pool)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusSwitchingProtocols, response.StatusCode)
+	s.Equal(p.keys[1], key)
+	s.Equal([]string{p.keys[1], p.keys[1]}, []string{p.Next(), p.Next()}, "the spent key rests")
+	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestAHandshakeThatFailsWithoutARefusalCountsNothing() {
@@ -403,7 +513,7 @@ func (s *RefusedAttemptsSuite) TestWhatIsNotARefusalAlertsNothing() {
 		status int
 	}{
 		{name: "answered"},
-		{name: "wrong key", status: http.StatusUnauthorized},
+		{name: "forbidden", status: http.StatusForbidden},
 		{name: "server error", status: http.StatusInternalServerError},
 	} {
 		s.Run(tc.name, func() {

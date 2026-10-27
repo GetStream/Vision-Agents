@@ -98,6 +98,19 @@ func (s *Mem0Suite) TestTheKeyIsSentAsATokenHeader() {
 	s.Equal("Token test-key", s.platform.auth)
 }
 
+func (s *Mem0Suite) TestEveryCallSendsTheOneKeyFromTheEnvironment() {
+	s.T().Setenv("MEM0_API_KEY", "env-key")
+	s.T().Setenv("MEM0_API_KEY_1", "another-projects-key")
+	store, err := New(Options{BaseURL: s.platform.server.URL, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+
+	for range 2 {
+		_, err := store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "where do they live"})
+		s.Require().NoError(err)
+		s.Equal("Token env-key", s.platform.auth, "a second key would be another mem0 project")
+	}
+}
+
 func (s *Mem0Suite) TestRecallScopesTheSearchToWhoTheMemoriesBelongTo() {
 	_, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "where do they live", Limit: 3})
 	s.Require().NoError(err)

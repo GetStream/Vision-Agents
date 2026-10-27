@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,8 +155,16 @@ func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCoun
 	opened := s.backendOpensACountedSession()
 
 	for turn := range 3 {
-		status, failure := s.backend.failure(http.MethodPost, "/v1/agents/sessions/"+opened+"/respond",
-			RespondRequest{Text: "how much does a call cost", RequestId: pointerTo(s.utils.uuid())})
+		// A turn's row is written before its reply has finished, and a session takes one
+		// response at a time, so the next turn waits for it as a backend does: the same
+		// request again until the session takes it.
+		request := RespondRequest{Text: "how much does a call cost", RequestId: pointerTo(s.utils.uuid())}
+		var status int
+		var failure string
+		s.Require().Eventually(func() bool {
+			status, failure = s.backend.failure(http.MethodPost, "/v1/agents/sessions/"+opened+"/respond", request)
+			return status != http.StatusBadRequest || !strings.Contains(failure, "a response is already running")
+		}, settleFor, 50*time.Millisecond, "the session never took turn %d", turn+1)
 		s.Require().Equal(http.StatusOK, status, failure)
 		s.awaitReplies(opened, turn+1)
 	}

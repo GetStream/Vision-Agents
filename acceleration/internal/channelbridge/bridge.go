@@ -537,6 +537,7 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		}
 	}
 	message.Text = rule.WithoutMention(read.Text, connection.Metadata)
+	message.Media = read.Media
 	thread = store.ChannelThread{
 		ChannelID:      threadChannelPrefix + uuid.NewString(),
 		CustomerID:     app.CustomerID,
@@ -732,9 +733,24 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 	}
 	// No source: the message hook answers only a message without one (api.addressed).
 	_, err = bound.Client.Chat().SendMessage(ctx, chatlog.ChannelType, thread.ChannelID, &getstream.SendMessageRequest{
-		Message: getstream.MessageRequest{Text: &message.Text, UserID: &author},
+		Message: getstream.MessageRequest{Text: &message.Text, UserID: &author, Attachments: photos(message.Media)},
 	})
 	return stack.Wrap(err)
+}
+
+// photos are a message's image files as Stream Chat image attachments, the shape the message
+// hook hands the model (api.messageEvent.photos), as conversation.chatFileAttachments writes
+// one. Any other file, such as a video, is left out: the agent gets the text alone (AI-2094).
+func photos(media []core.Media) []getstream.Attachment {
+	var attachments []getstream.Attachment
+	for _, file := range media {
+		if strings.HasPrefix(file.MIMEType, "image/") {
+			attachments = append(attachments, getstream.Attachment{
+				Type: getstream.PtrTo("image"), ImageUrl: &file.URL, Custom: map[string]any{"mime_type": file.MIMEType},
+			})
+		}
+	}
+	return attachments
 }
 
 // withFiles is a reply's text with the links of the files the agent made for it, one a line

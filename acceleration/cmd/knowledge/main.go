@@ -36,6 +36,8 @@ func main() {
 	customer := flag.String("customer", "", "customer (app id) the knowledge base belongs to")
 	namespace := flag.String("namespace", "", "knowledge base to write into")
 	size := flag.Int("chunk", ingest.DefaultChunk, "characters per passage")
+	minChunk := flag.Int("min-chunk", ingest.DefaultLimits.MinChunk, "bytes a smaller -chunk is raised to")
+	maxHeading := flag.Int("max-heading", ingest.DefaultLimits.MaxHeading, "bytes of a heading repeated in each later passage")
 	dryRun := flag.Bool("dry-run", false, "print the passages instead of writing them")
 	verbose := flag.Bool("verbose", false, "log what is written")
 	flag.Parse()
@@ -46,7 +48,10 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	options := options{customer: *customer, namespace: *namespace, size: *size, dryRun: *dryRun}
+	options := options{
+		customer: *customer, namespace: *namespace, size: *size, dryRun: *dryRun,
+		limits: ingest.Limits{MinChunk: *minChunk, MaxHeading: *maxHeading},
+	}
 	if err := run(options, flag.Args(), logger); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -57,6 +62,7 @@ type options struct {
 	customer  string
 	namespace string
 	size      int
+	limits    ingest.Limits
 	dryRun    bool
 }
 
@@ -74,7 +80,7 @@ func run(options options, paths []string, logger *slog.Logger) error {
 		return errors.New("a passage needs room for something to read")
 	}
 
-	documents, err := ingest.Read(paths, options.size)
+	documents, err := ingest.Read(paths, options.size, options.limits)
 	if err != nil {
 		return err
 	}
