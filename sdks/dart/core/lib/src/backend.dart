@@ -47,7 +47,7 @@ final class Backend {
   }
 
   /// Stream's hosted router, which is where a client goes when nothing says otherwise.
-  static final Uri defaultUrl = Uri.parse('https://accelerate-prod.gcp.stream-io-api.com');
+  static final Uri defaultUrl = Uri.parse('https://accelerate.gcp.stream-io-api.com');
 
   /// The router's base URL. Stream's hosted router unless another is named.
   final Uri url;

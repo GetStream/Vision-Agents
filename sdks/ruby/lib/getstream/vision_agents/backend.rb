@@ -18,7 +18,7 @@ module GetStream
       API_SECRET_ENV = "STREAM_API_SECRET"
       AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
       # Stream's hosted router, which is where a client goes when nothing says otherwise.
-      DEFAULT_URL = "https://accelerate-prod.gcp.stream-io-api.com"
+      DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com"
       CUSTOMER_HEADER = "X-Customer-Id"
 
       # How long a token minted here lasts. Short, because it is minted per request and a

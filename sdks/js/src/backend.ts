@@ -1,7 +1,7 @@
 import { ConfigurationError } from "./errors.js";
 
 /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
-export const DEFAULT_URL = "https://accelerate-prod.gcp.stream-io-api.com";
+export const DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com";
 
 /** The environment the same variables are read from as in the Go and Python clients. */
 export const URL_ENV = "STREAM_ACCELERATION_URL";

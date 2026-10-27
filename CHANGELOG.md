@@ -179,9 +179,9 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
-### The SDKs go to production by default
+### The SDKs' default router is production
 
-Every SDK's default router is production, `https://accelerate-prod.gcp.stream-io-api.com`, in place of staging's `https://accelerate.gcp.stream-io-api.com`. Staging is reached with `STREAM_ACCELERATION_URL=https://accelerate.gcp.stream-io-api.com` and, in every server SDK but Go, `STREAM_ACCELERATION_AUTHENTICATE=1`, since only the default router is authenticated through the proxy without being asked; the Kotlin, Swift and Dart SDKs take the URL in their `Backend`. `DEVELOPMENT.md` lists the variables for local, staging and production.
+`https://accelerate.gcp.stream-io-api.com`, every SDK's default, is production, and staging moves to `https://accelerate-staging.gcp.stream-io-api.com` (GetStream/chat#19561). Staging is reached with `STREAM_ACCELERATION_URL=https://accelerate-staging.gcp.stream-io-api.com` and, in every server SDK but Go, `STREAM_ACCELERATION_AUTHENTICATE=1`, since only the default router is authenticated through the proxy without being asked; the Kotlin, Swift and Dart SDKs take the URL in their `Backend`. `perfbench -target staging`, the `stt_realtime_example` `-staging` flag and the JS live staging test go to the new hostname. `DEVELOPMENT.md` lists the variables for local, staging and production.
 
 ### Go and Python refuse tool arguments that do not fit the schema
 

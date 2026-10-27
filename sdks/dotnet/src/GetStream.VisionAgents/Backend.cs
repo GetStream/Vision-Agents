@@ -64,7 +64,7 @@ public sealed record VisionAgentsOptions
 internal sealed class Backend
 {
     /// <summary>Stream's hosted router, which is where a client goes when nothing says otherwise.</summary>
-    public const string DefaultUrl = "https://accelerate-prod.gcp.stream-io-api.com";
+    public const string DefaultUrl = "https://accelerate.gcp.stream-io-api.com";
     public const string UrlEnv = "STREAM_ACCELERATION_URL";
     public const string CustomerEnv = "STREAM_ACCELERATION_CUSTOMER_ID";
     public const string ApiKeyEnv = "STREAM_API_KEY";

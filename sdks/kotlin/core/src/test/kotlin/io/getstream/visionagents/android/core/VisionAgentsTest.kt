@@ -52,7 +52,7 @@ class VisionAgentsTest {
     fun `naming no router reaches the hosted one`() {
         VisionAgents(apiKey = "key").use { hosted ->
             assertEquals(Backend.DEFAULT_URL, hosted.backend.url)
-            assertEquals("https://accelerate-prod.gcp.stream-io-api.com", hosted.backend.url)
+            assertEquals("https://accelerate.gcp.stream-io-api.com", hosted.backend.url)
         }
     }
 

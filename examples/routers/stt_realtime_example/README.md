@@ -204,7 +204,7 @@ the config rather than storing another copy.
 
 ## Run it against staging
 
-`-staging` transcribes on the hosted router at `accelerate.gcp.stream-io-api.com`, which
+`-staging` transcribes on the hosted router at `accelerate-staging.gcp.stream-io-api.com`, which
 needs neither of the two steps above — no database and no local process, since the configs
 are stored there.
 

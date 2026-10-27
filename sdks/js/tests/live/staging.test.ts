@@ -49,7 +49,7 @@ function authenticated(headers: Record<string, string>): WebSocketConstructor {
  * another's.
  */
 const acceleration =
-  process.env["STAGING_ACCELERATION_URL"] ?? "https://accelerate.gcp.stream-io-api.com";
+  process.env["STAGING_ACCELERATION_URL"] ?? "https://accelerate-staging.gcp.stream-io-api.com";
 const docs =
   process.env["STAGING_DOCS_SEARCH_URL"] ?? "https://search-production-98b1.up.railway.app";
 

@@ -70,7 +70,7 @@ public class Backend(
 ) : AutoCloseable {
     public companion object {
         /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
-        public const val DEFAULT_URL: String = "https://accelerate-prod.gcp.stream-io-api.com"
+        public const val DEFAULT_URL: String = "https://accelerate.gcp.stream-io-api.com"
     }
 
     /** The router's base URL, with no trailing slash. */

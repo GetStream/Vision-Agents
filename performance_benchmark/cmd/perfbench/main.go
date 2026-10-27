@@ -44,7 +44,7 @@ type hosted struct {
 // rehearsed on, so a run there disturbs nobody; staging is the one people use.
 var targets = map[string]hosted{
 	"staging": {
-		url:       "https://accelerate.gcp.stream-io-api.com",
+		url:       "https://accelerate-staging.gcp.stream-io-api.com",
 		namespace: "accelerate-staging",
 		selector:  "app.kubernetes.io/name=accelerate,app.kubernetes.io/instance=chat-accelerate-staging",
 	},

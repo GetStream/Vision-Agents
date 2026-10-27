@@ -29,7 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
-const staging = "https://accelerate.gcp.stream-io-api.com"
+const staging = "https://accelerate-staging.gcp.stream-io-api.com"
 
 const audio = "saturday_seven_thirty.wav"
 

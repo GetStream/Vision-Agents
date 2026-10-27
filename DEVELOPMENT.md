@@ -35,8 +35,9 @@ skill and `acceleration/development_skills/dashboard_skill.md`.
 
 ## Pointing an SDK at a router
 
-The SDKs go to production, `https://accelerate-prod.gcp.stream-io-api.com`, when nothing says
-otherwise. The server SDKs (Python, JS, Go, Ruby, PHP, .NET and Rust) read the same variables
+The SDKs go to production, `https://accelerate.gcp.stream-io-api.com`, when nothing says
+otherwise. Staging is `https://accelerate-staging.gcp.stream-io-api.com`, and the load
+balancer in `GetStream/chat`'s `infra/dns/gcp-stream-io-api-com` tells them apart by hostname. The server SDKs (Python, JS, Go, Ruby, PHP, .NET and Rust) read the same variables
 to go anywhere else:
 
 | Variable                           | What it does                                                                                   |
@@ -58,7 +59,7 @@ Staging, `accelerate-staging` in `GetStream/chat`'s `infra/shards/us-east1-accel
 behind the proxy like production does, so it takes an app's key and secret:
 
 ```
-STREAM_ACCELERATION_URL=https://accelerate.gcp.stream-io-api.com
+STREAM_ACCELERATION_URL=https://accelerate-staging.gcp.stream-io-api.com
 STREAM_ACCELERATION_AUTHENTICATE=1
 STREAM_API_KEY=...
 STREAM_API_SECRET=...
