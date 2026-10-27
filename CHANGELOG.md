@@ -117,6 +117,10 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 A daily job on every router deletes the runs of scheduled tasks that finished more than 90 days ago, and the tasks that completed or failed more than 90 days ago with their runs. An active or paused task is never deleted, however old; its old runs are. Each row copies the user's instructions, and a daily task added a run a day for good. `router replicate` now imports every scheduled task that is active on the source as paused, with its worker's claim cleared: the source goes on delivering it until the move is cut over, so the copy would have delivered it twice. Resume the tasks at cut-over.
 
+### The knowledge passage limits are configurable
+
+`knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A value of 0 or below is the default (AI-1992).
+
 ## Bug Fixes
 
 ### An iMessage photo's caption is answered
