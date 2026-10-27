@@ -244,9 +244,9 @@ func undoneResult(content string) bool {
 }
 
 // refusedBefore returns the answer of an identical call the tool already refused on this
-// call ({"ok": false}, {"error": ...}), as opposed to one that could not be made. Nemotron
-// sent verify_account the PIN it had misheard three times over and was refused each time;
-// only what the caller says next can change the answer.
+// call ({"ok": false}, {"error": ...}), as opposed to one that could not be made. Sending
+// the same values again is refused the same way; only what the caller says next can change
+// the answer.
 func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
 	for i := len(history) - 1; i >= 0; i-- {
 		result := history[i]
@@ -274,8 +274,8 @@ const tryOtherValues = ". Do not call it again with the same values. Read them b
 
 // fillsIn reports whether a later call's arguments are an earlier call's with at most the
 // text arguments it left empty or out filled in, and the others it left out given their
-// zero value. create_reservation went out without the phone, then again with it and
-// "high_chair": false, and the second booking failed against the first.
+// zero value. A booking made without the phone and then again with it and "late_checkout":
+// false is the same booking, and the second would fail against the first.
 func fillsIn(earlier, later string) bool {
 	if sameArguments(earlier, later) {
 		return true
@@ -320,8 +320,8 @@ const leftBlank = "%s was not run: %s left empty. Take them from what the caller
 	"call it again, or ask the caller for them."
 
 // blankRequired returns the arguments a tool's schema requires that a call left out or empty.
-// Made to call, Qwen fills the schema with whatever it has, and verify_account went out
-// with the PIN alone although the caller had just given the last four and the address.
+// A model made to call fills the schema with whatever it has, and can leave out a value the
+// caller has already given.
 func blankRequired(tool harness.Tool, arguments string) []string {
 	required, _ := tool.Parameters["required"].([]any)
 	if len(required) == 0 {

@@ -621,9 +621,8 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 }
 
 // everyArgumentRequired returns the tools with every property of their schemas required.
-// Made to call, Qwen on vLLM writes only the arguments a schema requires, so verify_account
-// went out with the PIN alone although the caller had given the last four and the address
-// too; left to choose, it writes them all.
+// Some models made to call write only the arguments a schema requires and leave out optional
+// values the caller has already given; with every argument required, they write them all.
 func everyArgumentRequired(offered []llm.Tool) []llm.Tool {
 	rendered := make([]llm.Tool, 0, len(offered))
 	for _, tool := range offered {

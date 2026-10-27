@@ -547,13 +547,12 @@ func (s *OpenAICompatSuite) TestABareChannelNameOpeningAReplyIsNeverSpoken() {
 }
 
 func (s *OpenAICompatSuite) TestABareChannelNameAfterWhitespaceIsNeverSpoken() {
-	// After a tool result, a caller heard "Thought, you're all set": the name
-	// came with whitespace around it rather than first and bare.
+	// The channel's name can arrive with whitespace or a colon around it rather than first
+	// and bare, and it is still the channel's name, not the start of the answer.
 	for _, frames := range [][]string{
 		{"\nthought\n", " You're all set!"},
 		{" thou", "ght \r\n You're all set!"},
 		{"thought\r", "\n You're all set!"},
-		// What Gemma 4 sent after a tool result in a later run, and the caller heard "thought".
 		{"thought:", " You're all set!"},
 		{"thought", ":\n You're all set!"},
 	} {
@@ -819,7 +818,8 @@ func (s *OpenAICompatSuite) TestAnOfferedNameWithoutItsArgumentsIsSpoken() {
 }
 
 func (s *OpenAICompatSuite) TestAStrayControlTokenIsNeverSpoken() {
-	// What Gemma 4 has sent beside a real call, and a caller heard as a turn.
+	// Gemma 4's control tokens can arrive as text beside a real call, and none of them is
+	// part of the answer.
 	s.frames = []string{
 		textFrame(`<|"|>`),
 		toolFrame(0, "call-1", "check_availability", `{"party_size":4}`),
@@ -835,7 +835,7 @@ func (s *OpenAICompatSuite) TestAStrayControlTokenIsNeverSpoken() {
 }
 
 func (s *OpenAICompatSuite) TestAStrayChannelMarkerIsNeverSpoken() {
-	// After a tool result a caller heard "<channel|>" before the answer.
+	// A channel's closing marker with no opening one ahead of it is still a marker.
 	s.frames = []string{textFrame("<channel|> I found it."), usageFrame(20, 0, 8, 0, "stop")}
 	provider := s.provider(Options{ThoughtChannel: true})
 
