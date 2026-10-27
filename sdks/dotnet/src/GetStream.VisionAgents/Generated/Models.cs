@@ -7195,6 +7195,21 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    /// <summary>
+    /// Why a revoked grant is live again.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LimitGrantUnrevocation
+    {
+
+        /// <summary>
+        /// Why it is live again; more than spaces.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+    }
+
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class LimitInForce
     {
