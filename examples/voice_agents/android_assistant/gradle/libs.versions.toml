@@ -6,7 +6,7 @@ material-icons = "1.7.8"
 activity = "1.11.0"
 lifecycle = "2.11.0"
 okhttp = "5.5.0"
-stream-chat-ai-compose = "7.16.1-202610271134-SNAPSHOT"
+stream-chat-ai-compose = "7.16.1-202610271335-SNAPSHOT"
 browser = "1.10.0"
 
 [libraries]
