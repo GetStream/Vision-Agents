@@ -86,7 +86,7 @@ func (s *TelnyxChannelSuite) useCase(name string, isDefault bool) store.UseCase 
 // texts are the texts the test's Telnyx took, in order.
 func (s *TelnyxChannelSuite) texts() []string {
 	var texts []string
-	for _, sent := range s.telnyx.sent() {
+	for _, sent := range s.telnyx().sent() {
 		texts = append(texts, sent.text)
 	}
 	return texts
@@ -122,7 +122,7 @@ func (s *TelnyxSandboxSuite) TestAPersonOutsideTheSandboxReachesNoAgent() {
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, "+13125550099", "Hi"), time.Now()))
 
 	channel := s.threadChannel("+13125550099")
-	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx.sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx().sent()) > 0 }, dropped, 20*time.Millisecond)
 }
 
 // A sandbox recipient is answered until the day's one message is sent; a reply after it is
@@ -141,7 +141,7 @@ func (s *TelnyxSandboxSuite) TestARecipientIsAnsweredUntilTheDailyLimit() {
 	s.Require().Eventually(func() bool { return s.answers(channel) == 2 }, settleFor, 10*time.Millisecond)
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, sandboxRecipient, "third"), time.Now()))
 
-	s.Never(func() bool { return len(s.telnyx.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	for _, message := range s.chat.Stored(channel) {
 		s.NotEqual("third", message["text"], "the message past the limit reaches no agent")
 	}
@@ -176,9 +176,9 @@ func (s *TelnyxSandboxSuite) TestAReplyTelnyxRefusesIsNotCountedAgainstTheDailyL
 	channel := s.threadChannel(sandboxRecipient)
 	s.written(channel, 2)
 	var refused atomic.Bool
-	original := s.telnyx.server.Config.Handler
-	s.telnyx.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.telnyx.earlier(r) && refused.CompareAndSwap(false, true) {
+	original := s.telnyx().server.Config.Handler
+	s.telnyx().server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.telnyx().earlier(r) && refused.CompareAndSwap(false, true) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
