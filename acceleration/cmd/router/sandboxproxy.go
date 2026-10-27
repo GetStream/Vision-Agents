@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -75,12 +74,15 @@ const proxyListenRetry = 100 * time.Millisecond
 // as a sandbox reaches it, is https, and plain HTTP otherwise. Without a proxy it listens on
 // nothing.
 //
-// A router started beside the one it replaces, as an overlap deploy does, finds addr held: it
-// keeps trying until the old router hands the address over, or ends. handOver is that hand-over,
-// for a router that starts draining: it stops taking connections on addr and leaves the tunnels
-// already open, which are the sandboxes' until the router stops. Either may be called more than
-// once, and after the other.
-func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*http.Server, net.Listener),
+// overlap is whether a supervisor starts this router beside the one it replaces, as an overlap
+// deploy does (the public listener is then inherited, settings.ListenFD). Only then is addr found
+// held by the old router a thing to wait for: the router keeps trying until the old one hands the
+// address over, or this one ends. handOver is that hand-over, for a router that starts draining:
+// it stops taking connections on addr and leaves the tunnels already open, which are the
+// sandboxes' until the router stops. Either may be called more than once, and after the other.
+// Without overlap a held address fails the start, as on any listener, and handOver does nothing:
+// the proxy takes connections until stop.
+func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool, serve func(*http.Server, net.Listener),
 	logger *slog.Logger) (stop func() error, handOver func(), err error) {
 	if proxy == nil {
 		return func() error { return nil }, func() {}, nil
@@ -93,17 +95,17 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*
 	// mu orders a listen while waiting against the hand-over, so a router done with the
 	// address never takes it.
 	var mu sync.Mutex
-	var serving *handOverListener
+	var serving net.Listener
 	finished := false
 	// start serves on listener; mu is held.
 	start := func(listener net.Listener) {
+		serving = listener
 		if secure {
 			listener = tls.NewListener(listener, proxy.ListenerTLS(public.Hostname()))
 		}
-		serving = &handOverListener{Listener: listener}
 		logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr",
 			"tls", secure)
-		go serve(server, serving)
+		go serve(server, listener)
 	}
 	// retry takes addr unless the router is done with it, and says whether to stop trying.
 	retry := func() bool {
@@ -123,7 +125,7 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*
 	switch {
 	case err == nil:
 		start(listener)
-	case errors.Is(err, syscall.EADDRINUSE):
+	case overlap && errors.Is(err, syscall.EADDRINUSE):
 		logger.Info("the sandbox egress proxy address is held, waiting for the router before this one to hand it over",
 			"address", addr, "setting", "code_sandbox.proxy_addr")
 		go func() {
@@ -151,39 +153,18 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*
 		logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", addr,
 			"setting", "code_sandbox.proxy_addr")
 		// The listener alone: the connections the proxy took are still served, a request
-		// they have yet to send included, which a Shutdown would drop.
+		// they have yet to send included, which a Shutdown would drop. Serve ends with the
+		// closed listener's error, which no one reads once the router drains.
 		if serving != nil {
 			_ = serving.Close()
 		}
 	}
 	// Close, not a drain: a tunnel is the sandbox's to reopen.
-	return func() error { finish(false); return server.Close() }, func() { finish(true) }, nil
-}
-
-// handOverListener is the proxy's listener, which a hand-over closes before the server does:
-// Serve then ends as on a closed server, so serve does not take it for a failure, and the
-// server's own Close finds it closed and says nothing.
-type handOverListener struct {
-	net.Listener
-	once   sync.Once
-	closed atomic.Bool
-	err    error
-}
-
-func (l *handOverListener) Accept() (net.Conn, error) {
-	conn, err := l.Listener.Accept()
-	if err != nil && l.closed.Load() {
-		return nil, http.ErrServerClosed
+	stop = func() error { finish(false); return server.Close() }
+	if !overlap {
+		return stop, func() {}, nil
 	}
-	return conn, err
-}
-
-func (l *handOverListener) Close() error {
-	l.once.Do(func() {
-		l.closed.Store(true)
-		l.err = l.Listener.Close()
-	})
-	return l.err
+	return stop, func() { finish(true) }, nil
 }
 
 // secretSweeper sweeps the Daytona secrets a crashed router left behind, and is nil where there

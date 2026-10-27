@@ -349,7 +349,7 @@ func startDraining(t *testing.T, drain time.Duration) *draining {
 	require.Eventually(t, func() bool { return servesMetrics(metrics) }, 5*time.Second, 10*time.Millisecond,
 		"the metrics listener never answered")
 	proxy := freeAddress(t)
-	stopProxy, handOverProxy := serveBareProxy(t, proxy)
+	stopProxy, handOverProxy := serveBareProxy(t, proxy, true)
 	t.Cleanup(func() { _ = stopProxy() })
 	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	public, err := net.Listen("tcp", "127.0.0.1:0")
@@ -463,7 +463,7 @@ func TestADrainingRouterFreesItsProxyAddressForTheRouterTakingOver(t *testing.T)
 func TestARouterWithoutADrainServesTheProxyUntilItStops(t *testing.T) {
 	public, _ := servingNothing(t)
 	proxy := freeAddress(t)
-	stopProxy, handOverProxy := serveBareProxy(t, proxy)
+	stopProxy, handOverProxy := serveBareProxy(t, proxy, true)
 	t.Cleanup(func() { _ = stopProxy() })
 
 	err := stopServing(stopping{
@@ -480,6 +480,36 @@ func TestARouterWithoutADrainServesTheProxyUntilItStops(t *testing.T) {
 	require.True(t, servesProxy(proxy), "the proxy stopped before the router exited")
 	require.NoError(t, stopProxy())
 	require.False(t, servesProxy(proxy), "the proxy outlived the router")
+}
+
+// TestAPlainRolloutServesTheProxyThroughItsDrain is the control: without an overlap deploy
+// nothing takes the address over, and base takes proxy connections until the process exits,
+// a drain included.
+func TestAPlainRolloutServesTheProxyThroughItsDrain(t *testing.T) {
+	public, _ := servingNothing(t)
+	proxy := freeAddress(t)
+	stopProxy, handOverProxy := serveBareProxy(t, proxy, false)
+	t.Cleanup(func() { _ = stopProxy() })
+	var held atomic.Int64
+	held.Store(1)
+	stopped := make(chan error, 1)
+	go func() {
+		stopped <- stopServing(stopping{
+			public:        public,
+			drainWork:     func() {},
+			held:          func() int { return int(held.Load()) },
+			telephony:     idlePhone(t),
+			handOverProxy: handOverProxy,
+			drain:         time.Hour,
+			grace:         testGrace,
+			logger:        slog.New(slog.DiscardHandler),
+		})
+	}()
+
+	require.Never(t, func() bool { return !servesProxy(proxy) }, 500*time.Millisecond, 20*time.Millisecond,
+		"the proxy stopped taking connections when the drain started")
+	held.Store(0)
+	require.NoError(t, <-stopped)
 }
 
 func TestARouterWithoutADrainServesMetricsUntilItStops(t *testing.T) {

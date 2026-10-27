@@ -1490,7 +1490,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 
 	stopSandboxProxy, handOverSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, settings.CodeSandbox.ProxyPublicURL,
-		serve, logger)
+		settings.ListenFD != 0, serve, logger)
 	if err != nil {
 		return err
 	}

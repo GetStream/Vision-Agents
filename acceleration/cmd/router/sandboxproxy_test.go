@@ -21,6 +21,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -86,7 +88,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	proxy, err := newSandboxProxy(settings, redis, &resolver.Resolver{}, nil, nil, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, proxy)
-	stop, _, err := serveSandboxProxy(proxy, settings.ProxyAddr, settings.ProxyPublicURL, func(server *http.Server, listener net.Listener) {
+	stop, _, err := serveSandboxProxy(proxy, settings.ProxyAddr, settings.ProxyPublicURL, false, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -106,7 +108,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 // public URL, and stop is safe.
 func TestNoProxyServesNothing(t *testing.T) {
 	address := freeAddress(t)
-	stop, handOver, err := serveSandboxProxy(nil, address, tlsPublicURL, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
+	stop, handOver, err := serveSandboxProxy(nil, address, tlsPublicURL, true, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stop() })
 	handOver()
@@ -299,7 +301,7 @@ func newLoggedListenedProxy(t *testing.T, publicURL string, logger *slog.Logger)
 		egress.Record{Session: "w15tlsl-session", Allowed: []string{"example.com"}}, time.Minute))
 	t.Cleanup(func() { _ = sandboxStore(redis).Delete(context.Background(), credential) })
 	listen := freeAddress(t)
-	stop, _, err := serveSandboxProxy(proxy, listen, publicURL, func(server *http.Server, listener net.Listener) {
+	stop, _, err := serveSandboxProxy(proxy, listen, publicURL, false, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, logger)
 	require.NoError(t, err)
@@ -477,12 +479,12 @@ func TestAnHTTPOrNoPublicURLServesThePlainProxyAsOnBase(t *testing.T) {
 
 // serveBareProxy serves on address, as serveSandboxProxy does, a proxy with no store: enough
 // to answer a request without a credential, which is all a test of its listener asks.
-func serveBareProxy(t *testing.T, address string) (stop func() error, handOver func()) {
+func serveBareProxy(t *testing.T, address string, overlap bool) (stop func() error, handOver func()) {
 	t.Helper()
 	caCert, caKey := newCA(t)
 	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
-	stop, handOver, err = serveSandboxProxy(proxy, address, "", func(server *http.Server, listener net.Listener) {
+	stop, handOver, err = serveSandboxProxy(proxy, address, "", overlap, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -503,20 +505,6 @@ func servesProxy(address string) bool {
 	return response.StatusCode == http.StatusMethodNotAllowed
 }
 
-// TestAHandedOverListenerEndsServeAsAClosedServer: serve in main takes any other end for a
-// failure, and the server's own Close, at stop, finds nothing more to close.
-func TestAHandedOverListenerEndsServeAsAClosedServer(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	handedOver := &handOverListener{Listener: listener}
-
-	require.NoError(t, handedOver.Close())
-	require.NoError(t, handedOver.Close())
-	_, err = handedOver.Accept()
-
-	require.ErrorIs(t, err, http.ErrServerClosed)
-}
-
 // TestAnAddressThatCannotBeListenedOnStillFailsTheStart: only an address another router holds
 // is waited for. 192.0.2.1 is TEST-NET-1 (RFC 5737), on no interface of this host.
 func TestAnAddressThatCannotBeListenedOnStillFailsTheStart(t *testing.T) {
@@ -524,9 +512,40 @@ func TestAnAddressThatCannotBeListenedOnStillFailsTheStart(t *testing.T) {
 	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
 
-	_, _, err = serveSandboxProxy(proxy, "192.0.2.1:8091", "", func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
+	_, _, err = serveSandboxProxy(proxy, "192.0.2.1:8091", "", true, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
 
 	require.ErrorContains(t, err, "192.0.2.1:8091")
+}
+
+// TestAHeldAddressFailsTheStartWithoutAnOverlapAsOnBase is the control. Base e5d6d8057 answered
+// "listen tcp <address>: bind: address already in use" and did not start; only a router started
+// beside the one it replaces, which the inherited listener says, waits.
+func TestAHeldAddressFailsTheStartWithoutAnOverlapAsOnBase(t *testing.T) {
+	holder, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = holder.Close() })
+	caCert, caKey := newCA(t)
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, err)
+
+	_, _, err = serveSandboxProxy(proxy, holder.Addr().String(), "", false, func(*http.Server, net.Listener) {},
+		slog.New(slog.DiscardHandler))
+
+	require.EqualError(t, err, "listen tcp "+holder.Addr().String()+": bind: address already in use")
+}
+
+// TestWithoutAnOverlapTheProxyIsServedUntilTheRouterStops is the control: base takes proxy
+// connections until the process exits, and a hand-over is for the overlap deploy alone.
+func TestWithoutAnOverlapTheProxyIsServedUntilTheRouterStops(t *testing.T) {
+	address := freeAddress(t)
+	stop, handOver := serveBareProxy(t, address, false)
+	t.Cleanup(func() { _ = stop() })
+
+	handOver()
+
+	require.True(t, servesProxy(address), "the proxy stopped taking connections at the hand-over")
+	require.NoError(t, stop())
+	require.False(t, servesProxy(address))
 }
 
 // SandboxProxyHandOverSuite is two routers on one proxy address, as an overlap deploy runs them
@@ -585,6 +604,11 @@ func (s *SandboxProxyHandOverSuite) SetupTest() {
 // startRouter is a router's proxy on the suite's address, tunnelling to a host that answers
 // body, or the error serveSandboxProxy gives.
 func (s *SandboxProxyHandOverSuite) startRouter(body string, logger *slog.Logger) (stop func() error, handOver func(), err error) {
+	return s.startRouterAt("", body, logger)
+}
+
+// startRouterAt is startRouter for a proxy reached at publicURL.
+func (s *SandboxProxyHandOverSuite) startRouterAt(publicURL, body string, logger *slog.Logger) (stop func() error, handOver func(), err error) {
 	host := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }))
 	s.T().Cleanup(host.Close)
 	s.trusted.AddCert(host.Certificate())
@@ -595,7 +619,7 @@ func (s *SandboxProxyHandOverSuite) startRouter(body string, logger *slog.Logger
 	s.Require().NoError(err)
 	// This test's channels: a router's Serve may end after the next test has set its own.
 	accepted, served := s.accepted, s.served
-	stop, handOver, err = serveSandboxProxy(proxy, s.address, "", func(server *http.Server, listener net.Listener) {
+	stop, handOver, err = serveSandboxProxy(proxy, s.address, publicURL, true, func(server *http.Server, listener net.Listener) {
 		server.ConnState = func(_ net.Conn, state http.ConnState) {
 			if state == http.StateNew {
 				select {
@@ -698,7 +722,7 @@ func (s *SandboxProxyHandOverSuite) TestTheRouterTakingOverServesOnceTheDraining
 		return err == nil && body == "second"
 	}, 5*time.Second, 5*time.Millisecond, "the router taking over never served the proxy")
 	s.Less(gap, time.Second, "sandboxes went without a proxy for longer than AI-2030 allows")
-	s.ErrorIs(<-s.served, http.ErrServerClosed, "the draining router took its hand-over for a failure")
+	s.ErrorIs(<-s.served, net.ErrClosed, "the draining router's Serve did not end with its listener")
 
 	body, err = open.get()
 	s.Require().NoError(err, "the hand-over cut a tunnel open on the draining router")
@@ -771,4 +795,96 @@ func (s *SandboxProxyHandOverSuite) TestHandingOverSaysSoOnce() {
 	s.Require().NoError(stop())
 	handOver()
 	s.NotContains(stopped.String(), "router taking over")
+}
+
+// TestTheTLSProxyHandsOverToTheRouterTakingOver: the proxy a router serves over TLS is the one
+// it waits to serve and hands over, so a sandbox that trusts the router CA reaches the host
+// through the new router, once the old one hands over, and through its own open tunnel still.
+func (s *SandboxProxyHandOverSuite) TestTheTLSProxyHandsOverToTheRouterTakingOver() {
+	s.Require().True(s.trusted.AppendCertsFromPEM([]byte(s.caCert)))
+	_, handOverFirst, err := s.startRouterAt(tlsPublicURL, "first", slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	client := func(keepAlive bool) *http.Client {
+		proxyURL, err := url.Parse(tlsPublicURL)
+		s.Require().NoError(err)
+		proxyURL.User = url.UserPassword("sbx", s.credential)
+		return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL),
+			DisableKeepAlives: !keepAlive, TLSClientConfig: &tls.Config{RootCAs: s.trusted},
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, s.address)
+			}}}
+	}
+	get := func(c *http.Client) (string, error) {
+		response, err := c.Get("https://example.com/")
+		if err != nil {
+			return "", err
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		return string(body), err
+	}
+	kept := client(true)
+	body, err := get(kept)
+	s.Require().NoError(err)
+	s.Require().Equal("first", body)
+	_, _, err = s.startRouterAt(tlsPublicURL, "second", slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	time.Sleep(3 * proxyListenRetry)
+
+	handedOver := time.Now()
+	handOverFirst()
+	var gap time.Duration
+	s.Require().Eventually(func() bool {
+		body, err := get(client(false))
+		gap = time.Since(handedOver)
+		return err == nil && body == "second"
+	}, 5*time.Second, 5*time.Millisecond, "the router taking over never served the proxy over TLS")
+
+	s.Less(gap, time.Second)
+	body, err = get(kept)
+	s.Require().NoError(err, "the hand-over cut a TLS tunnel open on the draining router")
+	s.Equal("first", body)
+}
+
+// waitingForTheAddress is a stack frame in a func of serveSandboxProxy: a wait for the proxy
+// address. A "created by" line does not match, and the serve goroutines have no such frame.
+var waitingForTheAddress = regexp.MustCompile(`(?m)^\S*router\.serveSandboxProxy\.func`)
+
+// waitingGoroutines is how many routers' waits for the proxy address are running.
+func waitingGoroutines() int {
+	buffer := make([]byte, 1<<20)
+	count := 0
+	for _, goroutine := range strings.Split(string(buffer[:runtime.Stack(buffer, true)]), "\n\n") {
+		if waitingForTheAddress.MatchString(goroutine) {
+			count++
+		}
+	}
+	return count
+}
+
+// TestTheWaitForTheAddressEndsWithTheRouterWhicheverWay: an address no router ever frees leaves
+// the wait running until the router stops or hands over, and then it ends.
+func (s *SandboxProxyHandOverSuite) TestTheWaitForTheAddressEndsWithTheRouterWhicheverWay() {
+	for _, viaHandOver := range []bool{false, true} {
+		holder, err := net.Listen("tcp", "127.0.0.1:0")
+		s.Require().NoError(err)
+		// Waits other tests ended are done within a retry.
+		s.Require().Eventually(func() bool { return waitingGoroutines() == 0 }, 2*time.Second, 20*time.Millisecond)
+		before := waitingGoroutines()
+		s.address = holder.Addr().String()
+		stop, handOver, err := s.startRouter("held", slog.New(slog.DiscardHandler))
+		s.Require().NoError(err)
+		time.Sleep(3 * proxyListenRetry)
+		s.Require().Equal(before+1, waitingGoroutines(), "the router was not waiting for the address")
+
+		if viaHandOver {
+			handOver()
+		} else {
+			s.Require().NoError(stop())
+		}
+
+		s.Require().Eventually(func() bool { return waitingGoroutines() == before }, 2*time.Second, 20*time.Millisecond,
+			"the wait outlived the router (hand over: %v)", viaHandOver)
+		s.Require().NoError(holder.Close())
+	}
 }
