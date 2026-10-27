@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -329,18 +330,30 @@ func (s *RefusedAttemptsSuite) TestEveryRefusedHandshakeIsCountedWhenNoKeyIsLeft
 	s.Equal(map[string]float64{"429": 2}, s.counted(p.keyVars[0]))
 }
 
-func (s *RefusedAttemptsSuite) TestAHandshakeOnAnOutOfCreditKeyIsCountedAndNotDialledAgain() {
-	p := s.pool("creditdial")
-	s.answerWith(http.StatusPaymentRequired, outOfCreditBody, p.keys[0])
+func (s *RefusedAttemptsSuite) TestAHandshakeOnAWrongOrOutOfCreditKeyIsCountedAndNotDialledAgain() {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"wrong key", http.StatusUnauthorized, invalidKeyBody},
+		{"out of credit", http.StatusPaymentRequired, outOfCreditBody},
+	} {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			p := s.pool("plaindial")
+			s.answerWith(tc.status, tc.body, p.keys[0])
 
-	response, key, err := s.dial(p.Pool)
+			response, key, err := s.dial(p.Pool)
 
-	s.Require().Error(err)
-	s.Equal(http.StatusPaymentRequired, response.StatusCode)
-	s.Equal(p.keys[0], key)
-	s.Equal(p.keys[:1], s.keysSeen())
-	s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the key does not rest")
-	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
+			s.Require().Error(err)
+			s.Equal(tc.status, response.StatusCode)
+			s.Equal(p.keys[0], key)
+			s.Equal(p.keys[:1], s.keysSeen())
+			s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the key does not rest")
+			s.Equal(map[string]float64{strconv.Itoa(tc.status): 1}, s.counted(p.keyVars[0]))
+		})
+	}
 }
 
 func (s *RefusedAttemptsSuite) TestAHandshakeOnASpentKeyIsCountedOnceAndDialledOnTheNextKey() {
