@@ -127,25 +127,56 @@ func (s *StallSuite) stall(r *rig) {
 	s.Equal(s.steady, s.answer(r, s.steady, answered).Provider)
 }
 
-func (s *StallSuite) TestAProviderThatSaysNothingUntilItLosesIsRoutedAround() {
+// stalls has the stalling provider lose as many decisions in silence as health needs to judge
+// it, all in one session, which keeps asking the provider it started on.
+func (s *StallSuite) stalls(r *rig) {
+	for range live.DefaultMinRequests {
+		s.stall(r)
+	}
+}
+
+func (s *StallSuite) TestOneStallOnFreshHistoryLeavesTheProviderAvailable() {
 	r, router := s.router()
 	s.start(r, router)
 	s.stall(r)
+
+	// Errors rather than requests: the counters are written together but not atomically.
+	var health live.Health
+	s.Require().Eventually(func() bool {
+		var err error
+		health, err = s.live.Health(s.ctx, string(routing.LLM), s.stalling, "model")
+		s.Require().NoError(err)
+		return health.Errors == 1
+	}, 2*stallWindow, 10*time.Millisecond, "the stall was never counted")
+	s.True(health.Available, "one stall is not enough to take a provider out for the whole shard")
+
+	s.start(r, router)
+	s.Equal(s.stalling, r.session.Provider(), "the next session still starts on the preferred provider")
+}
+
+func (s *StallSuite) TestAProviderThatSaysNothingUntilItLosesIsRoutedAround() {
+	r, router := s.router()
+	s.start(r, router)
+	s.stalls(r)
 	s.available(s.stalling, false)
 
 	s.start(r, router)
 	s.Equal(s.steady, r.session.Provider(), "the next session starts on the provider that answers")
+	before := r.requests(s.steady)
 	answered := s.decide(r)
-	s.asked(r, s.steady, 2)
+	s.asked(r, s.steady, before+1)
+	// Nothing tells a hedge that found no candidate from one not yet due, so this waits out
+	// the hedge delay. hedgeCandidates leaving out an unavailable provider is pinned without
+	// a clock in TestAHedgeGoesToADifferentModelBeforeADifferentProvider.
 	time.Sleep(4 * stallHedge)
-	s.Equal(1, r.requests(s.stalling), "a provider found unavailable is not asked as a hedge either")
+	s.Equal(live.DefaultMinRequests, r.requests(s.stalling), "a provider found unavailable is not asked as a hedge either")
 	s.Equal(s.steady, s.answer(r, s.steady, answered).Provider)
 }
 
 func (s *StallSuite) TestAStalledProviderIsAskedFirstAgainOnceItsWindowPasses() {
 	r, router := s.router()
 	s.start(r, router)
-	s.stall(r)
+	s.stalls(r)
 	s.available(s.stalling, false)
 
 	s.available(s.stalling, true)
@@ -162,11 +193,9 @@ func (s *StallSuite) TestAProviderThatSaidSomethingBeforeItLostIsNotPenalised() 
 	s.asked(r, s.steady, 1)
 	s.Equal(s.steady, s.answer(r, s.steady, answered).Provider)
 
-	time.Sleep(100 * time.Millisecond)
-	health, err := s.live.Health(s.ctx, string(routing.LLM), s.stalling, "model")
-	s.Require().NoError(err)
-	s.True(health.Available)
-	s.Zero(health.Errors, "a provider that had begun answering lost a race, which is no fault of its own")
+	s.Require().Eventually(func() bool { return r.called()[s.stalling] != "" }, 3*time.Second, time.Millisecond)
+	s.Equal(routing.ErrorCancelled, r.called()[s.stalling],
+		"a provider that had begun answering lost a race, which is no fault of its own")
 }
 
 func (s *StallSuite) TestAProviderWhoseCallerHungUpIsNotPenalised() {
@@ -184,9 +213,7 @@ func (s *StallSuite) TestAProviderWhoseCallerHungUpIsNotPenalised() {
 	hangUp()
 	s.ErrorIs(<-done, context.Canceled)
 
-	time.Sleep(100 * time.Millisecond)
-	health, err := s.live.Health(s.ctx, string(routing.LLM), s.stalling, "model")
-	s.Require().NoError(err)
-	s.True(health.Available)
-	s.Zero(health.Errors, "a decision nobody waits on any more says nothing about its provider")
+	s.Require().Eventually(func() bool { return len(r.called()) == 2 }, 3*time.Second, time.Millisecond)
+	s.Equal(map[string]string{s.stalling: routing.ErrorCancelled, s.steady: routing.ErrorCancelled}, r.called(),
+		"a decision nobody waits on any more says nothing about either provider")
 }
