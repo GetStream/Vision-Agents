@@ -136,11 +136,54 @@ path on the API, because the vendor fetching it has no customer to name. That co
 `ROUTER_PUBLIC_URL` and buys one thing back at Bandwidth: the BXML runs on the person's own
 leg, so its `<SendDtmf>` presses keys at them rather than at the trunk.
 
+## How a placed call ended
+
+Each call the router places ends with one of six outcomes:
+
+- `completed`: the person answered and the call ended.
+- `busy`: the line was busy or the person declined.
+- `no_answer`: it rang until the ring timeout.
+- `failed`: the vendor could not place it, for a bad number or a carrier fault.
+- `canceled`: the vendor says it was hung up before an answer.
+- `unknown`: the vendor reports nothing about how it ended, and the phone never joined.
+
+The router learns it three ways:
+
+- **The vendor's status URL.** Twilio, Telnyx, Vonage, Plivo and Bandwidth are handed
+  `<ROUTER_PUBLIC_URL>/v1/phone/status/{token}` on the dial and post to it. The path takes no
+  credential: the token names one call. A post that cannot be read is a 400 and changes
+  nothing. A post that is not final, such as ringing, only keeps the vendor's word. Plivo's
+  hangup post may carry no cause, and then the leg decides.
+- **The final SIP response,** for a call through a customer's `sip_trunk`. The router's own
+  bridge says it: 486 and 603 are `busy`, 408, 480 and a ring timeout are `no_answer`.
+- **Stream's join and leave** of the person's phone, for every vendor. Sinch and Bird post
+  nothing, so their calls show `unknown` unless the call was answered.
+
+Two rules decide. The first final outcome wins, and a later post changes nothing. A join forces
+`completed`: once Stream saw the phone in the call, no vendor's word outranks it. A call that
+ends without a join or a report is `no_answer` when its vendor reports, else `unknown`.
+
+Without `ROUTER_PUBLIC_URL` no status URL is sent. Then only the join and leave are known, and
+an unanswered call is `unknown`.
+
+A busy, unanswered, failed or canceled call ends its session at once, rather than leaving the
+agent to wait out its start timeout. It is ended off the vendor's request, on this router or
+on the node holding the session. A session whose phone joined is never ended this way.
+
+A dial the vendor refuses keeps nothing: the call never rang, so it has no outcome.
+
 ## What is recorded
 
 A number bought is a `requests` row with modality `phone` and a row in `phone_numbers`. The
 `phone_numbers` row is kept after the number is released, because it was billed and the history
 of what a customer paid for must survive the number going away.
+
+Each placed call is a row in `phone_calls`, kept by the
+[outcome](../../acceleration/internal/phone/outcome) package: who placed it, at which vendor,
+from and to which number, when the phone joined and left, and the outcome with the vendor's
+own word for it. The status token is cleared once the longest call could be over, plus an
+hour; a post after that is a 404, and the outcome stays. A session reads it as
+`call_outcome`: the outcome, `answered_at` and `duration_seconds`, from the join to the leave.
 
 Phone is recorded but not routed: there is one vendor per number, chosen by the customer, so
 the provider and route paths do not serve the modality while the statistics paths do.

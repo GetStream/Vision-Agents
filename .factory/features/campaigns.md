@@ -30,6 +30,13 @@ Parallel calls from one number work for Twilio, Telnyx and SIP trunks. They go t
 trunks, so a second call from a number no longer fails while the first is up. See
 [shared trunks](shared-trunks.md). The other five vendors still make a trunk per call.
 
+## A contact shows how its call ended
+
+Listing a campaign's contacts gives each one rung the `outcome` of its call, read by its
+`call_id` from [telephony](telephony.md#how-a-placed-call-ended). The `state` says only whether
+they were rung: a contact nobody answered is `done`, with `outcome` `no_answer`. Nobody is rung
+again for it.
+
 ## Contacts are claimed, not handed out
 
 `ClaimContact` marks a row `SKIP LOCKED`. Two routers running the same campaign therefore
