@@ -584,6 +584,27 @@ func (s *SessionCreateSuite) TestADeviceIsToldWhichServerSideFieldItMayNotSend()
 	}
 }
 
+func (s *SessionCreateSuite) TestADeviceMayNotOpenAnotherUsersMemories() {
+	request := textSession(nil)
+	request.Memory = &SessionMemory{UserId: pointerTo(s.data.createUser().userID)}
+
+	for _, device := range []*testClient{s.client, s.guestClient} {
+		status, failure := device.failure(http.MethodPost, "/v1/agents/sessions", request)
+		s.Equal(http.StatusForbidden, status, "%s", device.kind)
+		s.Equal(errDeviceMemoryUser.Message, failure, "%s", device.kind)
+	}
+}
+
+func (s *SessionCreateSuite) TestAnAnonymousCallerMayNotOpenMemoriesEvenUnderItsOwnName() {
+	request := textSession(nil)
+	request.Memory = &SessionMemory{UserId: pointerTo(s.anonymousClient.userID)}
+
+	status, failure := s.anonymousClient.failure(http.MethodPost, "/v1/agents/sessions", request)
+
+	s.Equal(http.StatusForbidden, status)
+	s.Equal(errAnonymousMemory.Message, failure)
+}
+
 // historySession is a conversation in writing on the model that recites what it was handed.
 func historySession(incognito bool) CreateSessionRequest {
 	request := textSession(nil)

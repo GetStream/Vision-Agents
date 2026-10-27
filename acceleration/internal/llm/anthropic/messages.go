@@ -279,7 +279,7 @@ func named(err error) error {
 		anthropic.ErrorTypeTimeoutError, anthropic.ErrorTypeAPIError:
 		transient = true
 	}
-	return &llm.ProviderFailure{Err: err, Code: string(refused.Type()), Transient: transient}
+	return &llm.ProviderFailure{Err: err, Transient: transient}
 }
 
 // incomplete translates a stop reason into why a response stopped early, returning empty
