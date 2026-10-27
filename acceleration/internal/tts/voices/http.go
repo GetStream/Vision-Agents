@@ -60,15 +60,16 @@ func (f *form) done() (io.Reader, string, error) {
 	return &f.body, f.writer.FormDataContentType(), nil
 }
 
-// client is the HTTP client a provider uses. Every request that carries the key goes out on
-// a key from keys, put where auth says, so a key the vendor refuses is counted and rested as
-// it is on a call. It keeps to one key while that key is not resting: a cloned voice belongs
-// to the account of the key that made it, and is looked up and deleted there.
+// client is the HTTP client a provider uses. Every request that carries the key goes out
+// through keys, put where auth says, so a 401 or 402 is counted as it is on a call, and a
+// key the pool rests (a 429, a spent quota) rests for the calls too. It always sends on the
+// first key and never moves to another: a cloned voice belongs to the account of the key
+// that made it, and is looked up and deleted there.
 func client(keys *keypool.Pool, auth keypool.Auth, timeout time.Duration) *http.Client {
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
-	return keys.Pin().WrapClient(&http.Client{Timeout: timeout}, auth)
+	return keys.First().WrapClient(&http.Client{Timeout: timeout}, auth)
 }
 
 // speak posts a JSON synthesis request and reads the audio it answers with. The content

@@ -135,7 +135,7 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ### A key refused while voices are listed or cloned is counted
 
-The voice library (ElevenLabs, Cartesia, Inworld) and voice cloning (ElevenLabs, Cartesia, Fish) send their requests on the provider's key pool, as speech does. A 401 or 402 on them is counted in `router_keypool_refused_attempts_total` under the provider's key variable, and a 429 moves to the next key. Before, they sent on the first key outside the pool, so a refused key went uncounted there. One voice client keeps to one key while that key is not resting, so a cloned voice is looked up and deleted on the account that made it.
+The voice library (ElevenLabs, Cartesia, Inworld) and voice cloning (ElevenLabs, Cartesia, Fish) send their requests on the provider's key pool, as speech does. A 401 or 402 on them is counted in `router_keypool_refused_attempts_total` under the provider's key variable, and a key the pool rests on them (a 429, a spent quota) rests for calls too. They still send on the provider's first key and never move to another, so a cloned voice is listed and deleted on the account that made it. Before, they sent on the first key outside the pool, so a refused key went uncounted there.
 
 ### Every 401 and 402 on a pooled key is counted as refused
 

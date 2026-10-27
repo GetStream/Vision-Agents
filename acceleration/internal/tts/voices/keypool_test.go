@@ -3,12 +3,15 @@ package voices
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 )
@@ -26,6 +29,9 @@ type KeyPoolSuite struct {
 	statuses map[string]int
 	// keys is the key each request carried, in order, from whichever header the vendor reads.
 	keys []string
+	// owners is the key each voice was cloned with on the ElevenLabs paths: only that key
+	// finds and deletes it, as only its account holds it.
+	owners map[string]string
 }
 
 func TestKeyPoolSuite(t *testing.T) {
@@ -36,26 +42,42 @@ func (s *KeyPoolSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.statuses = map[string]int{}
 	s.keys = nil
+	s.owners = map[string]string{}
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Each path reads the key only where its vendor does, so a key put anywhere else is
 		// not recognised as one.
 		key := r.Header.Get("Authorization")
-		switch r.URL.Path {
-		case "/v1/voices":
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/voices"):
 			key = r.Header.Get("xi-api-key")
-		case "/voices", "/model":
+		case r.URL.Path == "/voices", r.URL.Path == "/model":
 			key = strings.TrimPrefix(key, "Bearer ")
-		case "/voices/v1/voices":
+		case r.URL.Path == "/voices/v1/voices":
 			key = strings.TrimPrefix(key, "Basic ")
 		}
 		s.mu.Lock()
+		defer s.mu.Unlock()
 		s.keys = append(s.keys, key)
-		status := s.statuses[key]
-		s.mu.Unlock()
 
-		if status != 0 {
+		if status := s.statuses[key]; status != 0 {
 			w.WriteHeader(status)
 			_, _ = w.Write([]byte(`{"detail":"invalid api key"}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/voices/add":
+			id := fmt.Sprintf("voice%015d", len(s.owners)+1)
+			s.owners[id] = key
+			_, _ = w.Write([]byte(`{"voice_id":"` + id + `"}`))
+			return
+		}
+		if id, ok := strings.CutPrefix(r.URL.Path, "/v1/voices/"); ok && r.Method == http.MethodDelete {
+			if s.owners[id] != key {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			delete(s.owners, id)
+			_, _ = w.Write([]byte(`{}`))
 			return
 		}
 		switch r.URL.Path {
@@ -244,36 +266,82 @@ func (s *KeyPoolSuite) TestEachClientReadsItsKeysFromTheVariableItsProviderReads
 	s.Equal(keys, s.keysSeen())
 }
 
-func (s *KeyPoolSuite) TestAListRateLimitedOnOneKeyIsSentAgainOnTheNext() {
+// A 429 on the first key fails the list rather than moving to another account's key, and
+// rests that key for the calls that share the pool.
+func (s *KeyPoolSuite) TestAListRateLimitedOnTheFirstKeyFailsAndRestsItForCalls() {
 	keys := s.newKeys(2)
 	s.refuse(http.StatusTooManyRequests, keys[0])
-	lister, err := NewElevenLabs(ElevenLabsOptions{APIKey: keys[0] + "," + keys[1], BaseURL: s.server.URL})
+	joined := keys[0] + "," + keys[1]
+	lister, err := NewElevenLabs(ElevenLabsOptions{APIKey: joined, BaseURL: s.server.URL})
 	s.Require().NoError(err)
 	before := s.refusals("ELEVENLABS_API_KEY")
 
-	found, err := lister.List(s.ctx)
+	_, err = lister.List(s.ctx)
+	s.Require().Error(err)
+	_, err = lister.List(s.ctx)
+	s.Require().Error(err)
 
-	s.Require().NoError(err)
-	s.Len(found, 1)
-	s.Equal(keys, s.keysSeen())
-	s.Equal(map[string]float64{"429": 1}, added(before, s.refusals("ELEVENLABS_API_KEY")))
+	s.Contains(err.Error(), "http 429")
+	s.Equal([]string{keys[0], keys[0]}, s.keysSeen(), "each list is sent once, on the first key")
+	s.Equal(map[string]float64{"429": 2}, added(before, s.refusals("ELEVENLABS_API_KEY")))
+	s.Equal(keys[1], keypool.FromEnv(joined).Next(), "a call skips the key the list rested")
 }
 
 // A voice is cloned into the account of the key that made it, and only that account can
-// find or delete it, so one client keeps to one key while the vendor takes it.
-func (s *KeyPoolSuite) TestOneClientKeepsToOneKey() {
-	keys := s.newKeys(3)
-	lister, err := NewCartesia(CartesiaOptions{
-		APIKey: keys[0] + "," + keys[1] + "," + keys[2], BaseURL: s.server.URL,
-	})
+// find or delete it, so every voice request goes on the first key: after a call took a turn
+// on the shared pool too, and when the next key is one the vendor refuses.
+func (s *KeyPoolSuite) TestEveryVoiceRequestGoesOnTheFirstKey() {
+	keys := s.newKeys(2)
+	s.refuse(http.StatusUnauthorized, keys[1])
+	joined := keys[0] + "," + keys[1]
+	keypool.FromEnv(joined).Next()
+	lister, err := NewElevenLabs(ElevenLabsOptions{APIKey: joined, BaseURL: s.server.URL})
 	s.Require().NoError(err)
+	before := s.refusals("ELEVENLABS_API_KEY")
 
 	for range 3 {
 		_, err := lister.List(s.ctx)
 		s.Require().NoError(err)
 	}
 
-	seen := s.keysSeen()
-	s.Require().Len(seen, 3)
-	s.Equal([]string{seen[0], seen[0], seen[0]}, seen)
+	s.Equal([]string{keys[0], keys[0], keys[0]}, s.keysSeen())
+	s.Empty(added(before, s.refusals("ELEVENLABS_API_KEY")))
+}
+
+// The router builds the library and the cloner as two clients (cmd/router/main.go); a voice
+// one lists is the voice the other cloned only when both send on the same key.
+func (s *KeyPoolSuite) TestTheListerAndTheClonerSendOnTheSameKey() {
+	keys := s.newKeys(2)
+	s.T().Setenv("ELEVENLABS_API_KEY", keys[0])
+	s.T().Setenv("ELEVENLABS_API_KEY_1", keys[1])
+	lister, err := NewElevenLabs(ElevenLabsOptions{BaseURL: s.server.URL})
+	s.Require().NoError(err)
+	cloner, err := NewElevenLabs(ElevenLabsOptions{BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	_, err = lister.List(s.ctx)
+	s.Require().NoError(err)
+	_, err = cloner.Prepare(s.ctx, Request{Name: "Mine", Samples: []Sample{{Name: "a.wav", Content: []byte("RIFF")}}})
+	s.Require().NoError(err)
+
+	s.Equal([]string{keys[0], keys[0]}, s.keysSeen())
+}
+
+// A call rate limited on the first key rests it for the pool; a cloned voice is still
+// deleted on that key, where it lives, rather than reported gone by another account.
+func (s *KeyPoolSuite) TestAVoiceIsDeletedOnItsKeyWhileACallRestsIt() {
+	keys := s.newKeys(2)
+	joined := keys[0] + "," + keys[1]
+	cloner, err := NewElevenLabs(ElevenLabsOptions{APIKey: joined, BaseURL: s.server.URL})
+	s.Require().NoError(err)
+	prepared, err := cloner.Prepare(s.ctx, Request{Name: "Mine", Samples: []Sample{{Name: "a.wav", Content: []byte("RIFF")}}})
+	s.Require().NoError(err)
+	keypool.FromEnv(joined).Cooldown(keys[0], 30*time.Second)
+
+	s.Require().NoError(cloner.Delete(s.ctx, prepared.ExternalID))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Empty(s.owners, "the voice is gone from the account that held it")
+	s.Equal([]string{keys[0], keys[0]}, s.keys)
 }

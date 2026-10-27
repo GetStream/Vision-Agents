@@ -141,6 +141,8 @@ type Pool struct {
 	*ring
 	// pin is set on a pool made by Pin.
 	pin *pin
+	// first is set on a pool made by First.
+	first bool
 }
 
 // ring is the state every pool over the same keys shares: whose turn it is and which keys
@@ -177,8 +179,23 @@ func (p *Pool) Pin() *Pool {
 	return &Pool{ring: p.ring, pin: &pin{}}
 }
 
-// Len is how many keys the pool holds.
-func (p *Pool) Len() int { return len(p.keys) }
+// First is a view of the pool that sends every request on the first key, the one Peek
+// names. It never takes a turn and never moves to another key, so a request is sent once.
+// A refusal on it is counted, and rests the key for every view of the pool, as on any other.
+//
+// It is for a client whose requests reach state kept under one account for as long as the
+// process lives: a voice cloned on one key is found and deleted only on that key.
+func (p *Pool) First() *Pool {
+	return &Pool{ring: p.ring, first: true}
+}
+
+// Len is how many keys the pool holds, or for First the one it sends on.
+func (p *Pool) Len() int {
+	if p.first {
+		return min(1, len(p.keys))
+	}
+	return len(p.keys)
+}
 
 // Peek is the first key, without taking a turn, or "" for an empty pool.
 func (p *Pool) Peek() string {
@@ -189,10 +206,13 @@ func (p *Pool) Peek() string {
 }
 
 // Next takes the next key that is not resting, or for a pin the key it keeps to while
-// that key is not resting. When every key is, it is the one whose cooldown ends first: a
+// that key is not resting, or for First the first key whether it rests or not. When every key is, it is the one whose cooldown ends first: a
 // request sent on it may still go through, and failing it here would only fail it sooner.
 // It is "" for an empty pool.
 func (p *Pool) Next() string {
+	if p.first {
+		return p.Peek()
+	}
 	if p.pin == nil {
 		return p.ring.take()
 	}
