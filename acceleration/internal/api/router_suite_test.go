@@ -59,6 +59,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -340,6 +341,9 @@ type RouterSuite struct {
 	// runsPerApp caps one app's runs in flight, for a suite about runs to set before it starts
 	// the harness. Zero caps nothing.
 	runsPerApp int64
+	// knowledgeLimits is how documents are cut, for a suite about knowledge limits to set
+	// before it starts the harness. Zero is ingest.DefaultLimits.
+	knowledgeLimits ingest.Limits
 	// eventSecrets and bridge are the connector events endpoint's secrets and channel
 	// bridge, for a suite about connector events to set before it starts the harness. Nil
 	// takes no events and drops messages, as a deployment without them does.
@@ -674,6 +678,7 @@ func (s *RouterSuite) SetupSuite() {
 		ManageKey:         manageKey,
 		Secrets:           s.sealer,
 		Knowledge:         s.knowledgeWriter(),
+		KnowledgeLimits:   s.knowledgeLimits,
 		KnowledgeURLs:     s.pages(redisAddr),
 		Voices:            s.voiceService(),
 		VoiceLibrary:      voices.NewCatalogue(),
@@ -1324,6 +1329,7 @@ func (s *RouterSuite) pages(redisAddr string) *urls.Service {
 		Queue:         fmt.Sprintf("knowledge-%d", n),
 		Reader:        pageReader{},
 		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering),
+		Limits:        s.knowledgeLimits,
 		CheckInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)

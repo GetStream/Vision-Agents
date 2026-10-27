@@ -55,6 +55,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -1155,7 +1156,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Keeping a knowledge base filled from a url needs a row, a base and a crawler.
 	// Missing any of those, the url paths say so rather than storing a subscription
 	// nothing would ever honour.
-	pages, err := buildKnowledgeURLs(pgStore, settings.Redis.Addr, base, logger)
+	pages, err := buildKnowledgeURLs(pgStore, settings.Redis.Addr, base, knowledgeLimits(settings.Knowledge), logger)
 	if err != nil {
 		return err
 	}
@@ -1407,6 +1408,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 	}
 	options.Knowledge = base
+	options.KnowledgeLimits = knowledgeLimits(settings.Knowledge)
 	// A channel's provider credentials are sealed under the same keyring as the other
 	// secrets the router holds. Without one the channel paths refuse to hold them, which is
 	// better than keeping a WhatsApp token in the clear, and nothing is delivered because
@@ -1927,6 +1929,7 @@ func buildKnowledgeURLs(
 	pgStore *store.Store,
 	redisAddress string,
 	base *metered.Knowledge,
+	limits ingest.Limits,
 	logger *slog.Logger,
 ) (*urls.Service, error) {
 	if pgStore == nil || redisAddress == "" || base == nil {
@@ -1946,6 +1949,7 @@ func buildKnowledgeURLs(
 		Redis:     asynq.RedisClientOpt{Addr: redisAddress},
 		Reader:    reader,
 		Knowledge: base,
+		Limits:    limits,
 		Logger:    logger,
 	})
 }
@@ -1968,6 +1972,11 @@ func knowledgeCost(settings config.Knowledge) turbopuffer.Cost {
 		cost[pricing.Meter(meter)] = rate
 	}
 	return cost
+}
+
+// knowledgeLimits are how documents are cut into passages, as the settings name them.
+func knowledgeLimits(settings config.Knowledge) ingest.Limits {
+	return ingest.Limits{MinChunk: settings.MinChunk, MaxHeading: settings.MaxHeading}
 }
 
 // buildLibrary wires the catalogues the speech providers publish, so a voice can be picked

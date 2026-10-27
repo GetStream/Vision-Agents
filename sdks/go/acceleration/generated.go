@@ -5654,7 +5654,7 @@ type IndexedKnowledgeDocument struct {
 
 // IngestKnowledgeRequest defines model for IngestKnowledgeRequest.
 type IngestKnowledgeRequest struct {
-	// ChunkSize Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under 500 is raised to 500.
+	// ChunkSize Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it.
 	ChunkSize *int                `json:"chunk_size,omitempty"`
 	Documents []KnowledgeDocument `json:"documents"`
 

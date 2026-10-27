@@ -222,6 +222,20 @@ func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
 	s.ErrorContains(err, "runs.concurrent_per_app")
 }
 
+func (s *ConfigSuite) TestKnowledgeIsCutByTheIngestLimitsUnlessAskedOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(500, config.Knowledge.MinChunk)
+	s.Equal(128, config.Knowledge.MaxHeading)
+
+	s.T().Setenv("ROUTER_KNOWLEDGE_MIN_CHUNK", "800")
+	s.T().Setenv("ROUTER_KNOWLEDGE_MAX_HEADING", "64")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(800, config.Knowledge.MinChunk)
+	s.Equal(64, config.Knowledge.MaxHeading)
+}
+
 // TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor: the defaults, the
 // variables that set them, and a broker there is none of refused.
 func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor() {

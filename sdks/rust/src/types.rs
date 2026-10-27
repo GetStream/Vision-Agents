@@ -5867,7 +5867,7 @@ pub struct IndexedKnowledgeDocument {
 ///`IngestKnowledgeRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct IngestKnowledgeRequest {
-    ///Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under 500 is raised to 500.
+    ///Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub chunk_size: ::std::option::Option<i64>,
     pub documents: ::std::vec::Vec<KnowledgeDocument>,
