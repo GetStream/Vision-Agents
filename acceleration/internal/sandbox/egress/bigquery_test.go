@@ -247,6 +247,7 @@ func (s *ProxySuite) TestASQLReadTakesOneJSONRequestOfTheMembersItReads() {
 		queryCase("null", `null`, http.StatusForbidden),
 		queryCase("a string", `"SELECT 1"`, http.StatusForbidden),
 		queryCase("an array", `[{"query":"SELECT 1"}]`, http.StatusForbidden),
+		queryCase("an array of a key and a value", `["query","SELECT 1"]`, http.StatusForbidden),
 		queryCase("an empty object", `{}`, http.StatusForbidden),
 		queryCase("a JSON object cut short", `{"query":"SELECT 1"`, http.StatusForbidden),
 		queryCase("a second JSON value", `{"query":"SELECT 1"}{"query":"DELETE FROM t WHERE true"}`, http.StatusForbidden),
@@ -415,6 +416,19 @@ func (s *ProxySuite) TestAnotherGrantedHostKeepsReadOnlysAnswer() {
 	s.Equal("egress: POST api.github.test/bigquery/v2/projects/p/queries refused: code in the sandbox only reads through a connector; "+
 		"write with the connector's tools\n", body)
 	s.Empty(fake.requests())
+}
+
+// TestASQLReadHoldsBesideAnotherReadOfItsPath: a SQL read beside a read of the same method and
+// path still takes what the dry run says is one SELECT.
+func (s *ProxySuite) TestASQLReadHoldsBesideAnotherReadOfItsPath() {
+	fake := s.readBigQuery()
+	grant := s.grant(s.placeholder, "bigquery.github.test")
+	grant.Reads = []core.SandboxRead{{Host: "bigquery.github.test", Path: "/bigquery/v2/projects/*/queries", SQL: true},
+		{Host: "bigquery.github.test", Method: http.MethodPost, Path: "/bigquery/v2/projects/*/*"}}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
+	fake.dryRunAnswers(http.StatusOK, `{"statementType":"SCRIPT"}`)
+
+	s.sendQueries(fake, []queryRequest{queryCase("a script", `{"query":"SELECT 1; SELECT 2"}`, http.StatusForbidden)}, true)
 }
 
 // TestQueriesAtOnceEachGetTheirOwnDryRun: queries sent at the same time each pass on their own

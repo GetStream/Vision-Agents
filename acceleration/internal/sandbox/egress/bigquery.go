@@ -124,17 +124,13 @@ func queryObject(raw []byte) (map[string]json.RawMessage, error) {
 // names the answer's status or type alone, never its body.
 func (p *Proxy) selects(ctx context.Context, r *http.Request, t tunnel, members map[string]json.RawMessage, authorization string) error {
 	members["dryRun"] = json.RawMessage("true")
-	body := &bytes.Buffer{}
-	encoder := json.NewEncoder(body)
-	// The members go on as the sandbox wrote them: an escaped < is the same JSON string, and
-	// none is needed.
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(members); err != nil {
+	body, err := json.Marshal(members)
+	if err != nil {
 		return errors.New("a jobs.query request the proxy cannot encode again")
 	}
 	ctx, cancel := context.WithTimeout(ctx, p.dryRunTimeout)
 	defer cancel()
-	dry, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+t.host+r.URL.RequestURI(), body)
+	dry, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+t.host+r.URL.RequestURI(), bytes.NewReader(body))
 	if err != nil {
 		return errors.New("a jobs.query request the proxy cannot send again")
 	}

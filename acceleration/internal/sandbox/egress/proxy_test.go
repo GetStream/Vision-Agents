@@ -2065,6 +2065,16 @@ func (h *host) serve(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://outside.test/landing", http.StatusFound)
 		return
 	}
+	// BigQuery's dry run of jobs.query names the statement, SCRIPT for more than one (live probe
+	// 2026-10-27T19:55Z).
+	if strings.HasPrefix(r.URL.Path, "/bigquery/") && strings.Contains(got.Body, `"dryRun":true`) {
+		statement := "SELECT"
+		if strings.Contains(got.Body, ";") {
+			statement = "SCRIPT"
+		}
+		_, _ = io.WriteString(w, `{"statementType":"`+statement+`"}`)
+		return
+	}
 	w.Header().Set("X-Echo-Authorization", got.Authorization)
 	echo, _ := json.Marshal(map[string]string{"authorization": got.Authorization})
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && r.URL.Path != "/plain" {
