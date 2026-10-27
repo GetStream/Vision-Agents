@@ -44,7 +44,13 @@ from ._generated.models import (
 )
 from ._generated.types import UNSET, Unset
 from ._socket import Socket
-from ._tool_line import Holds, SocketLine, call_of, cancel, run_call
+from ._tool_line import (
+    Holds,
+    SocketLine,
+    tool_call_context_of,
+    cancel,
+    run_with_tool_call_context,
+)
 from .config import ensure_agent
 from .knowledge import Knowledge
 from .sessions import _with_policy
@@ -559,12 +565,12 @@ class Accelerated(OmniLLM):
             if name == "get_video_frames":
                 result["output"] = await self._capture_video(arguments)
             else:
-                tool_call_context = call_of(
+                tool_call_context = tool_call_context_of(
                     frame,
                     self.router_session_id or "",
                     SocketLine(self._command, self._holds),
                 )
-                output = await run_call(
+                output = await run_with_tool_call_context(
                     self.function_registry,
                     name,
                     arguments,

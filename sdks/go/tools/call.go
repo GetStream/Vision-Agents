@@ -147,17 +147,17 @@ type Conversation struct {
 
 type callKey struct{}
 
-// CallFrom returns the call a function is running for. Outside a call, as in a unit test
-// of the function itself, it returns an empty one rather than nil.
-func CallFrom(ctx context.Context) *Call {
-	if call, ok := ctx.Value(callKey{}).(*Call); ok {
-		return call
+// ToolCallContextFrom returns the call a function is running for. Outside a call, as in a
+// unit test of the function itself, it returns an empty one rather than nil.
+func ToolCallContextFrom(ctx context.Context) *Call {
+	if toolCallContext, ok := ctx.Value(callKey{}).(*Call); ok {
+		return toolCallContext
 	}
 	return &Call{}
 }
 
-// WithCall returns a context carrying call, which CallFrom reads back. Run sets it; a test
-// running a function directly can too.
-func WithCall(ctx context.Context, call *Call) context.Context {
-	return context.WithValue(ctx, callKey{}, call)
+// WithToolCallContext returns a context carrying toolCallContext, which ToolCallContextFrom
+// reads back. Run sets it; a test running a function directly can too.
+func WithToolCallContext(ctx context.Context, toolCallContext *Call) context.Context {
+	return context.WithValue(ctx, callKey{}, toolCallContext)
 }

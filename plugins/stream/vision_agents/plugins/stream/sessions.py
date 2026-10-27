@@ -46,7 +46,13 @@ from ._generated.models import (
     UpdateSessionRequestVerbosity,
 )
 from ._socket import Socket
-from ._tool_line import Holds, SocketLine, call_of, cancel, run_call
+from ._tool_line import (
+    Holds,
+    SocketLine,
+    tool_call_context_of,
+    cancel,
+    run_with_tool_call_context,
+)
 from .responses import Responses, _deleted, _unwrapped
 
 logger = logging.getLogger(__name__)
@@ -787,12 +793,12 @@ class Session:
         for key in ("request_id", "turn_id"):
             if frame.get(key):
                 result[key] = frame[key]
-        tool_call_context = call_of(
+        tool_call_context = tool_call_context_of(
             frame, self.id, SocketLine(self._command, self._holds)
         )
         try:
             arguments = json.loads(frame.get("arguments") or "{}")
-            output = await run_call(
+            output = await run_with_tool_call_context(
                 self._functions, name, arguments, tool_call_context, self._holds
             )
             result["output"] = output if isinstance(output, str) else json.dumps(output)

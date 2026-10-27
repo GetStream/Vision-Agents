@@ -126,6 +126,10 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### The helpers that read and set a tool's call are named after the tool call context
+
+Python's `current_call()` is `get_tool_call_context()` and `calling(...)` is `using_tool_call_context(...)`. Go's `tools.CallFrom(ctx)` is `tools.ToolCallContextFrom(ctx)` and `tools.WithCall` is `tools.WithToolCallContext`. Rust's `Tools::register_call` is `Tools::register_with_tool_call_context` and `Tools::call_as` is `Tools::call_with_tool_call_context`. The JS, .NET, PHP and Ruby SDKs hand the call to the function as an argument, so nothing they export changes.
+
 ### The call a tool function is handed is named toolCallContext
 
 The `ToolCall` a tool function is handed is named `toolCallContext` (`tool_call_context` in Python, Ruby and Rust) in every SDK's signatures, examples and docs, rather than `call`, which read as the phone or video call. Only code that passed it by name changes: PHP's `Tools::call(..., toolCallContext: ...)` and Python's `calling(tool_call_context=...)`.

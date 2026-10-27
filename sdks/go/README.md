@@ -89,24 +89,24 @@ tools.Register(agent.Tools(), "book_flight", "Book a flight", bookFlight,
 
 The router asks the question, with each `{argument}` filled in from the call, and runs the
 function only once the caller says yes within 15 seconds of the question ending. The function
-sees `tools.CallFrom(ctx).Approved` set, and its timeout starts then. A no or silence declines
-the call, and it never runs. A speech-to-speech model asks in its own voice and may not say the
-question word for word. Registering a question that names an argument the function does not
-take is an error. Only voice calls ask: in writing, the question goes out as the tool's
+sees `tools.ToolCallContextFrom(ctx).Approved` set, and its timeout starts then. A no or silence
+declines the call, and it never runs. A speech-to-speech model asks in its own voice and may not
+say the question word for word. Registering a question that names an argument the function does
+not take is an error. Only voice calls ask: in writing, the question goes out as the tool's
 `approval` for the app to show, and the call runs as it comes.
 
 Its `ctx` is cancelled when the router cancels the call: its timeout passed, or, for an
-interruptible tool, the caller interrupted. `tools.CallFrom(ctx)` is the call being run, whose
-`ID` is the same when the router sends a call again, so a function that changes something can
-key on it. A call sent again while it is still running joins it, and one that finished is answered
-with what it returned, without running twice.
+interruptible tool, the caller interrupted. `tools.ToolCallContextFrom(ctx)` is the call being
+run, whose `ID` is the same when the router sends a call again, so a function that changes
+something can key on it. A call sent again while it is still running joins it, and one that
+finished is answered with what it returned, without running twice.
 
 A call that takes a while can say how it is going, and protect a write from the caller
 talking over the agent:
 
 ```go
 func(ctx context.Context, args RebookFlight) (any, error) {
-    toolCallContext := tools.CallFrom(ctx)
+    toolCallContext := tools.ToolCallContextFrom(ctx)
     toolCallContext.Update(ctx, "Checking seats on the new flight")
 
     // Read only: the caller interrupting cancels ctx, and nothing has changed.
