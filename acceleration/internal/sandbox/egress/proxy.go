@@ -301,6 +301,11 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 				reads, logger = false, logger.With("why", err.Error())
 			}
 		}
+		// A body read to its end fills r.Trailer, which ReverseProxy sends on with the rest, so
+		// the trailer is checked after every body read (GraphQL's is the only one now).
+		if name := overrider(r.Trailer); name != "" {
+			reads, logger = false, logger.With("why", "a method override trailer: "+name)
+		}
 		if !reads {
 			logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
 			refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, fmt.Sprintf("egress: %s %s%s refused: "+

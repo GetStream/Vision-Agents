@@ -831,6 +831,64 @@ func (s *ProxySuite) TestAMethodOverrideHeaderIsRefusedOnEveryRead() {
 	}
 }
 
+// TestAMethodOverrideTrailerIsRefusedOnEveryRead: a chunked request's trailer arrives once its
+// body is read to the end, and ReverseProxy sends it on, so a GraphQL query or a GET that
+// carries an override header there, declared in Trailer or not, reaches no host. The same
+// request without the trailer reads (200 on the base, e1a71dcc4).
+func (s *ProxySuite) TestAMethodOverrideTrailerIsRefusedOnEveryRead() {
+	s.readGraphQL()
+	authorization := "Authorization: Bearer " + s.placeholder + "\r\n"
+	query := `{"query":"{ a }"}`
+	chunked := func(method, path, declared, trailer string) string {
+		head := method + " " + path + " HTTP/1.1\r\nHost: api.github.test\r\n" + authorization +
+			"Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n"
+		if declared != "" {
+			head += "Trailer: " + declared + "\r\n"
+		}
+		return head + "\r\n" + fmt.Sprintf("%x\r\n%s\r\n0\r\n", len(query), query) + trailer + "\r\n"
+	}
+	for _, name := range []string{"X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override"} {
+		for _, read := range []struct{ method, path string }{{http.MethodPost, "/graphql"}, {http.MethodGet, "/echo"}} {
+			for _, declared := range []string{"", name} {
+				what := fmt.Sprintf("%s %s with %s, declared %q", read.method, read.path, name, declared)
+				for _, trailer := range []string{"", name + ": DELETE\r\n"} {
+					s.granted.forget()
+					asked := s.asked
+					refused := s.requestCount("api.github.test", read.method, "denied_method", "4xx")
+
+					conn := s.tunnel(&tls.Config{})
+					_, err := io.WriteString(conn, chunked(read.method, read.path, declared, trailer))
+					s.Require().NoError(err, what)
+					response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+					s.Require().NoError(err, what)
+					_, _ = io.Copy(io.Discard, response.Body)
+					_ = response.Body.Close()
+
+					if trailer == "" {
+						// A name declared in Trailer is refused even unsent, so only the plain request is the control.
+						if declared == "" {
+							s.Equal(http.StatusOK, response.StatusCode, what+", no trailer")
+							s.Len(s.granted.requests(), 1, what+", no trailer")
+						}
+						continue
+					}
+					if read.method == http.MethodGet && declared == "" {
+						// The body of a GET is not read here, and the transport sends no trailer
+						// the request did not declare (probe: the host's r.Trailer is empty).
+						s.Equal(http.StatusOK, response.StatusCode, what)
+						continue
+					}
+					s.Equal(http.StatusForbidden, response.StatusCode, what)
+					s.Empty(s.granted.requests(), what)
+					s.Equal(asked, s.asked, what)
+					s.Equal(refused+1, s.requestCount("api.github.test", read.method, "denied_method", "4xx"), what)
+				}
+			}
+		}
+		s.Contains(s.logs.String(), `why="a method override trailer: `+strings.Replace(name, "HTTP", "Http", 1)+`"`)
+	}
+}
+
 // TestAHostOutsideTheGrantsIsRefusedAndNeverReached is A2.
 func (s *ProxySuite) TestAHostOutsideTheGrantsIsRefusedAndNeverReached() {
 	_, _, err := s.send(s.sandbox(s.credential), s.request(http.MethodGet, "https://outside.test/echo", "Bearer "+s.placeholder, ""))
