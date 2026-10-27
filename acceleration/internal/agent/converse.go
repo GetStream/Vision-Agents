@@ -189,9 +189,9 @@ type converse struct {
 	// patience is how long the same unfinished words are waited on before the caller is
 	// asked what they meant.
 	patience time.Duration
-	// undecidedFor is how long words that have held still, or a turn queued behind the
-	// agent's reply, keep a turn nobody asked for waiting, after which their ruling is taken
-	// as lost. See undecidedWithin. A field rather than a constant only so tests can shorten
+	// undecidedFor is how long words that have held still, or a turn kept queued once the
+	// agent was quiet, keep a turn nobody asked for waiting, after which their ruling is
+	// taken as lost. See undecidedWithin and Undecided. A field rather than a constant only so tests can shorten
 	// it, as the harness's flow deadline is.
 	undecidedFor time.Duration
 	// record keeps the trail after the process holding it is gone. Nil when the
@@ -271,8 +271,9 @@ type queuedCandidate struct {
 	// being said in when it was queued, and said is what that line showed of it then.
 	line string
 	said string
-	// at is when the turn was queued.
-	at time.Time
+	// declined is when the agent was first quiet enough to answer the turn and kept it
+	// queued because the caller was talking.
+	declined time.Time
 }
 
 // unfinished is a thought the controller keeps wanting to wait on, and when the waiting
@@ -991,16 +992,19 @@ func (c *converse) Listening() bool {
 // turn nobody asked for waits for them, because it would be said over a caller who spoke
 // first and answer none of what they said. Every ruling but a wait settles the words, and a
 // wait runs out with patience; words that have held still for longer than that and the
-// rulings it takes are taken to have lost theirs, and no longer hold up what is owed. A
-// queued turn is handed back as soon as the agent stops talking, so one still queued that
-// long after it was queued is held by the same limit.
+// rulings it takes are taken to have lost theirs, and no longer hold up what is owed.
+//
+// A queued turn is handed back by Waiting the first time the agent is quiet and the caller
+// is not talking, and until the agent is quiet nothing owed can start anyway. So the same
+// limit runs from when Waiting first found the agent quiet and kept the turn: one still
+// queued that long after is no longer waited on.
 func (c *converse) Undecided() bool {
 	if _, revised, hearing := c.cadence.Active(); hearing && time.Since(revised) < c.undecidedFor {
 		return true
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.queued != nil && time.Since(c.queued.at) < c.undecidedFor
+	return c.queued != nil && (c.queued.declined.IsZero() || time.Since(c.queued.declined) < c.undecidedFor)
 }
 
 // Waiting hands back the turn held while the agent finished speaking, now that it has.
@@ -1021,6 +1025,9 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 	// A copy: what is queued changes with the line it is in, under the lock.
 	held := *c.queued
 	listening := c.Listening()
+	if listening && c.queued.declined.IsZero() {
+		c.queued.declined = time.Now()
+	}
 	if !listening {
 		if !c.cadence.CommitHeld(held.candidate.ID) {
 			c.queued = nil
@@ -1444,7 +1451,6 @@ func joinOverlapping(held, more string) string {
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who
 // has said two more things while being talked over is owed an answer to the last of them.
 func (c *converse) hold(held queuedCandidate) {
-	held.at = time.Now()
 	c.mu.Lock()
 	released := ""
 	if c.queued != nil {
