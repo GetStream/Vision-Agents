@@ -42,6 +42,8 @@ type LinqChannelSuite struct {
 	RouterSuite
 
 	linq *fakeLinq
+	// logged is what the router logs, for the tests about what a refused keyword answer logs.
+	logged *lockedLog
 	// app is the Linq account's provider app id, secret its whsec_ signing secret, apiKey the
 	// line's bearer token, line its number, and connection and config the connection and the
 	// agent that answers on it.
@@ -68,6 +70,8 @@ func (s *LinqChannelSuite) SetupSuite() {
 		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
 	}
 	s.channelProvider = func() string { return s.linq.server.Listener.Addr().String() }
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -286,13 +290,23 @@ func (s *LinqChannelSuite) TestAReplyLinqRefusesIsSentByTheNextHandOff() {
 // received is a message.received of the 2026-02-03 version (events) in chat, to line, from
 // sender, with one text part.
 func (s *LinqChannelSuite) received(chat, line, sender, text string) []byte {
+	return s.receivedIn(map[string]any{"id": chat, "is_group": false}, line, sender, text)
+}
+
+// inGroup is a message.received from sender in a group chat (data.chat.is_group true) on the
+// suite's line.
+func (s *LinqChannelSuite) inGroup(chat, sender, text string) []byte {
+	return s.receivedIn(map[string]any{"id": chat, "is_group": true}, s.line, sender, text)
+}
+
+// receivedIn is a message.received in the data.chat given, to line, from sender.
+func (s *LinqChannelSuite) receivedIn(chat map[string]any, line, sender, text string) []byte {
+	chat["owner_handle"] = map[string]any{"handle": line, "is_me": true, "service": "iMessage", "status": "active"}
 	raw, err := json.Marshal(map[string]any{
 		"api_version": "v3", "webhook_version": "2026-02-03", "event_type": "message.received",
 		"event_id": s.utils.uuid(), "created_at": time.Now().UTC().Format(time.RFC3339Nano), "partner_id": "synthetic-partner",
 		"data": map[string]any{
-			"chat": map[string]any{"id": chat, "is_group": false,
-				"owner_handle": map[string]any{"handle": line, "is_me": true, "service": "iMessage", "status": "active"}},
-			"id": s.utils.uuid(), "direction": "inbound",
+			"chat": chat, "id": s.utils.uuid(), "direction": "inbound",
 			"sender_handle": map[string]any{"handle": sender, "is_me": false, "service": "iMessage", "status": "active"},
 			"parts":         []map[string]any{{"type": "text", "value": text}},
 		},
@@ -383,14 +397,16 @@ func (s *LinqChannelSuite) streamDelivers(channel string, index int) int {
 
 // fakeLinq takes replies as Linq's send endpoint does (send): POST
 // /api/partner/v3/chats/{chatId}/messages, a bearer API key, and a message of parts. It answers
-// 200, or 429 for the next calls limit set, or 400 for the next calls refuse set.
+// 200, or 429 for the next calls limit set, or refusedWith (400 unless set) for the next calls
+// refuse set.
 type fakeLinq struct {
 	server *httptest.Server
 
-	mu       sync.Mutex
-	messages []linqMessage
-	limited  int
-	refused  int
+	mu          sync.Mutex
+	messages    []linqMessage
+	limited     int
+	refused     int
+	refusedWith int
 }
 
 // linqMessage is one message the fake took.
@@ -420,7 +436,7 @@ func (l *fakeLinq) send(w http.ResponseWriter, r *http.Request) {
 	}
 	if l.refused > 0 {
 		l.refused--
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(l.refusedWith)
 		return
 	}
 	var sent struct {
@@ -451,9 +467,15 @@ func (l *fakeLinq) limit(n int) {
 
 // refuse has the next n sends answer 400.
 func (l *fakeLinq) refuse(n int) {
+	l.refuseWith(n, http.StatusBadRequest)
+}
+
+// refuseWith has the next n sends answer status, such as Linq's 403 to a person who texted STOP
+// (error 2024).
+func (l *fakeLinq) refuseWith(n, status int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.refused = n
+	l.refused, l.refusedWith = n, status
 }
 
 // refusing is how many more sends answer 400.
@@ -492,4 +514,205 @@ func (s *LinqChannelSuite) TestAnEmailHandleIsAnsweredWithoutACard() {
 		"SELECT count(*) FROM episodes WHERE customer_id = ?", s.customerID()).Scan(&episodes))
 	s.Zero(contacts)
 	s.Zero(episodes)
+}
+
+// AI-2015: a reply to a Linq group reaches everyone in it and cannot leave one out, so STOP from
+// a person who did not start the chat is confirmed in the group, the one message they are owed,
+// and then the group gets nothing: not the answer the agent finishes after the STOP, not an
+// answer to anyone's later message, not a scheduled delivery. Their START lifts it.
+func (s *LinqChannelSuite) TestAStopFromAnyoneInAGroupIsConfirmedAndSilencesTheGroupUntilTheirStart() {
+	chat, starter, member := s.utils.uuid(), "+12025550199", "+12025550198"
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Hi all"), time.Now()))
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "STOP"), time.Now()))
+
+	stopped := s.took(1)[0]
+	s.Equal(chat, stopped.chat, "confirmed in the group, where it reaches them")
+	s.Equal(telnyxStopped, stopped.text)
+	s.Equal(1, s.liveIMessageOptOuts(member))
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.agentReplied(channel, 1)
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Anyone there?"), time.Now()))
+	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut, "a scheduled delivery into the group is refused too")
+	s.Contains(s.logged.String(), `msg="dropped an inbound message in a chat with a person who opted out" connector=linq channel=`+channel)
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "START"), time.Now()))
+
+	s.Equal(telnyxStarted, s.took(2)[1].text)
+	s.Zero(s.liveIMessageOptOuts(member))
+	s.NoError(s.reachable(channel))
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Back again"), time.Now()))
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, s.index(channel, "Back again")))
+	s.Equal("Noted.", s.took(3)[2].text)
+}
+
+// The false positive: a group in which nobody opted out is answered, whoever wrote last.
+func (s *LinqChannelSuite) TestAGroupNobodyOptedOutOfIsAnswered() {
+	chat := s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, "+12025550199", "Hi all"), time.Now()))
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, "+12025550198", "Is the order ready?"), time.Now()))
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, s.index(channel, "Is the order ready?")))
+
+	sent := s.took(1)[0]
+	s.Equal(chat, sent.chat)
+	s.Equal("Noted.", sent.text)
+	s.NoError(s.reachable(channel))
+}
+
+// Opt-outs are per customer, number and channel, so a person who texted STOP in their own chat
+// with the line silences a group they write in: the message they write there reaches no agent,
+// and no answer to anyone goes into the group.
+func (s *LinqChannelSuite) TestAPersonWhoOptedOutInTheirOwnChatSilencesAGroupTheyWriteIn() {
+	member := "+12025550198"
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.utils.uuid(), s.line, member, "STOP"), time.Now()))
+	s.took(1)
+	group := s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(group, "+12025550199", "Hi all"), time.Now()))
+	channel := s.threadChannel(group)
+	s.written(channel, 1)
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(group, member, "Hello"), time.Now()))
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.agentReplied(channel, 1)
+	s.Never(func() bool { return s.holds(channel, "Hello") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
+}
+
+// A message whose chat does not say whether it is a group still makes its author one of the
+// people the chat reaches: the group is silenced by their STOP.
+func (s *LinqChannelSuite) TestAnAuthorCountsWhenTheChatDoesNotSayItIsAGroup() {
+	chat, member := s.utils.uuid(), "+12025550198"
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedIn(map[string]any{"id": chat}, s.line, "+12025550199", "Hi all"), time.Now()))
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedIn(map[string]any{"id": chat}, s.line, member, "STOP"), time.Now()))
+
+	s.took(1)
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedIn(map[string]any{"id": chat}, s.line, "+12025550199", "Anyone there?"), time.Now()))
+	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
+}
+
+// A person who texts STOP twice has one live opt-out, confirmed each time as in their own chat.
+// START from someone else does not lift it; their own START does.
+func (s *LinqChannelSuite) TestAStopSentTwiceInAGroupIsLiftedOnlyByThatPersonsStart() {
+	chat, starter, member := s.utils.uuid(), "+12025550199", "+12025550198"
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Hi all"), time.Now()))
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "STOP"), time.Now()))
+	s.took(1)
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "Stop."), time.Now()))
+	s.Equal(telnyxStopped, s.took(2)[1].text)
+	s.Equal(1, s.liveIMessageOptOuts(member))
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "START"), time.Now()))
+	s.took(3)
+	s.Equal(1, s.liveIMessageOptOuts(member))
+	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Anyone there?"), time.Now()))
+	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 3 }, dropped, 20*time.Millisecond)
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "START"), time.Now()))
+	s.took(4)
+	s.Zero(s.liveIMessageOptOuts(member))
+	s.NoError(s.reachable(channel))
+}
+
+// A person's STOP in their own chat leaves another person's own chat answered: a 1:1 chat
+// reaches only the person who started it.
+func (s *LinqChannelSuite) TestAStopInOnePersonsChatLeavesAnotherPersonsChatAnswered() {
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.utils.uuid(), s.line, "+12025550198", "STOP"), time.Now()))
+	s.took(1)
+	chat := s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "+12025550199", "Hi"), time.Now()))
+
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.Equal("Noted.", s.took(2)[1].text)
+	s.NoError(s.reachable(channel))
+}
+
+// AI-2016: Linq refuses the STOP confirmation to a person who texted STOP with 403 (error
+// 2024), which is what it says it does, so the bridge logs it at INFO, not as an error.
+func (s *LinqChannelSuite) TestAStopConfirmationLinqRefusesIsLoggedAsExpected() {
+	s.linq.refuseWith(1, http.StatusForbidden)
+	chat := s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "+12025550199", "STOP"), time.Now()))
+
+	channel := s.threadChannel(chat)
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), `level=INFO msg="the provider refused a keyword answer: it blocks sends after STOP" connector=linq channel=`+channel)
+	}, settleFor, 10*time.Millisecond, "the refused confirmation is logged at INFO")
+	s.NotContains(s.logged.String(), `level=ERROR msg="could not answer a keyword" connector=linq channel=`+channel)
+	s.Empty(s.linq.sent())
+}
+
+// AI-2016's control: a keyword answer that fails otherwise, such as Linq answering 429, is still
+// an error.
+func (s *LinqChannelSuite) TestAKeywordAnswerThatFailsOtherwiseIsAnError() {
+	s.linq.limit(1)
+	chat := s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "+12025550199", "HELP"), time.Now()))
+
+	channel := s.threadChannel(chat)
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), `level=ERROR msg="could not answer a keyword" connector=linq channel=`+channel)
+	}, settleFor, 10*time.Millisecond, "a failed keyword answer is logged as an error")
+}
+
+// reachable is what the bridge answers a scheduled delivery into a thread channel asks
+// (channelbridge.Bridge.Reachable).
+func (s *LinqChannelSuite) reachable(channel string) error {
+	thread, err := s.store.ChannelThread(context.Background(), channel)
+	s.Require().NoError(err)
+	return s.bridge.(*channelbridge.Bridge).Reachable(context.Background(), thread)
+}
+
+// holds is whether a channel holds a message with text.
+func (s *LinqChannelSuite) holds(channel, text string) bool {
+	for _, stored := range s.chat.Stored(channel) {
+		if stored["text"] == text {
+			return true
+		}
+	}
+	return false
+}
+
+// index waits until a channel holds a message with text, and returns its place among the
+// channel's messages.
+func (s *LinqChannelSuite) index(channel, text string) int {
+	s.Require().Eventually(func() bool { return s.holds(channel, text) }, settleFor, 10*time.Millisecond, "%s holds no %q", channel, text)
+	for i, stored := range s.chat.Stored(channel) {
+		if stored["text"] == text {
+			return i
+		}
+	}
+	return -1
+}
+
+// agentReplied waits until the agent wrote count replies into a thread channel, each of which
+// the conversation hands to the bridge once written.
+func (s *LinqChannelSuite) agentReplied(channel string, count int) {
+	s.Require().Eventually(func() bool {
+		replies := 0
+		for _, stored := range s.chat.Stored(channel) {
+			if stored["user_id"] == channel {
+				replies++
+			}
+		}
+		return replies >= count
+	}, settleFor, 10*time.Millisecond, "the agent wrote fewer than %d replies into %s", count, channel)
 }

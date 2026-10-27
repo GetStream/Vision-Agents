@@ -154,6 +154,38 @@ func (s *Store) SetChannelThreadChatPerson(ctx context.Context, channelID, perso
 	return nil
 }
 
+// AddChannelThreadMember records member as a person a thread channel's chat reaches, by the
+// recipient their opt-outs name (20261117110000_channel_thread_members.sql). One already
+// recorded is left as it is.
+func (s *Store) AddChannelThreadMember(ctx context.Context, channelID, member string) error {
+	if channelID == "" || member == "" {
+		return stack.Wrap(errors.New("store: a channel id and a member are required"))
+	}
+	_, err := s.db.NewRaw("INSERT INTO channel_thread_members (channel_id, member) VALUES (?, ?) ON CONFLICT DO NOTHING",
+		channelID, member).Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: add channel thread member: %w", err))
+	}
+	return nil
+}
+
+// ChannelThreadMemberOptedOut is whether a person recorded in a thread channel's chat
+// (AddChannelThreadMember) has a live opt-out of the customer's channel, or of all of them, as
+// OptedOut reads one.
+func (s *Store) ChannelThreadMemberOptedOut(ctx context.Context, customerID, channelID, channel string) (bool, error) {
+	found, err := s.db.NewSelect().Model((*OptOut)(nil)).
+		Join("JOIN channel_thread_members AS ctm ON ctm.member = oo.recipient").
+		Where("ctm.channel_id = ?", channelID).
+		Where("oo.customer_id = ?", customerID).
+		Where("oo.channel IN (?)", bun.In([]string{channel, OptOutAll})).
+		Where("oo.revoked_at IS NULL").
+		Exists(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: channel thread member opted out: %w", err))
+	}
+	return found, nil
+}
+
 // ChannelThreadLinked is whether an external thread of a customer's provider unit is linked to
 // a thread channel already.
 func (s *Store) ChannelThreadLinked(ctx context.Context, customerID, connectorID, providerUnitID, threadKey string) (bool, error) {

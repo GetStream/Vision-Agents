@@ -86,8 +86,18 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 		if optedOut {
 			b.logger.Info("dropped an inbound message from a person who opted out",
 				"connector", message.ConnectorID, "channel", thread.ChannelID)
+			return true, nil
 		}
-		return optedOut, nil
+		// No turn is paid for whose reply the chat may not get (refusesReply).
+		silenced, err := b.silenced(ctx, thread)
+		if err != nil {
+			return false, b.unclaim(ctx, thread, message, err)
+		}
+		if silenced {
+			b.logger.Info("dropped an inbound message in a chat with a person who opted out",
+				"connector", message.ConnectorID, "channel", thread.ChannelID)
+		}
+		return silenced, nil
 	}
 	useCase := b.useCase(ctx, thread)
 	var reply string
@@ -115,7 +125,15 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 		defer b.working.Done()
 		sending, cancel := context.WithTimeout(context.Background(), sendTimeout)
 		defer cancel()
-		if err := b.send(sending, thread, reply); err != nil {
+		err := b.send(sending, thread, reply)
+		var refused refusal
+		switch {
+		case errors.As(err, &refused):
+			// Expected, not a failure: Linq refuses every send to a person who texted STOP with
+			// 403, the confirmation included (AI-2016).
+			b.logger.Info("the provider refused a keyword answer: it blocks sends after STOP", "connector", thread.ConnectorID,
+				"channel", thread.ChannelID, "error", err)
+		case err != nil:
 			b.logger.Error("could not answer a keyword", "connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
 		}
 	}()
