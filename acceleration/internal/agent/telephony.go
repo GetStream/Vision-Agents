@@ -459,6 +459,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	// history the model reads: compaction summarises that, and a value it summarised away
 	// was still said or returned.
 	record := a.record()
+	// What the operator told the agent is theirs to give too: an ID or number written in it.
+	told := a.told()
 	if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
@@ -466,7 +468,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
-	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools())); unfound {
+	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools()), told); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
 	} else if key, known, missing := missingID(record, requested.Call, a.availableTools()); missing {
 		parts = llm.TextParts(unfoundIDResult(key, "", known))

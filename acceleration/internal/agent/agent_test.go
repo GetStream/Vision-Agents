@@ -1962,6 +1962,27 @@ func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
 	s.Equal(3, event.After)
 }
 
+func (s *AgentSuite) TestAnIDInTheInstructionsIsPassedOn() {
+	s.runner = &stubToolRunner{result: `{"balance":"12.40"}`}
+	s.tools = harness.Tools{Tools: []harness.Tool{{
+		Name:        "get_account",
+		Description: "look up an account",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{"account_id": map[string]any{"type": "string"}}},
+	}}}
+	s.joinText()
+	s.agent.mu.Lock()
+	s.agent.prompt = "You are the help line. The caller's account_id is ACC-7781."
+	s.agent.mu.Unlock()
+	s.model.reply = []string{"Let me look."}
+	s.model.then = []string{"Your balance is 12.40."}
+	s.asksFor("get_account", `{"account_id":"ACC-7781"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "What's my balance?", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the account the operator gave was refused")
+}
+
 func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 	// A lookup returned an account ID, a compaction summarised the result away, and a later
 	// call with that ID was refused as an ID no tool had given.
@@ -1984,9 +2005,9 @@ func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "Robin Hale asked for more data."})
 	refuel := llm.ToolCall{Name: "add_data", Arguments: `{"account_id":"AC7310","line_id":"LN4","gb_amount":2}`}
 
-	_, _, _, unfound := unfoundID(agent.History(), refuel, tools)
+	_, _, _, unfound := unfoundID(agent.History(), refuel, tools, "")
 	s.True(unfound, "the model's history no longer holds the result")
-	_, _, _, unfound = unfoundID(agent.record(), refuel, tools)
+	_, _, _, unfound = unfoundID(agent.record(), refuel, tools, "")
 	s.False(unfound, "the call's record still does")
 
 	summary := agent.History()[0]

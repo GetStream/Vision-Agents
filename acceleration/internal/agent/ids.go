@@ -20,8 +20,10 @@ import (
 // Only an ID one of the tools hands out is checked: "case_id" when there is an open_case,
 // "booking_id" when there is a find_booking. Any other ID, such as a card_id, is the
 // caller's to give, and so is one the caller said along with what it is ("my case is
-// 6631"). The error code "seven twenty", said where no case was mentioned, is not a case.
-func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, value string, known []string, found bool) {
+// 6631"), or said in answer to the agent asking for it ("What's your case number?" "6631").
+// The error code "seven twenty", said where no case was mentioned, is not a case. An ID
+// written in told, the instructions the operator gave the agent, is the operator's to give.
+func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told string) (key, value string, known []string, found bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
 		return "", "", nil, false
@@ -31,10 +33,24 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 	// texts are results that are not JSON objects or lists: a lookup may answer with the
 	// bare ID, such as jane_doe_17, under no key to look it up by.
 	var texts []string
+	// answers are what the caller said straight after the agent asked them something, with
+	// the question.
+	type answer struct{ question, said string }
+	var answers []answer
+	var question string
 	for _, message := range history {
 		switch message.Role {
+		case llm.Assistant:
+			if strings.TrimSpace(message.Content) != "" {
+				question = message.Content
+			}
 		case llm.User:
-			said.WriteString(" " + message.Content + " " + withSpokenSeparators(digitsFor(message.Content)))
+			heard := message.Content + " " + withSpokenSeparators(digitsFor(message.Content))
+			said.WriteString(" " + heard)
+			if question != "" {
+				answers = append(answers, answer{strings.ToLower(question), alphanumeric(heard)})
+			}
+			question = ""
 		case llm.ToolResult:
 			if failedResult(message.Content) {
 				// A refusal quotes the value it refused, which does not make it returned.
@@ -66,6 +82,11 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 			return name, text, collectIDs(results), true
 		}
 		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) {
+			continue
+		}
+		if slices.ContainsFunc(answers, func(given answer) bool {
+			return strings.Contains(given.question, entityOf(name)) && strings.Contains(given.said, wanted)
+		}) || holdsValue(told, wanted) {
 			continue
 		}
 		returned := false
