@@ -234,8 +234,9 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 		return nil, scheduleFailure(err)
 	}
 	// A repeat's first occurrence may have passed (09:00 daily, written at
-	// 10:00); it starts at the next one, as the agent's tools do.
-	next, ok := parsed.Next(now)
+	// 10:00); it starts at the next one, its COUNT counted from there, as the
+	// agent's tools do.
+	next, ok := parsed.FromNow(now)
 	if !ok {
 		return nil, scheduleFailure(&scheduling.Error{Code: scheduling.CodeScheduleInPast,
 			Message: "that schedule has no occurrence left; its last one has passed"})
@@ -257,6 +258,9 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 			return nil, conflict("a scheduled task with this id already exists; read it back, or choose another id")
 		case errors.Is(err, store.ErrTooManyScheduledTasks):
 			return nil, errTooManyScheduledTasks
+		case errors.Is(err, store.ErrNoAgentConfig):
+			// Deleted since it was read above.
+			return nil, errUnknownConfig
 		}
 		return nil, err
 	}
@@ -386,6 +390,9 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		}
 	}
 	if err := s.store.SaveScheduledTask(ctx, &task); err != nil {
+		if errors.Is(err, store.ErrNoAgentConfig) {
+			return nil, errUnknownConfig
+		}
 		return nil, err
 	}
 	s.kickScheduled()
@@ -500,7 +507,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		return nil, conflict("a completed task cannot be resumed; schedule a new one")
 	}
 	if task.State == store.ScheduledTaskPaused || task.State == store.ScheduledTaskFailed {
-		schedule, err := scheduling.FromStored(task.StartLocal, task.Timezone, task.RRule, untilOf(task))
+		schedule, err := scheduling.FromStored(task)
 		if err != nil {
 			return nil, scheduleFailure(err)
 		}
@@ -540,6 +547,9 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		}
 		task.ConsecutiveFailures = 0
 		if err := s.store.SaveScheduledTask(ctx, &task); err != nil {
+			if errors.Is(err, store.ErrNoAgentConfig) {
+				return nil, errUnknownConfig
+			}
 			return nil, err
 		}
 		s.kickScheduled()
@@ -573,13 +583,21 @@ func (s *Server) runScheduledTask(ctx context.Context, request *runScheduledTask
 	return &runScheduledTaskResponse{Body: scheduledTaskRunOf(task, run)}, nil
 }
 
-// deliverManualRun delivers a run made by hand and records how it landed.
+// deliverManualRun delivers a run made by hand and records how it landed: a
+// delivery too late to make, such as a call that would ring long after the
+// run was asked for, is missed, as a scheduled occurrence's is.
 func (s *Server) deliverManualRun(task store.ScheduledTask, run store.ScheduledTaskRun) {
 	ctx := context.Background()
 	deliveredTo, sessionID, err := s.DeliverScheduledTask(ctx, store.ClaimedScheduledTask{Task: task, Run: run})
 	state := store.ScheduledTaskRunDelivered
 	failure := ""
-	if err != nil {
+	var late *scheduling.Missed
+	switch {
+	case errors.As(err, &late):
+		state = store.ScheduledTaskRunMissed
+		s.logger.Info("a scheduled task run by hand was too late to deliver",
+			"task", task.ID, "run", run.ID, "error", err)
+	case err != nil:
 		state, failure = store.ScheduledTaskRunFailed, scheduling.ReasonOf(err)
 		s.logger.Error("a scheduled task run by hand did not land",
 			"task", task.ID, "run", run.ID, "error", err)
@@ -675,7 +693,7 @@ func scheduledTaskRendered(task store.ScheduledTask, lastRunAt time.Time) Schedu
 	if err != nil {
 		loc = time.UTC
 	}
-	schedule, _ := scheduling.FromStored(task.StartLocal, task.Timezone, task.RRule, untilOf(task))
+	schedule, _ := scheduling.FromStored(task)
 	rendered := ScheduledTask{
 		Id: task.ID, UserId: task.UserID, ConfigId: task.ConfigID, SessionId: task.SessionID,
 		Title: task.Title, Instructions: task.Instructions, State: task.State,

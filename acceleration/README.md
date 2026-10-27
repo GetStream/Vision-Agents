@@ -125,6 +125,7 @@ the other commands that read them there.
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
 | `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
+| `ROUTER_USAGE_MANAGE_KEY` | The usage service's manage key (its `USAGE_MANAGE_KEY`), for `router usage forget-user` alone; the router never sends it. Unset, that command refuses to run. See [The usage service](#the-usage-service) |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user's devices may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user's devices may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`) |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
@@ -512,7 +513,7 @@ any app manages every limit of its organization (an app seen in no organization 
 | --------- | ---- | ------------ |
 | `listLimits`, `createLimit` | `GET`, `POST /v1/spend/limits` | The organization's limits by id, filtered by subject, level, ids, team, category or interval; a new one, 201 |
 | `getLimit`, `updateLimit`, `deleteLimit` | `GET`, `PATCH`, `DELETE /v1/spend/limits/{limit_id}` | One limit; its amount and note only; 204 |
-| `getLimitUsage` | `GET /v1/spend/limits/usage` | One subject's current window in every interval: spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
+| `getLimitUsage` | `GET /v1/spend/limits/usage` | Up to 100 subjects of one kind, in the order asked (repeat `app_id`, `api_key`, `user_id`, `team` or `category`; a list of one goes with every subject): each one's current window in every interval, spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
 | `resetLimitUsage` | `POST /v1/spend/limits/usage/reset` | Resets the subject's spend for its limits in the windows named, with a reason |
 
 A team is `subject: team` (or `app_team` with an `app_id`) and `team: finance`, kept as the
@@ -545,6 +546,31 @@ The organization and app budgets that policies held moved into this table with t
 an app's under the organization it was last seen in, or under itself when it was seen in none.
 The migration stops while an hourly budget exists, since limits have no hourly interval. Coming
 down puts one budget back into each policy from its scope's own limits.
+
+### The account, its credit and its teams
+
+What an organization's own dashboard reads about its money, server-side only:
+
+| Operation | Path | What it does |
+| --------- | ---- | ------------ |
+| `getAccount` | `GET /v1/account` | Status, tier, balance (less what work in flight holds, as `X-Stream-Balance-Micros` says), granted and spent, the warning threshold with `balance_warning_source` (`tier`, `account` or `organization_policy`, which wins) and `balance_state`, what the operator allows (`limits`, `own_limits`) and its spend hard limit with this window's spend and room |
+| `listCredits` | `GET /v1/account/credits` | Credit entries, newest first, a page of up to 100; no actor or note, and a reference only on what the payment processor wrote (actor `stripe`) |
+| `listTeams` | `GET /v1/teams` | Every team a limit names or this month's work carried: its apps, its spend in each current window and its limits; `app_id` narrows it to one app |
+| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `api_key`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
+
+The first two and `listUsageEvents` read the usage service's customer view with the ingest
+token, and answer 404 `billing_not_enabled` with no usage service or for an app in no
+organization. A server-side caller's `api_key` and `user_id` query parameters are filters there,
+as they are on `getSpend`: the key is the `X-Api-Key` header's, and `user_id` in the query only
+names who a backend acts for, which no account read looks at. `listTeams`
+sums the request rows this month when there is no usage service. Staff read the teams of any
+organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
+
+`getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:api_key`,
+`who:user`, `who:team` (work with no team under the empty value) or `who:category` (the team
+left out, and a request counted once in each of its categories). A cost label key holds no
+`:`, so a label named `app` is still `group_by=app`. `scope=organization` counts every app of
+the caller's organization, and there a user is `<app_id>/<user_id>`.
 
 ### Admission
 
@@ -1766,6 +1792,34 @@ changes nothing, writes no audit row and answers the standing as it is now. The 
 space across the four writes: a key already used for another operation, organization or body
 is a 409 `idempotency_key_reused`. Keys are kept in `manage_requests`, for good.
 
+**The customer view.** `GET /v1/accounts/{organization_id}`, `/credits`, `/teams` and `/usage`
+take the ingest token and write nothing: the standing without `status_reason`, with the
+low-balance threshold in force and whose it is (`tier` or `account`) and `own_limits`, the
+settings the account overrides; the credit entries without actor, note or idempotency key, a
+reference only on an entry whose actor is `stripe`; the current windows of every `team:`
+category, across the organization and within each app that carried it this month; and the
+events `listUsage` answers, with its filters and cursor, without the organization, its tier,
+`base_cost_micros`, `price_version` or `source`. The manage key opens none of them. The
+router's `getAccount`, `listCredits`, `listTeams` and `listUsageEvents` read them.
+
+**Forgetting an end user.** A user id is often an email, so an erasure request for one of a
+customer's users reaches the usage records. `router usage forget-user --app <app> --user <id>
+--actor <who>` replaces the id with `forgotten:` and 32 random hex characters (random, since a
+hash of an email can be recomputed from it), in order: the requests of every shard; the usage
+service's events and the user's windows (`POST /v1/manage/users/forget`, one transaction, a
+window the replacement already has taking the forgotten one's spend), and again after
+`--settle` (2 minutes) for a batch a shipper read before the shards were rewritten; the user's
+`usage:` counter, `hold:` key and `quota:` buckets in Redis, deleted by name; and in the shared
+database their own policy and user-level limits, deleted, so the app's defaults apply, and the
+id on their resets, grants and campaigns. Usage and cost stay under the app. It writes one
+`end_user` audit row naming the replacement and the actor, never the id, and the service one
+`forget_user` row per organization. `--dry-run` prints the counts and changes nothing. Every
+step only touches what still names the id, so it is safe to repeat: to finish a run that
+stopped, pass the replacement it printed as `--replacement`, and the rest is rewritten under
+that one replacement, with the run's own audit row. It covers
+the usage records only: sessions, conversation history and `agent_logs` have their own
+retention, and work recorded for the id afterwards carries it again.
+
 The service checks its own alerts, sends them to Sentry (`usage_alert:<name>`) and logs them.
 A rejected event, a batch refused whole for what it holds (`batch_refused`: a 400, 413 or 422,
 any 4xx but a 401), ingest failing and Redis refusing the totals page. A router's events
@@ -1832,6 +1886,13 @@ first, which also restarts it on the new image.
 cd acceleration && go run ./cmd/router prices reload --development --dry-run
 docker compose up -d --build router && docker compose exec router router prices reload --development
 ```
+
+Customers read the list with `GET /v1/prices` (`getPrices`, any credential, a device's
+included): every entry in force from the router's memory, at the rates they are charged
+(each vendor rate with its markup, which no field names), with the change that wrote it, and
+`upcoming`, what the scheduled changes will set, soonest first, with their reason; a change of
+the markup alone shows as every entry it moves. The vendor rates, the markup, the unpriced
+items and each change's source and author stay on the staff operations.
 
 Until the router prices from the database, it prices every row from its price files:
 `ROUTER_PRICES_FILE` over the embedded `vendor.json`, at the rates they give and with no

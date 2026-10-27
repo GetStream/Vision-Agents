@@ -75,6 +75,10 @@ type Message struct {
 	// Speaker names who said a User turn once more than one person has spoken. No provider
 	// reads it: the agent writes it into the words it sends, and keeps Content as said.
 	Speaker string
+	// Author is the Stream user who wrote a User turn read back from a thread channel, which
+	// several people may write in. No provider reads it: the agent counts each author as it
+	// counts a speaker, and names them in Speaker once two have written.
+	Author string
 }
 
 // Tool is something the model may do instead of, or alongside, saying something.

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -58,8 +59,10 @@ func TestLinqChannelSuite(t *testing.T) {
 }
 
 // SetupSuite registers standard_webhooks and the real bearer scheme, whose Wrap puts the API
-// key on a reply, and the real channel bridge.
+// key on a reply, and the real channel bridge. The suite has a database of its own: one of its
+// tests renames a table away.
 func (s *LinqChannelSuite) SetupSuite() {
+	s.database = "linq_channel"
 	verifier := standardwebhooks.New()
 	s.connectors = core.Registry{
 		Schemes:   map[string]core.Scheme{bearer.Name: bearer.New()},
@@ -370,10 +373,18 @@ func (s *LinqChannelSuite) written(channel string, count int) []map[string]any {
 // thread channel, shaped as Stream sends it, signed with the app's secret.
 func (s *LinqChannelSuite) streamDelivers(channel string, index int) int {
 	data, _ := s.chat.Channel(channel)
+	message := s.chat.Delivered(channel)[index]
+	// The hook carries the author as Chat keeps them, which the bridge named after their
+	// number (channelbridge writeInto), not after their id as the fake's messages do.
+	if author, ok := message["user"].(map[string]any); ok {
+		if user, found := s.chat.User(fmt.Sprint(author["id"])); found {
+			message["user"] = user
+		}
+	}
 	payload, err := json.Marshal(map[string]any{
 		"type": "message.new", "cid": "agent:" + channel, "channel_id": channel, "channel_type": "agent",
 		"channel_custom": data["custom"],
-		"message":        s.chat.Delivered(channel)[index],
+		"message":        message,
 	})
 	s.Require().NoError(err)
 	return s.signedly("/v1/chat/hooks/stream", string(payload))

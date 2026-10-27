@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -404,6 +405,87 @@ func (s *Store) AddResets(ctx context.Context, resets []UsageReset, audit LimitA
 		return stack.Wrap(fmt.Errorf("store: add resets: %w", err))
 	}
 	return nil
+}
+
+// TeamAppSpend is what one team's rows in one app cost since each of the moments asked about,
+// in their order, and whether any of them started at or after the month's start.
+type TeamAppSpend struct {
+	AppID     string
+	Category  string
+	Spent     []int64
+	ThisMonth bool
+}
+
+// TeamSpendSince sums, across every shard, the billable cost of the rows of every app of the
+// organization that carry a team's category since each of since, per app and team, for a
+// deployment with no usage service to count it. Rows are read from the earliest moment.
+func (s *Store) TeamSpendSince(ctx context.Context, organizationID string, since []time.Time, month time.Time) ([]TeamAppSpend, error) {
+	if len(since) == 0 {
+		return nil, nil
+	}
+	apps, err := s.OrganizationApps(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	earliest := slices.MinFunc(append(slices.Clone(since), month), func(a, b time.Time) int { return a.Compare(b) })
+	var sums strings.Builder
+	args := make([]any, 0, len(since)+4)
+	for i, start := range since {
+		fmt.Fprintf(&sums, "COALESCE(SUM(cost_micros) FILTER (WHERE billable AND started_at >= ?), 0) AS s%d, ", i)
+		args = append(args, start)
+	}
+	args = append(args, month, bun.In(apps), earliest)
+	query := `SELECT customer_id AS app_id, team.category, ` + sums.String() + `bool_or(started_at >= ?) AS this_month
+FROM requests
+CROSS JOIN LATERAL unnest(usage_categories) AS team(category)
+WHERE customer_id IN (?) AND started_at >= ? AND usage_categories <> '{}' AND team.category ILIKE 'team:%'
+GROUP BY 1, 2`
+	answers, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]TeamAppSpend, error) {
+		rows, err := db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close() //nolint:errcheck // a read-only result
+		var read []TeamAppSpend
+		for rows.Next() {
+			row := TeamAppSpend{Spent: make([]int64, len(since))}
+			targets := []any{&row.AppID, &row.Category}
+			for i := range row.Spent {
+				targets = append(targets, &row.Spent[i])
+			}
+			if err := rows.Scan(append(targets, &row.ThisMonth)...); err != nil {
+				return nil, err
+			}
+			read = append(read, row)
+		}
+		return read, rows.Err()
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: team spend since: %w", err))
+	}
+	type key struct{ app, category string }
+	merged := map[key]*TeamAppSpend{}
+	var order []key
+	for _, answer := range answers {
+		for _, row := range answer {
+			k := key{row.AppID, row.Category}
+			sum, ok := merged[k]
+			if !ok {
+				sum = &TeamAppSpend{AppID: row.AppID, Category: row.Category, Spent: make([]int64, len(since))}
+				merged[k] = sum
+				order = append(order, k)
+			}
+			for i, micros := range row.Spent {
+				sum.Spent[i] += micros
+			}
+			sum.ThisMonth = sum.ThisMonth || row.ThisMonth
+		}
+	}
+	spent := make([]TeamAppSpend, 0, len(order))
+	for _, k := range order {
+		spent = append(spent, *merged[k])
+	}
+	return spent, nil
 }
 
 // SubjectSpendSince sums the billable cost of a subject's rows since a moment, across every

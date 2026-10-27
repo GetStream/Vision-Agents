@@ -3,6 +3,7 @@
 package routing_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -43,6 +44,7 @@ type ReserveSuite struct {
 	prices  *pricing.List
 
 	enforcer *policy.Enforcer
+	writer   *routing.Writer
 	recorder *routing.Recorder
 	app, org string
 }
@@ -85,9 +87,9 @@ func (s *ReserveSuite) SetupTest() {
 	}, discard)
 	s.Require().NoError(err)
 	s.T().Cleanup(s.enforcer.Close)
-	writer := routing.NewWriter(routing.WriterOptions{Store: s.store, Logger: discard, Gate: s.enforcer})
-	s.T().Cleanup(func() { writer.Close(context.Background()) })
-	s.recorder = routing.NewRecorderOn(routing.LLM, writer, s.prices, discard)
+	s.writer = routing.NewWriter(routing.WriterOptions{Store: s.store, Logger: discard, Gate: s.enforcer})
+	s.T().Cleanup(func() { s.writer.Close(context.Background()) })
+	s.recorder = routing.NewRecorderOn(routing.LLM, s.writer, s.prices, discard)
 }
 
 // owner is the app's work in its organization.
@@ -228,6 +230,32 @@ func (s *ReserveSuite) TestALeaseHoldsAMinuteUntilItStops() {
 	s.ErrorIs(s.spend(), policy.ErrNoCredits, "the stream's minute is held")
 	lease.Stop()
 	s.NoError(s.spend(), "and let go when it ends")
+}
+
+// A sandbox is priced by its class, which its slice rows carry, so the minute its run leases
+// is priced with the same attributes rather than as work with no price.
+func (s *ReserveSuite) TestASlicedRunLeasesAtItsRowsPrice() {
+	s.credit(2_000_000)
+	var logs bytes.Buffer
+	prices, err := pricing.NewList("sandbox", []pricing.Entry{{
+		Modality: string(routing.Sandbox), Provider: "daytona", Model: "running", When: map[string]string{"class": "container"},
+		Rates: map[pricing.Meter]pricing.Rate{pricing.VCPUSeconds: {USD: 3, Per: 60}},
+	}}, 0, slog.New(slog.NewTextHandler(&logs, nil)))
+	s.Require().NoError(err)
+	recorder := routing.NewRecorderOn(routing.Sandbox, s.writer, prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	run := routing.StartSlices(routing.SliceOptions{
+		Recorder: recorder, Config: routing.ProviderConfig{Provider: "daytona", Model: "running"}, Owner: s.owner(),
+		Kind: "sandbox", ID: uuid.NewString(), Attributes: map[string]string{"class": "container"}, Every: time.Hour,
+		Quantities: func(_ string, seconds int64) pricing.Quantities {
+			return pricing.Quantities{pricing.VCPUSeconds: seconds}
+		},
+	})
+
+	s.ErrorIs(s.spend(), policy.ErrNoCredits, "the running minute, $3, is held")
+	s.NotContains(logs.String(), "billable work has no price")
+	run.Cancel()
+	s.NoError(s.spend(), "and let go when the run ends")
 }
 
 // identified is work that names its own usage id.

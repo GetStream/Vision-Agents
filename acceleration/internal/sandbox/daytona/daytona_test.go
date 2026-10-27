@@ -1,6 +1,7 @@
 package daytona
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,6 +74,10 @@ type platform struct {
 	test string
 	// stall, while open, holds every code-run, and arrived hears of each one held.
 	stall, arrived chan struct{}
+	// slowCommand and slowRun are how long each shell command and each code-run take to answer,
+	// or until the caller gives up; checking, when set, hears of each shell command.
+	slowCommand, slowRun time.Duration
+	checking             chan struct{}
 }
 
 // heldSecret is a secret as Daytona keeps it.
@@ -89,10 +94,20 @@ func newPlatform() *platform {
 }
 
 func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/process/execute") {
+		p.mu.Lock()
+		slow, checking := p.slowCommand, p.checking
+		p.mu.Unlock()
+		if checking != nil {
+			checking <- struct{}{}
+		}
+		answerAfter(r, slow)
+	}
 	if strings.HasSuffix(r.URL.Path, "/process/code-run") {
 		p.mu.Lock()
-		stall, arrived := p.stall, p.arrived
+		stall, arrived, slow := p.stall, p.arrived, p.slowRun
 		p.mu.Unlock()
+		answerAfter(r, slow)
 		if stall != nil {
 			arrived <- struct{}{}
 			<-stall
@@ -251,6 +266,17 @@ func (p *platform) holds(path string, data []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.files[path] = data
+}
+
+// answerAfter waits slow before a request is answered, or until its caller gives up. The
+// server hears that only once the request's body is read, so it reads it first.
+func answerAfter(r *http.Request, slow time.Duration) {
+	raw, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	select {
+	case <-time.After(slow):
+	case <-r.Context().Done():
+	}
 }
 
 func (p *platform) sandboxes() []string {

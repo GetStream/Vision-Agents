@@ -14,11 +14,11 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     subject: LimitSubject,
-    app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
-    user_id: str | Unset = UNSET,
-    team: str | Unset = UNSET,
-    category: str | Unset = UNSET,
+    app_id: list[str] | None | Unset = UNSET,
+    api_key: list[str] | None | Unset = UNSET,
+    user_id: list[str] | None | Unset = UNSET,
+    team: list[str] | None | Unset = UNSET,
+    category: list[str] | None | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -26,15 +26,55 @@ def _get_kwargs(
     json_subject = subject.value
     params["subject"] = json_subject
 
-    params["app_id"] = app_id
+    json_app_id: list[str] | None | Unset
+    if isinstance(app_id, Unset):
+        json_app_id = UNSET
+    elif isinstance(app_id, list):
+        json_app_id = app_id
 
-    params["api_key"] = api_key
+    else:
+        json_app_id = app_id
+    params["app_id"] = json_app_id
 
-    params["user_id"] = user_id
+    json_api_key: list[str] | None | Unset
+    if isinstance(api_key, Unset):
+        json_api_key = UNSET
+    elif isinstance(api_key, list):
+        json_api_key = api_key
 
-    params["team"] = team
+    else:
+        json_api_key = api_key
+    params["api_key"] = json_api_key
 
-    params["category"] = category
+    json_user_id: list[str] | None | Unset
+    if isinstance(user_id, Unset):
+        json_user_id = UNSET
+    elif isinstance(user_id, list):
+        json_user_id = user_id
+
+    else:
+        json_user_id = user_id
+    params["user_id"] = json_user_id
+
+    json_team: list[str] | None | Unset
+    if isinstance(team, Unset):
+        json_team = UNSET
+    elif isinstance(team, list):
+        json_team = team
+
+    else:
+        json_team = team
+    params["team"] = json_team
+
+    json_category: list[str] | None | Unset
+    if isinstance(category, Unset):
+        json_category = UNSET
+    elif isinstance(category, list):
+        json_category = category
+
+    else:
+        json_category = category
+    params["category"] = json_category
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -49,9 +89,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | SubjectUsage | None:
+) -> ErrorResponse | list[SubjectUsage] | None:
     if response.status_code == 200:
-        response_200 = SubjectUsage.from_dict(response.json())
+        response_200 = []
+        _response_200 = response.json()
+        for response_200_item_data in _response_200:
+            response_200_item = SubjectUsage.from_dict(response_200_item_data)
+
+            response_200.append(response_200_item)
 
         return response_200
 
@@ -98,7 +143,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse | SubjectUsage]:
+) -> Response[ErrorResponse | list[SubjectUsage]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -111,18 +156,21 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     subject: LimitSubject,
-    app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
-    user_id: str | Unset = UNSET,
-    team: str | Unset = UNSET,
-    category: str | Unset = UNSET,
-) -> Response[ErrorResponse | SubjectUsage]:
-    """Read what a subject spent against its limits
+    app_id: list[str] | None | Unset = UNSET,
+    api_key: list[str] | None | Unset = UNSET,
+    user_id: list[str] | None | Unset = UNSET,
+    team: list[str] | None | Unset = UNSET,
+    category: list[str] | None | Unset = UNSET,
+) -> Response[ErrorResponse | list[SubjectUsage]]:
+    """Read what subjects spent against their limits
 
-     The subject's current window in every interval: what it spent, the limit in force with its effective
-    amount, its baseline since a reset and its room, and once for the organization the operator's spend
-    hard limit, which is what admission refuses first. Spend is read from the usage records, so it is
-    what admission counts within a few seconds.
+     Each subject's current window in every interval: what it spent, the limit in force with its
+    effective amount, its baseline since a reset and its room, and for the organization the operator's
+    spend hard limit, which is what admission refuses first, the same on every subject. Up to 100
+    subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app,
+    api_key, user_id, team or category), and send app_id once for subjects within one app or once per
+    subject, so every list has one value or one per subject. One subject answers a list of one. Spend is
+    read from the usage records, so it is what admission counts within a few seconds.
 
     Server-side only: one server-side credential of any app changes every limit of its organization, and
     a request that is not server-side, reads included, answers 403 server_side_only.
@@ -132,18 +180,20 @@ def sync_detailed(
             end user of an app, a usage category across the organization or within one app, or a team
             across the organization or within one app. A team is the user's team, as its token names
             it.
-        app_id (str | Unset):
-        api_key (str | Unset):
-        user_id (str | Unset):
-        team (str | Unset):
-        category (str | Unset):
+        app_id (list[str] | None | Unset): The app of each subject, for every subject but
+            organization, category and team. One goes with every subject.
+        api_key (list[str] | None | Unset): The key of each subject, for subject api_key.
+        user_id (list[str] | None | Unset): The end user of each subject, for subject user.
+        team (list[str] | None | Unset): The team of each subject, for subject team or app_team.
+        category (list[str] | None | Unset): The usage category of each subject, for subject
+            category or app_category.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | SubjectUsage]
+        Response[ErrorResponse | list[SubjectUsage]]
     """
 
     kwargs = _get_kwargs(
@@ -166,18 +216,21 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     subject: LimitSubject,
-    app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
-    user_id: str | Unset = UNSET,
-    team: str | Unset = UNSET,
-    category: str | Unset = UNSET,
-) -> ErrorResponse | SubjectUsage | None:
-    """Read what a subject spent against its limits
+    app_id: list[str] | None | Unset = UNSET,
+    api_key: list[str] | None | Unset = UNSET,
+    user_id: list[str] | None | Unset = UNSET,
+    team: list[str] | None | Unset = UNSET,
+    category: list[str] | None | Unset = UNSET,
+) -> ErrorResponse | list[SubjectUsage] | None:
+    """Read what subjects spent against their limits
 
-     The subject's current window in every interval: what it spent, the limit in force with its effective
-    amount, its baseline since a reset and its room, and once for the organization the operator's spend
-    hard limit, which is what admission refuses first. Spend is read from the usage records, so it is
-    what admission counts within a few seconds.
+     Each subject's current window in every interval: what it spent, the limit in force with its
+    effective amount, its baseline since a reset and its room, and for the organization the operator's
+    spend hard limit, which is what admission refuses first, the same on every subject. Up to 100
+    subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app,
+    api_key, user_id, team or category), and send app_id once for subjects within one app or once per
+    subject, so every list has one value or one per subject. One subject answers a list of one. Spend is
+    read from the usage records, so it is what admission counts within a few seconds.
 
     Server-side only: one server-side credential of any app changes every limit of its organization, and
     a request that is not server-side, reads included, answers 403 server_side_only.
@@ -187,18 +240,20 @@ def sync(
             end user of an app, a usage category across the organization or within one app, or a team
             across the organization or within one app. A team is the user's team, as its token names
             it.
-        app_id (str | Unset):
-        api_key (str | Unset):
-        user_id (str | Unset):
-        team (str | Unset):
-        category (str | Unset):
+        app_id (list[str] | None | Unset): The app of each subject, for every subject but
+            organization, category and team. One goes with every subject.
+        api_key (list[str] | None | Unset): The key of each subject, for subject api_key.
+        user_id (list[str] | None | Unset): The end user of each subject, for subject user.
+        team (list[str] | None | Unset): The team of each subject, for subject team or app_team.
+        category (list[str] | None | Unset): The usage category of each subject, for subject
+            category or app_category.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | SubjectUsage
+        ErrorResponse | list[SubjectUsage]
     """
 
     return sync_detailed(
@@ -216,18 +271,21 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     subject: LimitSubject,
-    app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
-    user_id: str | Unset = UNSET,
-    team: str | Unset = UNSET,
-    category: str | Unset = UNSET,
-) -> Response[ErrorResponse | SubjectUsage]:
-    """Read what a subject spent against its limits
+    app_id: list[str] | None | Unset = UNSET,
+    api_key: list[str] | None | Unset = UNSET,
+    user_id: list[str] | None | Unset = UNSET,
+    team: list[str] | None | Unset = UNSET,
+    category: list[str] | None | Unset = UNSET,
+) -> Response[ErrorResponse | list[SubjectUsage]]:
+    """Read what subjects spent against their limits
 
-     The subject's current window in every interval: what it spent, the limit in force with its effective
-    amount, its baseline since a reset and its room, and once for the organization the operator's spend
-    hard limit, which is what admission refuses first. Spend is read from the usage records, so it is
-    what admission counts within a few seconds.
+     Each subject's current window in every interval: what it spent, the limit in force with its
+    effective amount, its baseline since a reset and its room, and for the organization the operator's
+    spend hard limit, which is what admission refuses first, the same on every subject. Up to 100
+    subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app,
+    api_key, user_id, team or category), and send app_id once for subjects within one app or once per
+    subject, so every list has one value or one per subject. One subject answers a list of one. Spend is
+    read from the usage records, so it is what admission counts within a few seconds.
 
     Server-side only: one server-side credential of any app changes every limit of its organization, and
     a request that is not server-side, reads included, answers 403 server_side_only.
@@ -237,18 +295,20 @@ async def asyncio_detailed(
             end user of an app, a usage category across the organization or within one app, or a team
             across the organization or within one app. A team is the user's team, as its token names
             it.
-        app_id (str | Unset):
-        api_key (str | Unset):
-        user_id (str | Unset):
-        team (str | Unset):
-        category (str | Unset):
+        app_id (list[str] | None | Unset): The app of each subject, for every subject but
+            organization, category and team. One goes with every subject.
+        api_key (list[str] | None | Unset): The key of each subject, for subject api_key.
+        user_id (list[str] | None | Unset): The end user of each subject, for subject user.
+        team (list[str] | None | Unset): The team of each subject, for subject team or app_team.
+        category (list[str] | None | Unset): The usage category of each subject, for subject
+            category or app_category.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | SubjectUsage]
+        Response[ErrorResponse | list[SubjectUsage]]
     """
 
     kwargs = _get_kwargs(
@@ -269,18 +329,21 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     subject: LimitSubject,
-    app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
-    user_id: str | Unset = UNSET,
-    team: str | Unset = UNSET,
-    category: str | Unset = UNSET,
-) -> ErrorResponse | SubjectUsage | None:
-    """Read what a subject spent against its limits
+    app_id: list[str] | None | Unset = UNSET,
+    api_key: list[str] | None | Unset = UNSET,
+    user_id: list[str] | None | Unset = UNSET,
+    team: list[str] | None | Unset = UNSET,
+    category: list[str] | None | Unset = UNSET,
+) -> ErrorResponse | list[SubjectUsage] | None:
+    """Read what subjects spent against their limits
 
-     The subject's current window in every interval: what it spent, the limit in force with its effective
-    amount, its baseline since a reset and its room, and once for the organization the operator's spend
-    hard limit, which is what admission refuses first. Spend is read from the usage records, so it is
-    what admission counts within a few seconds.
+     Each subject's current window in every interval: what it spent, the limit in force with its
+    effective amount, its baseline since a reset and its room, and for the organization the operator's
+    spend hard limit, which is what admission refuses first, the same on every subject. Up to 100
+    subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app,
+    api_key, user_id, team or category), and send app_id once for subjects within one app or once per
+    subject, so every list has one value or one per subject. One subject answers a list of one. Spend is
+    read from the usage records, so it is what admission counts within a few seconds.
 
     Server-side only: one server-side credential of any app changes every limit of its organization, and
     a request that is not server-side, reads included, answers 403 server_side_only.
@@ -290,18 +353,20 @@ async def asyncio(
             end user of an app, a usage category across the organization or within one app, or a team
             across the organization or within one app. A team is the user's team, as its token names
             it.
-        app_id (str | Unset):
-        api_key (str | Unset):
-        user_id (str | Unset):
-        team (str | Unset):
-        category (str | Unset):
+        app_id (list[str] | None | Unset): The app of each subject, for every subject but
+            organization, category and team. One goes with every subject.
+        api_key (list[str] | None | Unset): The key of each subject, for subject api_key.
+        user_id (list[str] | None | Unset): The end user of each subject, for subject user.
+        team (list[str] | None | Unset): The team of each subject, for subject team or app_team.
+        category (list[str] | None | Unset): The usage category of each subject, for subject
+            category or app_category.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | SubjectUsage
+        ErrorResponse | list[SubjectUsage]
     """
 
     return (

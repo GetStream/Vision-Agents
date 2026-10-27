@@ -338,6 +338,27 @@ func (s *TwilioSuite) TestConfiguringInboundPointsTheNumberAtTheBridge() {
 	s.Contains(instructions, `password="hunter2"`)
 }
 
+func (s *TwilioSuite) TestStoppingInboundClearsTheVoiceURL() {
+	s.answer(`{"incoming_phone_numbers":[{"sid":"PN9","phone_number":"+15125551234"}],
+		"sid":"PN9","phone_number":"+15125551234"}`)
+
+	s.Require().NoError(s.provider.StopInbound(s.ctx, "+15125551234"))
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json", s.seen.path)
+	s.Equal([]string{""}, s.seen.form["VoiceUrl"])
+	s.NotContains(s.seen.form, "VoiceMethod")
+}
+
+func (s *TwilioSuite) TestStoppingInboundOfAnUnknownNumberFails() {
+	s.answer(`{"incoming_phone_numbers":[]}`)
+
+	err := s.provider.StopInbound(s.ctx, "+15125551234")
+
+	s.ErrorContains(err, "is not one of this account's numbers")
+	s.Equal(http.MethodGet, s.seen.method, "no number was changed")
+}
+
 func (s *TwilioSuite) TestInboundIsRefusedWithoutASipBridge() {
 	err := s.provider.ConfigureInbound(s.ctx, phone.Inbound{
 		E164:   "+15125551234",

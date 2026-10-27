@@ -1035,16 +1035,17 @@ func (s *Store) Guest(ctx context.Context, customerID, id string) (User, error) 
 	return guest, nil
 }
 
-// ClaimGuest moves a guest's sessions onto a real user and returns how many moved.
+// ClaimGuest moves a guest's sessions and scheduled tasks onto a real user and returns how
+// many sessions moved.
 //
-// One transaction, because the two halves are one fact. A guest marked claimed whose
+// One transaction, because the halves are one fact. A guest marked claimed whose
 // sessions still say the guest owns them is a person who signed up and lost their history;
 // sessions moved without the guest being marked is a guest that can be claimed again, by
-// somebody else.
+// somebody else. A task left on the guest follows up for nobody who can still see it.
 //
-// With shards, the guest is in the shared database and the sessions in every shard, and no
-// transaction spans them. The guest is claimed first, and a claim by the same user again moves
-// whatever sessions a failed one left behind.
+// With shards, the guest and the tasks are in the shared database and the sessions in every
+// shard, and no transaction spans them. The guest is claimed with its tasks first, and a claim
+// by the same user again moves whatever sessions a failed one left behind.
 func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID string) (int64, error) {
 	if customerID == "" || guestID == "" || userID == "" {
 		return 0, stack.Wrap(errors.New("store: a customer, a guest and a user id are required"))
@@ -1062,11 +1063,26 @@ func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID stri
 			Where("user_id = ?", guestID).
 			Exec(ctx)
 	}
+	moveTasks := func(ctx context.Context, db bun.IDB) error {
+		_, err := db.NewUpdate().Model((*ScheduledTask)(nil)).
+			Set("user_id = ?", userID).
+			Set("updated_at = ?", now).
+			Where("customer_id = ?", customerID).
+			Where("user_id = ?", guestID).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("claim guest scheduled tasks: %w", err)
+		}
+		return nil
+	}
 
 	if !s.Sharded() && len(s.peers) == 0 {
 		var moved int64
 		err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			if err := claimGuest(ctx, tx, customerID, guestID, userID, now, false); err != nil {
+				return err
+			}
+			if err := moveTasks(ctx, tx); err != nil {
 				return err
 			}
 			result, err := moveSessions(ctx, tx)
@@ -1085,7 +1101,13 @@ func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID stri
 		return moved, nil
 	}
 
-	if err := claimGuest(ctx, s.db, customerID, guestID, userID, now, true); err != nil {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := claimGuest(ctx, tx, customerID, guestID, userID, now, true); err != nil {
+			return err
+		}
+		return moveTasks(ctx, tx)
+	})
+	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: %w", err))
 	}
 	moved, err := onEveryShard(ctx, s, moveSessions)

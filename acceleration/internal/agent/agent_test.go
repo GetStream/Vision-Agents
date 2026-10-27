@@ -2402,8 +2402,8 @@ func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 
 func (s *AgentSuite) TestATurnAScheduledTaskFiredIsAskedOfTheModelAsScheduled() {
 	// A scheduled turn is the customer's spend, decided where the model is asked, so the
-	// mark has to reach it, the reply that finishes the turn included, and the next turn
-	// somebody sends is not marked.
+	// mark has to reach it, the reply that finishes the turn and the work it hands over
+	// included, and the next turn somebody sends is not marked.
 	s.delegates()
 	s.join(true)
 	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`, "Hello."}
@@ -2420,6 +2420,22 @@ func (s *AgentSuite) TestATurnAScheduledTaskFiredIsAskedOfTheModelAsScheduled() 
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the next turn was never asked")
 	s.Equal([]bool{true, true, false}, s.model.askedScheduled())
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the work the turn handed over is the customer's spend")
+}
+
+func (s *AgentSuite) TestAPictureAScheduledTaskSendsIsLookedAtAsScheduled() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.join(true)
+	picture := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is in this picture", picture, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "the vision task was never asked")
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the picture is the customer's spend")
 }
 
 func (s *AgentSuite) TestATurnNobodyIsNamedForIsNotAskedInTheNameOfTheLastSender() {
@@ -3650,15 +3666,15 @@ func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
 		{Role: llm.User, Content: "yes, please go ahead"},
 	}
 	again := llm.ToolCall{ID: "c2", Name: "create_reservation", Arguments: `{"time": "7:30", "name": "Alvarez"}`}
-	earlier, repeated := answeredSinceCaller(history, again)
+	earlier, repeated := answeredSinceCaller(history, again, nil)
 	s.True(repeated)
 	s.Contains(earlier, "Alvarez")
 
-	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "check_availability", Arguments: booking.Arguments})
+	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "check_availability", Arguments: booking.Arguments}, nil)
 	s.False(repeated, "a lookup is free to run again once the caller has spoken")
 
 	history[2].Content = `{"error":"no table at 7:30"}`
-	_, repeated = answeredSinceCaller(history, again)
+	_, repeated = answeredSinceCaller(history, again, nil)
 	s.False(repeated, "a booking that failed may be tried again")
 }
 
@@ -4598,7 +4614,7 @@ func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke()
 		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"time": "7:30"}`},
 		{Role: llm.User, Content: "Thanks."},
 	}
-	_, repeated := answeredSinceCaller(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"time":"7:30"}`})
+	_, repeated := answeredSinceCaller(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"time":"7:30"}`}, nil)
 	s.True(repeated)
 
 	failed := []llm.Message{
@@ -4606,7 +4622,7 @@ func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke()
 		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"error": "identity not verified"}`},
 		{Role: llm.User, Content: "My member ID is ABC123456."},
 	}
-	_, repeated = answeredSinceCaller(failed, llm.ToolCall{Name: "lookup_appointment", Arguments: `{}`})
+	_, repeated = answeredSinceCaller(failed, llm.ToolCall{Name: "lookup_appointment", Arguments: `{}`}, nil)
 	s.False(repeated, "a call that failed may be tried again")
 }
 
@@ -4618,7 +4634,7 @@ func (s *AgentSuite) TestACallTheRouterHeldBackRunsOnceThePersonHasActed() {
 			{Role: llm.ToolResult, ToolCallID: "1", Content: result},
 			{Role: llm.User, Content: "I pressed it, try again."},
 		}
-		_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: echo.Name, Arguments: echo.Arguments})
+		_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: echo.Name, Arguments: echo.Arguments}, nil)
 		return repeated
 	}
 

@@ -785,3 +785,23 @@ func (s *StoreSuite) TestARedactedToolCallStillCountsInToolUsage() {
 	s.Require().NotNil(tools[0].AvgMs, "the call's latency survives the redaction")
 	s.InDelta(1000, *tools[0].AvgMs, 1)
 }
+
+func (s *StoreSuite) TestClaimingAGuestMovesTheirScheduledTasks() {
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "acme", Name: "Guest"}))
+	s.task("theirs", func(task *ScheduledTask) { task.UserID = "guest-1" })
+	s.task("sams", nil)
+	s.task("theirs", func(task *ScheduledTask) { task.CustomerID, task.UserID = "globex", "guest-1" })
+
+	_, err := s.store.ClaimGuest(s.ctx, "acme", "guest-1", "account-1")
+	s.Require().NoError(err)
+
+	for _, want := range []struct{ customer, task, user string }{
+		{"acme", "theirs", "account-1"},
+		{"acme", "sams", "sam"},
+		{"globex", "theirs", "guest-1"},
+	} {
+		task, err := s.store.ScheduledTask(s.ctx, want.customer, want.task)
+		s.Require().NoError(err)
+		s.Equal(want.user, task.UserID, "%s/%s", want.customer, want.task)
+	}
+}

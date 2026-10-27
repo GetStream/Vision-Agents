@@ -35,10 +35,10 @@ number +1556...  ->  rule of its own  ->  same trunk
 | Piece                                                                          | What it does |
 | ------------------------------------------------------------------------------ | ------------ |
 | [lines.go](../../acceleration/internal/phone/lines.go)                          | `line`: join a trunk, adopt an old one, undo a failed join |
-| [service.go](../../acceleration/internal/phone/service.go)                      | `Call` and `Transfer` use the line; `Release` takes the number off; the sweep |
+| [service.go](../../acceleration/internal/phone/service.go)                      | `Call` and `Transfer` use the line; `Release` takes the number off; `Detach` stops inbound; the sweep |
 | [stream.go](../../acceleration/internal/phone/stream.go)                        | `UpdateTrunk`, `UpdateRoute`, `CreateCall` |
 | [phone.go](../../acceleration/internal/phone/phone.go)                          | `StreamLegger`, `StreamLegOf`, `Bridge.WithCallID` |
-| [store/streamtrunks.go](../../acceleration/internal/store/streamtrunks.go)      | The `stream_trunks` table and the per-group lock |
+| [store/streamtrunks.go](../../acceleration/internal/store/streamtrunks.go)      | The `stream_trunks` table, the per-group lock, `TrunkGroupTx.Detach` |
 | [store/callresources.go](../../acceleration/internal/store/callresources.go)    | `call_resources`, now with a `shared` flag |
 | [callhooks.go](../../acceleration/internal/api/callhooks.go)                    | The hook skips a call the router placed |
 | [phonesweep.go](../../acceleration/cmd/router/phonesweep.go)                    | The sweeper, every 10 minutes |
@@ -105,6 +105,16 @@ on the database lock with a pooled connection in hand, and the pool would run ou
 
 Release takes the number off its trunk under the same lock. It deletes the trunk when that
 was the last number.
+
+### Detach keeps the number on its trunk
+
+Detach stops inbound and leaves the line alone. The number keeps its trunk and its rule, so
+it still places calls. The vendor step runs first, outside the lock. Then `attached_at` is
+cleared under the group lock. If the vendor refuses, the number stays attached and detaching
+again finishes the job.
+
+Attaching again points the vendor back at the same shared trunk. Without `ROUTER_AUTH_KEK`,
+where each number has a trunk of its own, attach first takes the number off its old trunk.
 
 ### Old numbers are adopted
 
