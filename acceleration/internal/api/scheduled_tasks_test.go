@@ -2743,7 +2743,7 @@ func (s *ScheduledTasksSuite) TestAnUnreachablePhoneFallsBackToWhatsApp() {
 	s.makeDue(s.tasksOf(user)[0])
 
 	run := s.delivered(s.tasksOf(user)[0])
-	s.Equal("whatsapp", run.DeliveredTo, "no call could be placed here, so the text carried it")
+	s.Equal("whatsapp", run.DeliveredTo, "a number used only on WhatsApp is not rung, so the text carried it")
 	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond)
 }
@@ -2753,11 +2753,8 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 	scheduling.DeliveryRetries = []time.Duration{time.Millisecond, time.Millisecond}
 	s.T().Cleanup(func() { scheduling.DeliveryRetries = retries })
 
-	number, writer := s.lineNumber(), s.writerNumber()
-	s.connectWhatsApp(number)
-	config := s.agentOnWhatsApp(number)
 	user := s.data.createUser()
-	s.seedWriter(user, config, number, writer)
+	config := s.agentToRing(user)
 	opened := s.openScheduling(user, config, nil)
 	s.taskOn(user, config, opened.Id, []string{"phone"})
 	s.runWorker()
@@ -2776,11 +2773,8 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 }
 
 func (s *ScheduledTasksSuite) TestARunByHandThatFailsListsItsReasonAndNotItsWords() {
-	number, writer := s.lineNumber(), s.writerNumber()
-	s.connectWhatsApp(number)
-	config := s.agentOnWhatsApp(number)
 	user := s.data.createUser()
-	s.seedWriter(user, config, number, writer)
+	config := s.agentToRing(user)
 	opened := s.openScheduling(user, config, nil)
 	created := s.taskOn(user, config, opened.Id, []string{"phone"})
 	path := "/v1/agents/scheduled-tasks/" + created.Id
@@ -2928,8 +2922,8 @@ func (s *ScheduledTasksSuite) TestAFailureOnEveryChannelIsListedUnderTheFirstCha
 	s.connectWhatsApp(number)
 	config := s.agentOnWhatsApp(number)
 	user := s.data.createUser()
-	// The person never wrote, so WhatsApp is out of its window; the call
-	// rings the same number and cannot be placed here.
+	// The person never wrote, so WhatsApp is out of its window; nor did they
+	// text, so the call has no number to ring.
 	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
 		CustomerID: s.customerID(), ConfigID: config, Kind: "whatsapp", Address: writer, UserID: user.userID,
 	}))
@@ -3109,6 +3103,102 @@ func (s *ScheduledTasksSuite) TestARetryWaitsForAReplyStillBeingWritten() {
 	s.Equal("whatsapp", run.DeliveredTo)
 	s.Equal([]string{"Done."}, s.sink.to(writer), "the retry carried the reply once it was written")
 	s.Equal(1, s.model().turnsOn("<scheduled_task"), "the retry ran no second turn")
+}
+
+// onWhatsApp is a task on a WhatsApp agent for a user who texts it from writer, delivered as
+// deliverTo says, in the session it returns, opened and live here.
+func (s *ScheduledTasksSuite) onWhatsApp(writer string, deliverTo ...string) (store.ScheduledTask, *session.Session) {
+	number := s.lineNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	s.seedWriter(user, config, number, writer)
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, deliverTo)
+	found, live := s.router.sessions.Get(opened.Id, s.ownerOf(user))
+	s.Require().True(live)
+	return s.tasksOf(user)[0], found
+}
+
+// A reply the user cut off before it was written runs again on the retry, and its words are
+// the ones texted.
+func (s *ScheduledTasksSuite) TestATurnCancelledBeforeItsReplyRunsAgainOnTheRetry() {
+	writer := s.writerNumber()
+	task, found := s.onWhatsApp(writer, "whatsapp")
+	run := s.manualRun(task)
+	_, err := s.cutOff(s.router, task, run, found.Interrupt)
+	s.Equal(scheduling.ReasonNoReply, scheduling.ReasonOf(err), "%v", err)
+
+	deliveredTo, err := s.deliverRun(task, run)
+
+	s.Require().NoError(err)
+	s.Equal("whatsapp", deliveredTo)
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Equal(2, s.scheduledTurns(), "the retry ran the cancelled turn again")
+}
+
+// A turn whose router stopped under it, as on a deploy, is interrupted, and the retry, which
+// runs on another router sharing the conversations, runs the turn again.
+func (s *ScheduledTasksSuite) TestATurnInterruptedByItsRouterStoppingRunsAgainOnTheRetry() {
+	other, stopping, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.DiscardHandler))
+	// The stopping node texts through the suite's channels, as every node of a deployment does.
+	stopping.channels = s.router.channels
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	s.seedWriter(user, config, number, writer)
+	opened := user.on(other).createSession(CreateSessionRequest{ConfigId: &config})
+	body := taskRequest(config)
+	body.SessionId, body.DeliverTo = &opened.Id, []string{"whatsapp"}
+	s.Require().Equal(http.StatusCreated,
+		s.serverClient.actingFor(user).on(other).do(http.MethodPost, "/v1/agents/scheduled-tasks", body, nil))
+	task := s.tasksOf(user)[0]
+	run := s.manualRun(task)
+	_, err := s.cutOff(stopping, task, run, func() { s.Require().NoError(sessions.Shutdown()) })
+	s.Require().Error(err)
+	// A stopped router's claim on the session runs out; the test does not wait for it.
+	stopping.directory.Release(context.Background(), opened.Id)
+
+	deliveredTo, err := s.deliverRun(task, run)
+
+	s.Require().NoError(err)
+	s.Equal("whatsapp", deliveredTo)
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Equal(2, s.scheduledTurns(), "the retry ran the interrupted turn again")
+}
+
+// The turn runs again once: a second cut-off reply is read back as failed, with no third turn.
+func (s *ScheduledTasksSuite) TestATurnCancelledTwiceIsNotRunAThirdTime() {
+	writer := s.writerNumber()
+	task, found := s.onWhatsApp(writer, "whatsapp")
+	run := s.manualRun(task)
+	_, err := s.cutOff(s.router, task, run, found.Interrupt)
+	s.Require().Error(err)
+	_, err = s.cutOff(s.router, task, run, found.Interrupt)
+	s.Require().Error(err)
+
+	_, err = s.deliverRun(task, run)
+
+	s.failedAs(err, scheduling.ReasonReplyFailed, false)
+	s.Equal(2, s.scheduledTurns())
+	s.Empty(s.sink.to(writer))
+}
+
+// A channel after the one whose turn was cut off runs the turn again rather than take the
+// cut-off reply for its own: the conversation is given the task, not an empty reply.
+func (s *ScheduledTasksSuite) TestTheConversationAfterACutOffTextChannelRunsTheTurnAgain() {
+	writer := s.writerNumber()
+	task, found := s.onWhatsApp(writer, "whatsapp", store.ScheduledTaskDeliveredConversation)
+	run := s.manualRun(task)
+
+	deliveredTo, err := s.cutOff(s.router, task, run, found.Interrupt)
+
+	s.Require().NoError(err)
+	s.Equal(store.ScheduledTaskDeliveredConversation, deliveredTo)
+	s.Eventually(func() bool { return s.scheduledTurns() == 2 }, settleFor, 20*time.Millisecond,
+		"the conversation was not given the task again")
+	s.Empty(s.sink.to(writer))
 }
 
 func (s *ScheduledTasksSuite) TestAQuietTaskIsHeldUntilItsQuietHoursEnd() {
