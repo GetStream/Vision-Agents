@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -89,15 +90,28 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*
 	// ErrorLog: a failed handshake is the router's log line, as in a tunnel, not the std log's.
 	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelInfo)}
+	// mu orders a listener bound late against the hand-over, so a router done with the
+	// address never starts serving on it.
+	var mu sync.Mutex
+	var serving *handOverListener
+	done := make(chan struct{})
 	start := func(listener net.Listener) {
+		mu.Lock()
+		defer mu.Unlock()
+		select {
+		case <-done:
+			_ = listener.Close()
+			return
+		default:
+		}
 		if secure {
 			listener = tls.NewListener(listener, proxy.ListenerTLS(public.Hostname()))
 		}
+		serving = &handOverListener{Listener: listener}
 		logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr",
 			"tls", secure)
-		go serve(server, listener)
+		go serve(server, serving)
 	}
-	done := make(chan struct{})
 	listener, err := net.Listen("tcp", addr)
 	switch {
 	case err == nil:
@@ -114,8 +128,6 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*
 					return
 				case <-ticker.C:
 				}
-				// A listener bound just as the router stops is closed by serve: Serve on a
-				// closed server closes it.
 				if listener, err := net.Listen("tcp", addr); err == nil {
 					start(listener)
 					return
@@ -128,20 +140,49 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*
 	var once sync.Once
 	finish := func(handingOver bool) {
 		once.Do(func() {
+			mu.Lock()
+			defer mu.Unlock()
 			close(done)
 			if !handingOver {
 				return
 			}
 			logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", addr,
 				"setting", "code_sandbox.proxy_addr")
-			// Shutdown closes the listener and leaves the tunnels: they are hijacked connections,
-			// which an http.Server neither closes nor waits for. It waits only for the CONNECTs
-			// still being answered, so it runs on its own; stop ends it.
-			go func() { _ = server.Shutdown(context.Background()) }()
+			// The listener alone: the connections the proxy took are still served, a request
+			// they have yet to send included, which a Shutdown would drop.
+			if serving != nil {
+				_ = serving.Close()
+			}
 		})
 	}
 	// Close, not a drain: a tunnel is the sandbox's to reopen.
 	return func() error { finish(false); return server.Close() }, func() { finish(true) }, nil
+}
+
+// handOverListener is the proxy's listener, which a hand-over closes before the server does:
+// Serve then ends as on a closed server, so serve does not take it for a failure, and the
+// server's own Close finds it closed and says nothing.
+type handOverListener struct {
+	net.Listener
+	once   sync.Once
+	closed atomic.Bool
+	err    error
+}
+
+func (l *handOverListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil && l.closed.Load() {
+		return nil, http.ErrServerClosed
+	}
+	return conn, err
+}
+
+func (l *handOverListener) Close() error {
+	l.once.Do(func() {
+		l.closed.Store(true)
+		l.err = l.Listener.Close()
+	})
+	return l.err
 }
 
 // secretSweeper sweeps the Daytona secrets a crashed router left behind, and is nil where there

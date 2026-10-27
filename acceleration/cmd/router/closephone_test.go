@@ -333,12 +333,12 @@ func TestAShutdownThatFailsForAnotherReasonIsStillAnError(t *testing.T) {
 	require.ErrorIs(t, err, errUnclosable)
 }
 
-// draining is a router on its way down with a drain, a public, a peer and a metrics
-// listener, and a session count the test decides.
+// draining is a router on its way down with a drain, a public, a peer, a metrics and a
+// sandbox egress proxy listener, and a session count the test decides.
 type draining struct {
-	public, peers, metrics string
-	held                   atomic.Int64
-	stopped                chan error
+	public, peers, metrics, proxy string
+	held                          atomic.Int64
+	stopped                       chan error
 }
 
 func startDraining(t *testing.T, drain time.Duration) *draining {
@@ -348,6 +348,9 @@ func startDraining(t *testing.T, drain time.Duration) *draining {
 	t.Cleanup(stopMetrics)
 	require.Eventually(t, func() bool { return servesMetrics(metrics) }, 5*time.Second, 10*time.Millisecond,
 		"the metrics listener never answered")
+	proxy := freeAddress(t)
+	stopProxy, handOverProxy := serveBareProxy(t, proxy)
+	t.Cleanup(func() { _ = stopProxy() })
 	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	public, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -363,7 +366,8 @@ func startDraining(t *testing.T, drain time.Duration) *draining {
 	})
 	require.NoError(t, err)
 
-	d := &draining{public: public.Addr().String(), peers: peers.Addr().String(), metrics: metrics, stopped: make(chan error, 1)}
+	d := &draining{public: public.Addr().String(), peers: peers.Addr().String(), metrics: metrics, proxy: proxy,
+		stopped: make(chan error, 1)}
 	d.held.Store(1)
 	go func() {
 		d.stopped <- stopServing(stopping{
@@ -373,6 +377,7 @@ func startDraining(t *testing.T, drain time.Duration) *draining {
 			held:            func() int { return int(d.held.Load()) },
 			telephony:       service,
 			handOverMetrics: handOverMetrics,
+			handOverProxy:   handOverProxy,
 			drain:           drain,
 			grace:           shutdownGrace,
 			logger:          slog.New(slog.DiscardHandler),
@@ -428,6 +433,53 @@ func TestADrainingRouterFreesItsMetricsAddressForTheRouterTakingOver(t *testing.
 	case <-time.After(5 * time.Second):
 		t.Fatal("the router kept draining after its last session ended")
 	}
+}
+
+// TestADrainingRouterFreesItsProxyAddressForTheRouterTakingOver: the router started beside
+// it, on the same address, serves the sandboxes while this one finishes its sessions.
+func TestADrainingRouterFreesItsProxyAddressForTheRouterTakingOver(t *testing.T) {
+	d := startDraining(t, time.Hour)
+
+	require.Eventually(t, func() bool {
+		successor, err := net.Listen("tcp", d.proxy)
+		if err != nil {
+			return false
+		}
+		_ = successor.Close()
+		return true
+	}, time.Second, 10*time.Millisecond, "the draining router kept its proxy address")
+	select {
+	case <-d.stopped:
+		t.Fatal("the router stopped while it still held a session")
+	default:
+	}
+	d.held.Store(0)
+	require.NoError(t, <-d.stopped)
+}
+
+// TestARouterWithoutADrainServesTheProxyUntilItStops is the control: base serves the proxy
+// until the process exits, whatever stopServing does, and a router without a drain still
+// does.
+func TestARouterWithoutADrainServesTheProxyUntilItStops(t *testing.T) {
+	public, _ := servingNothing(t)
+	proxy := freeAddress(t)
+	stopProxy, handOverProxy := serveBareProxy(t, proxy)
+	t.Cleanup(func() { _ = stopProxy() })
+
+	err := stopServing(stopping{
+		public:        public,
+		drainWork:     func() {},
+		held:          func() int { return 0 },
+		telephony:     idlePhone(t),
+		handOverProxy: handOverProxy,
+		grace:         testGrace,
+		logger:        slog.New(slog.DiscardHandler),
+	})
+
+	require.NoError(t, err)
+	require.True(t, servesProxy(proxy), "the proxy stopped before the router exited")
+	require.NoError(t, stopProxy())
+	require.False(t, servesProxy(proxy), "the proxy outlived the router")
 }
 
 func TestARouterWithoutADrainServesMetricsUntilItStops(t *testing.T) {
