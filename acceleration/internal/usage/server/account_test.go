@@ -182,7 +182,7 @@ func (s *ServerSuite) TestTheCustomerViewOfUsageLeavesOutWhatTheOperatorReads() 
 	event := usagetest.Event(s.organization, func(event *usage.Event) {
 		event.UserID, event.UsageCategories, event.PriceVersion = "u1", []string{"support", "team:finance"}, "prices-v7"
 		event.Attributes, event.Tags = map[string]string{"country": "nl"}, map[string]string{"project": "alpha"}
-		event.BaseCostMicros, event.CostMicros = 777, 1_234
+		event.BaseCostMicros, event.CostMicros, event.SKU = 777, 1_234, "llm-openai-m"
 	})
 	bare := usagetest.Event(s.organization, func(event *usage.Event) { event.OccurredAt = event.OccurredAt.Add(-time.Second) })
 	s.ship(event, bare)
@@ -200,6 +200,8 @@ func (s *ServerSuite) TestTheCustomerViewOfUsageLeavesOutWhatTheOperatorReads() 
 	s.Equal(map[string]string{"country": "nl"}, listed.Attributes)
 	s.Equal(map[string]string{"project": "alpha"}, listed.Tags)
 	s.Equal("llm", listed.Meter)
+	s.Equal("llm-openai-m", listed.SKU, "the SKU the work was priced as is the customer's to read")
+	s.Empty(page.Items[1].SKU)
 	s.Equal([]string{}, page.Items[1].UsageCategories, "none is an empty list")
 	for _, hidden := range []string{"organization_tier", "organization_id", "base_cost_micros", "777", "price_version", "prices-v7", "source", "router/test/pod"} {
 		s.NotContains(string(answer), hidden)

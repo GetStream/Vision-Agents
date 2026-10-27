@@ -19,13 +19,11 @@ final readonly class PricePreviewItem
         public ?PricedEntry $after = null,
         // How it is priced before the change. Absent when nothing prices it.
         public ?PricedEntry $before = null,
-        // The factor the markup it is sold at moves by. Absent when either is 0.
-        public ?float $markupFactor = null,
         public ?bool $needsConfirmation = null,
-        // By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after.
+        // By meter, the factor its price moves by. Absent for a meter with no price before or after.
         /** @var array<string, mixed>|null */
-        public ?array $rateFactors = null,
-        // It is priced before the change and billable with no rate after.
+        public ?array $priceFactors = null,
+        // It is priced before the change and billable with no price after.
         public ?bool $unpriced = null,
         // The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default en...
         /** @var array<string, string>|null */
@@ -44,9 +42,8 @@ final readonly class PricePreviewItem
             provider: Json::string($data, 'provider'),
             after: array_key_exists('after', $data) && $data['after'] !== null ? PricedEntry::fromArray(Json::object($data, 'after')) : null,
             before: array_key_exists('before', $data) && $data['before'] !== null ? PricedEntry::fromArray(Json::object($data, 'before')) : null,
-            markupFactor: array_key_exists('markup_factor', $data) && $data['markup_factor'] !== null ? Json::float($data, 'markup_factor') : null,
             needsConfirmation: array_key_exists('needs_confirmation', $data) && $data['needs_confirmation'] !== null ? Json::bool($data, 'needs_confirmation') : null,
-            rateFactors: array_key_exists('rate_factors', $data) && $data['rate_factors'] !== null ? Json::object($data, 'rate_factors') : null,
+            priceFactors: array_key_exists('price_factors', $data) && $data['price_factors'] !== null ? Json::object($data, 'price_factors') : null,
             unpriced: array_key_exists('unpriced', $data) && $data['unpriced'] !== null ? Json::bool($data, 'unpriced') : null,
             when: array_key_exists('when', $data) && $data['when'] !== null ? Json::stringMap($data, 'when') : null,
         );
@@ -69,14 +66,11 @@ final readonly class PricePreviewItem
         if ($this->before !== null) {
             $out['before'] = $this->before->toArray();
         }
-        if ($this->markupFactor !== null) {
-            $out['markup_factor'] = $this->markupFactor;
-        }
         if ($this->needsConfirmation !== null) {
             $out['needs_confirmation'] = $this->needsConfirmation;
         }
-        if ($this->rateFactors !== null) {
-            $out['rate_factors'] = Json::objectValue($this->rateFactors);
+        if ($this->priceFactors !== null) {
+            $out['price_factors'] = Json::objectValue($this->priceFactors);
         }
         if ($this->unpriced !== null) {
             $out['unpriced'] = $this->unpriced;

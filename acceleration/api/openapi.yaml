@@ -6162,6 +6162,9 @@ components:
             $ref: '#/components/schemas/PriceRate'
           description: What a customer is charged, by meter.
           type: object
+        sku:
+          description: The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices.
+          type: string
         tiers:
           description: What a customer is charged for long prompts.
           items:
@@ -6209,10 +6212,6 @@ components:
           type: array
         kind:
           $ref: '#/components/schemas/PriceChangeKind'
-        markup_bps:
-          description: The list's markup from effective_at on. Absent left it as it was.
-          format: int64
-          type: integer
         name:
           description: '<UTC yyyymmddhhmmss>_<the name it was given>: the price_version of every row its entries price.'
           type: string
@@ -6233,23 +6232,34 @@ components:
       properties:
         free:
           type: boolean
-        markup_bps:
-          description: The entry's own markup in basis points. Absent takes the list's.
-          format: int64
-          type: integer
         modality:
           description: Such as llm, stt, tts, sms or phone.
           type: string
         model:
           type: string
+        price_tiers:
+          description: What customers are charged for long prompts.
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        prices:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: What customers are charged, by meter.
+          type: object
         provider:
           type: string
         rates:
           additionalProperties:
             $ref: '#/components/schemas/PriceRate'
-          description: The vendor's rates, by meter.
+          description: The vendor's cost, by meter, for reference.
           type: object
+        sku:
+          description: 'The item''s SKU: the one it is priced under, or the one a withdrawal stopped pricing.'
+          type: string
         tiers:
+          description: The vendor's cost for long prompts, for reference.
           items:
             $ref: '#/components/schemas/PriceTier'
           nullable: true
@@ -6263,6 +6273,7 @@ components:
           description: The change stopped pricing the item under its when.
           type: boolean
       required:
+        - sku
         - modality
         - provider
         - model
@@ -6278,18 +6289,12 @@ components:
           format: date-time
           type: string
         entries:
-          description: 'Each replaces its item''s entry under its when whole: every rate, tier and markup it has.'
+          description: 'Each replaces its item''s entry under its when whole: its cost, its price and every tier of both.'
           items:
             $ref: '#/components/schemas/PriceEntryInput'
           maxItems: 1000
           nullable: true
           type: array
-        markup_bps:
-          description: The list's markup in basis points from effective_at on. Absent leaves it.
-          format: int64
-          maximum: 100000
-          minimum: 0
-          type: integer
         name:
           description: 1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it.
           pattern: ^[a-z0-9_]{1,48}$
@@ -6333,21 +6338,6 @@ components:
       type: object
     PriceEntry:
       properties:
-        charged_markup_bps:
-          description: 'The markup the entry is sold at: its own, else the list''s.'
-          format: int64
-          type: integer
-        charged_rates:
-          additionalProperties:
-            $ref: '#/components/schemas/PriceRate'
-          description: 'What customers are charged: each rate with the markup added, to 12 significant digits.'
-          type: object
-        charged_tiers:
-          description: What customers are charged for long prompts.
-          items:
-            $ref: '#/components/schemas/PriceTier'
-          nullable: true
-          type: array
         effective_at:
           description: When the entry took effect, or takes effect.
           format: date-time
@@ -6356,26 +6346,36 @@ components:
           description: The vendor charges nothing for it.
           type: boolean
         local:
-          description: The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+          description: The deployment runs the model itself, as its routing config says. Local work with no price costs nothing.
           type: boolean
-        markup_bps:
-          description: The entry's own markup in basis points, replacing the list's. Absent takes the list's.
-          format: int64
-          type: integer
         modality:
           description: Such as llm, stt, tts, sms or phone.
           type: string
         model:
           type: string
+        price_tiers:
+          description: What customers are charged for long prompts, at the thresholds of tiers.
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        prices:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: What customers are charged, by the meters of rates.
+          type: object
         provider:
           type: string
         rates:
           additionalProperties:
             $ref: '#/components/schemas/PriceRate'
-          description: The vendor's rates, by meter.
+          description: 'The vendor''s cost, by meter, for reference: nothing is charged from it.'
           type: object
+        sku:
+          description: The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
+          type: string
         tiers:
-          description: The vendor's rates for long prompts.
+          description: The vendor's cost for long prompts, for reference.
           items:
             $ref: '#/components/schemas/PriceTier'
           nullable: true
@@ -6389,7 +6389,6 @@ components:
           description: 'The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item''s default entry.'
           type: object
       required:
-        - charged_markup_bps
         - modality
         - provider
         - model
@@ -6398,29 +6397,41 @@ components:
       additionalProperties: false
       properties:
         free:
-          description: The vendor charges nothing for it.
+          description: The vendor charges nothing for it. A free entry has no price.
           type: boolean
         local:
           description: 'Refused with invalid_price: a model is local when the routing config says so.'
           type: boolean
-        markup_bps:
-          description: The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
-          format: int64
-          type: integer
         modality:
           description: Such as llm, stt, tts, sms or phone.
           type: string
         model:
           type: string
+        price_tiers:
+          description: 'What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its meters, or 400 price_tiers_mismatch.'
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        prices:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: 'What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is.'
+          type: object
         provider:
           type: string
         rates:
           additionalProperties:
             $ref: '#/components/schemas/PriceRate'
-          description: 'The vendor''s rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused.'
+          description: 'The vendor''s cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. Required unless the entry is free or withdrawn. An unknown meter, and a rate of more than $1000 a unit, are refused.'
           type: object
+        sku:
+          description: 'The item''s SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item''s SKU, as a model its vendor renamed keeps the old name''s, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.'
+          maxLength: 255
+          pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+          type: string
         tiers:
-          description: Rates for long prompts. Each tier rates every meter the entry does.
+          description: The vendor's cost for long prompts. Each tier rates every meter the entry does.
           items:
             $ref: '#/components/schemas/PriceTier'
           nullable: true
@@ -6434,7 +6445,7 @@ components:
           description: 'The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item''s default entry.'
           type: object
         withdrawn:
-          description: Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate.
+          description: Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate, price or SKU.
           type: boolean
       required:
         - modality
@@ -6470,10 +6481,6 @@ components:
           items:
             $ref: '#/components/schemas/PriceEntry'
           type: array
-        markup_bps:
-          description: The list's markup in basis points, added to every entry with none of its own.
-          format: int64
-          type: integer
         unpriced:
           description: 'The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free.'
           items:
@@ -6486,7 +6493,6 @@ components:
           type: array
       required:
         - at
-        - markup_bps
         - entries
         - unpriced
         - upcoming
@@ -6504,12 +6510,6 @@ components:
           items:
             $ref: '#/components/schemas/PricePreviewItem'
           type: array
-        markup_bps_after:
-          format: int64
-          type: integer
-        markup_bps_before:
-          format: int64
-          type: integer
         needs_confirmation:
           description: The items that make it so.
           items:
@@ -6518,8 +6518,6 @@ components:
           type: array
       required:
         - effective_at
-        - markup_bps_before
-        - markup_bps_after
         - items
         - confirmation_required
       type: object
@@ -6531,10 +6529,6 @@ components:
         before:
           $ref: '#/components/schemas/PricedEntry'
           description: How it is priced before the change. Absent when nothing prices it.
-        markup_factor:
-          description: The factor the markup it is sold at moves by. Absent when either is 0.
-          format: double
-          type: number
         modality:
           description: Such as llm, stt, tts, sms or phone.
           type: string
@@ -6542,16 +6536,16 @@ components:
           type: string
         needs_confirmation:
           type: boolean
-        provider:
-          type: string
-        rate_factors:
+        price_factors:
           additionalProperties:
             format: double
             type: number
-          description: By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after.
+          description: By meter, the factor its price moves by. Absent for a meter with no price before or after.
           type: object
+        provider:
+          type: string
         unpriced:
-          description: It is priced before the change and billable with no rate after.
+          description: It is priced before the change and billable with no price after.
           type: boolean
         when:
           additionalProperties:
@@ -6604,28 +6598,28 @@ components:
       type: object
     PricedEntry:
       properties:
-        charged_rates:
-          additionalProperties:
-            $ref: '#/components/schemas/PriceRate'
-          type: object
-        charged_tiers:
-          items:
-            $ref: '#/components/schemas/PriceTier'
-          nullable: true
-          type: array
         free:
           type: boolean
         local:
           type: boolean
-        markup_bps:
-          description: The markup it is sold at.
-          format: int64
-          type: integer
+        price_tiers:
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        prices:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: What customers are charged.
+          type: object
         rates:
           additionalProperties:
             $ref: '#/components/schemas/PriceRate'
-          description: The vendor's rates.
+          description: The vendor's cost, for reference.
           type: object
+        sku:
+          description: The SKU it is priced under.
+          type: string
         tiers:
           items:
             $ref: '#/components/schemas/PriceTier'
@@ -6634,8 +6628,6 @@ components:
         version:
           description: The change that wrote it. Absent for the change previewed.
           type: string
-      required:
-        - markup_bps
       type: object
     Prices:
       properties:
@@ -9787,21 +9779,6 @@ components:
       type: object
     UpcomingPriceEntry:
       properties:
-        charged_markup_bps:
-          description: 'The markup the entry is sold at: its own, else the list''s.'
-          format: int64
-          type: integer
-        charged_rates:
-          additionalProperties:
-            $ref: '#/components/schemas/PriceRate'
-          description: 'What customers are charged: each rate with the markup added, to 12 significant digits.'
-          type: object
-        charged_tiers:
-          description: What customers are charged for long prompts.
-          items:
-            $ref: '#/components/schemas/PriceTier'
-          nullable: true
-          type: array
         effective_at:
           description: When the entry took effect, or takes effect.
           format: date-time
@@ -9810,29 +9787,39 @@ components:
           description: The vendor charges nothing for it.
           type: boolean
         local:
-          description: The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+          description: The deployment runs the model itself, as its routing config says. Local work with no price costs nothing.
           type: boolean
-        markup_bps:
-          description: The entry's own markup in basis points, replacing the list's. Absent takes the list's.
-          format: int64
-          type: integer
         modality:
           description: Such as llm, stt, tts, sms or phone.
           type: string
         model:
           type: string
+        price_tiers:
+          description: What customers are charged for long prompts, at the thresholds of tiers.
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        prices:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: What customers are charged, by the meters of rates.
+          type: object
         provider:
           type: string
         rates:
           additionalProperties:
             $ref: '#/components/schemas/PriceRate'
-          description: The vendor's rates, by meter.
+          description: 'The vendor''s cost, by meter, for reference: nothing is charged from it.'
           type: object
         reason:
           description: The change's reason.
           type: string
+        sku:
+          description: The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
+          type: string
         tiers:
-          description: The vendor's rates for long prompts.
+          description: The vendor's cost for long prompts, for reference.
           items:
             $ref: '#/components/schemas/PriceTier'
           nullable: true
@@ -9850,7 +9837,6 @@ components:
           type: boolean
       required:
         - reason
-        - charged_markup_bps
         - modality
         - provider
         - model
@@ -10002,6 +9988,9 @@ components:
           type: object
         session_id:
           description: The session the work was done in.
+          type: string
+        sku:
+          description: 'The SKU of the item the work was priced as, as getPrices lists it: the same across its price changes. Absent for work no entry priced, and for work recorded before SKUs were.'
           type: string
         success:
           description: Whether the work succeeded.
@@ -19381,7 +19370,7 @@ paths:
   /v1/manage/price-lists/active:
     get:
       description: |-
-        Every entry in force at `at` (default now): the vendor's rates, the entry's own markup or none, the rates customers are charged, and the change that wrote it, which is the `price_version` of every row it prices. `unpriced` names the routed items whose work is billable and that no entry prices, and `upcoming` the entries of the changes scheduled after `at`.
+        Every entry in force at `at` (default now): its SKU, which every row it prices records, the vendor's cost (`rates`, `tiers`) kept for reference, the price customers are charged (`prices`, `price_tiers`), and the change that wrote it, which is the `price_version` of every row it prices. `unpriced` names the routed items whose work is billable and that no entry prices, and `upcoming` the entries of the changes scheduled after `at`.
 
         Stream staff only: it needs the manage key, and names its actor in `X-Stream-Actor-Id`. On a deployment with no database it answers 400 `not_configured`.
       operationId: getActivePriceList
@@ -19468,9 +19457,11 @@ paths:
         - Staff
     post:
       description: |-
-        Writes a change, its entries and an audit row in one transaction. Each entry replaces its item's entry under its `when` whole, at the vendor's rates; `markup_bps` sets the list's markup. Every router prices with it from `effective_at`: this one at once, the others within 30 seconds, or at `effective_at` when that is later. Nothing ever changes an entry once written: a correction is a newer change, and a scheduled one can be cancelled.
+        Writes a change, its entries and an audit row in one transaction. Each entry replaces its item's entry under its `when` whole: the vendor's cost in `rates` and `tiers`, for reference, and the price customers are charged in `prices` and `price_tiers`, both set outright: nothing is worked out from the cost, and no markup is added. Every router prices with it from `effective_at`: this one at once, the others within 30 seconds, or at `effective_at` when that is later. Nothing ever changes an entry once written: a correction is a newer change, and a scheduled one can be cancelled.
 
-        An entry setting `local` or `version`, or entries that do not make a price list, are a 400 `invalid_price` naming the item. A change the preview says needs confirming is a 409 `confirmation_required` without `confirm: true`. Before the router's first start has loaded its price files the list is not seeded, and every change is a 503 `price_list_not_seeded`. A change that waits more than 5 seconds for another write to the price list is a 503 `price_list_busy`, to send again after `Retry-After`.
+        Every item has one SKU, kept across its price changes, which each row it prices records. An entry without `sku` keeps the item's, or gives a new item one made from its modality, provider, model and `when`, lowercased with every run of other characters a hyphen and numbered `-2`, `-3` past one another item has had. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, when that item is withdrawn by the same change or is no longer in force; else, or when a change scheduled later gives it to another item, the change is a 400 `sku_in_use`. An item in force given another SKU is a 400 `sku_changed`.
+
+        An entry that is neither free nor withdrawn needs `rates` and `prices` with the same meters, else a 400 `price_meters_mismatch`, and a price tier for each tier, at its threshold and with its meters, else a 400 `price_tiers_mismatch`. An entry setting `local` or `version`, or entries that do not make a price list, are a 400 `invalid_price` naming the item. A change the preview says needs confirming is a 409 `confirmation_required` without `confirm: true`. Before the router's first start has loaded its price files the list is not seeded, and every change is a 503 `price_list_not_seeded`. A change that waits more than 5 seconds for another write to the price list is a 503 `price_list_busy`, to send again after `Retry-After`.
 
         It is made once per `Idempotency-Key` (required, 1 to 255 characters): the same key and body again answer 200 with the change already written and write nothing; the same key with another body is a 409 `idempotency_key_reused`. A retry sends the same body: the same entries in the same order, since entries listed in another order are another body.
 
@@ -19616,7 +19607,7 @@ paths:
   /v1/manage/price-lists/changes/preview:
     post:
       description: |-
-        What `createPriceChange` would do with the same body, writing nothing: for every item it moves, the vendor rates, markup and charged rates before and after, the factor each rate moves by, and whether it becomes unpriced. `confirmation_required` is true, naming the items, when a vendor rate, its `increment` or `minimum`, or the markup an item is sold at moves by a factor of 2 or more either way (to or from 0 included), a long-prompt tier is added or dropped, or a routed model that is not local would become unpriced. A body whose entries do not make a price list is a 400 `invalid_price`; a preview never answers 409.
+        What `createPriceChange` would do with the same body, writing nothing: for every item it moves, its SKU, vendor cost and price before and after, the factor each price moves by, and whether it becomes unpriced. `confirmation_required` is true, naming the items, when a price, its `increment` or `minimum`, moves by a factor of 2 or more either way (to or from 0 included), a long-prompt price tier is added or dropped, or a routed model that is not local would become unpriced; the vendor's cost moving asks for none. A body whose entries do not make a price list is a 400 `invalid_price`, one whose prices are not in the shape of their cost a 400 `price_meters_mismatch` or `price_tiers_mismatch`, and one whose SKUs are refused a 400 `sku_in_use` or `sku_changed`, as `createPriceChange` says; a preview never answers 409.
 
         Stream staff only: it needs the manage key, and names its actor in `X-Stream-Actor-Id`. On a deployment with no database it answers 400 `not_configured`.
       operationId: previewPriceChange

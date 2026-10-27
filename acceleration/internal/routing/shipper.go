@@ -188,6 +188,7 @@ func eventOf(request store.Request, source string) usage.Event {
 		CostMicros:       request.CostMicros,
 		BaseCostMicros:   request.BaseCostMicros,
 		PriceVersion:     request.PriceVersion,
+		SKU:              request.SKU,
 		Billable:         request.Billable,
 		Success:          request.Success,
 		ErrorCode:        request.ErrorCode,

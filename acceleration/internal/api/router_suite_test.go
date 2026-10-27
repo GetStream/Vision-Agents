@@ -785,10 +785,10 @@ func (s *RouterSuite) registrations(listener *httptest.Server, logger *slog.Logg
 	return service
 }
 
-// telephonyRecorder records telephony through a writer of its own, priced from the vendor
-// list, and writes what it holds when the suite ends.
+// telephonyRecorder records telephony through a writer of its own, priced at the vendor list's
+// rates, and writes what it holds when the suite ends.
 func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
-	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, logger)
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), logger)
 	s.Require().NoError(err)
 	recorder := routing.NewRecorder(routing.Phone, s.store, s.live, list, logger)
 	s.T().Cleanup(recorder.Close)

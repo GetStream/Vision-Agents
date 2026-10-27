@@ -17,8 +17,6 @@ final readonly class PricePreview
         public \DateTimeImmutable $effectiveAt,
         /** @var list<PricePreviewItem> */
         public array $items,
-        public int $markupBpsAfter,
-        public int $markupBpsBefore,
         // The items that make it so.
         /** @var list<PriceItem>|null */
         public ?array $needsConfirmation = null,
@@ -34,8 +32,6 @@ final readonly class PricePreview
             confirmationRequired: Json::bool($data, 'confirmation_required'),
             effectiveAt: Json::date($data, 'effective_at'),
             items: array_map(PricePreviewItem::fromArray(...), Json::objects($data, 'items')),
-            markupBpsAfter: Json::int($data, 'markup_bps_after'),
-            markupBpsBefore: Json::int($data, 'markup_bps_before'),
             needsConfirmation: array_key_exists('needs_confirmation', $data) && $data['needs_confirmation'] !== null ? array_map(PriceItem::fromArray(...), Json::objects($data, 'needs_confirmation')) : null,
         );
     }
@@ -51,8 +47,6 @@ final readonly class PricePreview
         $out['confirmation_required'] = $this->confirmationRequired;
         $out['effective_at'] = Json::dateValue($this->effectiveAt);
         $out['items'] = array_map(static fn (PricePreviewItem $each): array => $each->toArray(), $this->items);
-        $out['markup_bps_after'] = $this->markupBpsAfter;
-        $out['markup_bps_before'] = $this->markupBpsBefore;
         if ($this->needsConfirmation !== null) {
             $out['needs_confirmation'] = array_map(static fn (PriceItem $each): array => $each->toArray(), $this->needsConfirmation);
         }

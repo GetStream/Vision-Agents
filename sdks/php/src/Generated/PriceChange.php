@@ -26,8 +26,6 @@ final readonly class PriceChange
         // The entries it wrote. Absent from a list of changes.
         /** @var list<PriceChangeEntry>|null */
         public ?array $entries = null,
-        // The list's markup from effective_at on. Absent left it as it was.
-        public ?int $markupBps = null,
     ) {
     }
 
@@ -48,7 +46,6 @@ final readonly class PriceChange
             cancelledAt: array_key_exists('cancelled_at', $data) && $data['cancelled_at'] !== null ? Json::date($data, 'cancelled_at') : null,
             cancelledBy: array_key_exists('cancelled_by', $data) && $data['cancelled_by'] !== null ? Json::string($data, 'cancelled_by') : null,
             entries: array_key_exists('entries', $data) && $data['entries'] !== null ? array_map(PriceChangeEntry::fromArray(...), Json::objects($data, 'entries')) : null,
-            markupBps: array_key_exists('markup_bps', $data) && $data['markup_bps'] !== null ? Json::int($data, 'markup_bps') : null,
         );
     }
 
@@ -78,9 +75,6 @@ final readonly class PriceChange
         }
         if ($this->entries !== null) {
             $out['entries'] = array_map(static fn (PriceChangeEntry $each): array => $each->toArray(), $this->entries);
-        }
-        if ($this->markupBps !== null) {
-            $out['markup_bps'] = $this->markupBps;
         }
         return $out;
     }
