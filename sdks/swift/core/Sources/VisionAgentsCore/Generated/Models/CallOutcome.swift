@@ -4,7 +4,7 @@ import StreamCore
 /// How a placed call ended.
 /// completed: the person answered and the call ended.
 /// busy: the line was busy or the person declined.
-/// no_answer: it rang until the ring timeout.
+/// no_answer: it rang and nobody answered.
 /// failed: the vendor could not place it, for a bad number or a carrier fault.
 /// canceled: the vendor says the call was hung up before an answer.
 /// unknown: the vendor reports nothing about how it ended, and the phone never joined.
