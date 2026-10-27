@@ -433,3 +433,65 @@ func (s *CallStatusSuite) TestAStatusOver64KiBIs413() {
 
 	s.Equal(http.StatusRequestEntityTooLarge, status)
 }
+
+// placedFor keeps a call placed at Twilio for session and returns its status token and key.
+func (s *CallStatusSuite) placedFor(session string) (string, outcome.Key) {
+	key := outcome.Key{
+		CustomerID: s.customerID(), CallType: "default", CallID: session,
+		Local: s.utils.number(), Remote: s.utils.number(),
+	}
+	token, err := s.router.phone.Outcomes().Placed(context.Background(), outcome.Call{Key: key, Vendor: "twilio", Reports: true})
+	s.Require().NoError(err)
+	return token, key
+}
+
+// busy records a busy call placed for session through the keeper, not the status path: the
+// path also ends the session, and one ended a moment ago is not found until its row is written.
+func (s *CallStatusSuite) busy(session string) {
+	token, _ := s.placedFor(session)
+	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Busy, "busy")
+	s.Require().NoError(err)
+}
+
+func (s *CallStatusSuite) TestASessionShowsHowItsPlacedCallEnded() {
+	opened := s.serverClient.createSession(textSession(nil))
+	s.busy(opened.Id)
+
+	read := s.serverClient.getSession(opened.Id)
+
+	s.Require().NotNil(read.CallOutcome)
+	s.Equal(CallOutcomeBusy, value(read.CallOutcome.Outcome))
+	s.Nil(read.CallOutcome.AnsweredAt)
+	s.Nil(read.CallOutcome.DurationSeconds)
+}
+
+func (s *CallStatusSuite) TestASessionShowsWhenTheCallWasAnsweredAndForHowLong() {
+	opened := s.serverClient.createSession(textSession(nil))
+	_, key := s.placedFor(opened.Id)
+	answered := time.Now().UTC().Truncate(time.Second)
+	s.Require().NoError(s.router.phone.Outcomes().Answered(context.Background(), key, answered))
+	s.Require().NoError(s.router.phone.Outcomes().Ended(context.Background(), key, answered.Add(75*time.Second)))
+
+	read := s.serverClient.getSession(opened.Id)
+
+	s.Require().NotNil(read.CallOutcome)
+	s.Equal(CallOutcomeCompleted, value(read.CallOutcome.Outcome))
+	s.Require().NotNil(read.CallOutcome.AnsweredAt)
+	s.True(answered.Equal(*read.CallOutcome.AnsweredAt))
+	s.Equal(75, value(read.CallOutcome.DurationSeconds))
+}
+
+func (s *CallStatusSuite) TestASessionWithoutAPlacedCallHasNoCallOutcome() {
+	opened := s.serverClient.createSession(textSession(nil))
+
+	s.Nil(s.serverClient.getSession(opened.Id).CallOutcome)
+}
+
+func (s *CallStatusSuite) TestADeviceIsNotShownTheCallOutcome() {
+	backend := s.serverClient.actingFor(s.client)
+	opened := backend.createSession(textSession(nil))
+	s.busy(opened.Id)
+
+	s.Nil(s.client.getSession(opened.Id).CallOutcome)
+	s.NotNil(backend.getSession(opened.Id).CallOutcome, "the backend is shown the outcome of the same session")
+}

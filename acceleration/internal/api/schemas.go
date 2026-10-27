@@ -791,6 +791,7 @@ type Session struct {
 	Agent            *string                 `json:"agent,omitempty" doc:"The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against."`
 	AgentId          string                  `json:"agent_id"`
 	CallId           string                  `json:"call_id" doc:"The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing."`
+	CallOutcome      *SessionCallOutcome     `json:"call_outcome,omitempty" doc:"How the call the router placed for this session ended. Read by a backend only."`
 	CallType         string                  `json:"call_type"`
 	ClosedAt         *time.Time              `json:"closed_at,omitempty" doc:"When the session ended. Absent while it is still running."`
 	ConfigId         *string                 `json:"config_id,omitempty" doc:"The agent config the session ran under, empty for one that spelled itself out."`
@@ -914,6 +915,41 @@ type SessionPhone struct {
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The number the session acts from, which is what turns transferring on."
 	return schema
+}
+
+// SessionCallOutcome is how the call the router placed for a session ended.
+type SessionCallOutcome struct {
+	Outcome         *CallOutcome `json:"outcome,omitempty" doc:"How the call ended. Absent while it is ringing or under way."`
+	AnsweredAt      *time.Time   `json:"answered_at,omitempty" doc:"When the person picked up: their phone joined the call."`
+	DurationSeconds *int         `json:"duration_seconds,omitempty" doc:"How long they talked, from answered_at to when their phone left. Absent until it has."`
+}
+
+func (*SessionCallOutcome) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How the call the router placed for a session ended."
+	return schema
+}
+
+// CallOutcome is how a placed call ended.
+type CallOutcome string
+
+const (
+	CallOutcomeCompleted CallOutcome = "completed"
+	CallOutcomeBusy      CallOutcome = "busy"
+	CallOutcomeNoAnswer  CallOutcome = "no_answer"
+	CallOutcomeFailed    CallOutcome = "failed"
+	CallOutcomeCanceled  CallOutcome = "canceled"
+	CallOutcomeUnknown   CallOutcome = "unknown"
+)
+
+func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CallOutcome", "How a placed call ended.\n"+
+		"completed: the person answered and the call ended.\n"+
+		"busy: the line was busy or the person declined.\n"+
+		"no_answer: it rang until the ring timeout.\n"+
+		"failed: the vendor could not place it, for a bad number or a carrier fault.\n"+
+		"canceled: the vendor says the call was hung up before an answer.\n"+
+		"unknown: the vendor reports nothing, as Sinch and Bird do, and the phone never joined.",
+		"completed", "busy", "no_answer", "failed", "canceled", "unknown")
 }
 
 // SessionRespondCommand is the SessionRespondCommand schema.
