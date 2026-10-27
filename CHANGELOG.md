@@ -33,6 +33,15 @@ new conversation's session names `io.getstream.visionagents.androidassistant:/co
 `return_url`, and the app opens a connector's sign-in in an Auth Tab, though Stream's Android AI
 components have no sign-in card to start one from yet. CI builds it beside the Kotlin SDK.
 
+### Kotlin apps manage the user's scheduled tasks
+
+`agents.scheduledTasks` in the Kotlin SDK lists, reads, changes, pauses, resumes and deletes the
+tasks agents hold for the user `setUser` named, and reads their runs, as Swift's does: `list`
+(filtered by `ScheduledTaskQuery`'s `state`, `configId` and `sessionId`, paged by cursor), `get`,
+`update` (title, schedule, `next` to snooze or skip one occurrence, `deliverTo` and
+`quietHours`), `pause`, `resume`, `delete` and `runs`. A schedule's `in` is spelled `after`,
+`in` being a Kotlin keyword. Making a task and running one by hand stay server-side only.
+
 ### Kotlin sessions name where a sign-in goes back to
 
 `SessionOptions.returnUrl` in the Kotlin SDK is sent as the session's `return_url`, as Swift's
