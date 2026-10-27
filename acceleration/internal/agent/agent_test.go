@@ -2447,6 +2447,24 @@ func (s *AgentSuite) TestAPictureAScheduledTaskSendsIsLookedAtAsScheduled() {
 	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the picture is the customer's spend")
 }
 
+// A picture sent with no text, or only blanks, is still looked at: the vision skill is asked about it.
+func (s *AgentSuite) TestAPictureSentAloneIsLookedAtByTheVisionSkill() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+	picture := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	for asked, text := range []string{"", " "} {
+		_, err := s.agent.RespondTo(s.ctx, text, picture, options.LLM{})
+		s.Require().NoError(err, "text %q", text)
+
+		s.eventually(func() bool { return len(s.subagent.requests()) == asked+1 }, "the vision task was never asked")
+		s.True(llm.HasImage(s.subagent.requests()[asked].Input), "the skill is shown the picture")
+	}
+}
+
 func (s *AgentSuite) TestAPhotoIsStillSeenByTheReplyAfterATool() {
 	s.sees = true
 	s.ownsTools("order 1042 is a pair of running shoes")
@@ -2484,6 +2502,32 @@ func (s *AgentSuite) TestAPhotoIsNotShownAgainToALaterTurnsTool() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the reply after the second turn's tool was never asked")
 	s.False(llm.HasImage(s.model.requests()[2].Input), "a photo is seen with the turn it came with alone")
+}
+
+func (s *AgentSuite) TestAnAgentWithAVisionSkillSeesImages() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+
+	s.True(s.agent.SeesImages())
+}
+
+func (s *AgentSuite) TestAnAgentWhoseModelAcceptsImagesSeesThem() {
+	s.sees = true
+	s.joinText()
+
+	s.True(s.agent.SeesImages())
+}
+
+// SeesImages says no exactly where RespondTo refuses a turn's images.
+func (s *AgentSuite) TestAnAgentWithNeitherSeesNoImages() {
+	s.joinText()
+
+	s.False(s.agent.SeesImages())
+	_, err := s.agent.RespondTo(s.ctx, "what is this?", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
+	s.ErrorIs(err, ErrCannotSeeImages)
 }
 
 // lastFromCaller is the caller's latest message in a request's input.
