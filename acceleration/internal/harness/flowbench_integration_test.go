@@ -100,7 +100,7 @@ const jevConfident = 0.6
 // jevInputPerMillion is $42 per billion input tokens. Output tokens are not billed.
 const jevInputPerMillion = 0.042
 
-// benchDeadline bounds one judgement. It is longer than the production flowDeadline on purpose:
+// benchDeadline bounds one judgement. It is longer than the production FlowDeadline on purpose:
 // a benchmark that scores a slow answer as a wrong one cannot tell the two apart.
 const benchDeadline = 20 * time.Second
 

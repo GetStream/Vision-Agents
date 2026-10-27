@@ -3,9 +3,8 @@ package audio
 import "math"
 
 // Levelling raises a phrase a voice rendered far quieter than the rest of its speech. An
-// expressive model can drop a phrase 20 to 30 dB below the one before it: in Voicebench
-// ElevenLabs read "I have your reservation for" at around -42 dBFS between sentences at
-// -26. A caller on a phone line hears that as the agent trailing off, and a caller's own
+// expressive model can drop a phrase 20 to 30 dB below the one before it: ElevenLabs has read
+// a phrase opening a sentence at around -42 dBFS between sentences at -26. A caller on a phone line hears that as the agent trailing off, and a caller's own
 // voice detection hears it as the agent having finished, and talks over the rest.
 //
 // It only ever raises: speech at or above the target is left as the voice made it, so one

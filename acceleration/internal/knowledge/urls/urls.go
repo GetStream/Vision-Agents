@@ -238,7 +238,7 @@ func (s *Service) Add(ctx context.Context, customerID string, wanted Subscriptio
 			return store.KnowledgeURL{}, err
 		}
 	}
-	return page, s.enqueue(ctx, page)
+	return page, s.readAgain(ctx, page)
 }
 
 // List returns the pages a knowledge base is filled from, newest first. An empty namespace
@@ -277,7 +277,7 @@ func (s *Service) Reindex(ctx context.Context, customerID, id string) (store.Kno
 	if err != nil {
 		return store.KnowledgeURL{}, err
 	}
-	return page, s.enqueue(ctx, page)
+	return page, s.readAgain(ctx, page)
 }
 
 // refresh queues a read of every page due one, each sweep, until Close. Every router runs
@@ -332,12 +332,21 @@ func (p indexPayload) owner() routing.Owner {
 }
 
 // enqueue queues a read of the page, for whoever ctx says asked. A read of it already waiting
-// is enough: the task id is the page, so asking twice before the worker gets to it reads it
-// once. A read already under way is not: it may have fetched the page before this was asked,
-// and it holds the page's id until asynq lets go of it, after the page shows it read. One
-// more read is queued behind it, under an id of its own so that asking again meanwhile still
-// reads the page once more rather than once per ask.
+// or under way is enough: the task id is the page, so asking twice before the worker gets to
+// it reads it once. That is what a scheduled refresh wants: the page read, by any read.
 func (s *Service) enqueue(ctx context.Context, page store.KnowledgeURL) error {
+	if err := s.enqueueAs(ctx, page, page.ID); err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+		return err
+	}
+	return nil
+}
+
+// readAgain queues a read someone asked for, by adding the page or adding it again, or by
+// reindexing it, after whatever the page last showed. A read of it still waiting is enough. A read already under way is not: it may have fetched the page
+// before this was asked, and it holds the page's id until asynq lets go of it, after the page
+// shows it read. One more read is queued behind it, under an id of its own so that asking
+// again meanwhile still reads the page once more rather than once per ask.
+func (s *Service) readAgain(ctx context.Context, page store.KnowledgeURL) error {
 	err := s.enqueueAs(ctx, page, page.ID)
 	if !errors.Is(err, asynq.ErrTaskIDConflict) {
 		return err

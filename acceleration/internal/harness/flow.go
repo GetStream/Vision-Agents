@@ -99,7 +99,7 @@ type flow struct {
 	emitter     *Emitter
 	logger      *slog.Logger
 	onModelCall func(llm.CallTiming)
-	// deadline is flowDeadline, shortened by tests that wait it out.
+	// deadline is FlowDeadline, shortened by tests that wait it out.
 	deadline time.Duration
 
 	mu sync.Mutex
@@ -124,9 +124,9 @@ type flow struct {
 	running sync.WaitGroup
 }
 
-// flowDeadline bounds one floor decision. The conversation model may sit for minutes;
+// FlowDeadline bounds one floor decision. The conversation model may sit for minutes;
 // the controller must not, or a 429 leaves the caller unanswered.
-const flowDeadline = 3 * time.Second
+const FlowDeadline = 3 * time.Second
 
 // Ongoing speech cannot wait for the conversation model to finish reasoning.
 // Noise is filtered before an overlap reaches the controller; on timeout yield
@@ -200,7 +200,7 @@ func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *f
 		emitter:  emitter,
 		logger:   logger,
 		pending:  map[string]*candidate{},
-		deadline: flowDeadline,
+		deadline: FlowDeadline,
 	}
 }
 
