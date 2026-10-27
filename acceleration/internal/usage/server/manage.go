@@ -126,7 +126,13 @@ func (s *Server) failed(err error, doing string) error {
 		return problem(http.StatusConflict, codeDefaultTier, "the default tier answers for every tier string with no row of its own, and cannot be deleted")
 	case errors.Is(err, ledger.ErrIdempotencyKeyReused):
 		return problem(http.StatusConflict, codeKeyReused, "the "+idempotencyHeader+" already holds a request of another operation "+
-			"or organization, or with another body (for a credit, another kind or amount)")
+			"or organization, or with another body (for a credit, another kind, amount or reverses_id)")
+	case errors.Is(err, ledger.ErrCreditNotFound):
+		return problem(http.StatusNotFound, codeCreditNotFound, "reverses_id names no credit entry of the organization")
+	case errors.Is(err, ledger.ErrNotReversible):
+		return problem(http.StatusBadRequest, codeNotReversible, "only a grant, or an adjustment that reverses another entry, can be reversed")
+	case errors.Is(err, ledger.ErrAlreadyReversed):
+		return problem(http.StatusConflict, codeAlreadyReversed, "the entry reverses_id names is already reversed: reverse the entry that reversed it instead")
 	}
 	s.logger.Error("a management call failed", "doing", doing, "error", err)
 	return huma.Error503ServiceUnavailable("the service's database failed; try again")
@@ -254,11 +260,18 @@ func (s *Server) registerManage(api huma.API) {
 		Errors: keyedFailures,
 	}, "Writes a credit entry and adds its amount to the organization's credit, once per `"+idempotencyHeader+"` "+
 		"(required, 1 to 255 characters): 201 with the entry written, or 200 with the one already written under the key, "+
-		"which changes nothing. A key that holds another organization's entry, one of another kind or amount, or a "+
-		"suspension, restore or settings change, is a 409 `idempotency_key_reused`. Only the sign is checked: "+
-		"`top_up`, `grant` and `dispute_reversal` are above 0, "+
+		"which changes nothing. A key that holds another organization's entry, one of another kind, amount or "+
+		"`reverses_id`, or a suspension, restore or settings change, is a 409 `idempotency_key_reused`. Only the sign "+
+		"is checked: `top_up`, `grant` and `dispute_reversal` are above 0, "+
 		"`refund` and `dispute` below, an `adjustment` either but not 0. Any account takes credit, a suspended one "+
-		"included: payment rules are the writer's."), s.addCredit)
+		"included: payment rules are the writer's.\n\n"+
+		"An entry with `reverses_id` reverses that entry. Revoking a grant is an `adjustment` of minus its amount "+
+		"with `reverses_id` the grant; unrevoking it is an `adjustment` of plus the amount with `reverses_id` the "+
+		"revocation, which can be revoked again the same way. A reversal is an `adjustment` of exactly minus the "+
+		"amount of the entry it reverses (400 `invalid_request`); that entry is the organization's (404 "+
+		"`credit_not_found`), a `grant` or an entry that itself reverses one (400 `not_reversible`: a top-up, refund, "+
+		"dispute or plain adjustment is not), and reversed at most once (409 `already_reversed`). Revoking credit "+
+		"already spent takes the balance below 0."), s.addCredit)
 	huma.Register(api, register(huma.Operation{
 		OperationID: "listCredits", Method: http.MethodGet, Path: usage.PathManage + "/accounts/{organization_id}/credits",
 		Summary: "List an organization's credit entries",
@@ -538,6 +551,7 @@ type CreditRequest struct {
 	AmountMicros int64            `json:"amount_micros" doc:"Signed, in micros: above 0 for top_up, grant and dispute_reversal, below 0 for refund and dispute, either for adjustment."`
 	Reference    string           `json:"reference,omitempty" maxLength:"255" doc:"The writer's own reference, such as a payment id."`
 	Note         string           `json:"note,omitempty" maxLength:"1000"`
+	ReversesID   int64            `json:"reverses_id,omitempty" minimum:"1" doc:"The id of the entry this adjustment reverses: a grant, to revoke it, or the entry that revoked it, to unrevoke it."`
 }
 
 type addCreditInput struct {
@@ -562,7 +576,7 @@ func (s *Server) addCredit(ctx context.Context, input *addCreditInput) (*addCred
 	entry, written, err := s.ledger.AddCredit(ctx, ledger.CreditEntry{
 		OrganizationID: input.OrganizationID, Kind: input.Body.Kind, AmountMicros: input.Body.AmountMicros,
 		Reference: input.Body.Reference, IdempotencyKey: input.IdempotencyKey, Note: input.Body.Note,
-		Actor: actor.ID, ActorName: actor.Name,
+		ReversesID: input.Body.ReversesID, Actor: actor.ID, ActorName: actor.Name,
 	})
 	if err != nil {
 		return nil, s.failed(err, "add credit")

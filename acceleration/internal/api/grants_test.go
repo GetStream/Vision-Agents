@@ -117,6 +117,114 @@ func (s *LimitsSuite) TestARevokedGrantStopsAtOnce() {
 	s.True(again.RevokedAt.Equal(*revoked.RevokedAt), "revoking again changes nothing")
 }
 
+// grantPath is the path of a grant's action, such as revoke.
+func grantPath(id int64, action string) string {
+	return "/v1/spend/limits/grants/" + strconv.FormatInt(id, 10) + "/" + action
+}
+
+// revoke revokes a grant as the app's backend.
+func (s *LimitsSuite) revoke(id int64) {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, grantPath(id, "revoke"), map[string]any{"reason": "done"}, nil))
+}
+
+func (s *LimitsSuite) TestAnUnrevokedGrantIsDrawnAgain() {
+	finance := s.spentTeam()
+	made := s.grant(map[string]any{"subject": "team", "team": "finance", "amount_micros": 1_000_000, "reason": "close"})
+	s.revoke(made.Id)
+	s.searchedUntil(finance, http.StatusPaymentRequired)
+
+	var unrevoked LimitGrant
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, grantPath(made.Id, "unrevoke"),
+		map[string]any{"reason": "revoked by mistake"}, &unrevoked))
+
+	s.Equal(GrantLive, unrevoked.State)
+	s.Nil(unrevoked.RevokedAt)
+	s.Empty(unrevoked.RevokedBy)
+	status, _ := finance.call(http.MethodPost, "/v1/search", SearchRequest{Query: "what is the time"})
+	s.Equal(http.StatusOK, status, "the router that unrevoked it draws on it at once")
+	entries, err := s.store.AuditEntries(context.Background(), s.customerID(), store.AuditEntryFilter{
+		ResourceType: store.AuditSpendLimit, ResourceID: "grant:" + strconv.FormatInt(made.Id, 10)})
+	s.Require().NoError(err)
+	s.Require().Len(entries, 3, "made, revoked and unrevoked")
+	s.Contains(mustJSON(s.T(), entries[0].Changes), "revoked by mistake")
+}
+
+func (s *LimitsSuite) TestUnrevokingAGrantThatIsNotRevokedChangesNothing() {
+	s.create(map[string]any{"subject": "organization", "interval": "monthly", "limit_micros": 5})
+	made := s.grant(map[string]any{"subject": "organization", "amount_micros": 5, "reason": "x"})
+
+	var again LimitGrant
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, grantPath(made.Id, "unrevoke"), map[string]any{"reason": "x"}, &again))
+
+	s.Equal(GrantLive, again.State)
+	entries, err := s.store.AuditEntries(context.Background(), s.customerID(), store.AuditEntryFilter{ResourceType: store.AuditSpendLimit})
+	s.Require().NoError(err)
+	s.Len(entries, 2, "the limit and the grant; the unrevoke records nothing")
+}
+
+func (s *LimitsSuite) TestAnExpiredGrantCannotBeUnrevoked() {
+	s.create(map[string]any{"subject": "organization", "interval": "monthly", "limit_micros": 5})
+	made := s.grant(map[string]any{"subject": "organization", "amount_micros": 5, "expires_at": time.Now().Add(time.Hour), "reason": "x"})
+	s.revoke(made.Id)
+	_, err := s.store.DB().ExecContext(context.Background(), "UPDATE limit_grants SET created_at = now() - interval '2 hours', "+
+		"expires_at = now() - interval '1 hour' WHERE id = ?", made.Id)
+	s.Require().NoError(err)
+
+	status, failure := s.refusal(s.serverClient, http.MethodPost, grantPath(made.Id, "unrevoke"), map[string]any{"reason": "x"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeInvalidExpiry, failure.Code)
+	s.Equal(GrantRevoked, s.grants("")[0].State)
+}
+
+func (s *LimitsSuite) TestUnrevokingATwentyFirstLiveGrantIsAConflict() {
+	s.create(map[string]any{"subject": "organization", "interval": "monthly", "limit_micros": 5})
+	made := s.grant(map[string]any{"subject": "organization", "amount_micros": 5, "reason": "x"})
+	s.revoke(made.Id)
+	for range store.MaxLiveGrants {
+		s.grant(map[string]any{"subject": "organization", "amount_micros": 5, "reason": "x"})
+	}
+
+	status, failure := s.refusal(s.serverClient, http.MethodPost, grantPath(made.Id, "unrevoke"), map[string]any{"reason": "x"})
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal(codeTooManyGrants, failure.Code)
+}
+
+func (s *LimitsSuite) TestAnotherOrganizationCannotUnrevokeAGrant() {
+	s.create(map[string]any{"subject": "organization", "interval": "monthly", "limit_micros": 5})
+	made := s.grant(map[string]any{"subject": "organization", "amount_micros": 5, "reason": "x"})
+	s.revoke(made.Id)
+
+	status, failure := s.refusal(s.data.backendOfAnotherApp(), http.MethodPost, grantPath(made.Id, "unrevoke"), map[string]any{"reason": "x"})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Equal(codeGrantNotFound, failure.Code)
+	s.Equal(GrantRevoked, s.grants("")[0].State)
+}
+
+func (s *LimitsSuite) TestStaffUnrevokeAnOrganizationsGrantThroughManage() {
+	s.create(map[string]any{"subject": "organization", "interval": "monthly", "limit_micros": 5})
+	made := s.grant(map[string]any{"subject": "organization", "amount_micros": 5, "reason": "x"})
+	s.revoke(made.Id)
+
+	var unrevoked LimitGrant
+	status, payload := s.staff.call(http.MethodPost, "/v1/manage/spend/limits/grants/"+strconv.FormatInt(made.Id, 10)+"/unrevoke",
+		map[string]any{"reason": "support"})
+
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	s.Require().NoError(json.Unmarshal(payload, &unrevoked))
+	s.Equal(GrantLive, unrevoked.State)
+	s.Equal(GrantLive, s.grants("")[0].State, "the customer reads it live")
+	entries, err := s.store.AuditEntries(context.Background(), s.organization(), store.AuditEntryFilter{
+		ResourceType: store.AuditSpendLimit, ResourceID: "grant:" + strconv.FormatInt(made.Id, 10)})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(entries)
+	s.Equal(store.AuditSourceManage, entries[0].Source)
+	status, _ = s.staff.call(http.MethodPost, "/v1/manage/spend/limits/grants/0/unrevoke", map[string]any{"reason": "support"})
+	s.Equal(http.StatusNotFound, status)
+}
+
 func (s *LimitsSuite) TestAGrantNeedsALimit() {
 	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/grants",
 		map[string]any{"subject": "team", "team": "nobody", "amount_micros": 5, "reason": "x"})

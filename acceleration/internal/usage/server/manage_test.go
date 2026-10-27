@@ -435,6 +435,112 @@ func (s *ServerSuite) TestAddCreditHasNoTopUpRule() {
 	s.Equal(int64(30_000_000_000), s.account(s.organization).GrantedMicros)
 }
 
+// reversal is the adjustment reversing the entry of id by amount.
+func reversal(id, amount int64) server.CreditRequest {
+	return server.CreditRequest{Kind: usage.CreditAdjustment, AmountMicros: amount, ReversesID: id, Note: "support"}
+}
+
+// credits are the organization's credit entries, as staff list them.
+func (s *ServerSuite) credits(organization string) []usage.CreditEntry {
+	var page server.CreditEntryPage
+	s.ok(http.StatusOK, &page, http.MethodGet, "/v1/manage/accounts/"+organization+"/credits", nil)
+	return page.Items
+}
+
+func (s *ServerSuite) TestAGrantIsRevokedAndUnrevokedThroughAddCredit() {
+	path := "/v1/manage/accounts/" + s.organization + "/credits"
+	_, grant := s.grant(s.organization, 5_000_000, "contract")
+	s.service.Spend(s.T(), s.organization, 1_000_000)
+
+	var revoke, unrevoke, again usage.CreditEntry
+	s.ok(http.StatusCreated, &revoke, http.MethodPost, path, reversal(grant.ID, -5_000_000), "Idempotency-Key", "revoke-1")
+	s.Equal(grant.ID, revoke.ReversesID)
+	s.Equal(usage.CreditAdjustment, revoke.Kind)
+	s.Equal(int64(-1_000_000), s.account(s.organization).BalanceMicros, "a balance may go below 0")
+	s.ok(http.StatusCreated, &unrevoke, http.MethodPost, path, reversal(revoke.ID, 5_000_000), "Idempotency-Key", "unrevoke-1")
+	s.Equal(int64(4_000_000), s.account(s.organization).BalanceMicros)
+	s.ok(http.StatusCreated, &again, http.MethodPost, path, reversal(unrevoke.ID, -5_000_000), "Idempotency-Key", "revoke-2")
+	s.Equal(int64(-1_000_000), s.account(s.organization).BalanceMicros)
+
+	listed := s.credits(s.organization)
+	s.Require().Len(listed, 4)
+	s.Equal([]int64{again.ID, unrevoke.ID, revoke.ID, grant.ID}, []int64{listed[0].ID, listed[1].ID, listed[2].ID, listed[3].ID})
+	s.Equal([2]int64{unrevoke.ID, 0}, [2]int64{listed[0].ReversesID, listed[0].ReversedByID})
+	s.Equal([2]int64{revoke.ID, again.ID}, [2]int64{listed[1].ReversesID, listed[1].ReversedByID})
+	s.Equal([2]int64{grant.ID, unrevoke.ID}, [2]int64{listed[2].ReversesID, listed[2].ReversedByID})
+	s.Equal([2]int64{0, revoke.ID}, [2]int64{listed[3].ReversesID, listed[3].ReversedByID})
+	var raw struct {
+		Items []map[string]any `json:"items"`
+	}
+	s.ok(http.StatusOK, &raw, http.MethodGet, path, nil)
+	s.NotContains(raw.Items[3], "reverses_id", "absent on the grant, which reverses nothing")
+	s.NotContains(raw.Items[0], "reversed_by_id", "absent while nothing reverses it")
+}
+
+func (s *ServerSuite) TestAReplayedReversalAnswersTheEntryWritten() {
+	path := "/v1/manage/accounts/" + s.organization + "/credits"
+	_, grant := s.grant(s.organization, 100, "contract")
+	var revoke, replayed usage.CreditEntry
+	s.ok(http.StatusCreated, &revoke, http.MethodPost, path, reversal(grant.ID, -100), "Idempotency-Key", "revoke")
+
+	s.ok(http.StatusOK, &replayed, http.MethodPost, path, reversal(grant.ID, -100), "Idempotency-Key", "revoke")
+
+	s.Equal(revoke, replayed)
+	s.Equal(int64(0), s.account(s.organization).GrantedMicros)
+	_, other := s.grant(s.organization, 100, "contract-2")
+	answered := s.refused(http.StatusConflict, http.MethodPost, path, reversal(other.ID, -100), "Idempotency-Key", "revoke")
+	s.Equal("idempotency_key_reused", answered.Code, "the key with another reverses_id")
+}
+
+func (s *ServerSuite) TestReversingATopUpIsNotReversible() {
+	path := "/v1/manage/accounts/" + s.organization + "/credits"
+	var topUp usage.CreditEntry
+	s.ok(http.StatusCreated, &topUp, http.MethodPost, path, server.CreditRequest{Kind: usage.CreditTopUp, AmountMicros: 100}, key()...)
+
+	answered := s.refused(http.StatusBadRequest, http.MethodPost, path, reversal(topUp.ID, -100), key()...)
+
+	s.Equal("not_reversible", answered.Code)
+	s.Equal(int64(100), s.account(s.organization).GrantedMicros)
+}
+
+func (s *ServerSuite) TestReversingAnEntryTwiceIsAlreadyReversed() {
+	path := "/v1/manage/accounts/" + s.organization + "/credits"
+	_, grant := s.grant(s.organization, 100, "contract")
+	s.ok(http.StatusCreated, nil, http.MethodPost, path, reversal(grant.ID, -100), key()...)
+
+	answered := s.refused(http.StatusConflict, http.MethodPost, path, reversal(grant.ID, -100), key()...)
+
+	s.Equal("already_reversed", answered.Code)
+	s.Equal(int64(0), s.account(s.organization).GrantedMicros)
+}
+
+func (s *ServerSuite) TestAReversalOfTheWrongAmountOrKindIsABadRequest() {
+	path := "/v1/manage/accounts/" + s.organization + "/credits"
+	_, grant := s.grant(s.organization, 100, "contract")
+
+	answered := s.refused(http.StatusBadRequest, http.MethodPost, path, reversal(grant.ID, -50), key()...)
+	s.Equal("invalid_request", answered.Code)
+	s.Contains(answered.Detail, "amount_micros must be -100")
+	answered = s.refused(http.StatusBadRequest, http.MethodPost, path,
+		server.CreditRequest{Kind: usage.CreditRefund, AmountMicros: -100, ReversesID: grant.ID}, key()...)
+	s.Equal("invalid_request", answered.Code)
+	s.Contains(answered.Detail, "kind must be adjustment")
+
+	s.Equal(int64(100), s.account(s.organization).GrantedMicros)
+}
+
+func (s *ServerSuite) TestAnotherOrganizationsEntryIsNotFoundToReverse() {
+	other := usagetest.Organization()
+	_, grant := s.grant(other, 100, "contract")
+
+	answered := s.refused(http.StatusNotFound, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/credits",
+		reversal(grant.ID, -100), key()...)
+
+	s.Equal("credit_not_found", answered.Code)
+	s.Equal(int64(100), s.account(other).GrantedMicros)
+	s.Zero(s.credits(other)[0].ReversedByID)
+}
+
 func (s *ServerSuite) TestSuspendNeedsAReasonAndRestoreClearsIt() {
 	s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{}, key()...)
 	s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: strings.Repeat("r", 501)}, key()...)

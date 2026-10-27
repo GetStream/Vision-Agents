@@ -3818,11 +3818,33 @@ export type paths = {
         readonly put?: never;
         /**
          * Revoke a grant
-         * @description The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+         * @description The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
          *
          *     Server-side only: one server-side credential of any app grants for any subject of its organization.
          */
         readonly post: operations["revokeLimitGrant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/spend/limits/grants/{grant_id}/unrevoke": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Unrevoke a grant
+         * @description Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+         *
+         *     Server-side only: one server-side credential of any app grants for any subject of its organization.
+         */
+        readonly post: operations["unrevokeLimitGrant"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -6877,6 +6899,11 @@ export type components = {
          * @enum {string}
          */
         readonly LimitGrantState: "live" | "used" | "expired" | "revoked";
+        /** @description Why a revoked grant is live again. */
+        readonly LimitGrantUnrevocation: {
+            /** @description Why it is live again; more than spaces. */
+            readonly reason: string;
+        };
         readonly LimitInForce: {
             /** Format: int64 */
             readonly effective_limit_micros: number;
@@ -19248,6 +19275,52 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly unrevokeLimitGrant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LimitGrantUnrevocation"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LimitGrant"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };

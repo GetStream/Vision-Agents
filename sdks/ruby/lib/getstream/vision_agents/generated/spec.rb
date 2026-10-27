@@ -1172,6 +1172,12 @@ module GetStream
           body: "LimitGrantRevocation", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "manageUnrevokeLimitGrant" => {
+          method: :post, path: "/v1/manage/spend/limits/grants/{grant_id}/unrevoke",
+          path_params: %w[grant_id].freeze, query: [].freeze,
+          body: "LimitGrantUnrevocation", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "manageUpdateLimit" => {
           method: :patch, path: "/v1/manage/spend/limits/{limit_id}",
           path_params: %w[limit_id].freeze, query: [].freeze,
@@ -1548,6 +1554,12 @@ module GetStream
           method: :delete, path: "/v1/agents/users/{user_id}/memories",
           path_params: %w[user_id].freeze, query: [].freeze,
           body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "unrevokeLimitGrant" => {
+          method: :post, path: "/v1/spend/limits/grants/{grant_id}/unrevoke",
+          path_params: %w[grant_id].freeze, query: [].freeze,
+          body: "LimitGrantUnrevocation", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "updateAgentConfig" => {
@@ -2302,6 +2314,10 @@ module GetStream
           required: %w[items has_more].freeze, open: false
         }.freeze,
         "LimitGrantRevocation" => {
+          properties: %w[reason].freeze,
+          required: %w[reason].freeze, open: false
+        }.freeze,
+        "LimitGrantUnrevocation" => {
           properties: %w[reason].freeze,
           required: %w[reason].freeze, open: false
         }.freeze,
