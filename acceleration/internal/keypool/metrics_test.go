@@ -380,7 +380,7 @@ func (s *RefusedAttemptsSuite) TestARefusedKeyAlertsOncePerVariableAndStatusUnti
 	}
 
 	s.post(p.Pool)
-	s.NotContains(refused(start.Add(30*time.Minute)), item, "held back by the limit")
+	s.NotContains(refused(start.Add(time.Hour)), item, "held back by the limit")
 
 	s.post(p.Pool)
 	s.Contains(refused(start.Add(time.Hour+2*time.Second)), item, "sent again once the limit passed")

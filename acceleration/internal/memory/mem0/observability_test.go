@@ -342,7 +342,7 @@ func (s *CallRecordingSuite) TestARefusalAlertsOncePerOperationAndStatusUntilThe
 	s.GreaterOrEqual(held["search/429"]["increase"], 1.0)
 
 	s.recall()
-	s.NotContains(refused(start.Add(30*time.Minute)), "search/429", "held back by the limit")
+	s.NotContains(refused(start.Add(time.Hour)), "search/429", "held back by the limit")
 
 	s.recall()
 	s.Contains(refused(start.Add(time.Hour+2*time.Second)), "search/429", "sent again once the limit passed")
