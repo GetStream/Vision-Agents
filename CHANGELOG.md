@@ -2,6 +2,10 @@
 
 ## Features
 
+### A 1:1 iMessage chat can schedule reminders
+
+An agent answering a Linq (iMessage) chat is now offered the scheduling tools when the chat is 1:1: the latest message says `data.chat.is_group` `false`. The task belongs to the person who wrote, and comes back into the chat, `delivered_to` `imessage`. A group chat, a chat whose message does not say, and a chat linked before this release get no tools; a chat that becomes a group loses them, and its tasks fail `thread_gone`. Migration `20261116100000_channel_thread_people` adds the table `channel_thread_people` (AI-1867).
+
 ### Customers list their usage events
 
 `GET /v1/usage/events` (`listUsageEvents`, server-side only) pages the usage events of the calling app, or with `scope=organization` of every app of its organization (`app_id` narrows it to one), newest first by `occurred_at` then `usage_id`: `UsageEventPage` (`items`, `has_more`, `next_cursor`) of `UsageEvent`, each with its `usage_id`, `occurred_at`, `app_id`, `api_key` (or the origin of work no key started, such as `hook:chat`), `user_id`, `team` (read off its `team:<name>` category), `usage_categories`, `agent_id`, `call_id`, `session_id`, `meter`, `provider`, `model`, `purpose`, `quantities`, `attributes`, `cost_micros`, `billable`, `success`, `error_code` and `tags`; never the tier, the cost at the vendor's rates, the price version or the producer. It filters by `from` (inclusive), `to` (exclusive), `meter`, `api_key`, `user_id`, and `team` or `category`, up to 200 a page (`limit`, 50 by default) continued by `cursor`. With `scope=app`, the default, an `app_id` other than the caller's is a 400, as are `user_id` with `scope=organization` and no `app_id`, `team` with `category`, and a cursor this list did not answer; with no usage service, or for an app in no organization, it answers 404 `billing_not_enabled`. A server-side caller's `api_key` and `user_id` query parameters filter, as on `getSpend`. The usage service's customer view gains `GET /v1/accounts/{organization_id}/usage` (`readAccountUsage`), `listUsage`'s filters and cursor without what only the operator reads, which the router reads (AI-1985).

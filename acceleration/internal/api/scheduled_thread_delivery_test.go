@@ -179,6 +179,27 @@ func (s *TelnyxChannelSuite) TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread()
 	s.Eventually(func() bool { return !s.threadOpen(channel) }, settleFor, 10*time.Millisecond, "the session was left open")
 }
 
+// A task made in a 1:1 Linq chat is sent back into the chat by the worker, and the run says it
+// went by iMessage.
+func (s *LinqChannelSuite) TestATaskMadeInALinqChatIsSentBackIntoTheChat() {
+	s.schedulingOn(&s.config)
+	s.planTool("schedule_task", stretchInTwoHours)
+	chat := s.utils.uuid()
+	channel := s.linqTurn(chat, "+13125550001", false, "remind me to stretch in two hours")
+	task := s.customersTasks(1)[0]
+	sent, replies := len(s.linq.sent()), s.repliesIn(channel)
+
+	run := s.deliveredByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunDelivered, run.State, "error %v", run.Error)
+	s.Equal("imessage", run.DeliveredTo)
+	texted := s.took(sent + 1)[sent]
+	s.Equal(chat, texted.chat)
+	s.Equal("Done.", texted.text)
+	s.Equal(1, s.scheduledTurns())
+	s.Equal(replies+1, s.repliesIn(channel), "the reply is kept in the thread")
+}
+
 // codeHandsBackAReport has every code run on the suite's Daytona write report.csv, and queues
 // the next turn's runs of code that hand it back, one by default. It returns where the report
 // is published.

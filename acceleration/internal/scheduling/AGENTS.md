@@ -40,7 +40,7 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
           sms | whatsapp | imessage   same turn's words and files -> channels.Service.Notify
           phone         phone.Service.Call -> call session -> task as first turn
 
-        deliverOnThread (a task made in an SMS or WhatsApp thread; deliver_to is not read):
+        deliverOnThread (a task made in an SMS, WhatsApp or 1:1 iMessage thread; deliver_to is not read):
           channel_threads row, the task's customer's and user's   else thread_gone
           channelbridge.Bridge.Reachable: connection, opt-out, sandbox gate, WhatsApp 24 h
           lease the thread's turn (store.TakeChannelThreadTurn)
@@ -190,14 +190,20 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   (`telnyx`) or WhatsApp thread session (`api.threadSession`, `personalThreads`) is offered
   the tools when its person writes, and not when someone else in the thread does; the task's `user_id` is the Stream user the bridge writes the person as
   (`channelbridge.authorUserID`: per customer, line and person), `caller_kind` `server`, and
-  `channel_thread` its thread channel. A Slack thread is shared and is offered none.
+  `channel_thread` its thread channel. A Linq (iMessage) chat is offered them while its
+  latest message says `data.chat.is_group` `false`; its person is that message's sender
+  (`channel_thread_people`), and a group chat, a chat whose message does not say and a
+  thread linked before the table are offered none. A Slack thread is shared and is offered none.
   `TestTelnyxChannelSuite/TestAPersonTextingTheLineSchedulesATaskThatKeepsTheirThread`,
   `TestTelnyxChannelSuite/TestTwoPeopleOnOneLineNeverReachEachOthersTasks`,
   `TestTelnyxChannelSuite/TestTheSamePersonOnAnotherCustomersLineReachesNoneOfTheTasks`,
   `TestTelnyxChannelSuite/TestSomeoneElseWritingInAPersonsThreadIsNotOfferedTheTools`,
   `TestTelnyxChannelSuite/TestAZoneNamedInOneRoundIsTheNextRoundsTasks`,
   `TestWhatsAppChannelSuite/TestAWhatsAppThreadSchedulesForThePersonWhoWrote`,
-  `TestLinqChannelSuite/TestALinqChatIsNotOfferedTheTools`,
+  `TestLinqChannelSuite/TestALinqOneToOneChatSchedulesForThePersonWhoWrote`,
+  `TestLinqChannelSuite/TestALinqGroupChatIsNotOfferedTheTools`,
+  `TestLinqChannelSuite/TestALinqChatWhoseMessageDoesNotSayIsNotOfferedTheTools`,
+  `TestLinqChannelSuite/TestALinqChatThatBecomesAGroupLosesTheToolsAndItsTasks`,
   `TestSlackChannelSuite/TestASlackThreadIsNotOfferedTheTools`.
 - **A task made in a thread is delivered back to that thread (AI-1843).** `deliverOnThread`
   opens the thread's conversation as `answerThread` does (the session the backend keeps on the
@@ -207,7 +213,7 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `whatsapp` only once the line took it: a refused send is `delivery_failed`, and its retry
   sends the reply the thread holds, with its files (`Session.FollowUpFinished`), without a
   second turn; a person who opted out by then is `channel_unreachable`, final, and a thread
-  removed by then is `thread_gone`, final. The task stores `deliver_to` `sms` or `whatsapp`
+  removed by then is `thread_gone`, final. The task stores `deliver_to` `sms`, `whatsapp` or `imessage`
   (`Spec.ThreadDelivery`), which PATCH refuses to change. Quiet hours hold it as any task.
   Before the turn,
   `Bridge.Reachable` refuses: a removed connection (`connection_removed`, final), an opted-out
@@ -293,7 +299,9 @@ so `testing.yaml` wins over `ROUTER_POSTGRES_DSN` (`TestTheTestingFileWinsOverTh
    (`model_router_test_<slug>_test` becomes `model_router_store_test_<slug>_test`). They create
    it on first use. `StoreSuite` drops the schema of its own (`internal/store/store_test.go:96`),
    never of yours. `ScheduledTasksSuite` runs on `model_router_scheduled_tasks_test_<slug>_test`
-   and `TelnyxChannelSuite` on `model_router_telnyx_channel_test_<slug>_test`
+   and `TelnyxChannelSuite` on `model_router_telnyx_channel_test_<slug>_test`, and
+   `LinqChannelSuite` on `model_router_linq_channel_test_<slug>_test` (one of its tests renames a
+   table away)
    (`RouterSuite.database`): a worker claims every task due in its database, so a worker of
    another suite or package would take their tasks (AI-1555). Each of their tests deletes its
    tasks when it ends, so the next test's worker finds none.

@@ -14,8 +14,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// A task made in an SMS or WhatsApp thread (store.ScheduledTask.ChannelThread) is carried out
-// in that thread: the Router opens the thread's conversation as a person's message there
+// A task made in an SMS, WhatsApp or 1:1 iMessage thread (store.ScheduledTask.ChannelThread) is
+// carried out in that thread: the Router opens the thread's conversation as a person's message there
 // opens it (answerThread), and the reply leaves for the thread through the channel bridge, as
 // every reply in a thread channel does (conversation.Service.OnFinishedReply).
 //
@@ -33,7 +33,7 @@ import (
 //	                                                            thread removed meanwhile: thread_gone, final
 //	                                                            refused: delivery_failed
 //	close the session it opened; let go of the lease
-//	delivered_to sms | whatsapp
+//	delivered_to sms | whatsapp | imessage
 
 // deliverOnThread carries out an occurrence of a task made in a thread in that thread, and
 // answers where it landed once the bridge sent the agent's reply: the delivery holds the reply

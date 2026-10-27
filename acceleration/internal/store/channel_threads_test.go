@@ -406,3 +406,58 @@ func (s *StoreSuite) TestAReplyPastItsKeepIsNotTakenAndIsDropped() {
 		"SELECT count(*) FROM channel_thread_waiting WHERE customer_id = 'acme-app'").Scan(&rows))
 	s.Equal(1, rows, "only the reply kept now")
 }
+
+// A chat thread's person is read with the thread, replaced by the next one recorded, and
+// forgotten by an empty one.
+func (s *StoreSuite) TestAChatThreadsPersonIsReadWithItUntilItIsForgotten() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "chat-1"))
+	s.Require().NoError(err)
+	s.Empty(s.chatPerson("thread-one"), "a thread nobody recorded a person for")
+
+	s.Require().NoError(s.store.SetChannelThreadChatPerson(s.ctx, "thread-one", "+12025550199"))
+	s.Equal("+12025550199", s.chatPerson("thread-one"))
+	s.Require().NoError(s.store.SetChannelThreadChatPerson(s.ctx, "thread-one", "+12025550188"))
+	s.Equal("+12025550188", s.chatPerson("thread-one"))
+
+	s.Require().NoError(s.store.SetChannelThreadChatPerson(s.ctx, "thread-one", ""))
+	s.Empty(s.chatPerson("thread-one"))
+}
+
+// A thread linked again keeps its person: only the bridge, for a fresh message, says who it is.
+func (s *StoreSuite) TestAThreadLinkedAgainKeepsItsChatPerson() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "chat-1"))
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SetChannelThreadChatPerson(s.ctx, "thread-one", "+12025550199"))
+
+	_, err = s.store.LinkChannelThread(s.ctx, thread("thread-two", "chat-1"))
+
+	s.Require().NoError(err)
+	s.Equal("+12025550199", s.chatPerson("thread-one"))
+}
+
+// A router built before channel_thread_people reads channel_threads rows back whole
+// (LinkChannelThread, RETURNING *) and fails on a column it does not know, so the table keeps
+// the columns it had then: a rollback keeps every thread channel working.
+func (s *StoreSuite) TestChannelThreadsKeepsTheColumnsARouterBeforeChatPeopleReads() {
+	rows, err := s.store.DB().QueryContext(s.ctx,
+		"SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'channel_threads' ORDER BY ordinal_position")
+	s.Require().NoError(err)
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var column string
+		s.Require().NoError(rows.Scan(&column))
+		columns = append(columns, column)
+	}
+	s.Require().NoError(rows.Err())
+
+	s.Equal([]string{"channel_id", "customer_id", "connector_id", "provider_unit_id", "thread_key", "connection_id",
+		"thread_parts", "stream_app_pk", "last_inbound_at", "turn_holder", "turn_until", "created_at"}, columns)
+}
+
+// chatPerson is the person store.ChannelThread reads for a thread channel.
+func (s *StoreSuite) chatPerson(channelID string) string {
+	found, err := s.store.ChannelThread(s.ctx, channelID)
+	s.Require().NoError(err)
+	return found.ChatPerson
+}
