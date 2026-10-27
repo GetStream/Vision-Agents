@@ -938,7 +938,7 @@ func (s *AgentSuite) joinText() {
 	}
 	var reading *metered.Knowledge
 	if s.knows != nil {
-		reading = metered.NewKnowledge(s.knows, s.metering)
+		reading = metered.NewKnowledge(s.knows, s.metering, nil)
 	}
 	var running ToolRunner
 	if s.runner != nil {
@@ -1066,7 +1066,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	}
 	var reading *metered.Knowledge
 	if s.knows != nil {
-		reading = metered.NewKnowledge(s.knows, s.metering)
+		reading = metered.NewKnowledge(s.knows, s.metering, nil)
 	}
 
 	var finding *searchrouter.Router

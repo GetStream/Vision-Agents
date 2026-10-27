@@ -32,15 +32,17 @@ const knowledgeFailed = "knowledge_failed"
 type Knowledge struct {
 	backend  knowledge.Backend
 	recorder *routing.Recorder
+	gate     routing.Gate
 }
 
-// NewKnowledge meters a backend, recording through recorder as knowledge rows. A nil recorder
-// records nothing.
-func NewKnowledge(backend knowledge.Backend, recorder *routing.Recorder) *Knowledge {
+// NewKnowledge meters a backend, recording through recorder as knowledge rows, and admits each
+// write through gate as a model call is admitted. A nil recorder records nothing; a nil gate
+// admits every write.
+func NewKnowledge(backend knowledge.Backend, recorder *routing.Recorder, gate routing.Gate) *Knowledge {
 	if recorder != nil {
 		recorder = recorder.For(routing.Knowledge)
 	}
-	return &Knowledge{backend: backend, recorder: recorder}
+	return &Knowledge{backend: backend, recorder: recorder, gate: gate}
 }
 
 // For is the knowledge base as owner reads and writes it: every call is a row of owner's.
@@ -126,6 +128,9 @@ func (o OwnedKnowledge) Fetch(ctx context.Context, namespace string, ids []strin
 // requests before it, which the provider billed, are billed too. Writing none asks the
 // provider nothing.
 func (o OwnedKnowledge) Upsert(ctx context.Context, namespace string, documents []knowledge.Document) error {
+	if err := o.admit(ctx); err != nil {
+		return err
+	}
 	namespace = o.scoped(namespace)
 	for batch := range slices.Chunk(documents, knowledge.WriteBatch) {
 		_, err := routing.Call(ctx, o.knowledge.meter(o.owner, KnowledgeWrite), func(ctx context.Context) (knowledge.Billed, error) {
@@ -151,6 +156,20 @@ func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []stri
 		}
 	}
 	return nil
+}
+
+// admit refuses a write the owner may not pay for: writing is most of what knowledge costs,
+// and its rows are only recorded once the provider has billed them. Deletes are not admitted,
+// so data can always be removed.
+func (o OwnedKnowledge) admit(ctx context.Context) error {
+	if o.knowledge.gate == nil {
+		return nil
+	}
+	admission, err := o.knowledge.gate.Admit(ctx, o.owner)
+	if err != nil {
+		return err
+	}
+	return admission.Spend
 }
 
 // scoped is the provider's name for the owner's knowledge base namespace. An empty name
