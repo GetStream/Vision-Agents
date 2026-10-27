@@ -198,7 +198,7 @@ func (s *URLsSuite) SetupTest() {
 
 	// Whatever a test before this one left queued would be read into this one's base.
 	inspector := asynq.NewInspector(s.redis)
-	_ = inspector.DeleteQueue(queue, true)
+	_ = inspector.DeleteQueue(defaultQueue, true)
 	s.Require().NoError(inspector.Close())
 
 	// A small chunk so a page cuts into several passages without needing a long fixture,
@@ -237,7 +237,7 @@ func (s *URLsSuite) drained(page store.KnowledgeURL) {
 	inspector := asynq.NewInspector(s.redis)
 	defer inspector.Close()
 	s.Require().Eventually(func() bool {
-		_, err := inspector.GetTaskInfo(queue, page.ID)
+		_, err := inspector.GetTaskInfo(defaultQueue, page.ID)
 		return errors.Is(err, asynq.ErrTaskNotFound) || errors.Is(err, asynq.ErrQueueNotFound)
 	}, 10*time.Second, 10*time.Millisecond)
 }

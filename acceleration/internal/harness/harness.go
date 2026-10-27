@@ -117,6 +117,18 @@ type noted struct {
 	turn string
 	// origin is the turn that requested the work, even before any reply takes its result.
 	origin string
+	// cutOff marks a note whose reply was talked over after it was written.
+	cutOff bool
+}
+
+// cutOffNote is added to a note whose reply was talked over before the caller heard it.
+const cutOffNote = "Your last reply passing this on was cut off before the caller heard " +
+	"it, so they still need to be told."
+
+// writtenReply is a reply the model has finished writing that may still be playing.
+type writtenReply struct {
+	turn  string
+	notes []noted
 }
 
 // Turn is what the harness is asked to answer.
@@ -172,6 +184,11 @@ type Harness struct {
 	// notes are what has come back from the subagent since the fast model last spoke.
 	// They are folded into the next prompt, and forgotten once that reply has finished.
 	notes []noted
+	// written is the last reply that finished being written and the notes it carried.
+	// Finishing the writing is not finishing the speaking: the reply can still be talked
+	// over while it plays, and what it carried is then owed again. Only one reply is on
+	// its way to the caller at a time, so the last one is all that is kept.
+	written writtenReply
 	// cancelledTurns also excludes results that finished before cancellation but have yet
 	// to be consumed. Notes and their originating turns are retired under the same lock.
 	cancelledTurns map[string]string
@@ -289,7 +306,9 @@ func (h *Harness) Remember(response llm.Response) {
 	if response.Status == llm.StatusFailed || response.Status == llm.StatusCancelled {
 		h.release(response.ID)
 	} else {
+		carried := slices.DeleteFunc(slices.Clone(h.notes), func(written noted) bool { return written.turn != response.ID })
 		h.notes = slices.DeleteFunc(h.notes, func(written noted) bool { return written.turn == response.ID })
+		h.written = writtenReply{turn: response.ID, notes: carried}
 	}
 	// A truncated response can retain an unfinished tool call at the provider even
 	// though its invalid arguments were discarded locally. Continuing that response
@@ -420,6 +439,20 @@ func (h *Harness) Release(turnID string) {
 }
 
 func (h *Harness) release(turnID string) {
+	if h.written.turn == turnID {
+		// The conversation keeps the reply as it was written, so the model would otherwise
+		// read itself as having already said this.
+		for _, carried := range h.written.notes {
+			carried.turn = ""
+			// A correction of the harness's own is not something the caller was being told.
+			if !carried.cutOff && carried.skill != "" {
+				carried.cutOff = true
+				carried.text += " " + cutOffNote
+			}
+			h.notes = append(h.notes, carried)
+		}
+		h.written = writtenReply{}
+	}
 	for i := range h.notes {
 		if h.notes[i].turn == turnID {
 			h.notes[i].turn = ""
@@ -549,6 +582,7 @@ func (h *Harness) CancelTurn(turnID, reason string) {
 	}
 	h.cancelledTurns[turnID] = reason
 	h.notes = slices.DeleteFunc(h.notes, func(written noted) bool { return written.origin == turnID })
+	h.written.notes = slices.DeleteFunc(h.written.notes, func(written noted) bool { return written.origin == turnID })
 	h.mu.Unlock()
 	if h.tasks != nil {
 		h.tasks.CancelTurn(turnID, reason)

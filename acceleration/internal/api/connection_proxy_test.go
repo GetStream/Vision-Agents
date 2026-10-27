@@ -1057,6 +1057,21 @@ func (s *ConnectionProxyOffSuite) SetupTest() {
 // and a list without owner_type a validation failure, which since AI-1293 lists the app's own
 // as owner_type=app does.
 func (s *ConnectionProxyOffSuite) TestTheConnectionEndpointsAnswerAsOnBase() {
+	// An app of its own with one connection: the fixture's app is shared, and a connection
+	// another suite made there was validated between the two lists below, so they differed.
+	s.useApp(s.data.createApp())
+	ctx := context.Background()
+	connectorID := "custom_listed" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest, err := core.ParseManifest([]byte("id: " + connectorID + "\nrevision: 1\nname: Listed\n" +
+		"endpoints:\n  api_base: https://api.example.com\nschemes: [bearer]\n"))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(ctx, s.customerID(), manifest)
+	s.Require().NoError(err)
+	registry := core.Registry{Schemes: map[string]core.Scheme{bearer.Name: bearer.New()}}
+	s.Require().NoError(s.store.CreateConnectorConnection(ctx, registry, &store.ConnectorConnection{
+		CustomerID: s.customerID(), ConnectorID: connectorID, OwnerType: store.OwnerApp,
+		AuthScheme: bearer.Name, DefinitionRevision: 1}))
+
 	status, body := s.serverClient.call(http.MethodGet, "/v1/agents/connections/x", nil)
 	s.Equal(http.StatusNotFound, status)
 	s.JSONEq(`{"error":{"message":"no such connection","type":"not_found","code":"connection_not_found","doc_url":"https://getstream.io/agents/docs/api/errors/#connection_not_found"}}`, withoutDuration(body))
@@ -1065,6 +1080,7 @@ func (s *ConnectionProxyOffSuite) TestTheConnectionEndpointsAnswerAsOnBase() {
 	appStatus, apps := s.serverClient.call(http.MethodGet, "/v1/agents/connections?owner_type=app", nil)
 	s.Equal(http.StatusOK, status)
 	s.Equal(http.StatusOK, appStatus)
+	s.Contains(string(apps), connectorID, "the app's own connection is listed")
 	s.JSONEq(withoutDuration(apps), withoutDuration(body))
 }
 
