@@ -127,6 +127,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### Every 401 and 402 on a pooled key is counted as refused
+
+`router_keypool_refused_attempts_total` now counts every 401 and 402 a provider answers on a pooled key, whatever the body says, with `status` `401` or `402`. Before, it counted one only when the body said `quota_exceeded`, so Gemini's 402 "prepayment credits are depleted" raised no `key_refused` alert. Which keys rest and when a request moves to the next key is unchanged (AI-2123).
+
 ### Sandbox code can no longer write through a method-override header
 
 Under the egress proxy broker, a request from sandbox code to a connector's host that carries `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` now gets the read-only 403 and reaches no host. Google runs a GET with `X-HTTP-Method-Override: POST` as the POST, so a read-only Google grant let code write with the connection's token (AI-2120).

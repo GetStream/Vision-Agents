@@ -329,6 +329,14 @@ func (p *Pool) refused(response *http.Response) (time.Duration, bool) {
 	return 0, false
 }
 
+// rejectsKey reports whether a status says the provider would not take the key at all: a
+// 401 for a key it does not know, a 402 for an account out of credit, such as Gemini's
+// "prepayment credits are depleted". Each is counted as refused whatever its body says, so a
+// key to replace or top up shows up, even when refused leaves it in turn.
+func rejectsKey(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusPaymentRequired
+}
+
 // peekedBody is a body with what was read of it put back in front.
 type peekedBody struct {
 	io.Reader
@@ -351,10 +359,12 @@ func (p *Pool) sendTimes(ctx context.Context, attempts int, send func(key string
 			return response, err
 		}
 		rest, refused := p.refused(response)
+		if refused || rejectsKey(response.StatusCode) {
+			p.countRefused(strconv.Itoa(response.StatusCode))
+		}
 		if !refused {
 			return response, nil
 		}
-		p.countRefused(strconv.Itoa(response.StatusCode))
 		p.Cooldown(key, rest)
 
 		if attempt >= attempts-1 || ctx.Err() != nil {
@@ -495,10 +505,12 @@ func (p *Pool) Dial(
 			return conn, response, key, err
 		}
 		rest, refused := p.refused(response)
+		if refused || rejectsKey(response.StatusCode) {
+			p.countRefused(strconv.Itoa(response.StatusCode))
+		}
 		if !refused {
 			return conn, response, key, err
 		}
-		p.countRefused(strconv.Itoa(response.StatusCode))
 		p.Cooldown(key, rest)
 		if attempt >= attempts-1 || ctx.Err() != nil {
 			return conn, response, key, err
