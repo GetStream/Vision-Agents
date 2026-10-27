@@ -568,7 +568,7 @@ func (s *SessionSuite) TestConcurrentStopsAndSubmissionsKeepEachCommandSeparate(
 func (s *SessionSuite) TestStartingVoiceJoinsTheCallNamedAfterTheSessionWithItsHistory() {
 	s.manages()
 	recalled := []llm.Message{
-		{Role: llm.User, Content: "Where is order 4471?"},
+		{Role: llm.User, Content: "Where is order 3825?"},
 		{Role: llm.Assistant, Content: "It ships on Friday."},
 	}
 	created := s.writes(Spec{Recall: &Recall{Messages: recalled}})
@@ -585,7 +585,7 @@ func (s *SessionSuite) TestStartingVoiceJoinsTheCallNamedAfterTheSessionWithItsH
 func (s *SessionSuite) TestStoppingVoiceLeavesTheCallAndCarriesOnInWriting() {
 	s.manages()
 	recalled := []llm.Message{
-		{Role: llm.User, Content: "Where is order 4471?"},
+		{Role: llm.User, Content: "Where is order 3825?"},
 		{Role: llm.Assistant, Content: "It ships on Friday."},
 	}
 	created := s.writes(Spec{Recall: &Recall{Messages: recalled}})

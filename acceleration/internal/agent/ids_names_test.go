@@ -29,37 +29,37 @@ func (s *GivenNamesSuite) TestANameReturnedByAToolIsPreserved() {
 
 func (s *GivenNamesSuite) TestALongNameTheCallerGaveIsPreserved() {
 	history := []llm.Message{{Role: llm.User, Content: "My name is Maria del Carmen de la Cruz."}}
-	_, refused := placeholderName(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"name":"Maria del Carmen de la Cruz"}`})
+	_, refused := placeholderName(history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"Maria del Carmen de la Cruz"}`})
 	s.False(refused)
 }
 
 func (s *GivenNamesSuite) TestAnAssistantInventingANameDoesNotGroundIt() {
 	history := []llm.Message{{Role: llm.Assistant, Content: "I will book it for John Doe."}}
-	_, refused := placeholderName(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"name":"John Doe"}`})
+	_, refused := placeholderName(history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
 	s.True(refused)
 }
 
 func (s *GivenNamesSuite) TestARealNameIsAllowedEvenWhenItLooksLikeAPlaceholder() {
 	history := []llm.Message{{Role: llm.User, Content: "My name is John Doe."}}
-	_, refused := placeholderName(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"name":"John Doe"}`})
+	_, refused := placeholderName(history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
 	s.False(refused)
 }
 
 func (s *GivenNamesSuite) TestARefusalQuotingAPlaceholderDoesNotGroundIt() {
 	history := []llm.Message{{Role: llm.ToolResult, Content: placeholderResult("John Doe")}}
-	_, refused := placeholderName(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"name":"John Doe"}`})
+	_, refused := placeholderName(history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
 	s.True(refused)
 }
 
 func (s *GivenNamesSuite) TestAPartialWordDoesNotGroundAPlaceholder() {
 	history := []llm.Message{{Role: llm.User, Content: "Ask John Doerr."}}
-	_, refused := placeholderName(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"name":"John Doe"}`})
+	_, refused := placeholderName(history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
 	s.True(refused)
 }
 
 func (s *GivenNamesSuite) TestSeparateToolValuesDoNotMakeAName() {
 	history := []llm.Message{{Role: llm.ToolResult, Content: `["John", "Doe"]`}}
-	_, refused := placeholderName(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"name":"John Doe"}`})
+	_, refused := placeholderName(history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
 	s.True(refused)
 }
 

@@ -714,8 +714,8 @@ func (s *StreamsSuite) TestTheResultDropsAnUpdateNotYetSaid() {
 	s.Require().NoError(conversation.WriteJSON(frame{
 		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
 	s.Require().NoError(conversation.WriteJSON(frame{
-		"type": "tool_result", "tool_call_id": "c1", "output": "a table at 7:30"}))
-	s.Equal("c1=a table at 7:30", s.told(model.answers))
+		"type": "tool_result", "tool_call_id": "c1", "output": "a room at 18:45"}))
+	s.Equal("c1=a room at 18:45", s.told(model.answers))
 	model.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1})
 
 	s.untold(model.updates, "the result says more than the update did")
@@ -980,7 +980,7 @@ func (s *StreamsSuite) told[T any](sent <-chan T) T {
 
 // calling has the model make a call, and waits for the socket to pass it on.
 func (s *StreamsSuite) calling(connection *websocket.Conn, model *stubConversation, id string) {
-	model.emitter.Send(sts.ToolCall{CallID: id, Name: "check_availability", Arguments: "{}"})
+	model.emitter.Send(sts.ToolCall{CallID: id, Name: "find_room", Arguments: "{}"})
 	made := s.nextConversationFrame(connection)
 	s.Require().Equal("tool_call", made["type"])
 	s.Require().Equal(id, made["id"])

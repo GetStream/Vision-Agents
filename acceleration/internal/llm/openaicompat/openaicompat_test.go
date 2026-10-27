@@ -524,7 +524,7 @@ func (s *OpenAICompatSuite) TestAThoughtChannelIsNeverSpoken() {
 		textFrame("Just a moment, checking. \n\n<|chan"),
 		textFrame("nel>thought\nparty of two<chan"),
 		textFrame("nel|>"),
-		toolFrame(0, "call-1", "check_availability", `{"party_size":2}`),
+		toolFrame(0, "call-1", "find_room", `{"guests":2}`),
 		usageFrame(20, 0, 14, 0, "tool_calls"),
 	}
 	provider := s.provider(Options{ThoughtChannel: true})
@@ -601,16 +601,16 @@ func (s *OpenAICompatSuite) TestAThoughtChannelIsLeftAloneForOtherModels() {
 // withTools is a request that offers the restaurant's tools.
 func withTools() llm.ResponseParams {
 	params := hello()
-	params.Tools = []llm.Tool{{Name: "check_availability"}, {Name: "create_reservation"}}
+	params.Tools = []llm.Tool{{Name: "find_room"}, {Name: "book_room"}}
 	return params
 }
 
 func (s *OpenAICompatSuite) TestAToolCallWrittenAsTextIsMadeNotSpoken() {
 	// What Gemma 4 has sent once the opening marker went missing, split mid-marker.
 	s.frames = []string{
-		textFrame("call:check_avail"),
-		textFrame("ability{party_size:4,patio:true,time:<|\"|"),
-		textFrame(">7:30<|\"|>}<tool_"),
+		textFrame("call:find_r"),
+		textFrame("oom{guests:4,breakfast:true,time:<|\"|"),
+		textFrame(">18:45<|\"|>}<tool_"),
 		textFrame("call|>"),
 		usageFrame(20, 0, 30, 0, "stop"),
 	}
@@ -620,16 +620,16 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenAsTextIsMadeNotSpoken() {
 
 	s.Empty(response.OutputText)
 	s.Require().Len(response.ToolCalls, 1)
-	s.Equal("check_availability", response.ToolCalls[0].Name)
-	s.JSONEq(`{"party_size":4,"patio":true,"time":"7:30"}`, response.ToolCalls[0].Arguments)
+	s.Equal("find_room", response.ToolCalls[0].Name)
+	s.JSONEq(`{"guests":4,"breakfast":true,"time":"18:45"}`, response.ToolCalls[0].Arguments)
 	s.NotEmpty(response.ToolCalls[0].ID)
 }
 
 func (s *OpenAICompatSuite) TestAMarkedToolCallAfterFillerKeepsTheFiller() {
 	s.frames = []string{
-		textFrame("One moment, checking. <|tool_call>call:create_reservation{name:<|\"|>Quillon<|\"|>,"),
-		textFrame("party_size:6,allergen:<|\"|>sesame<|\"|>,notes:{high_chair:false,tags:[1,<|\"|>a, b<|\"|>]}}<tool_call|>"),
-		toolFrame(0, "call-1", "check_availability", `{"party_size":6}`),
+		textFrame("One moment, checking. <|tool_call>call:book_room{name:<|\"|>Quillon<|\"|>,"),
+		textFrame("guests:6,allergen:<|\"|>sesame<|\"|>,notes:{late_checkout:false,tags:[1,<|\"|>a, b<|\"|>]}}<tool_call|>"),
+		toolFrame(0, "call-1", "find_room", `{"guests":6}`),
 		usageFrame(20, 0, 30, 0, "tool_calls"),
 	}
 	provider := s.provider(Options{ToolCallText: true})
@@ -639,10 +639,10 @@ func (s *OpenAICompatSuite) TestAMarkedToolCallAfterFillerKeepsTheFiller() {
 	s.Equal("One moment, checking. ", response.OutputText)
 	s.Require().Len(response.ToolCalls, 2, "the call written as text and the real one are both made")
 	names := []string{response.ToolCalls[0].Name, response.ToolCalls[1].Name}
-	s.ElementsMatch([]string{"create_reservation", "check_availability"}, names)
+	s.ElementsMatch([]string{"book_room", "find_room"}, names)
 	for _, call := range response.ToolCalls {
-		if call.Name == "create_reservation" {
-			s.JSONEq(`{"name":"Quillon","party_size":6,"allergen":"sesame","notes":{"high_chair":false,"tags":[1,"a, b"]}}`, call.Arguments)
+		if call.Name == "book_room" {
+			s.JSONEq(`{"name":"Quillon","guests":6,"allergen":"sesame","notes":{"late_checkout":false,"tags":[1,"a, b"]}}`, call.Arguments)
 		}
 	}
 }
@@ -656,52 +656,52 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken()
 		arguments string
 	}{
 		"call_tool prefix with double quotes": {
-			frames:    []string{"Let me open a ticket... call_tool: create_reservation{name: \"Qui", "llon, party of {6}\", allergen: \"say \\\"none\\\"\"}"},
+			frames:    []string{"Let me open a ticket... call_tool: book_room{name: \"Qui", "llon, party of {6}\", allergen: \"say \\\"none\\\"\"}"},
 			spoken:    "Let me open a ticket... ",
-			name:      "create_reservation",
+			name:      "book_room",
 			arguments: `{"name":"Quillon, party of {6}","allergen":"say \"none\""}`,
 		},
 		"call tool prefix with no arguments": {
-			frames:    []string{"One moment. call tool", ": check_availability{}"},
+			frames:    []string{"One moment. call tool", ": find_room{}"},
 			spoken:    "One moment. ",
-			name:      "check_availability",
+			name:      "find_room",
 			arguments: `{}`,
 		},
 		"python call in backticks": {
-			frames:    []string{"Checking, `call:check_availability(party_size=4, patio=true, ", `time="7:30")`, "`."},
+			frames:    []string{"Checking, `call:find_room(guests=4, breakfast=true, ", `time="18:45")`, "`."},
 			spoken:    "Checking, ``.",
-			name:      "check_availability",
-			arguments: `{"party_size":4,"patio":true,"time":"7:30"}`,
+			name:      "find_room",
+			arguments: `{"guests":4,"breakfast":true,"time":"18:45"}`,
 		},
 		"python call with single quotes": {
-			frames:    []string{"call:create_reservation(name='O\\'Br", "ien (party)', allergen='C:\\temp')"},
+			frames:    []string{"call:book_room(name='O\\'Br", "ien (party)', allergen='C:\\temp')"},
 			spoken:    "",
-			name:      "create_reservation",
+			name:      "book_room",
 			arguments: `{"name":"O'Brien (party)","allergen":"C:\\temp"}`,
 		},
 		"python call ending on a bare value": {
-			frames:    []string{"call:check_availability(time=\"7:30\", party_size=4)"},
+			frames:    []string{"call:find_room(time=\"18:45\", guests=4)"},
 			spoken:    "",
-			name:      "check_availability",
-			arguments: `{"party_size":4,"time":"7:30"}`,
+			name:      "find_room",
+			arguments: `{"guests":4,"time":"18:45"}`,
 		},
 		"bare python call with no prefix": {
-			frames:    []string{"One moment. Checking. check_avail", "ability(party_size=4, time=\"7:30\")"},
+			frames:    []string{"One moment. Checking. find_r", "oom(guests=4, time=\"18:45\")"},
 			spoken:    "One moment. Checking. ",
-			name:      "check_availability",
-			arguments: `{"party_size":4,"time":"7:30"}`,
+			name:      "find_room",
+			arguments: `{"guests":4,"time":"18:45"}`,
 		},
 		"call followed by a space": {
-			frames:    []string{"One moment, checking... call check_avail", "ability(party_size=4, time='7:30')"},
+			frames:    []string{"One moment, checking... call find_r", "oom(guests=4, time='18:45')"},
 			spoken:    "One moment, checking... ",
-			name:      "check_availability",
-			arguments: `{"party_size":4,"time":"7:30"}`,
+			name:      "find_room",
+			arguments: `{"guests":4,"time":"18:45"}`,
 		},
 		"bare brace call with no prefix": {
-			frames:    []string{"Booking now. create_reservation{name: \"Quillon\", party_size: 6}"},
+			frames:    []string{"Booking now. book_room{name: \"Quillon\", guests: 6}"},
 			spoken:    "Booking now. ",
-			name:      "create_reservation",
-			arguments: `{"name":"Quillon","party_size":6}`,
+			name:      "book_room",
+			arguments: `{"name":"Quillon","guests":6}`,
 		},
 	}
 	for name, tc := range cases {
@@ -727,64 +727,64 @@ func (s *OpenAICompatSuite) TestABraceFormToolCallPreservesSingleQuotedIdentityA
 	// Brace-form identity values in single quotes should decode as exact strings, without
 	// quote marks, before they reach the verification tool.
 	s.frames = []string{
-		textFrame("call:verify_identity{name:'Maya Chen',"),
-		textFrame("dob:'1987-03-04',member_id:'ABC123456'}"),
+		textFrame("call:confirm_caller{name:'Ines Moreau',"),
+		textFrame("dob:'1979-11-23',member_id:'KTR583027'}"),
 		usageFrame(20, 0, 30, 0, "tool_calls"),
 	}
 	provider := s.provider(Options{ToolCallText: true})
 	params := hello()
-	params.Tools = []llm.Tool{{Name: "verify_identity"}}
+	params.Tools = []llm.Tool{{Name: "confirm_caller"}}
 
 	response, _ := s.ask(provider, params)
 
 	s.Empty(response.OutputText)
 	s.Require().Len(response.ToolCalls, 1)
-	s.Equal("verify_identity", response.ToolCalls[0].Name)
-	s.JSONEq(`{"name":"Maya Chen","dob":"1987-03-04","member_id":"ABC123456"}`, response.ToolCalls[0].Arguments)
+	s.Equal("confirm_caller", response.ToolCalls[0].Name)
+	s.JSONEq(`{"name":"Ines Moreau","dob":"1979-11-23","member_id":"KTR583027"}`, response.ToolCalls[0].Arguments)
 	var identity struct {
 		Name     string `json:"name"`
 		DOB      string `json:"dob"`
 		MemberID string `json:"member_id"`
 	}
 	s.Require().NoError(json.Unmarshal([]byte(response.ToolCalls[0].Arguments), &identity))
-	s.Equal("Maya Chen", identity.Name)
-	s.Equal("1987-03-04", identity.DOB)
-	s.Equal("ABC123456", identity.MemberID)
+	s.Equal("Ines Moreau", identity.Name)
+	s.Equal("1979-11-23", identity.DOB)
+	s.Equal("KTR583027", identity.MemberID)
 }
 
 func (s *OpenAICompatSuite) TestABraceFormToolCallKeepsSingleQuotedValuesTogetherWhileStreaming() {
 	s.frames = []string{
-		textFrame("call:verify_identity{'name':'Maya Chen','dob':'1987-03-04',"),
-		textFrame("'member_id':'ABC123456','nickname':'O\\"),
+		textFrame("call:confirm_caller{'name':'Ines Moreau','dob':'1979-11-23',"),
+		textFrame("'member_id':'KTR583027','nickname':'O\\"),
 		textFrame("'Brien','note':'comma, brace } and {','bare':O'Brien}"),
 		usageFrame(20, 0, 30, 0, "tool_calls"),
 	}
 	provider := s.provider(Options{ToolCallText: true})
 	params := hello()
-	params.Tools = []llm.Tool{{Name: "verify_identity"}}
+	params.Tools = []llm.Tool{{Name: "confirm_caller"}}
 
 	response, _ := s.ask(provider, params)
 
 	s.Empty(response.OutputText)
 	s.Require().Len(response.ToolCalls, 1)
-	s.Equal("verify_identity", response.ToolCalls[0].Name)
-	s.JSONEq(`{"name":"Maya Chen","dob":"1987-03-04","member_id":"ABC123456","nickname":"O'Brien","note":"comma, brace } and {","bare":"O'Brien"}`, response.ToolCalls[0].Arguments)
+	s.Equal("confirm_caller", response.ToolCalls[0].Name)
+	s.JSONEq(`{"name":"Ines Moreau","dob":"1979-11-23","member_id":"KTR583027","nickname":"O'Brien","note":"comma, brace } and {","bare":"O'Brien"}`, response.ToolCalls[0].Arguments)
 }
 
 func (s *OpenAICompatSuite) TestNativeJSONToolArgumentsKeepApostrophesInsideDoubleQuotedValues() {
 	s.frames = []string{
-		toolFrame(0, "call-1", "verify_identity", `{"name":"O'Brien","alias":"'Maya Chen'"}`),
+		toolFrame(0, "call-1", "confirm_caller", `{"name":"O'Brien","alias":"'Ines Moreau'"}`),
 		usageFrame(20, 0, 30, 0, "tool_calls"),
 	}
 	provider := s.provider(Options{ToolCallText: true})
 	params := hello()
-	params.Tools = []llm.Tool{{Name: "verify_identity"}}
+	params.Tools = []llm.Tool{{Name: "confirm_caller"}}
 
 	response, _ := s.ask(provider, params)
 
 	s.Require().Len(response.ToolCalls, 1)
-	s.Equal("verify_identity", response.ToolCalls[0].Name)
-	s.JSONEq(`{"name":"O'Brien","alias":"'Maya Chen'"}`, response.ToolCalls[0].Arguments)
+	s.Equal("confirm_caller", response.ToolCalls[0].Name)
+	s.JSONEq(`{"name":"O'Brien","alias":"'Ines Moreau'"}`, response.ToolCalls[0].Arguments)
 }
 
 func (s *OpenAICompatSuite) TestAReplyThatMerelyLooksLikeAToolCallIsSpokenWhole() {
@@ -805,14 +805,14 @@ func (s *OpenAICompatSuite) TestAReplyThatMerelyLooksLikeAToolCallIsSpokenWhole(
 func (s *OpenAICompatSuite) TestAnOfferedNameWithoutItsArgumentsIsSpoken() {
 	s.frames = []string{
 		textFrame("Let me check"),
-		textFrame(" that. I can check_availability for you, or precheck_availability(x=1). check"),
+		textFrame(" that. I can find_room for you, or prefind_room(x=1). check"),
 		usageFrame(20, 0, 8, 0, "stop"),
 	}
 	provider := s.provider(Options{ToolCallText: true})
 
 	response, _ := s.ask(provider, withTools())
 
-	s.Equal("Let me check that. I can check_availability for you, or precheck_availability(x=1). check", response.OutputText,
+	s.Equal("Let me check that. I can find_room for you, or prefind_room(x=1). check", response.OutputText,
 		"a bare name is a call only when its arguments follow it and it starts a word")
 	s.Empty(response.ToolCalls)
 }
@@ -822,7 +822,7 @@ func (s *OpenAICompatSuite) TestAStrayControlTokenIsNeverSpoken() {
 	// part of the answer.
 	s.frames = []string{
 		textFrame(`<|"|>`),
-		toolFrame(0, "call-1", "check_availability", `{"party_size":4}`),
+		toolFrame(0, "call-1", "find_room", `{"guests":4}`),
 		textFrame("\ufffd\nOne <tool_call|>moment."),
 		usageFrame(20, 0, 8, 0, "tool_calls"),
 	}
@@ -845,23 +845,23 @@ func (s *OpenAICompatSuite) TestAStrayChannelMarkerIsNeverSpoken() {
 }
 
 func (s *OpenAICompatSuite) TestAToolCallThatNeverClosesIsNotSpoken() {
-	s.frames = []string{textFrame("Sure. call:create_reservation{name:<|\"|>Al"), usageFrame(20, 0, 8, 0, "length")}
+	s.frames = []string{textFrame("Sure. call:book_room{name:<|\"|>Al"), usageFrame(20, 0, 8, 0, "length")}
 	provider := s.provider(Options{ToolCallText: true})
 
 	response, events := s.ask(provider, withTools())
 
 	s.Equal("Sure. ", response.OutputText)
 	s.Empty(response.ToolCalls)
-	s.Contains(reasoningOf(events), "create_reservation", "it is kept where a caller that wants it can see it")
+	s.Contains(reasoningOf(events), "book_room", "it is kept where a caller that wants it can see it")
 }
 
 func (s *OpenAICompatSuite) TestAToolCallWrittenAsTextIsLeftAloneForOtherModels() {
-	s.frames = []string{textFrame("call:check_availability{party_size:4}"), usageFrame(20, 0, 8, 0, "stop")}
+	s.frames = []string{textFrame("call:find_room{guests:4}"), usageFrame(20, 0, 8, 0, "stop")}
 	provider := s.provider(Options{})
 
 	response, _ := s.ask(provider, withTools())
 
-	s.Equal("call:check_availability{party_size:4}", response.OutputText)
+	s.Equal("call:find_room{guests:4}", response.OutputText)
 	s.Empty(response.ToolCalls)
 }
 
@@ -1627,12 +1627,12 @@ func (s *OpenAICompatSuite) TestImagesFollowAllToolResultsInABatch() {
 
 func (s *OpenAICompatSuite) TestAForcedCallRequiresEveryArgument() {
 	offered := []llm.Tool{
-		{Name: "verify_account", Parameters: map[string]any{
+		{Name: "confirm_member", Parameters: map[string]any{
 			"type":       "object",
 			"properties": map[string]any{"pin": map[string]any{}, "last4": map[string]any{}, "address": map[string]any{}},
 			"required":   []any{"pin"},
 		}},
-		{Name: "check_outage"},
+		{Name: "check_status"},
 	}
 	required := everyArgumentRequired(offered)
 	s.Equal([]string{"address", "last4", "pin"}, required[0].Parameters["required"])
