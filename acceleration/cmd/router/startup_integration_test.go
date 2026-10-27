@@ -92,19 +92,19 @@ VALUES (?, 'agent_configs', 'insert', '{}', now() - make_interval(secs => ?))`,
 		s.Require().NoError(s.db.DB().QueryRowContext(s.ctx, query, customer).Scan(&n))
 		return n
 	}
-	s.Require().Equal(1, left("SELECT count(*) FROM scheduled_task_runs WHERE customer_id = ?"))
-	s.Require().Equal(1, left("SELECT count(*) FROM data_changes WHERE customer_id = ?"))
-	unredacted := "SELECT count(*) FROM agent_response_items i JOIN agent_responses r ON r.id = i.response_id " +
-		"WHERE r.customer_id = ? AND i.redact_at IS NOT NULL"
-	s.Require().Equal(1, left(unredacted))
+	const (
+		runs       = "SELECT count(*) FROM scheduled_task_runs WHERE customer_id = ?"
+		changes    = "SELECT count(*) FROM data_changes WHERE customer_id = ?"
+		unredacted = "SELECT count(*) FROM agent_response_items i JOIN agent_responses r ON r.id = i.response_id " +
+			"WHERE r.customer_id = ? AND i.redact_at IS NOT NULL"
+	)
+	s.Require().Equal([]int{1, 1, 1}, []int{left(runs), left(changes), left(unredacted)})
 
 	stopped := make(chan error, 1)
 	go func() { stopped <- run(s.settings, slog.New(slog.DiscardHandler)) }()
 
 	pruned := func() bool {
-		return left("SELECT count(*) FROM scheduled_task_runs WHERE customer_id = ?") == 0 &&
-			left("SELECT count(*) FROM data_changes WHERE customer_id = ?") == 0 &&
-			left(unredacted) == 0
+		return left(runs) == 0 && left(changes) == 0 && left(unredacted) == 0
 	}
 	deadline := time.After(30 * time.Second)
 	for !pruned() {
@@ -112,7 +112,8 @@ VALUES (?, 'agent_configs', 'insert', '{}', now() - make_interval(secs => ?))`,
 		case err := <-stopped:
 			s.Require().Failf("the router stopped before it was told to", "error: %v", err)
 		case <-deadline:
-			s.Require().Fail("a finished run, a recorded change or a tool result past its retention is still there")
+			s.Require().Failf("what is past its retention is still there",
+				"scheduled task runs %d, recorded changes %d, unredacted tool results %d", left(runs), left(changes), left(unredacted))
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
