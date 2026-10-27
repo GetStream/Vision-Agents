@@ -106,7 +106,7 @@ func (s *SlackChannelSuite) TestAPhotoThatCannotBeFetchedIsNotAnswered() {
 		thread, err := s.store.ChannelThread(context.Background(), channel)
 		return err == nil && thread.TurnHolder == ""
 	}, settleFor, 10*time.Millisecond, "the thread's turn is let go of")
-	s.Empty(s.slack.Posts())
+	s.Never(func() bool { return len(s.slack.Posts()) > 0 }, time.Second, 10*time.Millisecond, "nothing was answered")
 }
 
 // Control, as on base: a thread message with neither text nor a photo, such as a file alone or
