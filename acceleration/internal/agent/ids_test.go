@@ -254,23 +254,6 @@ func TestAnIDThatKeysARecordIsPassedOn(t *testing.T) {
 	assert.True(t, unfound, "the fields of one record are not IDs")
 }
 
-func TestAnIDTheCallerSaidWholeIsPassedOn(t *testing.T) {
-	// An identifier of letters and digits said whole is the caller's own, even when they do
-	// not say what it is. A number needs that said, because numbers come up by chance.
-	tools := []string{"get_user_id", "login", "create_ticket", "update_ticket"}
-	history := []llm.Message{{Role: llm.User, Content: "Logging in as USR001. The code on screen was 840."}}
-	call := func(name, arguments string) llm.ToolCall {
-		return llm.ToolCall{Name: name, Arguments: arguments}
-	}
-
-	_, _, _, unfound := unfoundID(history, call("login", `{"user_id":"USR001"}`), tools)
-	assert.False(t, unfound)
-	_, _, _, unfound = unfoundID(history, call("update_ticket", `{"ticket_id":"840"}`), tools)
-	assert.True(t, unfound, "a number said as something else is not a ticket")
-	_, _, _, unfound = unfoundID(history, call("login", `{"user_id":"USR0012"}`), tools)
-	assert.True(t, unfound, "only the identifier said whole")
-}
-
 func TestAnIDThatKeysARecordAndIsLeftOutIsAskedFor(t *testing.T) {
 	tools := harness.Tools{Tools: []harness.Tool{
 		{Name: "list_cards"},

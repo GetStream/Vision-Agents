@@ -69,12 +69,6 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) {
 			continue
 		}
-		// An ID of letters and digits the caller said whole is theirs, whatever they called
-		// it: "logging in as USR001" gives a user ID without saying "user". Only digits need
-		// what they are said with them, because those turn up in speech by chance.
-		if mixesLettersAndDigits(text) && holdsValue(said.String(), wanted) {
-			continue
-		}
 		returned := false
 		var ids []string
 		for _, result := range results {
@@ -549,7 +543,7 @@ func handedOut(key string, tools []string) bool {
 // with every one listed under a plural key as the ID of what that key names: τ-bench's
 // get_user_details lists a user's orders as "orders": ["#W5272531"], each an order_id; and
 // with every key of a map that holds nothing but records, which is a collection keyed by
-// the records' IDs: {"main_card": {...}} gives the card's ID as main_card, though no field
+// the records' IDs: {"primary": {...}} gives a card's ID as primary, though no field
 // of the card repeats it.
 func walkIDs(value any, at string, found func(at, id string)) {
 	switch typed := value.(type) {
@@ -609,12 +603,6 @@ func allObjects(fields map[string]any) bool {
 		}
 	}
 	return true
-}
-
-// mixesLettersAndDigits reports whether text holds both, as an identifier does and a number
-// or a word does not.
-func mixesLettersAndDigits(text string) bool {
-	return strings.ContainsFunc(text, unicode.IsLetter) && strings.ContainsFunc(text, unicode.IsDigit)
 }
 
 // holdsValue reports whether a result written as text gives wanted as one of its words, as
