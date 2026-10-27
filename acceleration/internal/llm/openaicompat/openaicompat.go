@@ -506,8 +506,11 @@ func (p *puller) finish(w *llm.ResponseWriter) {
 		p.answer(w, answer)
 	}
 	if p.toolText != nil {
-		answer, unfinished := p.toolText.Flush()
-		w.OutputText(answer)
+		answer, calls, unfinished := p.toolText.Flush()
+		w.OutputText(p.speakable(answer))
+		for _, call := range calls {
+			p.textCall(w, call)
+		}
 		if unfinished != "" {
 			p.textCall(w, unfinished)
 		}
