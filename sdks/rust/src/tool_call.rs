@@ -24,8 +24,9 @@ pub struct ToolConversation {
 
 /// One call of one of the caller's functions: who it is for, and its line back to them.
 ///
-/// A function registered with [`Tools::register_call`](crate::Tools::register_call) is
-/// handed one. A call made directly, as a test does, has no line, so its updates go nowhere.
+/// A function registered with
+/// [`Tools::register_with_tool_call_context`](crate::Tools::register_with_tool_call_context)
+/// is handed one. A call made directly, as a test does, has no line, so its updates go nowhere.
 #[derive(Debug, Clone, Default)]
 pub struct ToolCall {
     pub id: String,

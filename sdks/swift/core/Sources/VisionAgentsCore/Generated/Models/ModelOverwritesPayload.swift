@@ -1,35 +1,35 @@
 import Foundation
 import StreamCore
 
-final class ModelOverwritesThinking: RawRepresentable, Codable, Hashable, Sendable {
+final class ModelOverwritesPayloadThinking: RawRepresentable, Codable, Hashable, Sendable {
     let rawValue: String
 
     init(rawValue: String) {
         self.rawValue = rawValue
     }
 
-    static let high = ModelOverwritesThinking(rawValue: "high")
-    static let low = ModelOverwritesThinking(rawValue: "low")
-    static let medium = ModelOverwritesThinking(rawValue: "medium")
-    static let minimal = ModelOverwritesThinking(rawValue: "minimal")
-    static let none = ModelOverwritesThinking(rawValue: "none")
+    static let high = ModelOverwritesPayloadThinking(rawValue: "high")
+    static let low = ModelOverwritesPayloadThinking(rawValue: "low")
+    static let medium = ModelOverwritesPayloadThinking(rawValue: "medium")
+    static let minimal = ModelOverwritesPayloadThinking(rawValue: "minimal")
+    static let none = ModelOverwritesPayloadThinking(rawValue: "none")
 }
 
-final class ModelOverwritesVerbosity: RawRepresentable, Codable, Hashable, Sendable {
+final class ModelOverwritesPayloadVerbosity: RawRepresentable, Codable, Hashable, Sendable {
     let rawValue: String
 
     init(rawValue: String) {
         self.rawValue = rawValue
     }
 
-    static let high = ModelOverwritesVerbosity(rawValue: "high")
-    static let low = ModelOverwritesVerbosity(rawValue: "low")
-    static let medium = ModelOverwritesVerbosity(rawValue: "medium")
+    static let high = ModelOverwritesPayloadVerbosity(rawValue: "high")
+    static let low = ModelOverwritesPayloadVerbosity(rawValue: "low")
+    static let medium = ModelOverwritesPayloadVerbosity(rawValue: "medium")
 }
 
 /// What to change about the models for one session, over whatever its agent config decided.
 /// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
-final class ModelOverwrites: Sendable, Codable, JSONEncodable {
+final class ModelOverwritesPayload: Sendable, Codable, JSONEncodable {
     /// A provider/model or a capability shortcut, in place of the config's.
     let llm: String?
     /// Caps the reply, reasoning included. Omitted leaves the provider's default.
@@ -41,12 +41,12 @@ final class ModelOverwrites: Sendable, Codable, JSONEncodable {
     /// How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
     let temperature: Double?
     /// How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
-    let thinking: ModelOverwritesThinking?
+    let thinking: ModelOverwritesPayloadThinking?
     let tts: String?
     /// How much detail to give. Dropped for models that do not take it.
-    let verbosity: ModelOverwritesVerbosity?
+    let verbosity: ModelOverwritesPayloadVerbosity?
 
-    init(llm: String? = nil, maxOutputTokens: Int? = nil, search: String? = nil, sts: String? = nil, stt: String? = nil, temperature: Double? = nil, thinking: ModelOverwritesThinking? = nil, tts: String? = nil, verbosity: ModelOverwritesVerbosity? = nil) {
+    init(llm: String? = nil, maxOutputTokens: Int? = nil, search: String? = nil, sts: String? = nil, stt: String? = nil, temperature: Double? = nil, thinking: ModelOverwritesPayloadThinking? = nil, tts: String? = nil, verbosity: ModelOverwritesPayloadVerbosity? = nil) {
         self.llm = llm
         self.maxOutputTokens = maxOutputTokens
         self.search = search
@@ -66,9 +66,9 @@ final class ModelOverwrites: Sendable, Codable, JSONEncodable {
         self.sts = try container.decodeIfPresent(String.self, forKey: .sts)
         self.stt = try container.decodeIfPresent(String.self, forKey: .stt)
         self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
-        self.thinking = try container.decodeIfPresent(ModelOverwritesThinking.self, forKey: .thinking)
+        self.thinking = try container.decodeIfPresent(ModelOverwritesPayloadThinking.self, forKey: .thinking)
         self.tts = try container.decodeIfPresent(String.self, forKey: .tts)
-        self.verbosity = try container.decodeIfPresent(ModelOverwritesVerbosity.self, forKey: .verbosity)
+        self.verbosity = try container.decodeIfPresent(ModelOverwritesPayloadVerbosity.self, forKey: .verbosity)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -86,8 +86,8 @@ final class ModelOverwrites: Sendable, Codable, JSONEncodable {
 
 }
 
-extension ModelOverwrites: Hashable {
-    static func == (lhs: ModelOverwrites, rhs: ModelOverwrites) -> Bool {
+extension ModelOverwritesPayload: Hashable {
+    static func == (lhs: ModelOverwritesPayload, rhs: ModelOverwritesPayload) -> Bool {
         lhs.llm == rhs.llm &&
         lhs.maxOutputTokens == rhs.maxOutputTokens &&
         lhs.search == rhs.search &&

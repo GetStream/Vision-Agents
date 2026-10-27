@@ -65,9 +65,18 @@ func newStubLLM() *stubLLM {
 func (s *stubLLM) Start(context.Context) error { return nil }
 
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	// The script is kept with the request, under one lock: a test that waits for the request
+	// and then settles it would otherwise find no script yet.
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	hold, provider, model := s.holdCreate, cmp.Or(s.writtenBy[0], s.Provider()), cmp.Or(s.writtenBy[1], s.Model())
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   cmp.Or(s.writtenBy[0], s.Provider()),
+		Model:      cmp.Or(s.writtenBy[1], s.Model()),
+	})
+	s.scripts[params.ID] = script
+	s.order = append(s.order, params.ID)
+	hold := s.holdCreate
 	s.mu.Unlock()
 
 	if hold != nil {
@@ -78,15 +87,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		}
 	}
 
-	script := llmtest.New(llm.StreamOptions{
-		ResponseID: params.ID,
-		Provider:   provider,
-		Model:      model,
-	})
-
 	s.mu.Lock()
-	s.scripts[params.ID] = script
-	s.order = append(s.order, params.ID)
 	answer, queued := s.answers[params.ID]
 	if !queued && s.automatic != "" {
 		answer, queued = s.automatic, true
@@ -991,6 +992,58 @@ func (s *HarnessSuite) TestAnAnswerCutOffBeforeItWasHeardIsStillOwed() {
 
 	s.respond("turn-3", "sorry, go on")
 	s.Contains(s.fast.requests()[2].Instructions, "12.63")
+}
+
+func (s *HarnessSuite) TestAnAnswerTalkedOverAfterItWasWrittenIsStillOwed() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.False(s.harness.Pending(), "the reply carrying it was written and is playing")
+	s.harness.Release("turn-2")
+	s.True(s.harness.Pending(), "the caller talked over it while it played")
+
+	s.respond("turn-3", "sorry, what were the opening hours")
+	s.Contains(s.fast.requests()[2].Instructions, "12.63")
+	s.Contains(s.fast.requests()[2].Instructions, cutOffNote,
+		"the conversation still holds the reply as written, so the model is told it went unheard")
+	s.Equal(1, strings.Count(s.fast.requests()[2].Instructions, "12.63"))
+}
+
+func (s *HarnessSuite) TestOnlyTheReplyTalkedOverOwesItsAnswerAgain() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.respond("turn-3", "thanks")
+	s.harness.Remember(llm.Response{ID: "turn-3", Status: llm.StatusCompleted})
+	s.harness.Release("turn-2")
+	s.harness.Release("turn-3")
+
+	s.False(s.harness.Pending(), "the reply that carried it was heard in full")
+}
+
+func (s *HarnessSuite) TestACancelledRequestIsNotOwedAgainWhenItsReplyIsTalkedOver() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.harness.CancelTurn("turn-1", ReasonSuperseded)
+	s.harness.Release("turn-2")
+
+	s.False(s.harness.Pending())
 }
 
 func (s *HarnessSuite) TestAnAnswerWhoseReplyFailedIsStillOwed() {

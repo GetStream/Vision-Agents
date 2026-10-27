@@ -76,6 +76,116 @@ func (s *StoreSuite) TestRevokingTwiceIsANoOp() {
 	s.ErrorIs(err, ErrNoGrant, "another organization's grant is not there")
 }
 
+// revoked is a grant of the organization, revoked.
+func (s *StoreSuite) revoked(organization string) LimitGrant {
+	grant := s.grant(LimitGrant{OrganizationID: organization})
+	revoked, err := s.store.RevokeGrant(s.ctx, organization, grant.ID, "someone", "done", LimitAudit{CustomerID: "app-1", Source: AuditSourceAPI})
+	s.Require().NoError(err)
+	return revoked
+}
+
+// changeOf is the change to field an audit entry records.
+func changeOf(entry AuditEntry, field string) (AuditChange, bool) {
+	for _, change := range entry.Changes {
+		if change.Field == field {
+			return change, true
+		}
+	}
+	return AuditChange{}, false
+}
+
+func (s *StoreSuite) TestAnUnrevokedGrantIsLiveAgainAndAudited() {
+	grant := s.revoked("org-1")
+	audit := LimitAudit{CustomerID: "app-" + uuid.NewString(), Source: AuditSourceAPI}
+
+	unrevoked, err := s.store.UnrevokeGrant(s.ctx, "org-1", grant.ID, "revoked by mistake", audit)
+
+	s.Require().NoError(err)
+	s.Nil(unrevoked.RevokedAt)
+	s.Empty(unrevoked.RevokedBy)
+	live, err := s.store.LiveGrants(s.ctx, []string{"org-1"}, time.Now())
+	s.Require().NoError(err)
+	s.Equal([]int64{grant.ID}, idsOf(live))
+	entries, err := s.store.AuditEntries(s.ctx, audit.CustomerID, AuditEntryFilter{ResourceType: AuditSpendLimit})
+	s.Require().NoError(err)
+	s.Require().Len(entries, 1)
+	s.Equal(AuditUpdated, entries[0].Action)
+	reason, _ := changeOf(entries[0], "unrevoke_reason")
+	s.Equal("revoked by mistake", reason.After)
+	revokedAt, _ := changeOf(entries[0], "revoked_at")
+	s.NotNil(revokedAt.Before)
+	s.Nil(revokedAt.After)
+}
+
+func (s *StoreSuite) TestUnrevokingAGrantNotRevokedIsANoOp() {
+	grant := s.grant(LimitGrant{})
+	audit := LimitAudit{CustomerID: "app-" + uuid.NewString(), Source: AuditSourceAPI}
+
+	unrevoked, err := s.store.UnrevokeGrant(s.ctx, "org-1", grant.ID, "why not", audit)
+
+	s.Require().NoError(err)
+	s.Nil(unrevoked.RevokedAt)
+	entries, err := s.store.AuditEntries(s.ctx, audit.CustomerID, AuditEntryFilter{ResourceType: AuditSpendLimit})
+	s.Require().NoError(err)
+	s.Empty(entries, "it records nothing")
+	_, err = s.store.UnrevokeGrant(s.ctx, "org-2", s.revoked("org-1").ID, "x", audit)
+	s.ErrorIs(err, ErrNoGrant, "another organization's grant is not there")
+}
+
+func (s *StoreSuite) TestAnyOrganizationsGrantIsUnrevokedWithNoOrganization() {
+	grant := s.revoked("org-1")
+
+	unrevoked, err := s.store.UnrevokeGrant(s.ctx, "", grant.ID, "support", LimitAudit{Source: AuditSourceManage, ActorID: "manage:staff"})
+
+	s.Require().NoError(err)
+	s.Nil(unrevoked.RevokedAt)
+	entries, err := s.store.AuditEntries(s.ctx, "org-1", AuditEntryFilter{ResourceType: AuditSpendLimit})
+	s.Require().NoError(err)
+	s.Require().Len(entries, 1, "audited under the grant's organization")
+}
+
+func (s *StoreSuite) TestAnExpiredGrantCannotBeUnrevoked() {
+	grant := s.revoked("org-1")
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE limit_grants SET created_at = now() - interval '2 hours', "+
+		"expires_at = now() - interval '1 hour' WHERE id = ?", grant.ID)
+	s.Require().NoError(err)
+
+	_, err = s.store.UnrevokeGrant(s.ctx, "org-1", grant.ID, "x", LimitAudit{CustomerID: "app-1", Source: AuditSourceAPI})
+
+	s.ErrorIs(err, ErrGrantExpired)
+	still, err := s.store.Grant(s.ctx, "org-1", grant.ID)
+	s.Require().NoError(err)
+	s.NotNil(still.RevokedAt)
+}
+
+func (s *StoreSuite) TestUnrevokingPastTheLiveCapIsRefused() {
+	grant := s.revoked("org-full")
+	for range MaxLiveGrants {
+		s.grant(LimitGrant{OrganizationID: "org-full"})
+	}
+
+	_, err := s.store.UnrevokeGrant(s.ctx, "org-full", grant.ID, "x", LimitAudit{CustomerID: "app-1", Source: AuditSourceAPI})
+
+	s.ErrorIs(err, ErrTooManyGrants)
+	still, err := s.store.Grant(s.ctx, "org-full", grant.ID)
+	s.Require().NoError(err)
+	s.NotNil(still.RevokedAt)
+}
+
+func (s *StoreSuite) TestAUsedUpGrantIsUnrevokedPastTheLiveCap() {
+	used := s.grant(LimitGrant{OrganizationID: "org-full", AmountMicros: 300})
+	s.grantRow(s.store, []int64{used.ID}, 300, true)
+	_, err := s.store.RevokeGrant(s.ctx, "org-full", used.ID, "someone", "done", LimitAudit{CustomerID: "app-1", Source: AuditSourceAPI})
+	s.Require().NoError(err)
+	for range MaxLiveGrants {
+		s.grant(LimitGrant{OrganizationID: "org-full"})
+	}
+
+	_, err = s.store.UnrevokeGrant(s.ctx, "org-full", used.ID, "x", LimitAudit{CustomerID: "app-1", Source: AuditSourceAPI})
+
+	s.NoError(err, "used up, it does not count toward the cap")
+}
+
 func (s *StoreSuite) TestAnOrganizationHasAtMostSoManyLiveGrants() {
 	for range MaxLiveGrants {
 		s.grant(LimitGrant{OrganizationID: "org-full"})

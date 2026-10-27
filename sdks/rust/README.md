@@ -59,13 +59,13 @@ call. `agent.resume(id)` carries on a conversation held in writing by its sessio
 Tool calls are answered by the session itself, whether or not anything is reading events: the
 model is mid-sentence waiting. A tool that returns `Err` is reported to the model.
 
-A tool declared with `register_call` says how the backend treats its calls, and is handed the
-call it runs for:
+A tool declared with `register_with_tool_call_context` says how the backend treats its calls,
+and is handed the call it runs for:
 
 ```rust
 use vision_agents::{Error, ToolCall, types};
 
-tools.register_call(
+tools.register_with_tool_call_context(
     types::SessionTool {
         name: "book_flight".into(),
         description: "Book a flight for the caller".into(),
@@ -91,8 +91,8 @@ tools.register_call(
 - `approval` is a question the caller answers before each call runs, where each `{name}` is one
   of the tool's parameters. On a voice call the agent asks it out loud and waits 15 seconds for
   a yes, and `tool_call_context.approved` is then true. In writing it goes to the app.
-  `register_call` refuses a `{name}` that is not a parameter, a blank question and a negative
-  timeout.
+  `register_with_tool_call_context` refuses a `{name}` that is not a parameter, a blank question
+  and a negative timeout.
 
 `tool_call_context.id` is the id the model gave the call, which a call sent again keeps, so it
 is the key to make a side effect happen once; `session_id`, `turn_id`, `user` and `conversation`
@@ -219,10 +219,10 @@ dispatch.host(&agent, None); // None: the router waits its default 30 seconds fo
 dispatch.run().await?;
 ```
 
-A hosted tool registered with `register_call` takes the same `interruptible`, `timeout_ms` and
-`approval` (asked on a voice call), is handed its call, and is cancelled when the router gives
-up on it. A worker that only hosts tools needs no handler. If the router refuses the tools, `run`
-returns `Error::Failed` naming the agent and the reason.
+A hosted tool registered with `register_with_tool_call_context` takes the same `interruptible`,
+`timeout_ms` and `approval` (asked on a voice call), is handed its call, and is cancelled when
+the router gives up on it. A worker that only hosts tools needs no handler. If the router
+refuses the tools, `run` returns `Error::Failed` naming the agent and the reason.
 
 Every caller to an attached number gets a session of their own: the `call` handed to a worker
 carries its `session_id`, and `answer` joins that session with voice on. `wait_for_call(number)`

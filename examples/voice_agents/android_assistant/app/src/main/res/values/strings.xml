@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Juno</string>
+    <!-- Stream's composer, asked the way an assistant is. -->
+    <string name="stream_ai_compose_composer_input_placeholder">Ask Juno</string>
+</resources>

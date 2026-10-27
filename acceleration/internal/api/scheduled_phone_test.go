@@ -5,12 +5,14 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -570,6 +572,68 @@ func (s *ScheduledTasksSuite) TestACallThatCouldNotBePlacedIsGivenBackAndTriedAg
 	s.Equal(scheduling.ReasonFailed, failure.Reason)
 	s.False(failure.Final)
 	s.Empty(run.SessionID, "the call nobody was rung on was given back")
+}
+
+func (s *ScheduledTasksSuite) TestACallThatWasPlacedIsNotGivenBackWhenItFails() {
+	s.placingCalls()
+	task := s.silentTask([]string{"phone"})
+	rung := s.numberRungFor(task)
+	run := s.runOf(task, time.Now(), "")
+	claimed := store.ClaimedScheduledTask{Task: task, Run: run}
+
+	_, _, err := s.router.DeliverScheduledTask(context.Background(), claimed)
+
+	failure := s.failure(err)
+	// The suite's sessions have no telephony, so the call's session cannot open.
+	s.Equal(scheduling.ReasonFailed, failure.Reason)
+	s.True(failure.Final, "the user was rung already")
+	s.Len(s.sink.to(rung), 1, "the call was placed")
+	kept := s.runsOf(task)[0]
+	s.NotEmpty(kept.SessionID, "the call that rang stays taken on its run")
+
+	_, _, err = s.router.DeliverScheduledTask(context.Background(), claimed)
+
+	s.Equal(scheduling.ReasonFailed, s.failure(err).Reason, "how the call went, not that it was placed")
+	s.Len(s.sink.to(rung), 1, "an attempt after the one that rang rings nobody")
+}
+
+// placingCalls has the router place calls for the test: Telnyx is the suite's
+// channel sink, which takes the call, and the trunk and rule the call rings
+// into are made at the suite's Stream.
+func (s *ScheduledTasksSuite) placingCalls() {
+	bound, err := s.router.streamForApp(context.Background(), s.customerID(), 0, false)
+	s.Require().NoError(err)
+	config, err := phone.DefaultConfig()
+	s.Require().NoError(err)
+	// The key is given to the client below, so the environment need not hold it.
+	for i := range config.Vendors {
+		if config.Vendors[i].Vendor == "telnyx" {
+			config.Vendors[i].Credentials = nil
+		}
+	}
+	registry := phone.NewRegistry(config)
+	registry.Register("telnyx", func() (phone.Provider, error) {
+		return telnyx.New(telnyx.Options{APIKey: "telnyx-key", ConnectionID: "texml-app",
+			BaseURL: s.channelAPI.URL, HTTPClient: s.channelAPI.Client()})
+	})
+	service, err := phone.NewService(phone.ServiceOptions{
+		Registry: registry,
+		Store:    s.store,
+		Gate:     s.gate,
+		Stream:   phone.NewStreamFromClient(bound.Client),
+		Logger:   slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	kept := s.router.phone
+	s.router.phone = service
+	s.T().Cleanup(func() { s.router.phone = kept })
+}
+
+// numberRungFor is the number the task's user is rung on.
+func (s *ScheduledTasksSuite) numberRungFor(task store.ScheduledTask) string {
+	identity, err := s.store.ChannelIdentityByUser(context.Background(), task.CustomerID, task.ConfigID, "sms", task.UserID)
+	s.Require().NoError(err)
+	return identity.Address
 }
 
 func (s *ScheduledTasksSuite) TestACallTooLateLeavesTheNextChannelToSayWhyItFailed() {

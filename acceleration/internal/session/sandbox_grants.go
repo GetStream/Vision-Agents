@@ -19,30 +19,40 @@ import (
 // sandboxGrant adds an opened binding with sandbox set to d's grants, reading the sandbox
 // block of the revision its connection was saved on. A connection saved before the connector
 // had one gives the sandbox nothing, which fails a required binding and is a warning
-// otherwise.
-func (m *Manager) sandboxGrant(binding store.ConnectorBinding, connection store.ConnectorConnection,
-	manifest core.ResolvedManifest, scheme core.Scheme, d *dispatcher) string {
+// otherwise. The reads come from the connector's latest revision, so a connection pinned to an
+// earlier one gets them without a reconnect: they only narrow what the egress proxy lets
+// through.
+func (m *Manager) sandboxGrant(ctx context.Context, binding store.ConnectorBinding, connection store.ConnectorConnection,
+	manifest core.ResolvedManifest, scheme core.Scheme, d *dispatcher) (string, error) {
 	if !binding.Sandbox {
-		return ""
+		return "", nil
 	}
 	if manifest.Sandbox == nil {
 		if binding.Required {
-			return unavailableSandbox
+			return unavailableSandbox, nil
 		}
 		m.logger.Warn("a connector binding gives the sandbox no access: reconnect to use sandbox access", "connector", binding.Name,
 			"connection", connection.ID, "revision", connection.DefinitionRevision)
-		return ""
+		return "", nil
+	}
+	latest, err := m.options.Store.LatestConnectorDefinition(ctx, connection.CustomerID, binding.ConnectorID)
+	if err != nil {
+		return "", err
+	}
+	var reads []core.SandboxRead
+	if latest.Manifest.Sandbox != nil {
+		reads = latest.Manifest.Sandbox.Reads
 	}
 	d.grants = append(d.grants, sandbox.Grant{
 		Connection: core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID},
 		Binding:    binding.Name, Config: d.spec.ConfigID, Connector: binding.ConnectorID, Selection: binding.Connection.Type,
-		Scheme: connection.AuthScheme, Env: manifest.Sandbox.Env, Hosts: manifest.Sandbox.Hosts, Required: binding.Required,
+		Scheme: connection.AuthScheme, Env: manifest.Sandbox.Env, Hosts: manifest.Sandbox.Hosts, Reads: reads, Required: binding.Required,
 	})
 	if d.schemes == nil {
 		d.schemes = map[string]core.Scheme{}
 	}
 	d.schemes[binding.Name] = scheme
-	return ""
+	return "", nil
 }
 
 // lateGrant gives the sandbox an env var for a session binding with sandbox set that waits for
@@ -64,7 +74,7 @@ func (m *Manager) lateGrant(ctx context.Context, spec Spec, binding store.Connec
 	}
 	rule := definition.Manifest.Sandbox
 	d.grants = append(d.grants, sandbox.Grant{Binding: binding.Name, Config: spec.ConfigID, Connector: binding.ConnectorID,
-		Selection: binding.Connection.Type, Env: rule.Env, Hosts: rule.Hosts, Late: true})
+		Selection: binding.Connection.Type, Env: rule.Env, Hosts: rule.Hosts, Reads: rule.Reads, Late: true})
 	return nil
 }
 

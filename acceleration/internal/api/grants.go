@@ -105,6 +105,15 @@ func (*LimitGrantRevocation) TransformSchema(_ huma.Registry, schema *huma.Schem
 	return closed(schema, "Why a grant ends now.")
 }
 
+// LimitGrantUnrevocation says why a revoked grant is live again.
+type LimitGrantUnrevocation struct {
+	Reason string `json:"reason" minLength:"1" maxLength:"500" pattern:"\\S" doc:"Why it is live again; more than spaces."`
+}
+
+func (*LimitGrantUnrevocation) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	return closed(schema, "Why a revoked grant is live again.")
+}
+
 // LimitGrantPage is one page of grants, newest first.
 type LimitGrantPage struct {
 	Items      []LimitGrant `json:"items"`
@@ -133,6 +142,11 @@ type manageListGrantsRequest struct {
 type grantIDRequest struct {
 	GrantId int64 `path:"grant_id"`
 	Body    LimitGrantRevocation
+}
+
+type grantUnrevokeRequest struct {
+	GrantId int64 `path:"grant_id"`
+	Body    LimitGrantUnrevocation
 }
 
 type createGrantRequest struct{ Body LimitGrantInput }
@@ -218,7 +232,7 @@ func (s *Server) registerLimitGrants(api huma.API) {
 
 	revoke := op("revokeLimitGrant", http.MethodPost, "/v1/spend/limits/grants/{grant_id}/revoke", "Revoke a grant",
 		"The next admission no longer draws on it; work already admitted finishes and still counts. The "+
-			"grant and what it paid for stay. Revoking it again changes nothing.")
+			"grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.")
 	huma.Register(api, revoke, func(ctx context.Context, request *grantIDRequest) (*grantResponse, error) {
 		organization, audit, err := s.limitsCaller(ctx)
 		if err != nil {
@@ -231,6 +245,27 @@ func (s *Server) registerLimitGrants(api huma.API) {
 			return nil, errNoLimits
 		}
 		return s.revokeGrant(ctx, "", request, LimitAuditOf(managedBy(ctx), RequestIDFrom(ctx), ""))
+	})
+
+	unrevoke := op("unrevokeLimitGrant", http.MethodPost, "/v1/spend/limits/grants/{grant_id}/unrevoke", "Unrevoke a grant",
+		"Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, "+
+			"until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn "+
+			"from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 "+
+			"invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one "+
+			"not counted. The router that unrevoked it draws on it at once, the others within 5 s.",
+		http.StatusConflict)
+	huma.Register(api, unrevoke, func(ctx context.Context, request *grantUnrevokeRequest) (*grantResponse, error) {
+		organization, audit, err := s.limitsCaller(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return s.unrevokeGrant(ctx, organization, request, audit)
+	})
+	huma.Register(api, manage(unrevoke), func(ctx context.Context, request *grantUnrevokeRequest) (*grantResponse, error) {
+		if s.store == nil {
+			return nil, errNoLimits
+		}
+		return s.unrevokeGrant(ctx, "", request, LimitAuditOf(managedBy(ctx), RequestIDFrom(ctx), ""))
 	})
 }
 
@@ -360,4 +395,22 @@ func (s *Server) revokeGrant(ctx context.Context, organization string, request *
 	}
 	s.policies.LimitsChanged(ctx, revoked.OrganizationID)
 	return &grantResponse{Body: grantOf(revoked, time.Now())}, nil
+}
+
+func (s *Server) unrevokeGrant(ctx context.Context, organization string, request *grantUnrevokeRequest, audit store.LimitAudit) (*grantResponse, error) {
+	unrevoked, err := s.store.UnrevokeGrant(ctx, organization, request.GrantId, request.Body.Reason, audit)
+	switch {
+	case errors.Is(err, store.ErrNoGrant):
+		return nil, errNoSuchGrant
+	case errors.Is(err, store.ErrGrantExpired):
+		return nil, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidExpiry,
+			Message: "the grant has expired, and an expired grant cannot be unrevoked: make a new one"}
+	case errors.Is(err, store.ErrTooManyGrants):
+		return nil, APIError{Type: ErrorTypeConflict, Code: codeTooManyGrants, Message: fmt.Sprintf(
+			"the organization has %d live grants, as many as it may: revoke one, or wait for one to end", store.MaxLiveGrants)}
+	case err != nil:
+		return nil, err
+	}
+	s.policies.LimitsChanged(ctx, unrevoked.OrganizationID)
+	return &grantResponse{Body: grantOf(unrevoked, time.Now())}, nil
 }

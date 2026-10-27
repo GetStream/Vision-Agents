@@ -69,6 +69,9 @@ const (
 	// hold the floor. A revision younger than this means somebody is mid-utterance, so a
 	// turn the agent owes waits rather than talking over them.
 	callerHold = 1500 * time.Millisecond
+	// rulingWithin is how long the flow controller takes at most to rule on words, its own
+	// deadline (harness flowDeadline).
+	rulingWithin = 3 * time.Second
 )
 
 const (
@@ -189,6 +192,9 @@ type converse struct {
 	// patience is how long the same unfinished words are waited on before the caller is
 	// asked what they meant.
 	patience time.Duration
+	// undecidedFor is how long words that have held still keep a turn nobody asked for
+	// waiting: patience and the rulings it takes, after which their ruling is taken as lost.
+	undecidedFor time.Duration
 	// record keeps the trail after the process holding it is gone. Nil when the
 	// deployment has nowhere to put it, in which case the decisions are still logged and
 	// still reported live.
@@ -296,24 +302,25 @@ func newConverse(
 		logger = slog.Default()
 	}
 	return &converse{
-		cadence:     settling,
-		duplex:      listening,
-		emitter:     emitter,
-		logger:      logger,
-		patience:    patience,
-		record:      record,
-		candidates:  map[string]candidate{},
-		delegated:   map[string]string{},
-		waiting:     map[string]unfinished{},
-		wentOn:      map[string]time.Time{},
-		overlaps:    map[string]string{},
-		overlapping: map[string]overlapState{},
-		reported:    map[ActionKind]judged{},
-		lines:       map[string]string{},
-		grown:       map[string]bool{},
-		lastHeard:   map[string]string{},
-		queuedSaid:  map[string]string{},
-		repeated:    map[string]string{},
+		cadence:      settling,
+		duplex:       listening,
+		emitter:      emitter,
+		logger:       logger,
+		patience:     patience,
+		undecidedFor: patience + 2*rulingWithin + callerHold,
+		record:       record,
+		candidates:   map[string]candidate{},
+		delegated:    map[string]string{},
+		waiting:      map[string]unfinished{},
+		wentOn:       map[string]time.Time{},
+		overlaps:     map[string]string{},
+		overlapping:  map[string]overlapState{},
+		reported:     map[ActionKind]judged{},
+		lines:        map[string]string{},
+		grown:        map[string]bool{},
+		lastHeard:    map[string]string{},
+		queuedSaid:   map[string]string{},
+		repeated:     map[string]string{},
 	}
 }
 
@@ -966,6 +973,21 @@ func (c *converse) Tick(state floor) []Action {
 func (c *converse) Listening() bool {
 	_, revised, hearing := c.cadence.Active()
 	return hearing && time.Since(revised) < callerHold
+}
+
+// Undecided reports whether somebody has said something the agent has not yet dealt with:
+// words still being gathered or put to the controller, or a turn queued behind the reply. A
+// turn nobody asked for waits for them, because it would be said over a caller who spoke
+// first and answer none of what they said. Every ruling but a wait settles the words, and a
+// wait runs out with patience; words that have held still for longer than that and the
+// rulings it takes are taken to have lost theirs, and no longer hold up what is owed.
+func (c *converse) Undecided() bool {
+	if _, revised, hearing := c.cadence.Active(); hearing && time.Since(revised) < c.undecidedFor {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.queued != nil
 }
 
 // Waiting hands back the turn held while the agent finished speaking, now that it has.

@@ -48,6 +48,7 @@ public class Sessions internal constructor(
             voice = options.voice,
             tools = options.tools.ifEmpty { null }?.map { it.schema },
             tags = options.tags.ifEmpty { null },
+            returnUrl = options.returnUrl?.ifEmpty { null },
         )
         val created = backend.post(
             listOf("v1", "agents", "sessions"),

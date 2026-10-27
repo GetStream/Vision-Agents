@@ -29,6 +29,9 @@ type Grant struct {
 	// Hosts are the only hosts a request may carry the credential to: exact hosts, or *. and
 	// a domain.
 	Hosts []string
+	// Reads are the requests to Hosts that read with a method other than GET and HEAD, from the
+	// connector's latest revision: the egress proxy refuses any other such request.
+	Reads []core.SandboxRead
 	// Required refuses the sandbox when the credential cannot be had, as a required binding
 	// refuses the session.
 	Required bool

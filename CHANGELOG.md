@@ -18,6 +18,35 @@ An agent answering a Linq (iMessage) chat is now offered the scheduling tools wh
 
 `router usage forget-user --app <app> --user <user id> --actor <who> [--dry-run] [--settle 2m]` replaces an app's end user id with `forgotten:` and 32 random hex characters wherever the usage records keep it: the requests of every shard, the usage service's events and windows (through its new `forgetUser` management operation, `POST /v1/manage/users/forget`, then again after `--settle` for a batch shipped in between), the user's spend counters, holds and quota buckets in Redis (deleted by name), and in the shared database the user's own policy and user-level limits (deleted, so the app's defaults apply) and the id on their limit resets, grants and campaigns. Usage and cost stay under the app. It prints each step's count and writes one `end_user` audit row (source `cli`) naming the replacement and the actor, never the id; `--dry-run` prints the counts and changes nothing, and `--replacement <the id a run printed>` finishes a run that stopped under the same replacement. It needs `ROUTER_USAGE_URL` and the usage service's manage key in `ROUTER_USAGE_MANAGE_KEY`. Sessions, conversation history and `agent_logs` keep their own retention (AI-1826, #1259).
 
+### Juno on Android
+
+`examples/voice_agents/android_assistant` is the Android half of swift_assistant: Juno, talked
+to from an Android app with swift_assistant's agent, `configure` and backend. Its conversations
+are the router's, in a drawer that lists, searches, opens and deletes them, and a new one has no
+session until it is first written to. The chat is Stream Chat's AI components, with the reply's
+reasoning and steps, copy, share and rating under it, photos from the picker, and the composer
+floating over the conversation. The phone answers `get_local_context`, `get_location`,
+`list_events`, `add_reminder` (a calendar event with an alert) and `send_email`, asking for each
+permission the first time a tool needs it. Voice mode starts voice on the open conversation,
+with Stream's voice glow, captions, and a camera button with a preview of what Juno sees. Each
+new conversation's session names `io.getstream.visionagents.androidassistant:/connected` as its
+`return_url`, and the app opens a connector's sign-in in an Auth Tab, though Stream's Android AI
+components have no sign-in card to start one from yet. CI builds it beside the Kotlin SDK.
+
+### Kotlin sessions name where a sign-in goes back to
+
+`SessionOptions.returnUrl` in the Kotlin SDK is sent as the session's `return_url`, as Swift's
+`returnURL` is: the app's own scheme in reverse domain form, such as
+`com.example.app:/connected`, which the router hands a connector's sign-in back to. Left null,
+nothing is sent and the sign-in goes back to the dashboard, as before.
+`AgentSession.declineLogin(toolCallId)` answers such a sign-in with Not now, as Swift's
+`declineLogin` does: the router ends the call, runs nothing and tells the agent the person did
+not connect.
+
+### The Swift SDK catches up with the other client SDKs
+
+`SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.
+
 ### A tool on a speech-to-speech conversation can say how it is going
 
 `/v1/sts/stream` now takes `tool_update` (`tool_call_id`, `text`, `verbatim`) for a call the model is waiting on, and has the model say it the way an agent session does: once no reply is being spoken and the caller is not talking, a newer update for the call replacing one not yet said, and the call's `tool_result` dropping it. A status is said in the model's own words, `verbatim` words as written or close to them. An update for a call the model is not waiting on, or to a model that cannot be told about an open call, is dropped. `tool_hold` is answered with `tool_held` for an open call, and with `tool_cancel` for one the model cancelled or was answered for. In Python, `stream.STS` runs each function with `current_call()` set, so `update()`, `say()` and `disallow_interruptions()` work there as they do on `stream.Accelerated`; before, they did nothing.
@@ -48,6 +77,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### A photo is still seen after the model calls a tool
+
+A question asked with photos was answered as though none came when the model called a tool before answering, such as loading the `vision` skill: the photos went only with the turn's first model call. They now go with every reply of that turn, the replies to its tool results included, on the person's message, and the next turn drops them.
+
 ### The agent tells people apart in a group text chat
 
 In a thread several people write in, such as an iMessage group chat or a Slack thread with two people, the reply model is told who wrote each message once a second person has written: `Speaker 1: What are our names?`, each person under `Speaker N` in the order they first wrote, never their phone number or Slack id, with a note that several people are writing. It read every message as one person's, so it answered Kanat as Ana. A 1:1 chat and a session in writing from the dashboard or an SDK send the model what they did (AI-2014).
@@ -76,6 +109,10 @@ Under the egress proxy broker with an `https://` proxy, the check of the TLS tun
 
 When sandbox code got a 401 because the user had not connected a connector, its result tells the model to run the code again once they connect. The agent's repeat-call guard answered that identical second `run_code` from the first result, so the turn ended on the old 401 although the connection was live. A `run_code` result that says a connector was just connected, or that it is not connected and the user has connected it since, no longer answers a repeat; while the user has not connected it, the repeat is still answered from that result. Every other repeated call is still answered from its earlier result (AI-1987).
 
+### An iMessage group stays silent while one of its people is opted out
+
+A reply to a Linq (iMessage) group reaches everyone in it, so after STOP from any person in the chat the agent sends the group nothing: no answer, no resend, no scheduled delivery, and the others' messages reach no agent (logged at INFO). That person's STOP and START are still confirmed in the group, and their START lifts the silence once nobody in it is opted out. An opt-out from elsewhere, such as STOP in their own chat, silences a group they write in. Linq refusing a keyword confirmation (403 after STOP) is logged at INFO, not as an error. Migration `20261117110000_channel_thread_members` adds the table `channel_thread_members` (AI-2015, AI-2016).
+
 ### A thread message the session refuses is given up at once
 
 A message in a thread channel (Slack, SMS, WhatsApp, iMessage) whose session refuses the turn for any reason but a reply still being written is now given up at once and logged. Before, the router tried it again every 50 ms for up to two minutes, writing one more cancelled reply into the channel each time and holding the thread's turn. A message that arrives while a reply is running still waits for it. Only a scheduled task's follow-up now keeps a copy of its reply and files in memory, the one that is read back on a retry (AI-1556, AI-1557).
@@ -87,6 +124,10 @@ Delegated work (a skill, a picture to look at, a summary of a long conversation)
 ### Scheduled tasks follow config deletes and guest claims
 
 Deleting an agent config now writes its tasks' occurrences still running, such as one held through quiet hours, `missed`, as pausing a task does; before, they stayed `running` (AI-1600). A task created, resumed or edited while its config is being deleted is refused with a 404 `agent_config_not_found` (REST) or `unknown_config` (the agent's tools), instead of being left active on the deleted config; the agent's `schedule_task` on a session whose config was deleted is refused the same way (AI-1598). Claiming a guest now moves the guest's scheduled tasks to the account, with their conversations (AI-1532).
+
+### A knowledge source and a subscribed page have a length limit
+
+A document's `source` longer than 256 characters is now a 400 `validation_failed` on `POST /v1/agents/knowledge` and in a sync's `knowledge`, and a page `url` longer than 2,048 characters is one on `POST /v1/agents/knowledge/urls` and in a sync's `knowledge_urls`. Before, both were taken at any length, and each passage of the document or page carries its source, so a long one multiplied what was written to the knowledge base (AI-1989).
 
 ### A scheduled task's reply carries the files its code made
 
@@ -122,6 +163,10 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### The helpers that read and set a tool's call are named after the tool call context
+
+Python's `current_call()` is `get_tool_call_context()` and `calling(...)` is `using_tool_call_context(...)`. Go's `tools.CallFrom(ctx)` is `tools.ToolCallContextFrom(ctx)` and `tools.WithCall` is `tools.WithToolCallContext`. Rust's `Tools::register_call` is `Tools::register_with_tool_call_context` and `Tools::call_as` is `Tools::call_with_tool_call_context`. The JS, .NET, PHP and Ruby SDKs hand the call to the function as an argument, so nothing they export changes.
+
 ### The call a tool function is handed is named toolCallContext
 
 The `ToolCall` a tool function is handed is named `toolCallContext` (`tool_call_context` in Python, Ruby and Rust) in every SDK's signatures, examples and docs, rather than `call`, which read as the phone or video call. Only code that passed it by name changes: PHP's `Tools::call(..., toolCallContext: ...)` and Python's `calling(tool_call_context=...)`.
@@ -145,6 +190,10 @@ Every watcher of a session's events socket still sees each `tool_call`, which no
 ### The Swift SDK's `User` and JSON values are StreamCore's
 
 `VisionAgentsCore` now generates its client with the generator Stream Chat and Stream Video use, on StreamCore, and drops its own copies of what StreamCore already has. `User` is StreamCore's: `User(id:name:imageURL:)`, with `name` optional and `imageURL` a `URL` in place of `image`. `JSONValue` is gone in favour of StreamCore's `RawJSON`, in tool arguments and parameters, `AgentEvent.fields`, and `custom` on sessions and guests: `.object` is `.dictionary`, `.null` is `.nil`, and `stringValue`, `boolValue` and `arrayValue` are optional, so `arguments["id"]?.stringValue ?? ""` reads as before. `import VisionAgentsCore` brings both in. The SDK no longer depends on swift-openapi-runtime, swift-openapi-urlsession or swift-http-types.
+
+### Swift's `ForkOptions.agent` is an agent's name, and `Command.interrupt` takes a request id
+
+`ForkOptions.agent` names the agent to fork onto, as `agent` does everywhere else; it used to be sent as a config id, which is now `ForkOptions.configID`. `Command.interrupt` is `Command.interrupt(requestID:)`, so code sending the command itself writes `.interrupt()`. `session.interrupt()` is unchanged.
 
 ### The Go SDK refuses `plugins:` and `plugin_events:` in agent.yaml
 

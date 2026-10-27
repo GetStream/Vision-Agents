@@ -824,7 +824,7 @@ func (s *StoreSuite) TestALeaseLapsingAfterAHoldWasTakenUpIsParkedLikeAnyOther()
 	// The worker that took it up stops renewing a moment later: it may only be
 	// slow, so the run waits out the stale window like any other.
 	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
-		Set("lease_until = ?", time.Now().Add(-time.Second)).Where("id = ?", "one").Exec(s.ctx)
+		Set("lease_until = now() - interval '1 second'").Where("id = ?", "one").Exec(s.ctx)
 	s.Require().NoError(err)
 	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
 	s.Require().NoError(err)
@@ -851,7 +851,7 @@ func (s *StoreSuite) TestALastAttemptWhoseLeaseLapsesAMomentIsParkedNotFailed() 
 		Where("id = ?", runID).Exec(s.ctx)
 	s.Require().NoError(err)
 	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
-		Set("lease_until = ?", time.Now().Add(-time.Second)).Where("id = ?", "one").Exec(s.ctx)
+		Set("lease_until = now() - interval '1 second'").Where("id = ?", "one").Exec(s.ctx)
 	s.Require().NoError(err)
 
 	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
@@ -958,7 +958,11 @@ func (s *StoreSuite) TestTheLastRunOfEveryTaskIsReadAtOnce() {
 }
 
 func (s *StoreSuite) TestDeletingAConfigPausesOnlyItsActiveTasks() {
-	created := s.task("one", nil)
+	// Its last change a day ago, read back as Postgres keeps it: the pause stamps updated_at with
+	// Postgres's clock, which need not agree with this process's to the microsecond.
+	s.aged("one", "acme", ScheduledTaskActive, day)
+	created, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
 	s.task("done", func(task *ScheduledTask) { task.State = ScheduledTaskCompleted })
 	s.task("other-config", func(task *ScheduledTask) { task.ConfigID = "config-2" })
 	s.task("no-config", func(task *ScheduledTask) { task.ConfigID = "" })

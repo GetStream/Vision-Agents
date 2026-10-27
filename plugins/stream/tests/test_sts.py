@@ -5,7 +5,11 @@ from typing import Any, AsyncIterator, Optional
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestServer
-from vision_agents.core.llm.tool_call import CallNotHeld, ToolCall, current_call
+from vision_agents.core.llm.tool_call import (
+    CallNotHeld,
+    ToolCall,
+    get_tool_call_context,
+)
 from vision_agents.plugins import stream
 
 SETTLE = 2.0
@@ -74,7 +78,7 @@ class TestSTSTools:
 
         @model.register_function(description="Look the caller up")
         async def whoami() -> str:
-            seen.append(current_call())
+            seen.append(get_tool_call_context())
             return "ok"
 
         await model.connect()
@@ -90,8 +94,8 @@ class TestSTSTools:
     ):
         @model.register_function(description="Check the book")
         async def check() -> str:
-            await current_call().update("checking the patio")
-            await current_call().say("One moment.")
+            await get_tool_call_context().update("checking the patio")
+            await get_tool_call_context().say("One moment.")
             return "a table at 7:30"
 
         await model.connect()
@@ -122,7 +126,7 @@ class TestSTSTools:
     ):
         @model.register_function(description="Charge the card")
         async def charge() -> str:
-            await current_call().disallow_interruptions()
+            await get_tool_call_context().disallow_interruptions()
             return "charged"
 
         await model.connect()
@@ -145,7 +149,7 @@ class TestSTSTools:
         @model.register_function(description="Charge the card")
         async def charge() -> str:
             try:
-                await current_call().disallow_interruptions()
+                await get_tool_call_context().disallow_interruptions()
             except CallNotHeld as error:
                 refused.append(error)
                 raise

@@ -1310,9 +1310,13 @@ func (s *RouterSuite) knowledgeWriter() *metered.Knowledge {
 // Redis database of its own, so neither another suite nor a router running against the
 // same Redis takes the jobs for itself.
 func (s *RouterSuite) pages(redisAddr string) *urls.Service {
+	// Sixteen Redis databases do not go round every suite running at once, so the queue is
+	// also named for the suite: one suite's worker taking another's read loses it.
+	n := redisDB.Add(1)
 	service, err := urls.New(urls.Options{
 		Store:         s.store,
-		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(redisDB.Add(1))%15 + 1},
+		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(n)%15 + 1},
+		Queue:         fmt.Sprintf("knowledge-%d", n),
 		Reader:        pageReader{},
 		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering),
 		CheckInterval: 10 * time.Millisecond,
@@ -1559,6 +1563,26 @@ func (s *RouterSuite) quota(liveClient *live.Client, policies *policy.Enforcer, 
 	limiter, err := quota.New(liveClient.Redis(), quota.Limits{MessagesPerDay: allowed}, policies, logger)
 	s.Require().NoError(err)
 	return limiter
+}
+
+// gateOnClosedStore has the gate every text and call passes read from a store closed for the
+// test, so its opt-out check fails as an unreachable database does, which is no refusal. It
+// returns the way to put the gate back, which the test's end does too.
+func (s *RouterSuite) gateOnClosedStore() (restore func()) {
+	closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	original := *s.gate
+	*s.gate = *dlc.NewGate(closed, s.live.Redis(), s.sandbox, nil)
+	restored := false
+	restore = func() {
+		if !restored {
+			*s.gate = original
+			restored = true
+		}
+	}
+	s.T().Cleanup(restore)
+	return restore
 }
 
 // useFixture points the clients at the app of the fixture called name, with client signed

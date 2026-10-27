@@ -70,12 +70,12 @@ func (s *ConnectorsSuite) TestOnlyAConnectorThatReadsMessagesIsAChannel() {
 	s.False(listed["slack"])
 }
 
-// TestGitHubShowsWhatASandboxGetsForItsAPI: github's sandbox block (revision 7), in a read and
+// TestGitHubShowsWhatASandboxGetsForItsAPI: github's sandbox block (revision 9), in a read and
 // in the list, is what code in a sandbox reads (env) and where its token may go (hosts).
 func (s *ConnectorsSuite) TestGitHubShowsWhatASandboxGetsForItsAPI() {
 	want := &ConnectorSandbox{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com", "github.com"}}
 	github := s.get("github")
-	s.Equal(7, github.Revision)
+	s.Equal(9, github.Revision)
 	s.Equal(want, github.Sandbox)
 	for _, item := range s.list("").Items {
 		if item.ID == "github" {
@@ -410,6 +410,9 @@ func (s *ConnectorsSuite) TestTheListIsTheBuiltInsThenTheAppsOwnEachById() {
 }
 
 func (s *ConnectorsSuite) TestPagingWalksTheWholeListWithoutRepeatingOrSkipping() {
+	// An app of its own: the fixture's app is shared, and a connector another suite made there
+	// between the whole list and the walk showed up as one the walk did not expect.
+	s.useApp(s.data.createApp())
 	for range 3 {
 		s.create(s.customConnector(s.customID()))
 	}

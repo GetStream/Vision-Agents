@@ -106,3 +106,24 @@ func (s *ScheduledTasksSuite) TestATextOnALineWhoseCredentialsDoNotOpenIsAFailur
 	s.Equal(scheduling.ReasonFailed, failure.Reason)
 	s.False(failure.Final, "a line put right by the next attempt delivers")
 }
+
+// Only the gate's refusal makes a text unreachable (internal/channels/service.go reach). A gate
+// that cannot read is the router failing, so the run is tried again rather than given up on.
+func (s *ScheduledTasksSuite) TestATextWhoseGateCannotReadIsAFailureNotUnreachable() {
+	number := s.lineNumber()
+	s.seedSMSLine(number)
+	config := s.agentOnSMS(number)
+	user := s.data.createUser()
+	s.textsFrom(user, config, "sms")
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"sms"})
+	s.Require().NoError(s.reachOf(config, user, "sms"), "with a gate that reads, the text reaches them")
+	s.gateOnClosedStore()
+
+	_, err := s.deliverNow(s.tasksOf(user)[0], time.Now(), "")
+
+	s.ErrorContains(err, "database is closed")
+	failure := s.failure(err)
+	s.Equal(scheduling.ReasonFailed, failure.Reason)
+	s.False(failure.Final, "a gate that reads again delivers on the next attempt")
+}

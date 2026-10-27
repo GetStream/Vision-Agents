@@ -14,6 +14,9 @@ const (
 	codeNotConfigured   = "not_configured"
 	codeDefaultTier     = "default_tier"
 	codeKeyReused       = "idempotency_key_reused"
+	codeCreditNotFound  = "credit_not_found"
+	codeNotReversible   = "not_reversible"
+	codeAlreadyReversed = "already_reversed"
 )
 
 // apiError is a problem answer with a code beside Huma's fields. The router's API package sets

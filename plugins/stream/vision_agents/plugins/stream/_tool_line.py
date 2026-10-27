@@ -8,7 +8,7 @@ from vision_agents.core.llm.tool_call import (
     ToolCall,
     ToolConversation,
     ToolUser,
-    calling,
+    using_tool_call_context,
 )
 
 Send = Callable[[dict[str, Any]], Awaitable[None]]
@@ -78,8 +78,10 @@ def cancel(call_id: str, holds: Holds, task: Optional[asyncio.Task]) -> None:
         task.cancel()
 
 
-def call_of(frame: dict[str, Any], session_id: str, line: SocketLine) -> ToolCall:
-    """The call a tool_call frame asks for, as `current_call()` gives it to the function.
+def tool_call_context_of(
+    frame: dict[str, Any], session_id: str, line: SocketLine
+) -> ToolCall:
+    """The call a tool_call frame asks for, as `get_tool_call_context()` gives it to the function.
 
     `session_id` stands in for a frame that does not name its session, as one from a
     router from before it said does not.
@@ -104,7 +106,7 @@ def call_of(frame: dict[str, Any], session_id: str, line: SocketLine) -> ToolCal
     )
 
 
-async def run_call(
+async def run_with_tool_call_context(
     functions: FunctionRegistry,
     name: str,
     arguments: dict[str, Any],
@@ -114,7 +116,7 @@ async def run_call(
     """Run one function for `tool_call_context`, within its own timeout when it has one."""
     timeout = functions.policy(name).timeout
     try:
-        with calling(tool_call_context):
+        with using_tool_call_context(tool_call_context):
             if not timeout:
                 return await functions.call_function(name, arguments)
             try:

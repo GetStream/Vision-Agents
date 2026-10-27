@@ -380,7 +380,8 @@ func (s *WriterSuite) TestAStuckHolderGivesUpAndEveryRouterStillCountsWhatWaits(
 	stale := s.owned(func(request *store.Request) { request.StartedAt = time.Now().UTC().Add(-20 * time.Minute) })
 	writer.enqueue(stale)
 	s.written(1)
-	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true")
+	// Only this test's rows: a row another test left would be shipped too, by the same sweep.
+	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true WHERE customer_id = ?", s.customer)
 	s.Require().NoError(err)
 	// Another transaction holds the row, so marking it shipped waits, as on a database that
 	// stopped answering.
@@ -524,7 +525,8 @@ func (s *WriterSuite) TestTheSweeperPagesPastRowsThatWaitForAnOrganization() {
 	owned := s.owned(func(request *store.Request) { request.StartedAt = earlier.Add(time.Second) })
 	writer.enqueue(owned)
 	s.written(sweepPage + 1)
-	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true")
+	// Only this test's rows: a row another test left would be shipped too, by the same sweep.
+	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true WHERE customer_id = ?", s.customer)
 	s.Require().NoError(err)
 
 	s.swept(s.sweeper(service.Client))

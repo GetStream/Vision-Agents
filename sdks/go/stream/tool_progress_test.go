@@ -36,7 +36,7 @@ func (s *ToolCallSuite) TestAFunctionSaysHowItIsGoing() {
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
 	s.Require().NoError(tools.Register(pipeline.Functions(), "lookup_order", "Look an order up",
 		func(ctx context.Context, _ struct{}) (any, error) {
-			toolCallContext := tools.CallFrom(ctx)
+			toolCallContext := tools.ToolCallContextFrom(ctx)
 			if err := toolCallContext.Update(ctx, "Looking up order 7"); err != nil {
 				return nil, err
 			}
@@ -82,7 +82,7 @@ func (s *ToolCallSuite) TestAHeldCallOutlivesTheRouterCancellingIt() {
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
 	s.Require().NoError(tools.Register(pipeline.Functions(), "rebook_flight", "Move a booking",
 		func(ctx context.Context, _ struct{}) (any, error) {
-			writing := tools.CallFrom(ctx).DisallowInterruptions(ctx)
+			writing := tools.ToolCallContextFrom(ctx).DisallowInterruptions(ctx)
 			<-ctx.Done()
 			if writing.Err() != nil {
 				return nil, writing.Err()
@@ -119,7 +119,7 @@ func (s *ToolCallSuite) TestACallTooLateToHoldDoesNotStartItsWrite() {
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
 	s.Require().NoError(tools.Register(pipeline.Functions(), "rebook_flight", "Move a booking",
 		func(ctx context.Context, _ struct{}) (any, error) {
-			writing := tools.CallFrom(ctx).DisallowInterruptions(ctx)
+			writing := tools.ToolCallContextFrom(ctx).DisallowInterruptions(ctx)
 			if writing.Err() != nil {
 				return nil, writing.Err()
 			}

@@ -245,13 +245,24 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   Shown live under Daytona: `git ls-remote` of a public repo with `x-access-token:<placeholder>` as Basic
   auth (see above). `unverified` under Daytona: `git clone` (upload-pack POST), `git push`
   (receive-pack), a private repo, a user name other than `x-access-token`. The proxy broker's
-  tests cover its push (`brokertest` A15).
+  tests cover its clone (`brokertest` A15) and refuse its push.
+- Read-only under the proxy broker (`code_sandbox.broker: proxy`): code in the sandbox reads a
+  granted host and writes through the connector's tools. A request to a granted host that is not a
+  GET or a HEAD gets 403 «… refused: code in the sandbox only reads through a connector; write with
+  the connector's tools», unless the connector's latest `sandbox.reads` lists it (GitHub revision 8:
+  `POST github.com/<owner>/<repo>.git/git-upload-pack`, so clone and fetch work; push is refused).
+  A read with `graphql: true` takes a POST whose every GraphQL operation is a query (GitHub
+  revision 9: `POST api.github.com/graphql`, so `gh`'s queries work and its mutations get the 403).
+  Connections pinned to an earlier revision get the reads without a reconnect. Allowed domains
+  take any method. Under the Daytona broker nothing checks methods: code can write with the token
+  (`internal/sandbox/egress/AGENTS.md`, «Read-only»).
   GitHub refuses the token as `Authorization: Bearer` from git (401 to `git-receive-pack`, probe
   2026-10-22T03:53:09Z; Basic `x-access-token:<token>` was taken), so `run_code`'s description
   gives git the URL form. GitHub revision 7 grants github.com (AI-1576); a connection on
   revision 6 keeps its two API hosts until it is reconnected.
 - `sandbox: true` lets the code call every API the token's scopes allow, outside the binding's tool
-  grants, the connector limiter and the audit. That is intended.
+  grants, the connector limiter and the audit. That is intended; under the proxy broker the code
+  only reads (above).
 - Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
   host that echoes the token escaped or encoded would hand it to the sandbox. Wave 14's proxy
   broker closes it.

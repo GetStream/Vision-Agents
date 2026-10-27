@@ -191,6 +191,53 @@ import Testing
       ])
   }
 
+  @Test func everyReaderOfTheEventsGetsEachEventAndTheStreamEndsWithTheSession() async throws {
+    let server = try ApprovalServer()
+    defer { server.listener.cancel() }
+    let url = try #require(try await server.addresses.first(where: { @Sendable _ in true }))
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+          modality: .text, state: .live, text: true, userId: "test")),
+      tools: [])
+    var first = session.events().makeAsyncIterator()
+    var second = session.events().makeAsyncIterator()
+
+    await session.start()
+    let seen = [await first.next(), await second.next()]
+    await session.close()
+
+    #expect(seen.map { $0?.string("id") } == ["c1", "c1"])
+    #expect(await first.next() == nil)
+    var late = session.events().makeAsyncIterator()
+    #expect(await late.next() == nil)
+  }
+
+  @Test func sayingSomethingOverTheAgentStopsItFirst() async throws {
+    let server = try ApprovalServer()
+    defer { server.listener.cancel() }
+    let url = try #require(try await server.addresses.first(where: { @Sendable _ in true }))
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+          modality: .voice, state: .live, text: false, userId: "test")),
+      tools: [])
+    await session.start()
+    defer { Task { await session.close() } }
+
+    try await session.say("One moment.", interrupt: true)
+
+    var commands = server.commands.makeAsyncIterator()
+    let sent = try [#require(try await commands.next()), #require(try await commands.next())].map {
+      try JSONDecoder().decode([String: RawJSON].self, from: $0)
+    }
+    #expect(sent == [["type": .string("interrupt")], ["type": .string("say"), "text": .string("One moment.")]])
+  }
+
   @Test func anUpdateRefreshesTheSessionItHolds() async throws {
     let server = try SessionServer()
     defer { server.listener.cancel() }

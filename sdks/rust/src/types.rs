@@ -6389,6 +6389,14 @@ impl ::std::convert::TryFrom<::std::string::String> for LimitGrantState {
         value.parse()
     }
 }
+///Why a revoked grant is live again.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[derive(Default)]
+pub struct LimitGrantUnrevocation {
+    ///Why it is live again; more than spaces.
+    pub reason: ::std::string::String,
+}
 ///`LimitInForce`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct LimitInForce {

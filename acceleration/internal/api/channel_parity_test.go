@@ -5,7 +5,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -159,19 +158,7 @@ func (s *TelnyxSandboxSuite) TestAKeywordIsAnsweredPastTheSandbox() {
 // A gate that fails to read after the keywords is answered 500 and the message is unclaimed,
 // so the delivery Telnyx sends again reaches the agent: it is not dropped as one already taken.
 func (s *TelnyxSandboxSuite) TestAMessageWhoseSandboxCannotBeReadReachesTheAgentWhenTelnyxDeliversItAgain() {
-	unreadable, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
-	s.Require().NoError(err)
-	s.Require().NoError(unreadable.Close())
-	original := *s.gate
-	*s.gate = *dlc.NewGate(unreadable, s.live.Redis(), s.sandbox, nil)
-	restored := false
-	restore := func() {
-		if !restored {
-			*s.gate = original
-			restored = true
-		}
-	}
-	defer restore()
+	restore := s.gateOnClosedStore()
 	body := s.received(s.line, sandboxRecipient, "Hi")
 
 	s.Equal(http.StatusInternalServerError, s.deliver(body, time.Now()))

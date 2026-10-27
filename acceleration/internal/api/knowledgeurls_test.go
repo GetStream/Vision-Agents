@@ -4,6 +4,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,6 +103,20 @@ func (s *KnowledgeUrlsSuite) TestSomethingThatIsNotAFetchablePageIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "mailto:sales@example.com")
+}
+
+func (s *KnowledgeUrlsSuite) TestAUrlLongerThan2048CharactersIsRefused() {
+	page := "https://example.com/"
+	page += strings.Repeat("a", 2049-len(page))
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/knowledge/urls",
+		map[string]any{"namespace": "docs", "url": page})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected length <= 2048")
+	var listed []KnowledgeUrl
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/knowledge/urls?namespace=docs", nil, &listed))
+	s.Empty(listed)
 }
 
 func (s *KnowledgeUrlsSuite) TestAnotherAppsKnowledgeUrlIsNotFound() {

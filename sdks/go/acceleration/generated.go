@@ -5974,6 +5974,12 @@ type LimitGrantRevocation struct {
 // LimitGrantState Where a grant stands: live (it is drawn once a limit of its subject is spent), used (it paid for its amount), expired (past expires_at) or revoked.
 type LimitGrantState string
 
+// LimitGrantUnrevocation Why a revoked grant is live again.
+type LimitGrantUnrevocation struct {
+	// Reason Why it is live again; more than spaces.
+	Reason string `json:"reason"`
+}
+
 // LimitInForce defines model for LimitInForce.
 type LimitInForce struct {
 	EffectiveLimitMicros int64 `json:"effective_limit_micros"`
@@ -10528,6 +10534,9 @@ type CreateLimitGrantJSONRequestBody = LimitGrantInput
 // RevokeLimitGrantJSONRequestBody defines body for RevokeLimitGrant for application/json ContentType.
 type RevokeLimitGrantJSONRequestBody = LimitGrantRevocation
 
+// UnrevokeLimitGrantJSONRequestBody defines body for UnrevokeLimitGrant for application/json ContentType.
+type UnrevokeLimitGrantJSONRequestBody = LimitGrantUnrevocation
+
 // ResetLimitUsageJSONRequestBody defines body for ResetLimitUsage for application/json ContentType.
 type ResetLimitUsageJSONRequestBody = LimitResetInput
 
@@ -13585,7 +13594,7 @@ type ClientInterface interface {
 
 	// RevokeLimitGrantWithBody Revoke a grant
 	//
-	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 	//
 	// Server-side only: one server-side credential of any app grants for any subject of its organization.
 	//
@@ -13596,7 +13605,7 @@ type ClientInterface interface {
 
 	// RevokeLimitGrant Revoke a grant
 	//
-	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 	//
 	// Server-side only: one server-side credential of any app grants for any subject of its organization.
 	//
@@ -13604,6 +13613,28 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
 	RevokeLimitGrant(ctx context.Context, grantId int64, body RevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnrevokeLimitGrantWithBody Unrevoke a grant
+	//
+	// Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/unrevoke (the `UnrevokeLimitGrant` operationId).
+	UnrevokeLimitGrantWithBody(ctx context.Context, grantId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnrevokeLimitGrant Unrevoke a grant
+	//
+	// Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/unrevoke (the `UnrevokeLimitGrant` operationId).
+	UnrevokeLimitGrant(ctx context.Context, grantId int64, body UnrevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetLimitUsage Read what subjects spent against their limits
 	//
@@ -19490,7 +19521,7 @@ func (c *Client) CreateLimitGrant(ctx context.Context, body CreateLimitGrantJSON
 
 // RevokeLimitGrantWithBody Revoke a grant
 //
-// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 //
 // Server-side only: one server-side credential of any app grants for any subject of its organization.
 //
@@ -19511,7 +19542,7 @@ func (c *Client) RevokeLimitGrantWithBody(ctx context.Context, grantId int64, co
 
 // RevokeLimitGrant Revoke a grant
 //
-// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 //
 // Server-side only: one server-side credential of any app grants for any subject of its organization.
 //
@@ -19520,6 +19551,48 @@ func (c *Client) RevokeLimitGrantWithBody(ctx context.Context, grantId int64, co
 // Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
 func (c *Client) RevokeLimitGrant(ctx context.Context, grantId int64, body RevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeLimitGrantRequest(c.Server, grantId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UnrevokeLimitGrantWithBody Unrevoke a grant
+//
+// Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/spend/limits/grants/{grant_id}/unrevoke (the `UnrevokeLimitGrant` operationId).
+func (c *Client) UnrevokeLimitGrantWithBody(ctx context.Context, grantId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnrevokeLimitGrantRequestWithBody(c.Server, grantId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UnrevokeLimitGrant Unrevoke a grant
+//
+// Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/spend/limits/grants/{grant_id}/unrevoke (the `UnrevokeLimitGrant` operationId).
+func (c *Client) UnrevokeLimitGrant(ctx context.Context, grantId int64, body UnrevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnrevokeLimitGrantRequest(c.Server, grantId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -30182,6 +30255,53 @@ func NewRevokeLimitGrantRequestWithBody(server string, grantId int64, contentTyp
 	return req, nil
 }
 
+// NewUnrevokeLimitGrantRequest calls the generic UnrevokeLimitGrant builder with application/json body
+func NewUnrevokeLimitGrantRequest(server string, grantId int64, body UnrevokeLimitGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUnrevokeLimitGrantRequestWithBody(server, grantId, "application/json", bodyReader)
+}
+
+// NewUnrevokeLimitGrantRequestWithBody constructs an http.Request for the UnrevokeLimitGrant method, with any body, and a specified content type
+func NewUnrevokeLimitGrantRequestWithBody(server string, grantId int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/spend/limits/grants/%s/unrevoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetLimitUsageRequest constructs an http.Request for the GetLimitUsage method
 func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.Request, error) {
 	var err error
@@ -34665,7 +34785,7 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeLimitGrantWithBodyWithResponse Revoke a grant
 	//
-	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 	//
 	// Server-side only: one server-side credential of any app grants for any subject of its organization.
 	//
@@ -34676,7 +34796,7 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeLimitGrantWithResponse Revoke a grant
 	//
-	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+	// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 	//
 	// Server-side only: one server-side credential of any app grants for any subject of its organization.
 	//
@@ -34684,6 +34804,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/revoke (the `RevokeLimitGrant` operationId).
 	RevokeLimitGrantWithResponse(ctx context.Context, grantId int64, body RevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeLimitGrantResponse, error)
+
+	// UnrevokeLimitGrantWithBodyWithResponse Unrevoke a grant
+	//
+	// Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/unrevoke (the `UnrevokeLimitGrant` operationId).
+	UnrevokeLimitGrantWithBodyWithResponse(ctx context.Context, grantId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UnrevokeLimitGrantResponse, error)
+
+	// UnrevokeLimitGrantWithResponse Unrevoke a grant
+	//
+	// Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+	//
+	// Server-side only: one server-side credential of any app grants for any subject of its organization.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/spend/limits/grants/{grant_id}/unrevoke (the `UnrevokeLimitGrant` operationId).
+	UnrevokeLimitGrantWithResponse(ctx context.Context, grantId int64, body UnrevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*UnrevokeLimitGrantResponse, error)
 
 	// GetLimitUsageWithResponse Read what subjects spent against their limits
 	//
@@ -57506,6 +57648,121 @@ func (r RevokeLimitGrantResponse) ContentType() string {
 	return ""
 }
 
+// UnrevokeLimitGrantResponse200Headers the declared response headers of an HTTP 200 response for UnrevokeLimitGrant
+type UnrevokeLimitGrantResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// UnrevokeLimitGrantResponse402Headers the declared response headers of an HTTP 402 response for UnrevokeLimitGrant
+type UnrevokeLimitGrantResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type UnrevokeLimitGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LimitGrant
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *UnrevokeLimitGrantResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *UnrevokeLimitGrantResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UnrevokeLimitGrantResponse) GetJSON200() *LimitGrant {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UnrevokeLimitGrantResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UnrevokeLimitGrantResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UnrevokeLimitGrantResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UnrevokeLimitGrantResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UnrevokeLimitGrantResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UnrevokeLimitGrantResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UnrevokeLimitGrantResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UnrevokeLimitGrantResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UnrevokeLimitGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UnrevokeLimitGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UnrevokeLimitGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UnrevokeLimitGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetLimitUsageResponse200Headers the declared response headers of an HTTP 200 response for GetLimitUsage
 type GetLimitUsageResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -64603,7 +64860,7 @@ func (c *ClientWithResponses) CreateLimitGrantWithResponse(ctx context.Context, 
 
 // RevokeLimitGrantWithBodyWithResponse Revoke a grant
 //
-// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 //
 // Server-side only: one server-side credential of any app grants for any subject of its organization.
 //
@@ -64620,7 +64877,7 @@ func (c *ClientWithResponses) RevokeLimitGrantWithBodyWithResponse(ctx context.C
 
 // RevokeLimitGrantWithResponse Revoke a grant
 //
-// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing.
+// The next admission no longer draws on it; work already admitted finishes and still counts. The grant and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 //
 // Server-side only: one server-side credential of any app grants for any subject of its organization.
 //
@@ -64633,6 +64890,40 @@ func (c *ClientWithResponses) RevokeLimitGrantWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseRevokeLimitGrantResponse(rsp)
+}
+
+// UnrevokeLimitGrantWithBodyWithResponse Unrevoke a grant
+//
+// Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits/grants/{grant_id}/unrevoke (the `UnrevokeLimitGrant` operationId).
+func (c *ClientWithResponses) UnrevokeLimitGrantWithBodyWithResponse(ctx context.Context, grantId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UnrevokeLimitGrantResponse, error) {
+	rsp, err := c.UnrevokeLimitGrantWithBody(ctx, grantId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnrevokeLimitGrantResponse(rsp)
+}
+
+// UnrevokeLimitGrantWithResponse Unrevoke a grant
+//
+// Makes a revoked grant live again: the next admission draws on it once a limit of its subject is spent, until it is used up, expires or is revoked again. The work admitted while it was revoked is not drawn from it. Unrevoking one that is not revoked changes nothing. An expired grant cannot be unrevoked (400 invalid_expiry), and an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that unrevoked it draws on it at once, the others within 5 s.
+//
+// Server-side only: one server-side credential of any app grants for any subject of its organization.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/spend/limits/grants/{grant_id}/unrevoke (the `UnrevokeLimitGrant` operationId).
+func (c *ClientWithResponses) UnrevokeLimitGrantWithResponse(ctx context.Context, grantId int64, body UnrevokeLimitGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*UnrevokeLimitGrantResponse, error) {
+	rsp, err := c.UnrevokeLimitGrant(ctx, grantId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnrevokeLimitGrantResponse(rsp)
 }
 
 // GetLimitUsageWithResponse Read what subjects spent against their limits
@@ -91344,6 +91635,139 @@ func ParseRevokeLimitGrantResponse(rsp *http.Response) (*RevokeLimitGrantRespons
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers RevokeLimitGrantResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUnrevokeLimitGrantResponse parses an HTTP response from a UnrevokeLimitGrantWithResponse call
+func ParseUnrevokeLimitGrantResponse(rsp *http.Response) (*UnrevokeLimitGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UnrevokeLimitGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LimitGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers UnrevokeLimitGrantResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers UnrevokeLimitGrantResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
