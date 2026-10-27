@@ -2,6 +2,10 @@
 
 ## Features
 
+### Sandbox code reads Linear
+
+A `linear_app` binding with `sandbox: true` lets code in the session's sandbox call Linear's GraphQL API (`https://api.linear.app/graphql`) and file storage (`https://uploads.linear.app`) with `Authorization: Bearer $LINEAR_ACCESS_TOKEN`. The sandbox holds a placeholder, never the token. Behind the egress proxy, a POST to `/graphql` passes only when every operation is a query; a mutation gets 403, so code writes through the connector's tools. A `linear_app` connection made at revision 1 gives the sandbox nothing until it connects again. A `linear` (DCR) connection gets no sandbox access: Linear's API refuses its token (AI-2082).
+
 ### A 1:1 iMessage chat can schedule reminders
 
 An agent answering a Linq (iMessage) chat is now offered the scheduling tools when the chat is 1:1: the latest message says `data.chat.is_group` `false`. The task belongs to the person who wrote, and comes back into the chat, `delivered_to` `imessage`. A group chat, a chat whose message does not say, and a chat linked before this release get no tools; a chat that becomes a group loses them, and its tasks fail `thread_gone`. Migration `20261116100000_channel_thread_people` adds the table `channel_thread_people` (AI-1867).
