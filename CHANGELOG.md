@@ -123,6 +123,10 @@ A question asked with photos was answered as though none came when the model cal
 
 Only the first 128 bytes of a heading, cut between characters, are now repeated at the top of each later passage of its section and in each passage's `source`; the first passage keeps the heading as written. A `chunk_size` under 500 on `POST /v1/agents/knowledge` is raised to 500, and so is the URL crawler's and `cmd/knowledge`'s. Before, a long heading over one-character paragraphs with `chunk_size` 1 turned 1 MiB into about 1 GB of passages, and an 8 MiB request could run a router out of memory (AI-1988).
 
+### A knowledge base can have any name
+
+A knowledge base named with a space, a slash or a letter outside A-Z, such as `my docs` or an agent synced from a directory called `Support Bot`, was refused by turbopuffer on every write and lookup. turbopuffer now stores a base as `<customer>__<slug>-<hash>`: a readable slug of the name and 16 hex characters of its SHA-256, so names that read alike, such as `Support Bot` and `support-bot`, stay two bases. Bases written before this release are under their old names and are not read; write them again (AI-1994).
+
 ### The agent tells people apart in a group text chat
 
 In a thread several people write in, such as an iMessage group chat or a Slack thread with two people, the reply model is told who wrote each message once a second person has written: `Speaker 1: What are our names?`, each person under `Speaker N` in the order they first wrote, never their phone number or Slack id, with a note that several people are writing. It read every message as one person's, so it answered Kanat as Ana. A 1:1 chat and a session in writing from the dashboard or an SDK send the model what they did (AI-2014).
