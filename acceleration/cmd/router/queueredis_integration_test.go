@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -14,6 +15,11 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // clusterEnvVar names a node of a Redis Cluster with more than one shard, which CI does not
@@ -63,6 +69,35 @@ func (s *QueueRedisSuite) TestAReadIsQueuedAndRunOnACluster() {
 	address := s.address(clusterEnvVar)
 
 	s.queuesAndRuns(queueRedis(config.Redis{Addr: address}, s.connect(address)))
+}
+
+func (s *QueueRedisSuite) TestAPageIsQueuedThroughTheServiceOnAPlainRedis() {
+	s.queuesThroughTheService(s.address("ROUTER_REDIS_ADDR"))
+}
+
+// The service is built the way the router builds it, so this fails when the router hands it
+// anything but the queue the shared client's mode asks for.
+func (s *QueueRedisSuite) TestAPageIsQueuedThroughTheServiceOnACluster() {
+	s.queuesThroughTheService(s.address(clusterEnvVar))
+}
+
+// queuesThroughTheService adds a page to the url service buildKnowledgeURLs makes over the
+// Redis at address, which queues a read of it.
+func (s *QueueRedisSuite) queuesThroughTheService(address string) {
+	s.T().Setenv("EXA_API_KEY", "exa-key")
+	settings := config.Defaults()
+	settings.Postgres.DSN = testenv.Database(os.Getenv(dsnEnvVar), "queueredis")
+	st, err := openStore(s.ctx, settings)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.NoError(st.Close()) })
+
+	pages, err := buildKnowledgeURLs(st, config.Redis{Addr: address}, s.connect(address), &metered.Knowledge{}, ingest.Limits{}, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.Require().NotNil(pages)
+	s.T().Cleanup(func() { s.Require().NoError(pages.Close()) })
+
+	_, err = pages.Add(s.ctx, "queueredis-"+uuid.NewString(), urls.Subscription{Namespace: "ns", URL: "https://example.com/pricing"})
+	s.Require().NoError(err)
 }
 
 // queuesAndRuns does to a queue of its own on opt what the url service does to its queue:
@@ -119,8 +154,8 @@ func (s *QueueRedisSuite) address(variable string) string {
 // connect is a client of the Redis at address made the way the router makes its own, so it
 // finds out the same way whether that Redis is a cluster.
 func (s *QueueRedisSuite) connect(address string) rueidis.Client {
-	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	client, err := live.New(live.Options{Address: address})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
-	return client
+	return client.Redis()
 }
