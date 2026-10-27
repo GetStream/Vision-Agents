@@ -461,3 +461,40 @@ func (s *StoreSuite) chatPerson(channelID string) string {
 	s.Require().NoError(err)
 	return found.ChatPerson
 }
+
+// A chat thread is silenced by a live opt-out of a person recorded in it, on its channel or on
+// all of them; not by one of another channel, another customer, a person not in it, or one
+// revoked (AI-2015).
+func (s *StoreSuite) TestAThreadMemberWithALiveOptOutIsFound() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-group", "chat-group"))
+	s.Require().NoError(err)
+	_, err = s.store.LinkChannelThread(s.ctx, thread("thread-other", "chat-other"))
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.AddChannelThreadMember(s.ctx, "thread-group", "+12025550198"))
+	s.Require().NoError(s.store.AddChannelThreadMember(s.ctx, "thread-group", "+12025550199"))
+	s.Require().NoError(s.store.AddChannelThreadMember(s.ctx, "thread-group", "+12025550199"), "a member recorded again")
+	optedOut := func(channelID string) bool {
+		found, err := s.store.ChannelThreadMemberOptedOut(s.ctx, "acme-app", channelID, "imessage")
+		s.Require().NoError(err)
+		return found
+	}
+	optOut := func(customerID, recipient, channel string) {
+		s.Require().NoError(s.store.OptOut(s.ctx, &OptOut{CustomerID: customerID, Recipient: recipient, Channel: channel, Source: "keyword"}))
+	}
+	s.False(optedOut("thread-group"), "nobody opted out")
+
+	optOut("acme-app", "+12025550198", "sms")
+	optOut("other-app", "+12025550198", "imessage")
+	optOut("acme-app", "+12025550100", "imessage")
+	s.False(optedOut("thread-group"), "another channel, another customer, a person not in the chat")
+
+	optOut("acme-app", "+12025550198", OptOutAll)
+	s.True(optedOut("thread-group"), "an opt-out of every channel")
+	s.False(optedOut("thread-other"), "a chat the person is not in")
+	s.Require().NoError(s.store.RevokeOptOuts(s.ctx, "acme-app", "+12025550198", "imessage"))
+	s.False(optedOut("thread-group"), "revoked")
+
+	optOut("acme-app", "+12025550199", "imessage")
+	s.True(optedOut("thread-group"))
+	s.Error(s.store.AddChannelThreadMember(s.ctx, "thread-group", ""), "no member")
+}

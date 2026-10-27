@@ -76,6 +76,10 @@ Under the egress proxy broker with an `https://` proxy, the check of the TLS tun
 
 When sandbox code got a 401 because the user had not connected a connector, its result tells the model to run the code again once they connect. The agent's repeat-call guard answered that identical second `run_code` from the first result, so the turn ended on the old 401 although the connection was live. A `run_code` result that says a connector was just connected, or that it is not connected and the user has connected it since, no longer answers a repeat; while the user has not connected it, the repeat is still answered from that result. Every other repeated call is still answered from its earlier result (AI-1987).
 
+### An iMessage group stays silent while one of its people is opted out
+
+A reply to a Linq (iMessage) group reaches everyone in it, so after STOP from any person in the chat the agent sends the group nothing: no answer, no resend, no scheduled delivery, and the others' messages reach no agent (logged at INFO). That person's STOP and START are still confirmed in the group, and their START lifts the silence once nobody in it is opted out. An opt-out from elsewhere, such as STOP in their own chat, silences a group they write in. Linq refusing a keyword confirmation (403 after STOP) is logged at INFO, not as an error. Migration `20261117110000_channel_thread_members` adds the table `channel_thread_members` (AI-2015, AI-2016).
+
 ### A thread message the session refuses is given up at once
 
 A message in a thread channel (Slack, SMS, WhatsApp, iMessage) whose session refuses the turn for any reason but a reply still being written is now given up at once and logged. Before, the router tried it again every 50 ms for up to two minutes, writing one more cancelled reply into the channel each time and holding the thread's turn. A message that arrives while a reply is running still waits for it. Only a scheduled task's follow-up now keeps a copy of its reply and files in memory, the one that is read back on a retry (AI-1556, AI-1557).
