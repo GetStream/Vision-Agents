@@ -53,15 +53,16 @@ type messageEvent struct {
 		// message.new; the classic GET /messages/{id} of an episode card shows the same).
 		Source json.RawMessage `json:"source"`
 		// Attachments are what was sent with the message; a photo on a thread channel is
-		// answered (photos).
-		Attachments []messageAttachment `json:"attachments"`
+		// answered (photos). Read by photos, one at a time, so an attachment of a shape
+		// nothing here expects costs only itself, not the message's text.
+		Attachments json.RawMessage `json:"attachments"`
 	} `json:"message"`
 }
 
 // messageAttachment is the part of a Stream Chat attachment that says whether it is a photo
-// and where it is. An image carries its URL in image_url, as this router and Stream's UI
-// SDKs write it (conversation.chatFileAttachments), or in asset_url, as Stream's upload docs
-// write it (https://getstream.io/chat/docs/javascript/file_uploads/).
+// and where it is. An image carries its URL in image_url, as this router writes it
+// (conversation.chatFileAttachments), or in asset_url, as Stream's upload docs write it
+// (https://getstream.io/chat/docs/javascript/file_uploads/).
 type messageAttachment struct {
 	Type     string `json:"type"`
 	ImageURL string `json:"image_url"`
@@ -74,8 +75,16 @@ type messageAttachment struct {
 
 // photos are the images sent with a message, at most maxRunImages, as many as a run takes.
 func (e messageEvent) photos() []llm.ImagePart {
+	var attachments []json.RawMessage
+	if json.Unmarshal(e.Message.Attachments, &attachments) != nil {
+		return nil
+	}
 	var images []llm.ImagePart
-	for _, attachment := range e.Message.Attachments {
+	for _, raw := range attachments {
+		var attachment messageAttachment
+		if json.Unmarshal(raw, &attachment) != nil {
+			continue
+		}
 		source := cmp.Or(attachment.ImageURL, attachment.AssetURL)
 		if attachment.Type == "image" && source != "" && attachment.OGScrapeURL == "" && len(images) < maxRunImages {
 			images = append(images, llm.ImagePart{URL: source})

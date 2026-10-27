@@ -139,8 +139,8 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 	// rather than a second answer. Only a reply another way into the session is
 	// still writing is waited out; any other failure ends the message, as each
 	// attempt whose turn did not start leaves a cancelled reply in the channel.
-	text, images := s.threadPhotos(turn, found, thread, event)
-	if text == "" && len(images) == 0 {
+	text, images, fetched := s.threadPhotos(turn, found, thread, event)
+	if !fetched {
 		return
 	}
 	followUpID := "thread_" + store.NewID()
@@ -163,23 +163,23 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 // threadPhotos is what a thread's message tells the model: its text, and the photos sent
 // with it, read into bytes (fetchImages). An agent with nothing that looks at a photo is
 // handed none, as RespondTo would refuse the turn with ErrCannotSeeImages and the person would
-// hear nothing; it is told the person sent one, so it says it cannot see it. Photos that cannot
-// be fetched end the message: empty text and no images.
-func (s *Server) threadPhotos(ctx context.Context, found *session.Session, thread store.ChannelThread, event messageEvent) (string, []llm.ImagePart) {
-	text, images := event.Message.Text, event.photos()
+// hear nothing; it is told the person sent one, so it says it cannot see it. fetched is false
+// when a photo could not be fetched, which ends the message.
+func (s *Server) threadPhotos(ctx context.Context, found *session.Session, thread store.ChannelThread, event messageEvent) (text string, images []llm.ImagePart, fetched bool) {
+	text, images = event.Message.Text, event.photos()
 	switch {
 	case len(images) == 0:
-		return text, nil
+		return text, nil, true
 	case !found.SeesImages() && text == "":
-		return unseenPhoto, nil
+		return unseenPhoto, nil, true
 	case !found.SeesImages():
-		return text + "\n\n" + unseenPhotoWithText, nil
+		return text + "\n\n" + unseenPhotoWithText, nil, true
 	}
 	if err := fetchImages(ctx, s.imageHTTP, images); err != nil {
 		s.logger.Error("could not fetch the photos of a message in a thread channel", "channel", thread.ChannelID, "error", err)
-		return "", nil
+		return "", nil, false
 	}
-	return text, images
+	return text, images, true
 }
 
 // unseenPhoto and unseenPhotoWithText are the turn of an agent that cannot see, for a photo
