@@ -494,6 +494,10 @@ func (s *Server) pauseScheduledTask(ctx context.Context, request *pauseScheduled
 	return &pauseScheduledTaskResponse{Body: rendered}, nil
 }
 
+// resumedAt is the clock a resume counts a task's next run from. A test sets
+// it to resume inside an hour the wall clock is not in.
+var resumedAt = time.Now
+
 func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeScheduledTaskRequest) (*resumeScheduledTaskResponse, error) {
 	customerID, failure := s.scheduledTasksCustomer(ctx)
 	if failure != nil {
@@ -512,7 +516,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 			return nil, scheduleFailure(err)
 		}
 		// Counted from now: what a pause slept through is never replayed.
-		next, ok := schedule.Next(time.Now())
+		next, ok := schedule.Next(resumedAt())
 		if !ok {
 			// A one-shot whose time came while it was paused takes no place and runs
 			// on nothing: it is only closed, with the occurrence it slept through on

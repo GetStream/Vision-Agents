@@ -1809,6 +1809,42 @@ func (s *ScheduledTasksSuite) TestAOneShotResumedAfterItsTimeRecordsTheOccurrenc
 		"the missed run is the task's last run")
 }
 
+func (s *ScheduledTasksSuite) TestAOneShotResumedInsideTheFallBackHourKeepsTheSecondPassItIsDueAt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	due := s.pausedInTheSecondPass(created.Id)
+	// 02:50 CEST, the first pass: 02:20 CEST is behind, 02:20 CET an hour and a half ahead.
+	s.resumingAt(time.Date(2026, 10, 25, 0, 50, 0, 0, time.UTC))
+
+	var resumed ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/resume", nil, &resumed))
+
+	s.Equal(store.ScheduledTaskActive, resumed.State, "the second pass is still ahead")
+	s.Require().NotNil(resumed.NextRunAt)
+	next, err := time.Parse(time.RFC3339, *resumed.NextRunAt)
+	s.Require().NoError(err)
+	s.True(due.Equal(next), "due at the second pass, %s, not %s", due, next)
+	s.Empty(s.runsOf(store.ScheduledTask{ID: created.Id}), "nothing was slept through")
+}
+
+func (s *ScheduledTasksSuite) TestAOneShotInTheSecondPassResumedOnTheWallClockIsMissed() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	due := s.pausedInTheSecondPass(created.Id)
+
+	var resumed ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/resume", nil, &resumed))
+
+	s.Equal(store.ScheduledTaskCompleted, resumed.State)
+	s.Nil(resumed.NextRunAt)
+	runs := s.runsOf(store.ScheduledTask{ID: created.Id})
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunMissed, runs[0].State)
+	s.True(due.Equal(runs[0].ScheduledFor), "the second pass was missed, not %s", runs[0].ScheduledFor)
+}
+
 func (s *ScheduledTasksSuite) TestAOneShotTheAgentResumesAfterItsTimeRecordsTheOccurrenceAsMissed() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
@@ -2142,6 +2178,27 @@ func (s *ScheduledTasksSuite) pausedAt(id string, due time.Time) time.Time {
 		Exec(context.Background())
 	s.Require().NoError(err)
 	return due
+}
+
+// pausedInTheSecondPass pauses the task as one made at 01:50 CEST on
+// 2026-10-25 to run an hour and a half later is stored: at 02:20 Berlin, the
+// second pass of the hour the clocks go back, 01:20Z. It answers that instant.
+func (s *ScheduledTasksSuite) pausedInTheSecondPass(id string) time.Time {
+	due := time.Date(2026, 10, 25, 1, 20, 0, 0, time.UTC)
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("state = ?", store.ScheduledTaskPaused).Set("timezone = ?", "Europe/Berlin").
+		Set("start_local = ?", time.Date(2026, 10, 25, 2, 20, 0, 0, time.UTC)).Set("next_run_at = ?", due).
+		Where("customer_id = ?", s.customerID()).Where("id = ?", id).
+		Exec(context.Background())
+	s.Require().NoError(err)
+	return due
+}
+
+// resumingAt has a resume count from now rather than the wall clock.
+func (s *ScheduledTasksSuite) resumingAt(now time.Time) {
+	kept := resumedAt
+	resumedAt = func() time.Time { return now }
+	s.T().Cleanup(func() { resumedAt = kept })
 }
 
 // utcTaskRequest is taskRequest in UTC, so a task's local start is its instant.
