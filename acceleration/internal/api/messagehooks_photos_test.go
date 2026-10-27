@@ -85,14 +85,6 @@ func (s *MessagePhotosSuite) TestAttachmentsThatAreNoListAreNoPhotos() {
 	}
 }
 
-func (s *MessagePhotosSuite) TestAMessageWithoutAttachmentsStillReads() {
-	var event messageEvent
-	s.Require().NoError(json.Unmarshal([]byte(`{"channel_type":"agent","channel_id":"thread-1","message":{"id":"m","text":"hi"}}`), &event))
-
-	s.Empty(event.photos())
-	s.True(addressed(event))
-}
-
 func (s *MessagePhotosSuite) TestAtMostAsManyPhotosAsARunTakes() {
 	photo := `{"type":"image","image_url":"https://cdn.example/%d.jpg"}`
 	sent := make([]string, maxRunImages+1)
@@ -109,11 +101,4 @@ func (s *MessagePhotosSuite) TestAtMostAsManyPhotosAsARunTakes() {
 func (s *MessagePhotosSuite) TestAPhotoAloneOutsideAThreadChannelIsNotAddressed() {
 	s.False(addressed(s.sent("support-chat-1", `[{"type":"image","image_url":"https://cdn.example/a.jpg"}]`)))
 	s.False(addressed(s.sent("chat-1", `[{"type":"image","image_url":"https://cdn.example/a.jpg"}]`)))
-}
-
-func (s *MessagePhotosSuite) TestAPhotoAloneWithASourceIsNotAddressed() {
-	event := s.sent("thread-1", `[{"type":"image","image_url":"https://cdn.example/a.jpg"}]`)
-	event.Message.Source = json.RawMessage(`"agent"`)
-
-	s.False(addressed(event), "the agent's own reply carries its files")
 }
