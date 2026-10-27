@@ -1,0 +1,130 @@
+name: Integration (router)
+# The router's `-tags integration` suites that need Postgres, each package in its own job on its
+# own Postgres and Redis. CI (unit) runs `go test ./...` without the tag, so these ran only on
+# laptops. Not a required check. Vendor suites (tts, stt, llm, sts, search, imagegen, detection)
+# need API keys, so they are not here. imagerouter and dlc skip themselves on CI: AI-2040.
+on:
+  push:
+    branches: [ "main", "accelerate" ]
+    paths:
+      - 'acceleration/**'
+      - '!**/*.md'
+      - 'go.work'
+      - 'go.work.sum'
+      - '.github/workflows/integration.yml'
+  pull_request:
+    branches: [ "**" ]
+    paths:
+      - 'acceleration/**'
+      - '!**/*.md'
+      - 'go.work'
+      - 'go.work.sum'
+      - '.github/workflows/integration.yml'
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: integration (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - cmd/router
+          - cmd/usage
+          - internal/agent
+          - internal/api
+          - internal/appconfig
+          - internal/channels
+          - internal/concurrency
+          - internal/connectors/core
+          - internal/connectors/credentialstores/pgsealed
+          - internal/connectors/resolver
+          - internal/decisionrouter
+          - internal/eventforward
+          - internal/harness
+          - internal/knowledge/urls
+          - internal/live
+          - internal/llmrouter
+          - internal/metered
+          - internal/omnichannel
+          - internal/phone
+          - internal/policy
+          - internal/quota
+          - internal/routing
+          - internal/sandbox/daytona
+          - internal/sandbox/egress
+          - internal/scheduling
+          - internal/session
+          - internal/store
+          - internal/streamapp
+          - internal/stsrouter
+          - internal/sttrouter
+          - internal/tts/voices
+          - internal/ttsrouter
+          - internal/usage
+          - internal/usage/ledger
+          - internal/usage/server
+          - internal/users
+        # A test that fails on CI at the base is skipped in its job, so the rest of the package
+        # still gates. `skip` is a `go test -skip` regex: `^Suite$/^Test$`, the suite named too.
+        include:
+          # AI-2003
+          - package: internal/api
+            skip: '^TestConnectionProxyOffSuite$/^TestTheConnectionEndpointsAnswerAsOnBase$'
+          # AI-2036
+          - package: internal/policy
+            skip: '^TestPolicySuite$/^TestAColdStartReadsItsFirstAccountsInBatches$'
+          # AI-2037
+          - package: internal/connectors/resolver
+            skip: '^TestResolverSuite$/^TestAConnectedConnectionResolvesToACredentialTheProviderTakes$'
+          # AI-2038
+          - package: internal/sandbox/egress
+            skip: '^TestTunnelSuite$/^TestACheckWhoseForwarderLostThePortFindsTheWinnerUp$'
+    # acceleration/internal/config/testing.yaml wins over the environment and names these two
+    # host ports, so the services listen there and no ROUTER_* variable is set.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 56379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: acceleration/go.mod
+          cache-dependency-path: |
+            acceleration/go.sum
+            sdks/go/go.sum
+            tui/go.sum
+            benchmark/go.sum
+
+      - name: Test ${{ matrix.package }}
+        run: go test -tags integration -p 1 -count=1 -timeout 30m -skip "$SKIP" ./${{ matrix.package }}
+        env:
+          SKIP: ${{ matrix.skip }}
+        working-directory: acceleration
