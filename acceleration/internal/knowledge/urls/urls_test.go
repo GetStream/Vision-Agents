@@ -44,9 +44,22 @@ type crawler struct {
 	page     search.Page
 	err      error
 	failures int
+	// reads counts the reads made. hold, when set, keeps each read under way until it is
+	// closed, and reading is told when one starts.
+	reads   int
+	hold    chan struct{}
+	reading chan struct{}
 }
 
 func (c *crawler) Read(_ context.Context, address string) (search.Page, error) {
+	c.mu.Lock()
+	c.reads++
+	hold, reading := c.hold, c.reading
+	c.mu.Unlock()
+	if hold != nil {
+		reading <- struct{}{}
+		<-hold
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -262,6 +275,59 @@ func (s *URLsSuite) reindexed(page store.KnowledgeURL) store.KnowledgeURL {
 	queued, err := s.service.Reindex(s.ctx, page.CustomerID, page.ID)
 	s.Require().NoError(err)
 	return s.settled(queued)
+}
+
+// holdReads keeps every read under way until the returned function is called, and returns
+// the channel each read announces itself on.
+func (s *URLsSuite) holdReads() (<-chan struct{}, func()) {
+	hold, reading := make(chan struct{}), make(chan struct{}, 4)
+	s.reader.mu.Lock()
+	s.reader.hold, s.reader.reading = hold, reading
+	s.reader.mu.Unlock()
+	return reading, sync.OnceFunc(func() { close(hold) })
+}
+
+func (s *URLsSuite) readsMade() int {
+	s.reader.mu.Lock()
+	defer s.reader.mu.Unlock()
+	return s.reader.reads
+}
+
+func (s *URLsSuite) TestARefreshDuringAReadIsThatRead() {
+	// A scheduled refresh wants the page read, and a read already going on reads it.
+	reading, release := s.holdReads()
+	defer release()
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
+	s.Require().NoError(err)
+	<-reading
+
+	s.Require().NoError(s.service.enqueue(s.ctx, page))
+	release()
+	s.settled(page)
+
+	s.Never(func() bool { return s.readsMade() > 1 }, 500*time.Millisecond, 20*time.Millisecond,
+		"the refresh read the page a second time")
+}
+
+func (s *URLsSuite) TestAReindexDuringAReadReadsThePageOnceMore() {
+	// Someone asking to read the page again after it changed is not answered by a read that
+	// may have fetched it before they asked.
+	reading, release := s.holdReads()
+	defer release()
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
+	s.Require().NoError(err)
+	<-reading
+
+	_, err = s.service.Reindex(s.ctx, page.CustomerID, page.ID)
+	s.Require().NoError(err)
+	_, err = s.service.Reindex(s.ctx, page.CustomerID, page.ID)
+	s.Require().NoError(err)
+	release()
+
+	s.Eventually(func() bool { return s.readsMade() == 2 }, 10*time.Second, 20*time.Millisecond,
+		"the reindex was not read")
+	s.Never(func() bool { return s.readsMade() > 2 }, 500*time.Millisecond, 20*time.Millisecond,
+		"asking twice during one read reads the page once more, not twice")
 }
 
 func (s *URLsSuite) TestAddingAPageQueuesItsReadRatherThanWaitingOnIt() {
