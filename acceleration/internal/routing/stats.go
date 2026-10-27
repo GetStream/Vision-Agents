@@ -307,6 +307,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	r.watch(config, entry, request, priced)
+	countTraffic(request)
 	entry.Spent.add(request.CostMicros, entry.Attributes[AttributeUsageEstimated] == "true")
 	// Before the row is queued, so an ack that comes back fast finds the hold it settles.
 	request.LimitGrants = r.spent(entry.Owner, request)
