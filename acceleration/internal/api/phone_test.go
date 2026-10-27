@@ -16,6 +16,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/twilio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -494,4 +496,18 @@ func (s *CallStatusSuite) TestADeviceIsNotShownTheCallOutcome() {
 
 	s.Nil(s.client.getSession(opened.Id).CallOutcome)
 	s.NotNil(backend.getSession(opened.Id).CallOutcome, "the backend is shown the outcome of the same session")
+}
+
+func (s *CallStatusSuite) TestABusyStatusEndsItsSessionBeforeTheStartTimeout() {
+	// The suite has no telephony to place a call with, so the session is opened as the phone
+	// service opens one, by the manager.
+	opened, err := s.manager.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	token, _ := s.placedFor(opened.ID())
+
+	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"busy"}}))
+
+	s.Require().Eventually(func() bool { return !s.manager.Running(opened.ID()) }, 10*time.Second, 20*time.Millisecond,
+		"the session waits for its start timeout")
 }
