@@ -1963,17 +1963,17 @@ func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
 }
 
 func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
-	// A lookup returned an account ID, a compaction summarised the result away, and a later
-	// call with that ID was refused as an ID no tool had given.
-	tools := []string{"find_account_by_phone", "get_account", "add_data"}
+	// A lookup returns a member ID and a compaction then summarises the result away. A later
+	// call with that ID still names an ID a tool returned, because the call's record keeps it.
+	tools := []string{"find_member_by_phone", "get_member", "renew_loan"}
 	looked := []llm.Message{
 		{Role: llm.User, Content: "It's five five five dash zero one nine dash four four one six."},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "find_account_by_phone"}}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"account_id": "AC7310", "full_name": "Robin Hale"}`},
-		{Role: llm.Assistant, Content: "I found your account, Robin."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "find_member_by_phone"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"member_id": "MB7310", "full_name": "Robin Hale"}`},
+		{Role: llm.Assistant, Content: "I found your library card, Robin."},
 	}
 	recent := []llm.Message{
-		{Role: llm.User, Content: "Can you add two gigabytes to my line?"},
+		{Role: llm.User, Content: "Can you renew my loan for two more weeks?"},
 	}
 	emitter := NewEmitter(eventBuffer)
 	defer emitter.Close()
@@ -1981,12 +1981,12 @@ func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 		emitter: emitter,
 		history: append(append([]llm.Message(nil), looked...), recent...),
 	}
-	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "Robin Hale asked for more data."})
-	refuel := llm.ToolCall{Name: "add_data", Arguments: `{"account_id":"AC7310","line_id":"LN4","gb_amount":2}`}
+	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "Robin Hale asked to renew a loan."})
+	renewal := llm.ToolCall{Name: "renew_loan", Arguments: `{"member_id":"MB7310","branch_id":"BR4","weeks":2}`}
 
-	_, _, _, unfound := unfoundID(agent.History(), refuel, tools)
+	_, _, _, unfound := unfoundID(agent.History(), renewal, tools)
 	s.True(unfound, "the model's history no longer holds the result")
-	_, _, _, unfound = unfoundID(agent.record(), refuel, tools)
+	_, _, _, unfound = unfoundID(agent.record(), renewal, tools)
 	s.False(unfound, "the call's record still does")
 
 	summary := agent.History()[0]
@@ -3531,7 +3531,7 @@ func (s *AgentSuite) TestTalkingOverTheAgentStopsItBeforeTheWordsSettle() {
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
 		"the interruption was never reported")
 
-	s.says(participant, "actually wait, make it six")
+	s.says(participant, "actually wait, make it seven")
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the settled words were never answered")
 	s.Equal(1, countOf[Interrupted](s.reported()),

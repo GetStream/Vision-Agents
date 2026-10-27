@@ -403,7 +403,7 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 // bounded: only while the agent holds the floor, at most overlapAsks per utterance, and only
 // once the words have grown by overlapReaskWords since the last ask. An ask still in flight
 // is replaced rather than waited on, so "okay" does not occupy the controller while the
-// caller has already said "wait, make it six".
+// caller has already said "wait, make it seven".
 func (c *converse) overlap(transcript stt.Transcript, saying string, state floor) []Action {
 	if state.Quiet || state.Speaking == "" || transcript.Final() {
 		return nil
@@ -1243,7 +1243,7 @@ func revisesQueued(held, ready candidate) bool {
 // participant's queued turn is still theirs to be answered.
 //
 // Only words the newer turn does not say are taken in. A revision that kept less of the run
-// ("okay wait" after "okay wait make it six") owes the rest of it; any other revision says it
+// ("okay wait" after "okay wait make it seven") owes the rest of it; any other revision says it
 // all and is left to forgetQueuedRevisedByLocked. A newer utterance that opens with the queued
 // words says them already.
 func (c *converse) forgetQueuedAnsweredOver(ready candidate) string {
