@@ -4,9 +4,11 @@ package api
 
 import (
 	"context"
+	"os"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -23,6 +25,17 @@ func (s *ScheduledTasksSuite) textsFrom(user *testClient, config, kind string) {
 	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
 		CustomerID: s.customerID(), ConfigID: config, Kind: kind, Address: s.writerNumber(), UserID: user.userID,
 	}))
+}
+
+// gateOnClosedStore has the gate every text passes read from a store closed for the test, so
+// its opt-out check fails as an unreachable database does, which is no refusal.
+func (s *ScheduledTasksSuite) gateOnClosedStore() {
+	closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	original := *s.gate
+	*s.gate = *dlc.NewGate(closed, s.live.Redis(), s.sandbox, nil)
+	s.T().Cleanup(func() { *s.gate = original })
 }
 
 // agentOnSMS is a scheduling agent answering on the text line number.
@@ -105,4 +118,25 @@ func (s *ScheduledTasksSuite) TestATextOnALineWhoseCredentialsDoNotOpenIsAFailur
 	failure := s.failure(err)
 	s.Equal(scheduling.ReasonFailed, failure.Reason)
 	s.False(failure.Final, "a line put right by the next attempt delivers")
+}
+
+// Only the gate's refusal makes a text unreachable (internal/channels/service.go reach). A gate
+// that cannot read is the router failing, so the run is tried again rather than given up on.
+func (s *ScheduledTasksSuite) TestATextWhoseGateCannotReadIsAFailureNotUnreachable() {
+	number := s.lineNumber()
+	s.seedSMSLine(number)
+	config := s.agentOnSMS(number)
+	user := s.data.createUser()
+	s.textsFrom(user, config, "sms")
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"sms"})
+	s.Require().NoError(s.reachOf(config, user, "sms"), "with a gate that reads, the text reaches them")
+	s.gateOnClosedStore()
+
+	_, err := s.deliverNow(s.tasksOf(user)[0], time.Now(), "")
+
+	s.ErrorContains(err, "database is closed")
+	failure := s.failure(err)
+	s.Equal(scheduling.ReasonFailed, failure.Reason)
+	s.False(failure.Final, "a gate that reads again delivers on the next attempt")
 }
