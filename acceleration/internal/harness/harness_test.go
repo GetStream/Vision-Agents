@@ -28,7 +28,7 @@ const settleFor = 3 * time.Second
 var errModelDown = errors.New("the model is down")
 
 // overloaded is a failure the provider named as its own and passing.
-var overloaded = &llm.ProviderFailure{Err: errModelDown, Code: "overloaded", Transient: true}
+var overloaded = &llm.ProviderFailure{Err: errModelDown, Transient: true}
 
 // stubLLM answers whatever it is asked with whatever the test has queued, and only when
 // the test says so, which is what lets a task be caught mid-flight.
@@ -1687,7 +1687,7 @@ func (s *HarnessSuite) TestWorkWhoseRequestTheProviderRefusesIsNotAskedAgain() {
 	// refused again, and each attempt is paid for.
 	s.build(true)
 	s.slow.failures = 1
-	s.slow.failure = &llm.ProviderFailure{Err: errors.New("the request was refused"), Code: "invalid_request"}
+	s.slow.failure = &llm.ProviderFailure{Err: errors.New("the request was refused")}
 	s.slow.automatic = "It is 12.63."
 	s.respond("turn-1", "what is 15% of 84.20")
 
