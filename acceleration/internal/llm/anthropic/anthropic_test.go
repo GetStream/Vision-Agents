@@ -311,6 +311,17 @@ func (s *AnthropicSuite) TestAnErrorMidStreamFailsTheResponse() {
 	s.ErrorContains(err, "Overloaded")
 	s.Equal(llm.StatusFailed, response.Status)
 	s.Equal("par", response.OutputText)
+	s.True(llm.Transient(err), "overloaded is Anthropic's own and passes")
+}
+
+func (s *AnthropicSuite) TestARefusalMidStreamIsNotTransient() {
+	s.answerWith(http.StatusOK, strings.TrimSuffix(stream(textBlock(0, "par")), "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")+
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Not this\"}}\n\n")
+
+	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+
+	s.ErrorContains(err, "Not this")
+	s.False(llm.Transient(err))
 }
 
 func (s *AnthropicSuite) TestTheCompatibilityPathStaysSelectable() {
