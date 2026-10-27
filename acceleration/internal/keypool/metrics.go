@@ -13,7 +13,7 @@ import (
 // passed in that no provider reads from a variable.
 const unnamedKeyVar = "unknown"
 
-// key_var is the variable a pool's keys are read from (MEM0_API_KEY), a constant in the
+// key_var is the variable a pool's keys are read from (DEEPGRAM_API_KEY), a constant in the
 // code, and status the refused response's HTTP status (refused, rejectsKey): both fixed
 // sets. A key is never a label.
 var refusedAttempts = promauto.NewCounterVec(prometheus.CounterOpts{

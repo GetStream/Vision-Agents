@@ -219,8 +219,11 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 			case <-ctx.Done():
 				// A reply cancelled while it waited ends as a provider's would, with nothing
 				// written. Answering it anyway raced the turn being torn down, so a router
-				// stopped mid-turn could read back a reply it never got.
-				script.Fail(ctx.Err(), "scheduling")
+				// stopped mid-turn could read back a reply it never got. It ends cancelled, not
+				// failed: a failure reaches the conversation as agent.Error, which could finish
+				// an interrupted follow-up as failed before the interruption did, and a failed
+				// follow-up is never run again (replyCommand).
+				script.Cancel()
 			}
 		}()
 		return script.Stream(), nil

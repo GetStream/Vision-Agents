@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +24,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -66,7 +66,9 @@ var tracer = tracing.Tracer("memory/mem0")
 // Options configures a Store. The key falls back to the environment, the way every other
 // provider in this service is configured.
 type Options struct {
-	// APIKey defaults to MEM0_API_KEY.
+	// APIKey defaults to MEM0_API_KEY. It is one key, not a keypool: a mem0 key is scoped to
+	// one project, so keys taken in turn would spread a user's memories across projects, and
+	// mem0 counts its quota per workspace rather than per key.
 	APIKey string
 	// BaseURL defaults to the hosted platform. A self-hosted deployment overrides it.
 	BaseURL string
@@ -88,11 +90,12 @@ type Store struct {
 
 // New validates the options and returns a Store.
 func New(options Options) (*Store, error) {
-	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
-	if keys.Len() == 0 {
+	if options.APIKey == "" {
+		options.APIKey = os.Getenv(apiKeyEnvVar)
+	}
+	if options.APIKey == "" {
 		return nil, errors.New("mem0: " + apiKeyEnvVar + " is required")
 	}
-	options.APIKey = keys.Peek()
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
 	}
@@ -109,7 +112,7 @@ func New(options Options) (*Store, error) {
 	return &Store{
 		apiKey:  options.APIKey,
 		baseURL: strings.TrimSuffix(options.BaseURL, "/"),
-		client:  keys.WrapClient(options.HTTPClient, keypool.Header("Authorization", "Token ")),
+		client:  options.HTTPClient,
 		logger:  options.Logger,
 	}, nil
 }
@@ -191,6 +194,9 @@ func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm
 }
 
 // Truncate deletes everything mem0 knows about one user of one app.
+//
+// What mem0 filed under the agent instead, what the agent said in the user's sessions, has no
+// user id and is left: it is never recalled, and ForgetRun deletes it with its session.
 func (s *Store) Truncate(ctx context.Context, appID, userID string) (memory.Billed, error) {
 	if appID == "" || userID == "" {
 		return memory.Billed{}, stack.Wrap(errors.New("mem0: truncating needs an app id and a user id"))

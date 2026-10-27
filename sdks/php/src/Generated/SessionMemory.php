@@ -20,7 +20,7 @@ final readonly class SessionMemory
         // The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside t...
         /** @var array<string, string>|null */
         public ?array $filter = null,
-        // Who the memories belong to. Empty means the customer.
+        // Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, a...
         public ?string $userId = null,
     ) {
     }

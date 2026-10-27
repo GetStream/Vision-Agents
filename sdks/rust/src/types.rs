@@ -9826,7 +9826,7 @@ pub struct SessionMemory {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub filter: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
-    ///Who the memories belong to. Empty means the customer.
+    ///Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user_id: ::std::option::Option<::std::string::String>,
 }
