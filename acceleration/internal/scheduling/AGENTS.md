@@ -116,7 +116,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestStoreSuite/TestPausingATaskWritesItsHeldOccurrenceMissed`,
   `TestScheduledTasksSuite/TestPausingATaskWritesTheOccurrenceItHeldMissed`,
   `TestStoreSuite/TestAnEditedOneShotWhoseOccurrenceWasHeldComesDueAgainAsItNowReads`,
-  `TestStoreSuite/TestAnEditedOneShotBeingDeliveredKeepsItsClaimAndItsRun`.
+  `TestStoreSuite/TestAnEditedOneShotBeingDeliveredKeepsItsClaimAndItsRun`,
+  `TestStoreSuite/TestAnEditedOneShotWhoseLostWorkerPlacedACallIsCompletedNotRungAgain`,
+  `TestStoreSuite/TestAOneShotMovedOffAnOccurrenceWhoseLostWorkerPlacedACallStaysAtItsNewTime`.
 - **A paused one-shot resumed after its time is completed with one `missed` run, error
   `task_paused` (AI-1602)**, over the API and the tool alike; the tool result names the time in
   the task's zone. `TestAPausedOneShotSleepsThroughItsTimeAsAMissedRun` (unit),
@@ -136,10 +138,20 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksSuite/TestTheAgentCannotResumeAFailedOneShotPastItsTime`.
 - **A call rings once, on an SMS number, never more than 15 min late, and only with ring and
   call limit left in the occurrence (S5).** Too late is `missed` without a call; nobody
-  answering is `not_answered`, final, kept on the run for a worker that takes it over.
+  answering is `not_answered`, final, kept on the run for a worker that takes it over and for
+  a retry, whatever would stop that retry's call.
   `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered`,
-  `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`.
+  `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`,
+  `TestScheduledTasksSuite/TestAUserWhoWritesOnlyOnWhatsAppIsNotRung`,
+  `TestScheduledTasksSuite/TestAnAgentOnlyOnWhatsAppHasNoLineToRingFrom`,
+  `TestScheduledTasksSuite/TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIsMissedWithoutACall`,
+  `TestScheduledTasksSuite/TestACallTheOccurrenceHasTimeToRingButNotToHoldIsMissedWithoutACall`,
+  `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsNotAnswered`,
+  `TestStoreSuite/TestARunsCallKeepsTheReasonItEndedUnderForTheWorkerTakingItOver`,
+  `TestScheduledTasksSuite/TestARetryShortOfTimeAfterAnUnansweredCallIsNotAnswered`,
+  `TestScheduledTasksSuite/TestARetryAQuarterHourLateAfterAnUnansweredCallIsNotAnswered`,
+  `TestScheduledTasksSuite/TestARetryWhileTheUserIsOnACallAfterAnUnansweredCallIsNotAnswered`.
 - **A repeat `Describe` would misstate is refused (S18)**; a stored one still runs.
   `TestARepeatItsDescriptionWouldMisstateIsRefused` (unit and `ScheduledTasksSuite`),
   `TestAStoredRepeatNowRefusedStillRuns` (unit).
