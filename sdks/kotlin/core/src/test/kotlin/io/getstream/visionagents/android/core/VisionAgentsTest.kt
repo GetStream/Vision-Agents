@@ -177,6 +177,18 @@ class VisionAgentsTest {
     }
 
     @Test
+    fun `a session names the user's timezone only when one is given`() = runTest {
+        router.answer = { Reply(201, sessionJson()) }
+
+        agents.sessions.create(SessionOptions(timezone = "Europe/Skopje"))
+        agents.sessions.create(SessionOptions())
+
+        val (zoned, plain) = router.requests.map { Json.parseToJsonElement(it.body).jsonObject }
+        assertEquals(JsonPrimitive("Europe/Skopje"), zoned["timezone"])
+        assertEquals(null, plain["timezone"])
+    }
+
+    @Test
     fun `memory is the signed-in user's, narrowed by the labels asked for`() = runTest {
         router.answer = { Reply(201, sessionJson()) }
         agents.setUser(User("jlahey"), "unused")

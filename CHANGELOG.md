@@ -47,7 +47,7 @@ not connect.
 
 `SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.
 
-### Kotlin sessions remember the user, lists filter by date and label, and say can interrupt
+### Kotlin sessions remember the user and name their timezone, lists filter by date and label, and say can interrupt
 
 `SessionOptions.memory` in the Kotlin SDK (a `SessionOptions.Memory` of `filter` and `appId`)
 sends `memory` with `user_id` set to the user `setUser` named, as Swift's `memory` does, so a
@@ -56,7 +56,9 @@ incognito session still remembers nothing. `SessionQuery` takes `createdSince` a
 `createdBefore` (`kotlin.time.Instant`, sent as `filter.created_at` `$gte` and `$lt`),
 `custom` (sent as `filter.custom`, every pair held) and `sort` (`SessionQuery.Sort.UpdatedAt`
 or `Relevance`, sent as `sort: [{"field": ...}]`). `AgentSession.say(text, interrupt = true)`
-sends `interrupt` and then `say`, so the reply in flight stops before the words are spoken.
+sends `interrupt` and then `say`, so the reply in flight stops before the words are spoken. `SessionOptions.timezone`
+(an IANA zone, such as `TimeZone.getDefault().id`) is sent as `timezone`, so the agent reads dates
+in the user's zone and remembers it for the scheduled tasks that follow.
 
 ### A tool on a speech-to-speech conversation can say how it is going
 

@@ -76,6 +76,13 @@ public data class SessionOptions(
      * an [incognito] session never does.
      */
     val memory: Memory? = null,
+    /**
+     * The user's IANA zone, such as `TimeZone.getDefault().id`, which the device knows and the
+     * router does not. The agent reads dates in it, and it is remembered as the user's for the
+     * scheduled tasks that follow. Null sends none, and a zone the router does not know is
+     * refused.
+     */
+    val timezone: String? = null,
 ) {
     /**
      * What a session remembers about the user [Backend.setUser] named. It is always theirs: a

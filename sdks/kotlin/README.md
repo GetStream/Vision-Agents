@@ -101,6 +101,13 @@ val chat = agents.agent("docs").chat(
 `appId` keeps two of your apps sharing one memory account apart. Left null, nothing is
 remembered.
 
+`timezone` names the user's zone, which the phone knows and the router does not, so the agent
+reads "at six" in it and remembers it for the scheduled tasks that follow:
+
+```kotlin
+SessionOptions(memory = SessionOptions.Memory(), timezone = TimeZone.getDefault().id)
+```
+
 ### A tool that runs on the phone
 
 The agent runs in the backend; a tool you give it runs here. That is the point: it can read
