@@ -28,6 +28,9 @@ var ErrNoGrant = errors.New("store: no such grant")
 // ErrTooManyGrants is a grant past MaxLiveGrants live in its organization.
 var ErrTooManyGrants = errors.New("store: the organization has as many live grants as it may")
 
+// ErrGrantExpired is an unrevoke of a grant past its expires_at, which could never be drawn.
+var ErrGrantExpired = errors.New("store: the grant has expired")
+
 // LimitGrant is a one-time amount one subject may spend past its own spent limits, until it is
 // used up, expires or is revoked. UsedMicros is what it paid for: the billable cost of the
 // request rows that name it, added as the writer writes them (AddGrantUses).
@@ -191,6 +194,68 @@ func (s *Store) RevokeGrant(ctx context.Context, organizationID string, id int64
 		return LimitGrant{}, stack.Wrap(fmt.Errorf("store: revoke grant: %w", err))
 	}
 	return revoked, nil
+}
+
+// UnrevokeGrant makes a revoked grant of the organization, or of any when organizationID is
+// empty, live again, and records it with the reason. Unrevoking one that is not revoked
+// changes nothing and records nothing. An expired grant is ErrGrantExpired, and one that would
+// be past MaxLiveGrants live in its organization ErrTooManyGrants: the count and the write
+// hold the organization's lock, as AddGrant's do.
+func (s *Store) UnrevokeGrant(ctx context.Context, organizationID string, id int64, reason string, audit LimitAudit) (LimitGrant, error) {
+	var unrevoked LimitGrant
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// The organization's lock is taken before the row's, as AddGrant takes it before it
+		// writes, and an organization id is never changed.
+		found, err := grantOf(ctx, tx, organizationID, id, false)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('limit_grants:' || ?, 0))", found.OrganizationID); err != nil {
+			return err
+		}
+		before, err := grantOf(ctx, tx, found.OrganizationID, id, true)
+		if err != nil {
+			return err
+		}
+		unrevoked = before
+		if before.RevokedAt == nil {
+			return nil
+		}
+		if before.ExpiresAt != nil && !time.Now().Before(*before.ExpiresAt) {
+			return ErrGrantExpired
+		}
+		if before.UsedMicros < before.AmountMicros {
+			query := tx.NewSelect().Model((*LimitGrant)(nil)).Where("organization_id = ?", before.OrganizationID)
+			live, err := whereLive(query, bun.Safe("now()")).Count(ctx)
+			if err != nil {
+				return err
+			}
+			if live >= MaxLiveGrants {
+				return ErrTooManyGrants
+			}
+		}
+		unrevoked.RevokedAt, unrevoked.RevokedBy = nil, ""
+		if _, err := tx.NewUpdate().Model(&unrevoked).Column("revoked_at", "revoked_by").
+			WherePK().Returning("*").Exec(ctx); err != nil {
+			return err
+		}
+		if audit.CustomerID == "" {
+			audit.CustomerID = unrevoked.OrganizationID
+		}
+		after := grantFields(&unrevoked)
+		after["unrevoke_reason"] = reason
+		return recordAuditEntry(ctx, tx, audit.entry("grant:"+strconv.FormatInt(id, 10), string(unrevoked.Subject), AuditUpdated,
+			fieldChanges(grantFields(&before), after)))
+	})
+	for _, known := range []error{ErrNoGrant, ErrGrantExpired, ErrTooManyGrants} {
+		if errors.Is(err, known) {
+			return LimitGrant{}, known
+		}
+	}
+	if err != nil {
+		return LimitGrant{}, stack.Wrap(fmt.Errorf("store: unrevoke grant: %w", err))
+	}
+	return unrevoked, nil
 }
 
 // GrantFilter picks one organization's grants. Each empty field is every grant.

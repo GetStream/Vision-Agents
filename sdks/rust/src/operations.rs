@@ -2673,6 +2673,26 @@ impl Client {
         )
         .await
     }
+    /// Unrevoke a grant
+    ///
+    /// `POST /v1/manage/spend/limits/grants/{grant_id}/unrevoke` (`manageUnrevokeLimitGrant`).
+    pub async fn manage_unrevoke_limit_grant(
+        &self,
+        grant_id: &str,
+        body: &types::LimitGrantUnrevocation,
+    ) -> Result<types::LimitGrant> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/manage/spend/limits/grants/{grant_id}/unrevoke",
+                grant_id = segment(grant_id)
+            ),
+            None::<&()>,
+            Some(body),
+            "manageUnrevokeLimitGrant",
+        )
+        .await
+    }
     /// Read what subjects spent against their limits
     ///
     /// `GET /v1/manage/spend/limits/usage` (`manageGetLimitUsage`).
@@ -3682,6 +3702,26 @@ impl Client {
             None::<&()>,
             Some(body),
             "revokeLimitGrant",
+        )
+        .await
+    }
+    /// Unrevoke a grant
+    ///
+    /// `POST /v1/spend/limits/grants/{grant_id}/unrevoke` (`unrevokeLimitGrant`).
+    pub async fn unrevoke_limit_grant(
+        &self,
+        grant_id: &str,
+        body: &types::LimitGrantUnrevocation,
+    ) -> Result<types::LimitGrant> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/spend/limits/grants/{grant_id}/unrevoke",
+                grant_id = segment(grant_id)
+            ),
+            None::<&()>,
+            Some(body),
+            "unrevokeLimitGrant",
         )
         .await
     }

@@ -103,7 +103,7 @@ def sync_detailed(
     """Revoke a grant
 
      The next admission no longer draws on it; work already admitted finishes and still counts. The grant
-    and what it paid for stay. Revoking it again changes nothing.
+    and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 
     Server-side only: one server-side credential of any app grants for any subject of its organization.
 
@@ -140,7 +140,7 @@ def sync(
     """Revoke a grant
 
      The next admission no longer draws on it; work already admitted finishes and still counts. The grant
-    and what it paid for stay. Revoking it again changes nothing.
+    and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 
     Server-side only: one server-side credential of any app grants for any subject of its organization.
 
@@ -172,7 +172,7 @@ async def asyncio_detailed(
     """Revoke a grant
 
      The next admission no longer draws on it; work already admitted finishes and still counts. The grant
-    and what it paid for stay. Revoking it again changes nothing.
+    and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 
     Server-side only: one server-side credential of any app grants for any subject of its organization.
 
@@ -207,7 +207,7 @@ async def asyncio(
     """Revoke a grant
 
      The next admission no longer draws on it; work already admitted finishes and still counts. The grant
-    and what it paid for stay. Revoking it again changes nothing.
+    and what it paid for stay. Revoking it again changes nothing; unrevoke makes it live again.
 
     Server-side only: one server-side credential of any app grants for any subject of its organization.
 

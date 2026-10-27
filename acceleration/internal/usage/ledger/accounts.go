@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
@@ -51,8 +52,23 @@ var (
 	ErrDefaultTier = errors.New("ledger: the default tier cannot be deleted")
 	// ErrIdempotencyKeyReused is an account write made under a key that already holds a
 	// request of another operation or organization, or with another body (for a credit,
-	// another kind or amount): a writer's bug, since a retry sends the same request.
+	// another kind, amount or reversed entry): a writer's bug, since a retry sends the same
+	// request.
 	ErrIdempotencyKeyReused = errors.New("ledger: the idempotency key holds another request")
+	// ErrCreditNotFound is a reversal of an entry that is not there, or is another
+	// organization's.
+	ErrCreditNotFound = errors.New("ledger: no such credit entry in the organization")
+	// ErrNotReversible is a reversal of an entry that is neither a grant nor a reversal.
+	ErrNotReversible = errors.New("ledger: the credit entry cannot be reversed")
+	// ErrAlreadyReversed is a reversal of an entry another entry already reverses.
+	ErrAlreadyReversed = errors.New("ledger: the credit entry is already reversed")
+)
+
+// uniqueViolation is Postgres refusing a row a unique index already holds, and
+// reversesIndex the index that lets an entry be reversed once.
+const (
+	uniqueViolation = "23505"
+	reversesIndex   = "credit_entries_reverses_idx"
 )
 
 // InvalidError is a write refused for what it holds, with what is wrong.
@@ -123,7 +139,11 @@ type CreditEntry struct {
 	Note           string           `bun:"note,notnull"`
 	Actor          string           `bun:"actor,notnull"`
 	ActorName      string           `bun:"actor_name,notnull"`
-	CreatedAt      time.Time        `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	// ReversesID is the entry this adjustment reverses, 0 for none.
+	ReversesID int64 `bun:"reverses_id,nullzero"`
+	// ReversedByID is the entry reversing this one, 0 for none, as creditEntries reads it.
+	ReversedByID int64     `bun:"reversed_by_id,scanonly"`
+	CreatedAt    time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 }
 
 // Contract is the entry as the contract has it.
@@ -131,8 +151,21 @@ func (e CreditEntry) Contract() usage.CreditEntry {
 	return usage.CreditEntry{
 		ID: e.ID, OrganizationID: e.OrganizationID, Kind: e.Kind, AmountMicros: e.AmountMicros,
 		Reference: e.Reference, IdempotencyKey: e.IdempotencyKey, Note: e.Note,
-		Actor: e.Actor, ActorName: e.ActorName, CreatedAt: e.CreatedAt.UTC(),
+		Actor: e.Actor, ActorName: e.ActorName, ReversesID: e.ReversesID, ReversedByID: e.ReversedByID,
+		CreatedAt: e.CreatedAt.UTC(),
 	}
+}
+
+// reversible reports whether another entry may reverse this one: a grant, or a reversal, so
+// a grant's revocation can be undone, and that undone again.
+func (e CreditEntry) reversible() bool {
+	return e.Kind == usage.CreditGrant || (e.Kind == usage.CreditAdjustment && e.ReversesID != 0)
+}
+
+// creditEntries selects credit entries into model, each with the entry reversing it.
+func creditEntries(db bun.IDB, model any) *bun.SelectQuery {
+	return db.NewSelect().Model(model).ColumnExpr("ce.*").ColumnExpr("reversal.id AS reversed_by_id").
+		Join("LEFT JOIN credit_entries AS reversal ON reversal.reverses_id = ce.id")
 }
 
 // ManageAudit is one management write: who made it, on which organization (none for a
@@ -535,16 +568,22 @@ type statusRequest struct {
 }
 
 // creditRequest is what a credit asks for, as a replay is compared: an entry's reference
-// and note are not.
+// and note are not. ReversesID is left out when 0, so a request without one has the digest
+// it had before reversals.
 type creditRequest struct {
 	Kind         usage.CreditKind `json:"kind"`
 	AmountMicros int64            `json:"amount_micros"`
+	ReversesID   int64            `json:"reverses_id,omitempty"`
 }
 
 // AddCredit writes the entry and adds its amount to the organization's credit, once per
 // idempotency key: an entry already written under the key is answered as it is, with false,
 // and changes nothing. Only the sign and the key are checked: a suspended account takes
-// credit too. The entry's ID and CreatedAt are the service's.
+// credit too, and a balance may go below 0. The entry's ID and CreatedAt are the service's.
+//
+// An entry with ReversesID reverses that entry of the organization (ErrCreditNotFound): an
+// adjustment of minus its amount, of a grant or of another reversal (ErrNotReversible), and
+// at most once (ErrAlreadyReversed).
 func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry, bool, error) {
 	if problem := entry.Kind.AmountProblem(entry.AmountMicros); problem != "" {
 		return CreditEntry{}, false, invalid("%s", problem)
@@ -552,8 +591,11 @@ func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry,
 	if entry.AmountMicros > usage.MaxCostMicros || entry.AmountMicros < -usage.MaxCostMicros {
 		return CreditEntry{}, false, invalid("amount_micros is at most %d either way", int64(usage.MaxCostMicros))
 	}
+	if entry.ReversesID != 0 && entry.Kind != usage.CreditAdjustment {
+		return CreditEntry{}, false, invalid("a reversal is an adjustment: kind must be adjustment, not %s", entry.Kind)
+	}
 	request, err := newRequest(entry.IdempotencyKey, ActionAddCredit, entry.OrganizationID,
-		creditRequest{Kind: entry.Kind, AmountMicros: entry.AmountMicros})
+		creditRequest{Kind: entry.Kind, AmountMicros: entry.AmountMicros, ReversesID: entry.ReversesID})
 	if err != nil {
 		return CreditEntry{}, false, err
 	}
@@ -563,7 +605,7 @@ func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry,
 	if !storable(entry.Reference) || !storable(entry.Note) {
 		return CreditEntry{}, false, invalid("reference and note are UTF-8 without a NUL character")
 	}
-	entry.ID, entry.CreatedAt = 0, time.Time{}
+	entry.ID, entry.ReversedByID, entry.CreatedAt = 0, 0, time.Time{}
 	written := false
 	err = l.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		before, err := lockAccount(ctx, tx, entry.OrganizationID)
@@ -575,24 +617,34 @@ func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry,
 			return err
 		}
 		if !first {
-			if err := tx.NewSelect().Model(&entry).Where("idempotency_key = ?", entry.IdempotencyKey).Scan(ctx); err != nil {
+			if err := creditEntries(tx, &entry).Where("ce.idempotency_key = ?", entry.IdempotencyKey).Scan(ctx); err != nil {
 				return fmt.Errorf("ledger: add credit: %w", err)
 			}
 			return nil
 		}
+		if entry.ReversesID != 0 {
+			if err := checkReversal(ctx, tx, entry); err != nil {
+				return err
+			}
+		}
 		// A credit written before manage_requests holds its key in credit_entries alone: it
 		// is answered as a replay when it is the same entry.
 		var inserted []CreditEntry
-		if err := tx.NewInsert().Model(&entry).On("CONFLICT (idempotency_key) DO NOTHING").
-			Returning("*").Scan(ctx, &inserted); err != nil {
+		err = tx.NewInsert().Model(&entry).On("CONFLICT (idempotency_key) DO NOTHING").Returning("*").Scan(ctx, &inserted)
+		var refused pgdriver.Error
+		if errors.As(err, &refused) && refused.Field('C') == uniqueViolation && refused.Field('n') == reversesIndex {
+			return ErrAlreadyReversed
+		}
+		if err != nil {
 			return fmt.Errorf("ledger: add credit: %w", err)
 		}
 		if len(inserted) == 0 {
 			var existing CreditEntry
-			if err := tx.NewSelect().Model(&existing).Where("idempotency_key = ?", entry.IdempotencyKey).Scan(ctx); err != nil {
+			if err := creditEntries(tx, &existing).Where("ce.idempotency_key = ?", entry.IdempotencyKey).Scan(ctx); err != nil {
 				return fmt.Errorf("ledger: add credit: %w", err)
 			}
-			if existing.OrganizationID != entry.OrganizationID || existing.Kind != entry.Kind || existing.AmountMicros != entry.AmountMicros {
+			if existing.OrganizationID != entry.OrganizationID || existing.Kind != entry.Kind ||
+				existing.AmountMicros != entry.AmountMicros || existing.ReversesID != entry.ReversesID {
 				return ErrIdempotencyKeyReused
 			}
 			entry = existing
@@ -611,6 +663,28 @@ func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry,
 		return CreditEntry{}, false, err
 	}
 	return entry, written, nil
+}
+
+// checkReversal refuses entry when the entry it reverses is not the organization's, cannot be
+// reversed, or is not its amount the other way. Whether it is reversed already is the unique
+// index's to refuse, when entry is written.
+func checkReversal(ctx context.Context, tx bun.Tx, entry CreditEntry) error {
+	var reversed CreditEntry
+	err := tx.NewSelect().Model(&reversed).Where("id = ?", entry.ReversesID).Where("organization_id = ?", entry.OrganizationID).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrCreditNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("ledger: add credit: %w", err)
+	}
+	if !reversed.reversible() {
+		return ErrNotReversible
+	}
+	if entry.AmountMicros != -reversed.AmountMicros {
+		return invalid("a reversal is minus the amount of the entry it reverses: amount_micros must be %d, not %d",
+			-reversed.AmountMicros, entry.AmountMicros)
+	}
+	return nil
 }
 
 // creditAudit is what an add_credit audit row keeps: the account before, and after it the
@@ -633,14 +707,14 @@ type CreditPosition struct {
 }
 
 // CreditEntries are the organization's credit entries after the position, newest first, at
-// most limit of them; and whether there are more.
+// most limit of them, each with the entry reversing it; and whether there are more.
 func (l *Ledger) CreditEntries(ctx context.Context, organization string, after *CreditPosition, limit int) ([]CreditEntry, bool, error) {
 	var rows []CreditEntry
-	query := l.db.NewSelect().Model(&rows).Where("organization_id = ?", organization)
+	query := creditEntries(l.db, &rows).Where("ce.organization_id = ?", organization)
 	if after != nil {
-		query = query.Where("(created_at, id) < (?, ?)", after.CreatedAt, after.ID)
+		query = query.Where("(ce.created_at, ce.id) < (?, ?)", after.CreatedAt, after.ID)
 	}
-	if err := query.Order("created_at DESC", "id DESC").Limit(limit + 1).Scan(ctx); err != nil {
+	if err := query.OrderExpr("ce.created_at DESC, ce.id DESC").Limit(limit + 1).Scan(ctx); err != nil {
 		return nil, false, fmt.Errorf("ledger: credit entries: %w", err)
 	}
 	more := len(rows) > limit
