@@ -1,6 +1,6 @@
 # internal/sandbox/egress
 
-The router's egress proxy for code in a sandbox. The sandbox holds a placeholder in an env var; the proxy puts the connection's token in its place on the way out. The token never enters the sandbox. A host of the agent config's `allowed_domains` gets the sandbox's bytes as they are. `cmd/router` serves it on `code_sandbox.proxy_addr` (`ROUTER_CODE_SANDBOX_PROXY_ADDR`) when that is set.
+The router's egress proxy for code in a sandbox. The sandbox holds a placeholder in an env var; the proxy puts the connection's token in its place on the way out. The token never enters the sandbox. A host of the agent config's `allowed_domains` gets the sandbox's bytes as they are. `cmd/router` serves it on `code_sandbox.proxy_addr` (`ROUTER_CODE_SANDBOX_PROXY_ADDR`) when that is set. Under an overlap deploy (the router inherits its public listener, `ROUTER_LISTEN_FD`) the new router finds that address held and tries it again every 100 ms; the old one, when its drain starts, closes only its listener, so the tunnels it holds run until it exits (AI-2030). Otherwise a held address fails the start and the proxy is served until the router exits.
 
 When `code_sandbox.proxy_public_url` is `https://<public IPv4 address>:port`, that listener serves TLS, so the sandbox's proxy credential in `Proxy-Authorization` never crosses the network in the clear. Each handshake gets a certificate for that IP address (an IP SAN, no DNS name), signed by the router CA (`proxy_ca_cert`, `proxy_ca_key`), as each tunnel's is (`Proxy.ListenerTLS`). A plain-HTTP CONNECT on that port gets no answer, and a client that does not trust the CA completes no handshake. With `http://` or no public URL it serves plain HTTP.
 
@@ -27,7 +27,7 @@ Most of a sandbox's clients cannot use a TLS proxy URL (curl, urllib, wget, node
 
 Code in the sandbox reads a granted host and writes through the connector's tools, which a binding can make ask the user first. So the proxy lets a request to a granted host through only when it is a GET or a HEAD, or one of the grants' `reads` (`core.SandboxRead`) matches it: the method as sent (case-sensitive, RFC 9110 section 9.1), the host, and a `path.Match` pattern over the path. Any other request gets 403, `egress: POST api.github.com/repos/o/r/issues refused: code in the sandbox only reads through a connector; write with the connector's tools`, reaches no host and asks for no token, with the placeholder or without it.
 
-- A read lists a request that reads with another method: GitHub's is `POST github.com/*/*/git-upload-pack`, which git clone and fetch send (gitprotocol-http(5)). A push's `git-receive-pack` is refused.
+- A read lists a request that reads with another method: GitHub's is `POST github.com/*/*/git-upload-pack`, which git clone and fetch send (gitprotocol-http(5)). A push is refused at its first request, the `GET .../info/refs?service=git-receive-pack`: git prints that refusal's body (the hint) and drops the body of a refused POST.
 - A GraphQL read (`graphql: true`) takes a POST of queries alone, where a query and a mutation are both a POST: GitHub's is `api.github.com/graphql`, which `gh` reads through. It names no method, so a router that predates the field reads the stored revision as a read of no method and refuses the POST. The proxy reads the body (`onlyQueries`, `graphql.go`), puts the same bytes back for the host, and refuses with the same 403 unless:
   - the URL has no query, and `Content-Type` is `application/json`, with no charset or UTF-8 (GraphQL over HTTP, https://http-spec.graphql.org/draft/, 4.4 POST): `application/graphql`, a form or gzip are refused;
   - the body is 1 MiB at most and valid JSON: one request object, or a non-empty batch (an array) of them;
@@ -73,6 +73,24 @@ Code in the sandbox reads a granted host and writes through the connector's tool
 - `BeforeRun` asks `Bind` for each late grant's connection and puts the connection and scheme it gives, alone, in the record entry, so the proxy sends the token from the next request on. It withdraws a grant whose connection needs a reconnect and stores the record again, which renews its TTL. With no grant left and no allowed domain, or after a `Close` the store refused, it deletes the record instead.
 - `Close` deletes the record: the next request through the proxy is a 407.
 
+## Metrics
+
+`metrics.go` holds the proxy's Prometheus metrics, served on the router's `/metrics`.
+
+- `router_sandbox_egress_requests_total{host, method, decision, status}` counts requests. A tunnel to a granted host is counted by the requests in it, not by its CONNECT. A tunnel to an allowed domain is counted by its CONNECT, since the proxy reads nothing in it. `status` is the class the sandbox got (`2xx`, `4xx`).
+- `decision` is one of:
+  - `token`: the placeholder was put in place of the token.
+  - `granted_no_token`: a request to a granted host with no placeholder, sent as it is.
+  - `blind`: a tunnel to an allowed domain.
+  - `denied_host`: a host, a port or a tunnel's `Host` the sandbox has no grant for, or a grant that has ended.
+  - `denied_auth`: no proxy credential, or an unknown or expired one (407).
+  - `denied_method`: a method a granted host does not take.
+  - `denied_request`: a request the proxy does not serve: not a CONNECT, a CONNECT with no port, or an upgrade.
+  - `error`: the proxy could not serve it: the grants unreadable, a connection it could not take over, or a connection that gives no token.
+- `router_sandbox_egress_upstream_seconds{host}` is the time a granted host took to answer a request, to its response header or its failure.
+- `router_sandbox_egress_tunnels_open` is the tunnels open now, to granted hosts and to allowed domains.
+- `host` is the entry of a grant's hosts that covers the request, as the connector's manifest wrote it (`*.example.com` is one value, whatever name under it is asked for), or `other` for any other host: an allowed domain, a refused host or a refused credential. `method` is one of RFC 9110's, else `other`. A token, placeholder, proxy credential, session or user is never a label value: the sandbox chooses its hosts and methods, and the label set must not grow with it.
+
 ## Tests
 
-`proxy_test.go` (tag `integration`, needs `ROUTER_REDIS_ADDR`) runs the attack table A1-A14 of the sandbox broker waves against a proxy whose hosts are `httptest` TLS servers and whose sandbox is a Go `http.Client` with the proxy URL. `broker_test.go` runs `brokertest` and the broker's own tests through the same proxy. `tunnel_test.go` runs the forwarder and its commands in a shell, under a directory that stands for the sandbox's root, against the proxy served over TLS (needs `python3`).
+`proxy_test.go` (tag `integration`, needs `ROUTER_REDIS_ADDR`) runs the attack table A1-A14 of the sandbox broker waves, and reads the metrics after real requests, against a proxy whose hosts are `httptest` TLS servers and whose sandbox is a Go `http.Client` with the proxy URL. `broker_test.go` runs `brokertest` and the broker's own tests through the same proxy. `tunnel_test.go` runs the forwarder and its commands in a shell, under a directory that stands for the sandbox's root, against the proxy served over TLS (needs `python3`).

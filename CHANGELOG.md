@@ -48,6 +48,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### The agent tells people apart in a group text chat
+
+In a thread several people write in, such as an iMessage group chat or a Slack thread with two people, the reply model is told who wrote each message once a second person has written: `Speaker 1: What are our names?`, each person under `Speaker N` in the order they first wrote, never their phone number or Slack id, with a note that several people are writing. It read every message as one person's, so it answered Kanat as Ana. A 1:1 chat and a session in writing from the dashboard or an SDK send the model what they did (AI-2014).
+
 ### Scheduled calls ring only SMS numbers, and say why they ended
 
 A scheduled call rings only a number the user texts the agent from, from the agent's SMS line; a WhatsApp-only number is not rung (`no_phone_number`, `no_agent_number`). A call with less than its ring and call limit left in the occurrence, or a run by hand over 15 min late, is `missed`. A run taken over after its call keeps the call's reason, such as `not_answered`, and an edited one-shot whose call was placed is completed rather than rung again. A text channel's own failure, such as a store or line credential error, is `delivery_failed`, not `channel_unreachable`.
@@ -71,6 +75,10 @@ Under the egress proxy broker with an `https://` proxy, the check of the TLS tun
 ### Code run again after the user connects a connector runs, instead of returning the old 401
 
 When sandbox code got a 401 because the user had not connected a connector, its result tells the model to run the code again once they connect. The agent's repeat-call guard answered that identical second `run_code` from the first result, so the turn ended on the old 401 although the connection was live. A `run_code` result that says a connector was just connected, or that it is not connected and the user has connected it since, no longer answers a repeat; while the user has not connected it, the repeat is still answered from that result. Every other repeated call is still answered from its earlier result (AI-1987).
+
+### An iMessage group stays silent while one of its people is opted out
+
+A reply to a Linq (iMessage) group reaches everyone in it, so after STOP from any person in the chat the agent sends the group nothing: no answer, no resend, no scheduled delivery, and the others' messages reach no agent (logged at INFO). That person's STOP and START are still confirmed in the group, and their START lifts the silence once nobody in it is opted out. An opt-out from elsewhere, such as STOP in their own chat, silences a group they write in. Linq refusing a keyword confirmation (403 after STOP) is logged at INFO, not as an error. Migration `20261117110000_channel_thread_members` adds the table `channel_thread_members` (AI-2015, AI-2016).
 
 ### A thread message the session refuses is given up at once
 

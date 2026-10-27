@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,16 +60,21 @@ func (g Grant) covers(host string) bool {
 
 // covers says whether host is one of hosts: exact hosts, or *. and a domain.
 func covers(hosts []string, host string) bool {
-	for _, named := range hosts {
-		if domain, wildcard := strings.CutPrefix(named, "*."); wildcard {
+	return named(hosts, host) != ""
+}
+
+// named is the entry of hosts that covers host, or "" when none does.
+func named(hosts []string, host string) string {
+	for _, entry := range hosts {
+		if domain, wildcard := strings.CutPrefix(entry, "*."); wildcard {
 			if host == domain || strings.HasSuffix(host, "."+domain) {
-				return true
+				return entry
 			}
-		} else if host == named {
-			return true
+		} else if host == entry {
+			return entry
 		}
 	}
-	return false
+	return ""
 }
 
 // granted says whether any grant covers host.
@@ -87,9 +93,12 @@ func (r Record) granted(host string) bool {
 // matched, so no other spelling of a path reaches another resource behind a pattern. When a read
 // that matches is a GraphQL one it says graphQL, whatever other reads match: the request reads
 // only if its body holds queries alone.
+// git push's first request, a GET of info/refs for git-receive-pack (gitprotocol-http(5),
+// https://git-scm.com/docs/gitprotocol-http, "Smart Clients"), is not a read: git prints the
+// body of a refusal there to the model, and drops the body of a refused POST.
 func (r Record) reads(host, method string, target *url.URL) (reads, graphQL bool) {
 	if method == http.MethodGet || method == http.MethodHead {
-		return true, false
+		return !strings.HasSuffix(target.Path, "/info/refs") || !slices.Contains(target.Query()["service"], "git-receive-pack"), false
 	}
 	at := target.EscapedPath()
 	if at != target.Path || path.Clean(at) != at {
@@ -106,6 +115,18 @@ func (r Record) reads(host, method string, target *url.URL) (reads, graphQL bool
 		}
 	}
 	return reads, graphQL
+}
+
+// hostLabel is how the metrics name host: the entry of a grant's hosts that covers it, which
+// the connector's manifest wrote, so a wildcard names the domain once whatever the sandbox
+// asks for under it; "other" for a host no grant covers.
+func (r Record) hostLabel(host string) string {
+	for _, grant := range r.Grants {
+		if entry := named(grant.Hosts, host); entry != "" {
+			return entry
+		}
+	}
+	return otherHost
 }
 
 // allowed says whether host is one of the config's allowed domains.

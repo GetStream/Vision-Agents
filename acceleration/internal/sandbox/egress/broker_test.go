@@ -200,7 +200,8 @@ func (s *BrokerSuite) withGit() sandbox.Grant {
 }
 
 // TestCodeInTheSandboxReadsGitHubAndWritesNothing: code clones with the token, and its push is
-// refused at its POST to git-receive-pack, so github.com keeps main as it was. A POST to the
+// refused at its first request, info/refs for git-receive-pack, so github.com keeps main as it
+// was and git prints the refusal's hint. A POST to the
 // REST API reaches no host, and its answer tells the model to write with the connector's tools.
 func (s *BrokerSuite) TestCodeInTheSandboxReadsGitHubAndWritesNothing() {
 	mount, err := s.broker.Prepare(s.ctx, []sandbox.Grant{s.withGit()})
@@ -212,7 +213,8 @@ func (s *BrokerSuite) TestCodeInTheSandboxReadsGitHubAndWritesNothing() {
 	out, err := s.rig.push(s.T(), mount, placeholder, "pushed\n")
 
 	s.Error(err)
-	s.Contains(out, "403")
+	s.Contains(out, "remote: egress: GET github.com/")
+	s.Contains(out, "/info/refs refused: code in the sandbox only reads through a connector; write with the connector's tools")
 	s.Equal("first\n", s.rig.git.file(s.T(), "token.txt"))
 
 	request, err := http.NewRequestWithContext(s.ctx, http.MethodPost, "https://api.github.com/repos/octo/hello/issues", strings.NewReader(`{"title":"x"}`))

@@ -127,7 +127,9 @@ type episodeSource struct {
 	// E.164»). Nil is the id as the provider wrote it.
 	recipient func(id string) string
 	// chats is a thread key that is a chat, not the person a reply reaches: a Linq chat id
-	// (linq.yaml). Its replies reach the person who started the thread (replyTo).
+	// (linq.yaml). Its replies reach the person who started the thread (replyTo) and everyone
+	// else in the chat, its members as far as their messages show them
+	// (store.AddChannelThreadMember), so one of them who opted out silences it (refusesReply).
 	chats bool
 	// oneToOne is whether a chat's raw event says the chat is one person's, not a group, so the
 	// thread records its author as the chat's person (store.SetChannelThreadChatPerson). Nil is
@@ -565,6 +567,14 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 			thread.ChatPerson = message.AuthorID
 		}
 		if err := b.store.SetChannelThreadChatPerson(ctx, thread.ChannelID, thread.ChatPerson); err != nil {
+			return store.ChannelThread{}, store.AgentConfig{}, false, nil, b.unclaim(ctx, thread, *message, err)
+		}
+	}
+	// Before the keywords, so a person who opted out silences the chat with their STOP and with
+	// any message after it (refusesReply). Every author counts, whatever data.chat.is_group
+	// says: a reply reaches whoever is in the chat.
+	if source := episodeSources[message.ConnectorID]; fresh && source.chats {
+		if err := b.store.AddChannelThreadMember(ctx, thread.ChannelID, source.recipientOf(message.AuthorID)); err != nil {
 			return store.ChannelThread{}, store.AgentConfig{}, false, nil, b.unclaim(ctx, thread, *message, err)
 		}
 	}

@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
@@ -475,6 +476,52 @@ func (s *ProxySuite) TestAGrantedHostTakesOnlyAGetOrAHead() {
 	s.Empty(s.granted.requests())
 	s.Equal(asked, s.asked)
 	s.Contains(s.logs.String(), "refused a request that may write")
+}
+
+// TestARefusedMethodIsCountedAndLoggedBounded: a method a granted host does not take is
+// counted as denied_method under its bounded label, and the log keeps only its first 32 bytes.
+func (s *ProxySuite) TestARefusedMethodIsCountedAndLoggedBounded() {
+	long := strings.Repeat("WRITE", 200)
+	posted := s.requestCount("api.github.test", "POST", "denied_method", "4xx")
+	odd := s.requestCount("api.github.test", "other", "denied_method", "4xx")
+
+	for _, method := range []string{http.MethodPost, long} {
+		response, _, err := s.send(s.sandbox(s.credential), s.request(method, "https://api.github.test/echo", "", "{}"))
+		s.Require().NoError(err)
+		s.Equal(http.StatusForbidden, response.StatusCode)
+	}
+
+	s.Equal(posted+1, s.requestCount("api.github.test", "POST", "denied_method", "4xx"))
+	s.Equal(odd+1, s.requestCount("api.github.test", "other", "denied_method", "4xx"))
+	s.Contains(s.logs.String(), long[:32]+"…")
+	s.NotContains(s.logs.String(), long[:33])
+}
+
+// TestGitPushIsRefusedAtItsFirstRequest: git push first GETs info/refs for git-receive-pack,
+// and git shows the model the body of a refusal there; a clone's GET for git-upload-pack
+// reads.
+func (s *ProxySuite) TestGitPushIsRefusedAtItsFirstRequest() {
+	for target, status := range map[string]int{
+		"https://api.github.test/o/r.git/info/refs?service=git-receive-pack":                         http.StatusForbidden,
+		"https://api.github.test/o/r/info/refs?service=git-receive-pack":                             http.StatusForbidden,
+		"https://api.github.test/o/r.git/info/refs?service=git-upload-pack&service=git-receive-pack": http.StatusForbidden,
+		"https://api.github.test/o/r.git/info/refs?service=git-upload-pack":                          http.StatusOK,
+		"https://api.github.test/o/r.git/info/refs":                                                  http.StatusOK,
+		"https://api.github.test/echo?service=git-receive-pack":                                      http.StatusOK,
+	} {
+		s.granted.forget()
+
+		response, body, err := s.send(s.sandbox(s.credential), s.request(http.MethodGet, target, "Bearer "+s.placeholder, ""))
+
+		s.Require().NoError(err, target)
+		s.Equal(status, response.StatusCode, target)
+		if status == http.StatusForbidden {
+			s.Empty(s.granted.requests(), target)
+			s.Contains(body, "refused: code in the sandbox only reads through a connector; write with the connector's tools", target)
+		} else {
+			s.Len(s.granted.requests(), 1, target)
+		}
+	}
 }
 
 // TestAReadTakesItsMethodToItsPathOnItsHostAlone: a grant's read lets one more method through, to
@@ -1517,6 +1564,399 @@ func (s *ProxySuite) TestTheSandboxReadsNoTokenErrorText() {
 	s.Equal("egress: the connection gives no token: github\n", unavailableBody)
 	s.NotContains(s.logs.String(), canary)
 	s.Contains(s.logs.String(), "class=no_credential")
+}
+
+// metric reads one series of the process's metrics, as /metrics shows it: a counter's or a
+// gauge's value, a histogram's sample count. labels is the whole label set; none is a series
+// that has not been touched, which reads 0.
+func (s *ProxySuite) metric(name string, labels map[string]string) float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+	series:
+		for _, metric := range family.GetMetric() {
+			if len(metric.GetLabel()) != len(labels) {
+				continue
+			}
+			for _, label := range metric.GetLabel() {
+				if labels[label.GetName()] != label.GetValue() {
+					continue series
+				}
+			}
+			switch {
+			case metric.GetHistogram() != nil:
+				return float64(metric.GetHistogram().GetSampleCount())
+			case metric.GetGauge() != nil:
+				return metric.GetGauge().GetValue()
+			}
+			return metric.GetCounter().GetValue()
+		}
+	}
+	return 0
+}
+
+// requestCount is the proxy's request counter for one label set.
+func (s *ProxySuite) requestCount(host, method, decision, status string) float64 {
+	return s.metric("router_sandbox_egress_requests_total",
+		map[string]string{"host": host, "method": method, "decision": decision, "status": status})
+}
+
+// labelValues are every label value of the proxy's metrics.
+func (s *ProxySuite) labelValues() []string {
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	var values []string
+	for _, family := range families {
+		if !strings.HasPrefix(family.GetName(), "router_sandbox_egress_") {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				values = append(values, label.GetValue())
+			}
+		}
+	}
+	return values
+}
+
+// tunnelsOpen is the open-tunnels gauge once it has stopped moving: the tunnels an earlier
+// test's sandbox held close a moment after it.
+func (s *ProxySuite) tunnelsOpen() float64 {
+	last := s.metric("router_sandbox_egress_tunnels_open", nil)
+	for stable := 0; stable < 5; {
+		time.Sleep(20 * time.Millisecond)
+		if now := s.metric("router_sandbox_egress_tunnels_open", nil); now != last {
+			last, stable = now, 0
+		} else {
+			stable++
+		}
+	}
+	return last
+}
+
+// TestARequestWithAPlaceholderIsCountedAsAToken: and the host's wait for the answer is timed.
+func (s *ProxySuite) TestARequestWithAPlaceholderIsCountedAsAToken() {
+	counted := s.requestCount("api.github.test", "GET", "token", "2xx")
+	timed := s.metric("router_sandbox_egress_upstream_seconds", map[string]string{"host": "api.github.test"})
+
+	s.get("Bearer " + s.placeholder)
+
+	s.Equal(counted+1, s.requestCount("api.github.test", "GET", "token", "2xx"))
+	s.Equal(timed+1, s.metric("router_sandbox_egress_upstream_seconds", map[string]string{"host": "api.github.test"}))
+}
+
+// TestARequestToAGrantedHostWithNoPlaceholderIsCountedAsGrantedNoToken: it is sent as it is.
+func (s *ProxySuite) TestARequestToAGrantedHostWithNoPlaceholderIsCountedAsGrantedNoToken() {
+	counted := s.requestCount("api.github.test", "GET", "granted_no_token", "2xx")
+	asked := s.requestCount("api.github.test", "GET", "token", "2xx")
+
+	s.get("")
+
+	s.Equal(counted+1, s.requestCount("api.github.test", "GET", "granted_no_token", "2xx"))
+	s.Equal(asked, s.requestCount("api.github.test", "GET", "token", "2xx"))
+}
+
+// TestAnAllowedDomainTunnelIsCountedAsBlindUnderOther: the domain is the customer's to name,
+// so it is not a label value.
+func (s *ProxySuite) TestAnAllowedDomainTunnelIsCountedAsBlindUnderOther() {
+	s.allow("outside.test")
+	counted := s.requestCount("other", "CONNECT", "blind", "2xx")
+
+	_, _, err := s.send(s.direct(), s.request(http.MethodGet, "https://outside.test/echo", "", ""))
+
+	s.Require().NoError(err)
+	s.Equal(counted+1, s.requestCount("other", "CONNECT", "blind", "2xx"))
+	s.NotContains(s.labelValues(), "outside.test")
+}
+
+// TestABlindTunnelThatCannotBeDialedIsCountedAsBlindWithAServerStatus.
+func (s *ProxySuite) TestABlindTunnelThatCannotBeDialedIsCountedAsBlindWithAServerStatus() {
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) { options.Dial = nil }))
+	s.T().Cleanup(s.proxy.Close)
+	s.allow("localhost")
+	counted := s.requestCount("other", "CONNECT", "blind", "5xx")
+
+	s.connectStatus("localhost:443", basic("sbx", s.credential))
+
+	s.Equal(counted+1, s.requestCount("other", "CONNECT", "blind", "5xx"))
+}
+
+// TestAHostOrAPortWithoutAGrantIsCountedAsDeniedHost: a granted host on another port keeps its
+// label, any other host is "other", an allowed domain on another port included.
+func (s *ProxySuite) TestAHostOrAPortWithoutAGrantIsCountedAsDeniedHost() {
+	s.allow("allowed.test")
+	outside := s.requestCount("other", "CONNECT", "denied_host", "4xx")
+	port := s.requestCount("api.github.test", "CONNECT", "denied_host", "4xx")
+
+	s.connectStatus("outside.test:443", basic("sbx", s.credential))
+	s.connectStatus("127.0.0.1:443", basic("sbx", s.credential))
+	s.connectStatus("api.github.test:8443", basic("sbx", s.credential))
+	s.connectStatus("allowed.test:8443", basic("sbx", s.credential))
+
+	s.NotContains(s.labelValues(), "allowed.test")
+	s.Equal(outside+3, s.requestCount("other", "CONNECT", "denied_host", "4xx"))
+	s.Equal(port+1, s.requestCount("api.github.test", "CONNECT", "denied_host", "4xx"))
+}
+
+// TestAnotherHostInAGrantedTunnelIsCountedAsDeniedHost.
+func (s *ProxySuite) TestAnotherHostInAGrantedTunnelIsCountedAsDeniedHost() {
+	counted := s.requestCount("api.github.test", "GET", "denied_host", "4xx")
+
+	request := s.request(http.MethodGet, "https://api.github.test/echo", "", "")
+	request.Host = "other.github.test"
+	s.send(s.sandbox(s.credential), request)
+
+	s.Equal(counted+1, s.requestCount("api.github.test", "GET", "denied_host", "4xx"))
+}
+
+// TestAGrantThatEndedIsCountedAsDeniedHost.
+func (s *ProxySuite) TestAGrantThatEndedIsCountedAsDeniedHost() {
+	client := s.sandbox(s.credential)
+	s.Require().Equal(http.StatusOK, s.again(client))
+	counted := s.requestCount("api.github.test", "GET", "denied_host", "4xx")
+
+	s.Require().NoError(s.store.Delete(s.ctx, s.credential))
+
+	s.Equal(http.StatusForbidden, s.again(client))
+	s.Equal(counted+1, s.requestCount("api.github.test", "GET", "denied_host", "4xx"))
+}
+
+// TestACredentialThatIsNotASandboxsIsCountedAsDeniedAuth.
+func (s *ProxySuite) TestACredentialThatIsNotASandboxsIsCountedAsDeniedAuth() {
+	counted := s.requestCount("other", "CONNECT", "denied_auth", "4xx")
+
+	s.connectStatus("api.github.test:443", "")
+	s.connectStatus("api.github.test:443", basic("sbx", egress.NewCredential()))
+
+	s.Equal(counted+2, s.requestCount("other", "CONNECT", "denied_auth", "4xx"))
+}
+
+// TestARequestTheProxyDoesNotServeIsCountedAsDeniedRequest: plain HTTP, an upgrade and a
+// CONNECT with no port.
+func (s *ProxySuite) TestARequestTheProxyDoesNotServeIsCountedAsDeniedRequest() {
+	plain := s.requestCount("other", "GET", "denied_request", "4xx")
+	upgrade := s.requestCount("api.github.test", "GET", "denied_request", "5xx")
+	noPort := s.requestCount("other", "CONNECT", "denied_request", "4xx")
+
+	s.send(s.sandbox(s.credential), s.request(http.MethodGet, "http://api.github.test/echo", "", ""))
+	request := s.request(http.MethodGet, "https://api.github.test/echo", "", "")
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	s.send(s.sandbox(s.credential), request)
+	s.connectStatus("api.github.test", basic("sbx", s.credential))
+
+	s.Equal(plain+1, s.requestCount("other", "GET", "denied_request", "4xx"))
+	s.Equal(upgrade+1, s.requestCount("api.github.test", "GET", "denied_request", "5xx"))
+	s.Equal(noPort+1, s.requestCount("other", "CONNECT", "denied_request", "4xx"))
+}
+
+// TestGrantsThatCannotBeReadAreCountedAsAnError: Redis lost before the CONNECT.
+func (s *ProxySuite) TestGrantsThatCannotBeReadAreCountedAsAnError() {
+	closed, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	s.Require().NoError(err)
+	closed.Close()
+	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(closed)))
+	s.T().Cleanup(s.proxy.Close)
+	counted := s.requestCount("other", "CONNECT", "error", "5xx")
+
+	s.connectStatus("api.github.test:443", basic("sbx", s.credential))
+
+	s.Equal(counted+1, s.requestCount("other", "CONNECT", "error", "5xx"))
+}
+
+// TestGrantsThatCannotBeReadInAnOpenTunnelAreCountedAsAnError: Redis lost after the CONNECT.
+func (s *ProxySuite) TestGrantsThatCannotBeReadInAnOpenTunnelAreCountedAsAnError() {
+	lost, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	s.Require().NoError(err)
+	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(lost)))
+	s.T().Cleanup(s.proxy.Close)
+	client := s.sandbox(s.credential)
+	s.Require().Equal(http.StatusOK, s.again(client))
+	counted := s.requestCount("api.github.test", "GET", "error", "5xx")
+
+	lost.Close()
+
+	s.Equal(http.StatusServiceUnavailable, s.again(client))
+	s.Equal(counted+1, s.requestCount("api.github.test", "GET", "error", "5xx"))
+}
+
+// TestEveryStandardMethodIsItsOwnLabel: RFC 9110 section 9.1's methods, in a tunnel, each one
+// the grant reads with.
+func (s *ProxySuite) TestEveryStandardMethodIsItsOwnLabel() {
+	grant := s.grant(s.placeholder, "api.github.test")
+	for _, method := range []string{"POST", "PUT", "DELETE", "OPTIONS", "TRACE", "PATCH"} {
+		grant.Reads = append(grant.Reads, core.SandboxRead{Host: "api.github.test", Method: method, Path: "/echo"})
+	}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
+	client := s.sandbox(s.credential)
+	for _, method := range []string{"GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "TRACE", "PATCH"} {
+		counted := s.requestCount("api.github.test", method, "granted_no_token", "2xx")
+
+		_, _, err := s.send(client, s.request(method, "https://api.github.test/echo", "", ""))
+
+		s.Require().NoError(err, method)
+		s.Equal(counted+1, s.requestCount("api.github.test", method, "granted_no_token", "2xx"), method)
+	}
+}
+
+// TestAConnectionThatGivesNoTokenIsCountedAsAnError: the placeholder is not replaced, so it is
+// not counted as a token.
+func (s *ProxySuite) TestAConnectionThatGivesNoTokenIsCountedAsAnError() {
+	s.fail(sandbox.ErrNoCredential)
+	counted := s.requestCount("api.github.test", "GET", "error", "4xx")
+	replaced := s.requestCount("api.github.test", "GET", "token", "4xx")
+
+	response, _ := s.get("Bearer " + s.placeholder)
+
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	s.Equal(counted+1, s.requestCount("api.github.test", "GET", "error", "4xx"))
+	s.Equal(replaced, s.requestCount("api.github.test", "GET", "token", "4xx"))
+}
+
+// TestTheStatusIsTheClassTheSandboxGot: a host's 404 and a host that cannot be reached, both
+// timed.
+func (s *ProxySuite) TestTheStatusIsTheClassTheSandboxGot() {
+	s.answering(func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) })
+	missing := s.requestCount("api.github.test", "GET", "token", "4xx")
+	timed := s.metric("router_sandbox_egress_upstream_seconds", map[string]string{"host": "api.github.test"})
+
+	s.get("Bearer " + s.placeholder)
+
+	s.Equal(missing+1, s.requestCount("api.github.test", "GET", "token", "4xx"))
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.answerAt(closed.Addr().String())
+	s.Require().NoError(closed.Close())
+	unreachable := s.requestCount("api.github.test", "GET", "token", "5xx")
+
+	s.get("Bearer " + s.placeholder)
+
+	s.Equal(unreachable+1, s.requestCount("api.github.test", "GET", "token", "5xx"))
+	s.Equal(timed+2, s.metric("router_sandbox_egress_upstream_seconds", map[string]string{"host": "api.github.test"}))
+}
+
+// TestTheLabelsHoldNoNameTheSandboxChoosesNorAnySecret: a wildcard grant is one host label
+// whatever name under it is asked for, an unknown method is "other", and no token,
+// placeholder, credential or session is a label value. The grant reads with the unknown method.
+func (s *ProxySuite) TestTheLabelsHoldNoNameTheSandboxChoosesNorAnySecret() {
+	grant := s.grant(s.placeholder, "*.github.test")
+	grant.Reads = []core.SandboxRead{{Host: "*.github.test", Method: "BREW", Path: "/echo"}}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
+	wildcard := s.requestCount("*.github.test", "GET", "token", "2xx")
+	odd := s.requestCount("*.github.test", "other", "granted_no_token", "2xx")
+	client := s.sandbox(s.credential)
+
+	for _, target := range []string{"https://a.github.test/echo", "https://b.github.test/echo", "https://github.test/echo"} {
+		_, _, err := s.send(client, s.request(http.MethodGet, target, "Bearer "+s.placeholder, ""))
+		s.Require().NoError(err)
+	}
+	_, _, err := s.send(client, s.request("BREW", "https://a.github.test/echo", "", ""))
+	s.Require().NoError(err)
+
+	s.Equal(wildcard+3, s.requestCount("*.github.test", "GET", "token", "2xx"))
+	s.Equal(odd+1, s.requestCount("*.github.test", "other", "granted_no_token", "2xx"))
+	values := s.labelValues()
+	for _, secret := range []string{"gho_first-token-of-the-connection", s.placeholder, s.credential, s.session,
+		"a.github.test", "b.github.test", "BREW"} {
+		s.NotContains(values, secret)
+	}
+}
+
+// TestAStreamedResponseReachesTheSandboxBeforeTheHostEnds: the first flushed chunk is not held
+// by the counting wrapper, with a placeholder and without.
+func (s *ProxySuite) TestAStreamedResponseReachesTheSandboxBeforeTheHostEnds() {
+	for _, authorization := range []string{"", "Bearer " + s.placeholder} {
+		release := make(chan struct{})
+		s.answering(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("first\n"))
+			s.NoError(http.NewResponseController(w).Flush())
+			select {
+			case <-release:
+			case <-time.After(10 * time.Second):
+			}
+			_, _ = w.Write([]byte("second\n"))
+		})
+		response, err := s.sandbox(s.credential).Do(s.request(http.MethodGet, "https://api.github.test/echo", authorization, ""))
+		s.Require().NoError(err)
+		read := make(chan string, 1)
+		go func() {
+			line, _ := bufio.NewReader(response.Body).ReadString('\n')
+			read <- line
+		}()
+		select {
+		case line := <-read:
+			s.Equal("first\n", line, "authorization %q", authorization)
+		case <-time.After(5 * time.Second):
+			s.Fail("the first chunk was held until the host ended", "authorization %q", authorization)
+		}
+		close(release)
+		_ = response.Body.Close()
+	}
+}
+
+// TestAnInformationalResponseDoesNotHideTheFinalStatus: a request with no placeholder gets
+// its 1xx sent on, and is counted by the status after it.
+func (s *ProxySuite) TestAnInformationalResponseDoesNotHideTheFinalStatus() {
+	s.answering(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusEarlyHints)
+		w.WriteHeader(http.StatusTeapot)
+	})
+	teapot := s.requestCount("api.github.test", "GET", "granted_no_token", "4xx")
+	early := s.requestCount("api.github.test", "GET", "granted_no_token", "1xx")
+
+	response, _ := s.get("")
+
+	s.Equal(http.StatusTeapot, response.StatusCode)
+	s.Equal(teapot+1, s.requestCount("api.github.test", "GET", "granted_no_token", "4xx"))
+	s.Equal(early, s.requestCount("api.github.test", "GET", "granted_no_token", "1xx"))
+}
+
+// TestAConnectionThatCannotBeTakenOverIsCountedAsAnError: a response writer that cannot hijack,
+// as an HTTP/2 stream's, for a granted host and for an allowed domain.
+func (s *ProxySuite) TestAConnectionThatCannotBeTakenOverIsCountedAsAnError() {
+	s.allow("outside.test")
+	proxy := s.newProxy(s.store)
+	granted := s.requestCount("api.github.test", "CONNECT", "error", "5xx")
+	blind := s.requestCount("other", "CONNECT", "error", "5xx")
+
+	for _, target := range []string{"api.github.test:443", "outside.test:443"} {
+		request := httptest.NewRequest(http.MethodConnect, "http://"+target, nil)
+		request.Host = target
+		request.Header.Set("Proxy-Authorization", basic("sbx", s.credential))
+		recorder := httptest.NewRecorder()
+
+		proxy.ServeHTTP(recorder, request)
+
+		s.Equal(http.StatusInternalServerError, recorder.Code, target)
+	}
+
+	s.Equal(granted+1, s.requestCount("api.github.test", "CONNECT", "error", "5xx"))
+	s.Equal(blind+1, s.requestCount("other", "CONNECT", "error", "5xx"))
+}
+
+// TestOpenTunnelsAreCountedUntilTheyClose: a tunnel to a granted host, one to an allowed domain.
+func (s *ProxySuite) TestOpenTunnelsAreCountedUntilTheyClose() {
+	s.allow("outside.test")
+	before := s.tunnelsOpen()
+	granted := s.sandbox(s.credential)
+	blind := s.direct()
+	s.Require().Equal(http.StatusOK, s.again(granted))
+	_, _, err := s.send(blind, s.request(http.MethodGet, "https://outside.test/echo", "", ""))
+	s.Require().NoError(err)
+
+	s.Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before+2 },
+		5*time.Second, 20*time.Millisecond, "open")
+
+	granted.CloseIdleConnections()
+	s.Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before+1 },
+		5*time.Second, 20*time.Millisecond, "the granted tunnel closed")
+	blind.CloseIdleConnections()
+	s.Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before },
+		5*time.Second, 20*time.Millisecond, "the blind tunnel closed")
 }
 
 // TestAHostThatCannotBeReachedIsABadGateway: and the dial error, which holds nothing of a
