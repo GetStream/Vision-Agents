@@ -20,7 +20,7 @@ import (
 // Only an ID one of the tools hands out is checked: "ticket_id" when there is a create_ticket,
 // "appointment_id" when there is a lookup_appointment. Any other ID, such as a member_id, is
 // the caller's to give, and so is one the caller said along with what it is ("my ticket is
-// 1842"). The error code "eight forty", said where no ticket was mentioned, is not a ticket.
+// 6631"). The error code "seven twenty", said where no ticket was mentioned, is not a ticket.
 func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, value string, known []string, found bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -272,8 +272,8 @@ func nameWasGiven(history []llm.Message, name string) bool {
 }
 
 // unheardNumber reports an argument of four or more digits that neither the caller nor a
-// tool ever gave: digits reordered from what the caller said ("nine eight two one" sent as
-// 1982), or a phone number with a digit dropped.
+// tool ever gave: digits reordered from what the caller said ("six three zero five" sent as
+// 5630), or a phone number with a digit dropped.
 func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string, heard []string, unheard bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -290,7 +290,7 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 				}
 			}
 		case llm.ToolResult:
-			// A refusal quotes the value refused: "19821" refused let 1982 through.
+			// A refusal quotes the value refused: "56305" refused let 5630 through.
 			if !failedResult(message.Content) {
 				sources = append(sources, message.Content)
 			}
@@ -327,7 +327,7 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 var digitRun = regexp.MustCompile(`\d+`)
 
 // numberGroup is one number as written, its dashes and brackets included: "512-555-0142".
-// Numbers apart are kept apart, so "4471, last four 9821" holds no 1982.
+// Numbers apart are kept apart, so "2745, last four 6305" holds no 5630.
 var numberGroup = regexp.MustCompile(`\d(?:[\d().-]*\d)?`)
 
 func allDigits(text string) bool {
@@ -391,15 +391,15 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 // single letters read out one at a time, "o d e n o r", "P-A-T-E-L", "J. O. H. N.".
 //
 // A spelling's letters are joined by one kind of separator, spaces, commas, hyphens or
-// periods, and a change of separator ends it: in "f i s c h e r. I need" the period ends
-// the sentence, and read as one more letter the "I" made Fischer "fischeri". A letter only
+// periods, and a change of separator ends it: in "k l e i n. I need" the period ends the
+// sentence, and read as one more letter the "I" made Klein "kleini". A letter only
 // counts when it stands alone: in "that's a l m e i d a" the s ends a word, and read as a
 // spelled letter it made Almeida "Salmeida".
 //
-// A caller who says a name and then spells it with the next one in a single breath ("Lay
-// Wilson. That's l e i w i l s o n") gives the transcriber no pause to write. A spelling
+// A caller who says a name and then spells it with the next one in a single breath ("Kay
+// Jensen. That's k a i j e n s e n") gives the transcriber no pause to write. A spelling
 // that opens or closes with a name said in the same message is also read as the two
-// names, so Lei and Wilson are each spelled as well as leiwilson.
+// names, so Kai and Jensen are each spelled as well as kaijensen.
 func spelledNames(text string) []string {
 	runes := []rune(strings.ToLower(text))
 	alone := func(at int) bool {
@@ -610,8 +610,8 @@ func holdsValue(result, wanted string) bool {
 	}), func(word string) bool { return alphanumeric(word) == wanted })
 }
 
-// alphanumeric lowercases text and drops everything but letters and digits, so "T-1842"
-// and "t1842" match.
+// alphanumeric lowercases text and drops everything but letters and digits, so "T-6631"
+// and "t6631" match.
 func alphanumeric(text string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
