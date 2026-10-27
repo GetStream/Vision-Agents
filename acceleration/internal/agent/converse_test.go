@@ -482,6 +482,22 @@ func (s *ConverseSuite) TestATurnQueuedBehindAnOverlapAskIsHeardOnceItIsAnswered
 	}, "the queued turn was answered without being reported as what the caller said")
 }
 
+func (s *ConverseSuite) TestATurnQueuedButNeverHandedBackStopsHoldingUpWhatIsOwed() {
+	// Handed back as soon as the agent stops talking, a queued turn that is still queued long
+	// after is one nothing will hand back, and must not hold an owed turn for good.
+	s.build(DuplexOptions{})
+	s.converse.undecidedFor = 200 * time.Millisecond
+	s.overhears("could you also check the side door", s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+	s.True(s.converse.Undecided(), "a turn just queued holds up what is owed")
+
+	s.eventually(func() bool { return !s.converse.Undecided() }, "a turn left queued held up what is owed for good")
+	s.converse.mu.Lock()
+	defer s.converse.mu.Unlock()
+	s.NotNil(s.converse.queued, "the turn is still queued, only no longer waited on")
+}
+
 func (s *ConverseSuite) TestATurnQueuedAfterItsRulingIsHeardOnlyOnce() {
 	s.build(DuplexOptions{})
 	ready := s.settle("book a table for four", s.talking())
