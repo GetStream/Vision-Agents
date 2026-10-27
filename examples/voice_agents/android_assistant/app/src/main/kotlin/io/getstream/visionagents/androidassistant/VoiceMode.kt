@@ -290,12 +290,15 @@ private fun AgentPresence(voice: VoiceSession?, isStarting: Boolean, modifier: M
         var writtenTurn: String? = null
         var writtenAt = since
         var last = since
+        // The call carries on the chat's conversation, so what was written before it is already
+        // here. Only what is said on the call moves the glow and the captions.
+        val before = voice.session.conversation.value.turns.mapTo(HashSet()) { it.id }
         while (isActive) {
             val now = SystemClock.elapsedRealtime()
             val agent = agentMeter.read()
             val person = personMeter.read()
             val current = voice.session.conversation.value
-            val turn = current.turns.lastOrNull()
+            val turn = current.turns.lastOrNull()?.takeUnless { it.id in before }
             if (turn?.isAgent == true && turn.id != writtenTurn) {
                 writtenTurn = turn.id
                 writtenAt = now
