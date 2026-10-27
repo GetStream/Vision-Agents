@@ -145,12 +145,13 @@ func (s *RecorderSuite) TestANonBillableRowCountsNoCost() {
 	// A customer's own model is priced at its own rates and bills nobody.
 	own := ProviderConfig{Provider: CustomProvider, Model: "traffic-" + uuid.NewString()[:8], Price: Price{PerMillionInputTokens: 2}}
 	before := traffic(trafficRequests, "provider", CustomProvider)["modality=llm,model=custom,outcome=ok"]
+	costBefore := traffic(trafficCost, "provider", CustomProvider)["modality=llm,model=custom"]
 
 	row := s.recordedAs(LLM, s.prices, own, Stat{Success: true, Usage: Usage{InputTokens: 1_000}})[0]
 
 	s.Require().False(row.Billable)
 	s.Require().Positive(row.CostMicros, "it has a cost, so leaving it out is the rule and not a zero")
-	s.Empty(traffic(trafficCost, "model", own.Model))
+	s.Equal(costBefore, traffic(trafficCost, "provider", CustomProvider)["modality=llm,model=custom"])
 	s.Equal(before+1, traffic(trafficRequests, "provider", CustomProvider)["modality=llm,model=custom,outcome=ok"],
 		"its request still counts, under the model custom")
 }
