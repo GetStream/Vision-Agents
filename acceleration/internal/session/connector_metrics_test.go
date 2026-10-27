@@ -67,6 +67,17 @@ func (s *ConnectorMetricsSuite) TestACustomConnectorsCallIsCountedAsCustom() {
 	s.Zero(callsOf(connector, "ok"), "the customer's own id is no label")
 }
 
+// An incognito session's row names no session, but the call is as much a call of the connector.
+func (s *ConnectorMetricsSuite) TestAnIncognitoSessionsCallIsCounted() {
+	s.d.spec.Incognito = true
+	connector := builtInConnector()
+
+	s.recordOf(connector, time.Now(), "")
+
+	s.Equal(1.0, callsOf(connector, "ok"))
+	s.Equal(uint64(1), timedCalls(connector).GetSampleCount())
+}
+
 // The time is in seconds, from when the call started: 1.5 s is in the 1.6 s bucket and not the 0.8 s one.
 func (s *ConnectorMetricsSuite) TestACallIsTimedInSecondsFromItsStart() {
 	connector := builtInConnector()

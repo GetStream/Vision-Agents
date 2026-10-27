@@ -6,12 +6,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -96,6 +99,76 @@ func (s *ConnectorEventsSuite) TestACustomConnectorsEventIsCountedAsCustom() {
 	s.Zero(eventsOf(connector, eventRefused))
 }
 
+// The provider app's route carries Slack's, WhatsApp's, Telnyx's and Linq's events, and a
+// customer's own: an event on it is counted under the connector the route names.
+func (s *SlackChannelSuite) TestAMessageOnTheProviderAppRouteIsCountedHandledUnderItsConnector() {
+	before := eventsOf("slack_bot", eventHandled)
+
+	s.messaged("U0000ALICE", "synthetic counted text", "1759740000.009100", "")
+
+	s.Equal(before+1, eventsOf("slack_bot", eventHandled))
+}
+
+// The ids in the path of a provider app's route are the sender's choice: a request naming a
+// provider app nobody holds, or one whose connector has no definition for its customer, leaves
+// no series under the id it names. The second is a race the store's cascade makes rare: the
+// definition went after the client was read.
+func (s *SlackChannelSuite) TestAnEventOnTheProviderAppRouteOfAnIdNobodyDefinedIsNotCounted() {
+	unknown := "no_such_connector_" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	status, _ := s.slack.Deliver(s.server.URL+providerAppEventsPath+unknown+"/A"+s.utils.uuid(), s.secret,
+		[]byte(`{"synthetic":"unknown"}`), 0)
+	s.Equal(http.StatusNotFound, status)
+	s.Zero(eventSeries(unknown), "a provider app nobody holds")
+
+	connector := store.CustomPrefix + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest, err := core.ParseManifest([]byte("id: " + connector + "\nrevision: 1\nname: Metrics probe\n" +
+		"endpoints:\n  mcp: https://crm.example/mcp\nschemes: [oauth2_code]\nclient:\n  registration: [customer]\n"))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	appID, secret := "synthetic-gone-"+s.utils.uuid(), "synthetic-gone-signing-"+s.utils.uuid()
+	record := &store.ConnectorOAuthClient{CustomerID: s.customerID(), ConnectorID: connector,
+		Registration: core.ClientCustomer, ClientID: "synthetic-client", ProviderAppID: appID}
+	record.SigningSecretSealed, err = s.sealer.SealWithAAD(secret, providerAppAAD(record.CustomerID, connector, appID))
+	s.Require().NoError(err)
+	record.SigningKEKVersion = s.sealer.CurrentVersion()
+	_, err = s.store.PutConnectorOAuthClient(context.Background(), record)
+	s.Require().NoError(err)
+	_, err = s.store.DB().NewRaw(`DELETE FROM connector_definitions WHERE customer_id = ? AND id = ?`,
+		s.customerID(), connector).Exec(context.Background())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		s.Require().NoError(s.store.DeleteConnectorOAuthClient(context.Background(), s.customerID(), connector, core.ClientCustomer))
+	})
+	custom := eventsOf("custom", eventRefused)
+
+	status, _ = s.slack.Deliver(s.server.URL+providerAppEventsPath+connector+"/"+appID, secret, []byte(`{"synthetic":"gone"}`), 0)
+
+	s.Equal(http.StatusNotFound, status)
+	s.Equal(custom, eventsOf("custom", eventRefused), "an event no definition reads is not counted")
+	s.Zero(eventSeries(connector))
+}
+
+// An event the forwarder fails to queue is answered 500 so the provider delivers it again, and
+// counted failed, not as the unhandled event it would be.
+func (s *EventForwardingSuite) TestAnEventTheForwarderFailsOnIsCountedFailed() {
+	closed, err := store.OpenShards(store.Options{DSN: testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN"))})
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	broken, err := eventforward.New(eventforward.Options{Store: closed, Secrets: s.sealer, HTTP: s.forwardHTTP, Logger: s.router.logger})
+	s.Require().NoError(err)
+	working := s.router.eventForwarder
+	s.router.eventForwarder = broken
+	s.T().Cleanup(func() { s.router.eventForwarder = working })
+	failed, unhandled := eventsOf("slack_bot", eventFailed), eventsOf("slack_bot", eventUnhandled)
+
+	status, _ := s.deliver(s.reaction(), 0)
+
+	s.Equal(http.StatusInternalServerError, status)
+	s.Equal(failed+1, eventsOf("slack_bot", eventFailed))
+	s.Equal(unhandled, eventsOf("slack_bot", eventUnhandled))
+}
+
 // countedOnce delivers request to connector's events route, requires status, and that the
 // connector's events counted outcome once more and no other outcome ("" for none at all).
 func (s *ConnectorEventsSuite) countedOnce(connector, outcome string, status int, request *http.Request) {
@@ -135,4 +208,25 @@ func eventsBotAs(id, env string) string {
 // eventsOf is how many events of connector were counted as outcome.
 func eventsOf(connector, outcome string) float64 {
 	return testutil.ToFloat64(connectorEvents.WithLabelValues(connector, outcome))
+}
+
+// eventSeries is how many series of connectorEvents are under connector, whatever the outcome.
+func eventSeries(connector string) int {
+	registry := prometheus.NewPedanticRegistry()
+	registry.MustRegister(connectorEvents)
+	families, err := registry.Gather()
+	if err != nil {
+		panic(err)
+	}
+	found := 0
+	for _, family := range families {
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "connector" && label.GetValue() == connector {
+					found++
+				}
+			}
+		}
+	}
+	return found
 }
