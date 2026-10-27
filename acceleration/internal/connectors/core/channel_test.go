@@ -426,6 +426,130 @@ func (s *ChannelSuite) TestAMessageTheLinqLineSentIsNotRead() {
 	s.Empty(s.read("linq", "linq.sent.json").Messages)
 }
 
+// linqParts is the recorded linq.received.json with its parts replaced by parts.
+func (s *ChannelSuite) linqParts(parts string) []byte {
+	body := string(s.recorded("linq.received.json"))
+	const recordedParts = `"parts":[{"type":"text","value":"Hi, is my order ready?"}]`
+	s.Require().Contains(body, recordedParts)
+	return []byte(strings.Replace(body, recordedParts, `"parts":`+parts, 1))
+}
+
+// AI-2092: a photo sent with its caption is [media, text] (staging, 2026-10-27), and the
+// fixture read only parts[0]. Every part's value is the text now, joined by a newline.
+func (s *ChannelSuite) TestLinqReadsTheTextOfEveryPart() {
+	const (
+		media   = `{"type":"media","id":"00000000-0000-4000-8000-0000000000f1","filename":"IMG_7564.jpeg","mime_type":"image/jpeg","size_bytes":245678,"url":"https://cdn.linqapp.com/attachments/a1b2c3d4/IMG_7564.jpeg?signature=x"}`
+		caption = `{"type":"text","value":"What is in this photo?"}`
+	)
+	m := s.load("linq")
+	for _, tc := range []struct {
+		name, parts, text string
+	}{
+		{"media, text", "[" + media + "," + caption + "]", "What is in this photo?"},
+		{"text, media", "[" + caption + "," + media + "]", "What is in this photo?"},
+		{"text, text", `[{"type":"text","value":"Hi"},` + caption + "]", "Hi\nWhat is in this photo?"},
+		{"text, media, text", `[{"type":"text","value":"Hi"},` + media + "," + caption + "]", "Hi\nWhat is in this photo?"},
+		{"media only", "[" + media + "]", ""},
+		{"no parts", "[]", ""},
+		{"parts null", "null", ""},
+		{"an empty text part", `[{"type":"text","value":""},` + caption + "]", "What is in this photo?"},
+		{"a link", `[{"type":"link","value":"https://example.com/menu"}]`, "https://example.com/menu"},
+		{"an app card", `[{"type":"imessage_app","url":"https://example.com/card"}]`, ""},
+	} {
+		read, err := m.Channel.Read(m.ID, s.linqParts(tc.parts))
+		s.Require().NoError(err, tc.name)
+		s.Require().Len(read.Messages, 1, "a message without text is still read: %s", tc.name)
+		s.Equal(tc.text, read.Messages[0].Text, tc.name)
+		s.Equal("00000000-0000-4000-8000-0000000000e1", read.Messages[0].ProviderMessageID, tc.name)
+	}
+}
+
+// A body whose parts are not values is refused, as a text path to one is.
+func (s *ChannelSuite) TestLinqPartsOfTheWrongShapeAreRefused() {
+	m := s.load("linq")
+	for parts, want := range map[string]string{
+		`{"type":"text","value":"Hi"}`:            "$.data.parts[*].value: parts is not an array",
+		`[{"type":"text","value":{"text":"Hi"}}]`: "$.data.parts[*].value is an object or an array, not a value",
+		`["Hi"]`: "$.data.parts[*].value: value is not inside an object",
+	} {
+		_, err := m.Channel.Read(m.ID, s.linqParts(parts))
+		s.ErrorContains(err, want, parts)
+	}
+}
+
+func (s *ChannelSuite) TestTextPartsIsCheckedWhenTheManifestIsParsed() {
+	for _, tc := range []struct {
+		name, old, new, want string
+	}{
+		{"beside text", "text: $.text", "text: $.text\n    text_parts: $.parts[*].value", "channel.messages.text_parts: goes instead of text, not beside it"},
+		{"no [*]", "text: $.text", "text_parts: $.parts[0].value", `channel.messages.text_parts: "$.parts[0].value" has no [*] past messages.each`},
+		{"not a path", "text: $.text", "text_parts: $.parts[?@.type=='text'].value", "channel.messages.text_parts: \"$.parts[?@.type=='text'].value\" is not a path of member names"},
+		{"neither", "text: $.text", "", `channel.messages.text: "" is not a path of member names`},
+		{"in a form", "format: json\n", "format: form\n", `channel.messages.text_parts: "$.parts[*].value": a form is flat`},
+	} {
+		channel := strings.Replace(baseChannel, "text: $.text", "text_parts: $.parts[*].value", 1)
+		if tc.name != "in a form" {
+			channel = baseChannel
+		}
+		s.Require().Contains(channel, tc.old, tc.name)
+		_, err := ParseManifest(minimal(strings.Replace(channel, tc.old, tc.new, 1)))
+		s.ErrorContains(err, tc.want, tc.name)
+	}
+	_, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", "text_parts: $.parts[*].value", 1)))
+	s.NoError(err)
+}
+
+// With each, text_parts reads every piece of the message each binds, so it starts with each.
+func (s *ChannelSuite) TestTextPartsReadsThePiecesOfEachMessageOfABatch() {
+	batch := func(text string) string {
+		return strings.NewReplacer(
+			"thread_key:", "each: $.messages[*]\n    thread_key:",
+			"$.chat", "$.messages[*].chat",
+			"$.from", "$.messages[*].from",
+			"$.id", "$.messages[*].id",
+			"text: $.text", text,
+		).Replace(baseChannel)
+	}
+	m, err := ParseManifest(minimal(batch("text_parts: $.messages[*].parts[*].value")))
+	s.Require().NoError(err)
+	read, err := m.Channel.Read(m.ID, []byte(`{"messages":[
+		{"chat":"c","from":"u","id":"1","parts":[{"url":"https://example.com/a.jpg"},{"value":"one"},{"value":"two"}]},
+		{"chat":"c","from":"u","id":"2","parts":[{"value":"three"}]},
+		{"chat":"c","from":"u","id":"3"}]}`))
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 3)
+	s.Equal("one\ntwo", read.Messages[0].Text)
+	s.Equal("three", read.Messages[1].Text)
+	s.Empty(read.Messages[2].Text)
+
+	for path, want := range map[string]string{
+		"$.other[*].parts[*].value":    "does not start with messages.each",
+		"$.parts[*].value":             "does not start with messages.each",
+		"$.messages[0].parts[*].value": "does not start with messages.each",
+		"$.messages[*]":                "has no [*] past messages.each",
+		"$.messages[*].value":          "has no [*] past messages.each",
+		"$.messages[*].parts[0].value": "has no [*] past messages.each",
+	} {
+		_, err := ParseManifest(minimal(batch("text_parts: " + path)))
+		s.ErrorContains(err, want, path)
+	}
+}
+
+// An element number after the [*] reads that element of each, and an element that is not
+// there is left out.
+func (s *ChannelSuite) TestTextPartsReadsOneElementOfEveryPart() {
+	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", "text_parts: $.parts[*].lines[1]", 1)))
+	s.Require().NoError(err)
+	read, err := m.Channel.Read(m.ID, []byte(`{"chat":"c","from":"u","id":"1","parts":[{"lines":["a","b"]},{"lines":["c"]},{"lines":["d","e"]}]}`))
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 1)
+	s.Equal("b\ne", read.Messages[0].Text)
+}
+
+func (s *ChannelSuite) TestABlockWithOnlyTextPartsIsNotZero() {
+	s.False(MessageRule{TextParts: "$.parts[*].value"}.IsZero())
+}
+
 func (s *ChannelSuite) TestALinqReplyGoesToTheChat() {
 	resolved, err := s.load("linq").Resolve("bearer", nil, nil)
 	s.Require().NoError(err)

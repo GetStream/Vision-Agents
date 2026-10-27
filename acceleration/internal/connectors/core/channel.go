@@ -121,8 +121,9 @@ type MessageRule struct {
 	// still read, with empty text.
 	Text string `yaml:"text" json:"text"`
 	// TextParts goes instead of Text for a message whose text is in pieces, such as Linq's
-	// parts, where a photo comes before its caption: the path of every piece, with a [*] past
-	// those of Each. The text is every value found, in order, joined by a newline (AI-2092).
+	// parts, where a photo comes before its caption: the path of every piece, starting with
+	// Each when there is one and with a [*] past it. The text is every value found, in order,
+	// joined by a newline (AI-2092).
 	TextParts string `yaml:"text_parts,omitempty" json:"text_parts,omitempty"`
 	// Addressed is when a message speaks to the connection's own account, such as its bot in
 	// a channel of people. A message that does not starts no thread: it is answered only on a
@@ -526,18 +527,22 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 			fail(field, "%q: %v", path, err)
 		}
 	}
-	// checkParts checks a path that reads every value at its [*] past those of each.
+	// checkParts checks a path that reads every value at its [*] past each, inside the
+	// message each reads.
 	checkParts := func(field, path string) {
 		steps, err := parsePath(path)
 		if err != nil {
 			fail(field, "%v", err)
 			return
 		}
-		bound := min(len(each), len(steps))
-		if err := correlated(steps[:bound], each, "messages.each"); err != nil {
-			fail(field, "%q: %v", path, err)
-		} else if !slices.ContainsFunc(steps[bound:], func(step pathStep) bool { return step.index == wildcard }) {
-			fail(field, "%q has no [*] past those of messages.each, so it reads one value: that is text", path)
+		if c.Format == FormatForm {
+			fail(field, "%q: a form is flat, so it has no [*] to read every value of", path)
+			return
+		}
+		if len(steps) < len(each) || !slices.Equal(steps[:len(each)], each) {
+			fail(field, "%q does not start with messages.each, so its pieces are not the message's", path)
+		} else if !slices.ContainsFunc(steps[len(each):], func(step pathStep) bool { return step.index == wildcard }) {
+			fail(field, "%q has no [*] past messages.each, so it reads one value: that is text", path)
 		}
 	}
 	if c.Format == FormatForm && msgs.Each != "" {
@@ -1278,7 +1283,8 @@ func readPath(root any, path string, bound []int) (value string, found bool, err
 
 // readEvery is every value a path reaches, in order, taking its first [*] as the elements
 // bound gives them and each one after as every element. A value readPath would not find,
-// such as a missing member, is left out.
+// such as a missing member, is left out. bound is in range: enumerate took it from the lists
+// of each, which Validate makes the path start with.
 func readEvery(root any, path string, bound []int) ([]string, error) {
 	steps, err := parsePath(path)
 	if err != nil {
@@ -1312,9 +1318,6 @@ func readEvery(root any, path string, bound []int) ([]string, error) {
 			}
 			return walk(list[steps[i].index], i+1, wildcards)
 		case wildcards < len(bound):
-			if bound[wildcards] >= len(list) {
-				return nil
-			}
 			return walk(list[bound[wildcards]], i+1, wildcards+1)
 		}
 		for _, item := range list {

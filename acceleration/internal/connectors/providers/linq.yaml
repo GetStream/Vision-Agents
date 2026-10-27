@@ -70,9 +70,10 @@ channel:
     provider_message_id: $.data.id
     # [send], «Message parts»: text is a part, and [events] shows text and media parts. A
     # photo sent with a caption comes as [media, text] (staging, 2026-10-27, AI-2088), so every
-    # part's value is read, joined by a newline. A media part has a url and no value, so it is
-    # left out. A link part's value is its URL ([webhooks reference], «Link»), which the
-    # agent gets as the person's text, as revision 1 did when it was the first part.
+    # part's value is read, joined by a newline, as internal/channels/linq.go joins the text
+    # and link parts. A media part has a url and no value, so it is left out. A link part's
+    # value is its URL ([webhooks reference], «Link»), which the agent gets as the person's
+    # text, as revision 1 did when it was the first part.
     #   [webhooks reference] https://docs.linqapp.com/channel/imessage/api/resources/webhooks/index.md, opened October 27, 2026
     text_parts: $.data.parts[*].value
   reply:

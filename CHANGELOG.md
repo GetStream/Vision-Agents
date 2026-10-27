@@ -115,6 +115,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### An iMessage photo's caption is answered
+
+A Linq message's text is every part's `value`, joined by a newline: the caption an iPhone sends after a photo was dropped, since only the first part was read, so the message got no reply. `linq` revision 2, which a connection takes at its next write; `messages.text_parts` in a channel manifest reads text in pieces (AI-2092).
+
 ### A photo is still seen after the model calls a tool
 
 A question asked with photos was answered as though none came when the model called a tool before answering, such as loading the `vision` skill: the photos went only with the turn's first model call. They now go with every reply of that turn, the replies to its tool results included, on the person's message, and the next turn drops them.
