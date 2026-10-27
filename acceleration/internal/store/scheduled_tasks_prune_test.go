@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -125,7 +126,9 @@ func (s *StoreSuite) TestPruneKeepsAnOldCompletedTaskWhileARunOfItIsUnfinishedOr
 	s.Equal([]string{"recent", "running", "theirs"}, s.runIDs())
 }
 
-func (s *StoreSuite) TestPruneGoesOnUntilNoBatchIsLeft() {
+// backlog stores a batch and one more of old completed tasks, done-1 on, and of old runs of
+// the active task live, run-1 on, so the prune of each takes two statements.
+func (s *StoreSuite) backlog() {
 	_, err := s.store.db.ExecContext(s.ctx, fmt.Sprintf(`
 INSERT INTO scheduled_tasks (id, customer_id, user_id, title, instructions, start_local, timezone, state, updated_at)
 SELECT 'done-' || n, 'acme', 'sam', 't', 'i', now()::timestamp, 'UTC', 'completed', now() - interval '91 days'
@@ -137,6 +140,10 @@ INSERT INTO scheduled_task_runs (id, task_id, customer_id, scheduled_for, trigge
 SELECT 'run-' || n, 'live', 'acme', now() - make_interval(mins => n), 'manual', 'delivered', now() - interval '91 days'
 FROM generate_series(1, %d) AS n`, scheduledTaskRunsPruned+1))
 	s.Require().NoError(err)
+}
+
+func (s *StoreSuite) TestPruneGoesOnUntilNoBatchIsLeft() {
+	s.backlog()
 
 	runs, tasks, err := s.store.PruneScheduledTasks(s.ctx)
 
@@ -145,6 +152,32 @@ FROM generate_series(1, %d) AS n`, scheduledTaskRunsPruned+1))
 	s.EqualValues(scheduledTasksPruned+1, tasks)
 	s.Equal([]string{"acme/live"}, s.taskIDs())
 	s.Empty(s.runIDs())
+}
+
+// One statement of the prune deletes a batch at most, so a backlog is never locked whole in one
+// transaction. A snapshot taken before the prune still sees each row it deletes, with xmax the
+// transaction that deleted it.
+func (s *StoreSuite) TestPruneDeletesNoMoreThanABatchInOneStatement() {
+	s.backlog()
+	before, err := s.store.db.BeginTx(s.ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	s.Require().NoError(err)
+	defer before.Rollback() //nolint:errcheck // read only
+	// A repeatable read transaction takes its snapshot at its first statement.
+	_, err = before.ExecContext(s.ctx, "SELECT 1")
+	s.Require().NoError(err)
+
+	_, _, err = s.store.PruneScheduledTasks(s.ctx)
+	s.Require().NoError(err)
+
+	perStatement := func(query string) []int {
+		var deleted []int
+		s.Require().NoError(before.NewRaw(query).Scan(s.ctx, &deleted))
+		return deleted
+	}
+	s.Equal([]int{scheduledTaskRunsPruned, 1}, perStatement(
+		"SELECT count(*) FROM scheduled_task_runs WHERE id LIKE 'run-%' GROUP BY xmax::text ORDER BY 1 DESC"))
+	s.Equal([]int{scheduledTasksPruned, 1}, perStatement(
+		"SELECT count(*) FROM scheduled_tasks WHERE id LIKE 'done-%' GROUP BY xmax::text ORDER BY 1 DESC"))
 }
 
 // Old finished runs of active tasks are deleted while their workers finish new ones, and old
