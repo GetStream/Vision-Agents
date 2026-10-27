@@ -22,14 +22,15 @@ const (
 	tokensOutput      = "output"
 )
 
-// trafficBuckets span voice latency, 25 ms to 25.6 s, doubling.
-var trafficBuckets = prometheus.ExponentialBuckets(0.025, 2, 11)
+// trafficBuckets span 25 ms to 60 s: fine steps where voice first output lands (100 to 800 ms),
+// wide ones for the long LLM requests. Each is a series per modality and provider.
+var trafficBuckets = []float64{0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.6, 0.8, 1.2, 2, 4, 8, 15, 30, 60}
 
 var (
 	trafficRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "requests_total",
-		Help:      "Vendor requests recorded as usage rows, by outcome: ok when Success, cancelled and timeout by ErrorCode, otherwise error",
+		Help:      "Requests recorded as usage rows, vendor calls and also the router's own metered work (runtime and sandbox slices, phone legs, numbers, storage), so filter by modality; by outcome: ok when Success, cancelled and timeout by ErrorCode, otherwise error",
 	}, []string{"modality", "provider", "model", "outcome"})
 	trafficTokens = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
@@ -54,13 +55,13 @@ var (
 	trafficFirstOutput = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "router",
 		Name:      "first_output_seconds",
-		Help:      "How long a vendor request took to its first useful output: LatencyMs / 1000, for rows that have it",
+		Help:      "How long a request took to its first useful output: LatencyMs / 1000, for rows that have it",
 		Buckets:   trafficBuckets,
 	}, []string{"modality", "provider"})
 	trafficDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "router",
 		Name:      "request_seconds",
-		Help:      "How long a whole vendor request took: DurationMs / 1000, for rows that have it",
+		Help:      "How long a whole request took: DurationMs / 1000, for rows that have it",
 		Buckets:   trafficBuckets,
 	}, []string{"modality", "provider"})
 )
@@ -69,6 +70,10 @@ var (
 // no series is made for what a modality never has.
 func countTraffic(request store.Request) {
 	modality, provider, model := request.Modality, request.Provider, request.Model
+	if provider == CustomProvider {
+		// The model is a name each customer chose: unbounded as a label.
+		model = CustomProvider
+	}
 	trafficRequests.WithLabelValues(modality, provider, model, outcome(request)).Inc()
 	tokens := func(kind string, count int64) {
 		if count > 0 {

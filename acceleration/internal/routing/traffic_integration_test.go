@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 // vendorOfItsOwn is a provider no other test records under, so the traffic metrics of a test
@@ -110,7 +112,7 @@ func (s *RecorderSuite) TestARowWithoutTimingsAddsNoObservation() {
 		traffic(trafficDuration, "provider", vendor.Provider), "only the row that has a duration, in seconds")
 }
 
-func (s *RecorderSuite) TestTheTimingsAreBucketedFrom25MillisecondsToAbout30Seconds() {
+func (s *RecorderSuite) TestTheTimingsAreBucketedFrom25MillisecondsTo60SecondsFinestWhereVoiceLands() {
 	vendor := vendorOfItsOwn()
 
 	s.recordedAs(STT, s.prices, vendor, Stat{Success: true, LatencyMs: 120, DurationMs: 900})
@@ -122,34 +124,44 @@ func (s *RecorderSuite) TestTheTimingsAreBucketedFrom25MillisecondsToAbout30Seco
 		for _, bucket := range written.GetHistogram().GetBucket() {
 			bounds = append(bounds, bucket.GetUpperBound())
 		}
-		s.Equal([]float64{0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8, 25.6}, bounds)
+		s.Equal([]float64{0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.6, 0.8, 1.2, 2, 4, 8, 15, 30, 60}, bounds)
 	}
 }
 
-func (s *RecorderSuite) TestABillableRowCountsItsCost() {
+func (s *RecorderSuite) TestABillableRowCountsItsCostWithTheMarkupNotTheVendorsCharge() {
 	vendor := vendorOfItsOwn()
 	vendor.Price = Price{PerMillionInputTokens: 2}
-	prices, err := Prices(Config{LLM: {Providers: []ProviderConfig{vendor}}}, slog.New(slog.DiscardHandler))
+	prices, err := pricing.NewList(pricing.ActiveVersion, PriceEntries(Config{LLM: {Providers: []ProviderConfig{vendor}}}), 2500, nil)
 	s.Require().NoError(err)
 
 	row := s.recordedAs(LLM, prices, vendor, Stat{Success: true, Usage: Usage{InputTokens: 1_000}})[0]
 
 	s.Require().True(row.Billable)
-	s.Require().Positive(row.CostMicros)
+	s.Require().NotEqual(row.BaseCostMicros, row.CostMicros, "a markup, so the two differ")
 	s.Equal(map[string]float64{"modality=llm,model=m": float64(row.CostMicros)}, traffic(trafficCost, "provider", vendor.Provider))
 }
 
 func (s *RecorderSuite) TestANonBillableRowCountsNoCost() {
 	// A customer's own model is priced at its own rates and bills nobody.
 	own := ProviderConfig{Provider: CustomProvider, Model: "traffic-" + uuid.NewString()[:8], Price: Price{PerMillionInputTokens: 2}}
+	before := traffic(trafficRequests, "provider", CustomProvider)["modality=llm,model=custom,outcome=ok"]
 
 	row := s.recordedAs(LLM, s.prices, own, Stat{Success: true, Usage: Usage{InputTokens: 1_000}})[0]
 
 	s.Require().False(row.Billable)
 	s.Require().Positive(row.CostMicros, "it has a cost, so leaving it out is the rule and not a zero")
 	s.Empty(traffic(trafficCost, "model", own.Model))
-	s.Equal(map[string]float64{"modality=llm,outcome=ok,provider=custom": 1}, traffic(trafficRequests, "model", own.Model),
-		"its request still counts")
+	s.Equal(before+1, traffic(trafficRequests, "provider", CustomProvider)["modality=llm,model=custom,outcome=ok"],
+		"its request still counts, under the model custom")
+}
+
+func (s *RecorderSuite) TestACustomersOwnModelNameIsNeverALabel() {
+	own := ProviderConfig{Provider: CustomProvider, Model: "traffic-" + uuid.NewString()[:8]}
+
+	s.recordedAs(LLM, s.prices, own, Stat{Success: true, Usage: Usage{InputTokens: 1_000, OutputTokens: 10}})
+
+	s.Empty(traffic(trafficRequests, "model", own.Model))
+	s.Empty(traffic(trafficTokens, "model", own.Model))
 }
 
 func (s *RecorderSuite) TestARecorderThatWritesNowhereCountsNothing() {
