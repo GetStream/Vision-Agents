@@ -5,13 +5,18 @@ package egress_test
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
@@ -24,6 +29,9 @@ const (
 	sqlRefused = "code in the sandbox reads BigQuery with one SELECT per request, sent as POST /bigquery/v2/projects/<project>/queries " +
 		"(jobs.query, such as client.query_and_wait in Python); client.query() sends jobs.insert, which is refused, and so are scripts, " +
 		"DML, DDL and EXPORT DATA; write with the connector's tools\n"
+	// escapedQuery is the key query with its q as a JSON escape, built here: a \u escape written
+	// in this file's text can end up as the letter itself.
+	escapedQuery = string(rune(92)) + "u0071uery"
 )
 
 // bigQuery is a fake BigQuery: it answers a dry run of jobs.query with dryStatus and dryAnswer,
@@ -174,7 +182,7 @@ func (s *ProxySuite) TestASQLReadPassesWhatTheDryRunSaysIsOneSELECT() {
 			`"parameterMode":"NAMED","queryParameters":[{"name":"x","parameterType":{"type":"INT64"},"parameterValue":{"value":"1"}}],`+
 			`"maximumBytesBilled":"1000000","useQueryCache":true,"formatOptions":{},"requestId":"r","jobCreationMode":"JOB_CREATION_REQUIRED"}`,
 			http.StatusOK),
-		queryCase("a key escaped", `{"query":"SELECT 1"}`, http.StatusOK),
+		queryCase("a key escaped", `{"`+escapedQuery+`":"SELECT 1"}`, http.StatusOK),
 		queryCase("HTML in the query", `{"query":"SELECT '<a>&' AS x"}`, http.StatusOK),
 		client,
 	}, true)
@@ -253,7 +261,7 @@ func (s *ProxySuite) TestASQLReadTakesOneJSONRequestOfTheMembersItReads() {
 		queryCase("a second JSON value", `{"query":"SELECT 1"}{"query":"DELETE FROM t WHERE true"}`, http.StatusForbidden),
 		queryCase("invalid UTF-8", "{\"query\":\"SELECT '\xff'\"}", http.StatusForbidden),
 		queryCase("query twice, a DELETE last", `{"query":"SELECT 1","query":"DELETE FROM t WHERE true"}`, http.StatusForbidden),
-		queryCase("query twice, escaped", `{"query":"SELECT 1","query":"DELETE FROM t WHERE true"}`, http.StatusForbidden),
+		queryCase("query twice, escaped", `{"query":"SELECT 1","`+escapedQuery+`":"DELETE FROM t WHERE true"}`, http.StatusForbidden),
 		queryCase("dryRun twice", `{"query":"DELETE FROM t WHERE true","dryRun":true,"dryRun":false}`, http.StatusForbidden),
 		queryCase("Query beside query", `{"Query":"DELETE FROM t WHERE true","query":"SELECT 1"}`, http.StatusForbidden),
 		queryCase("createSession", `{"query":"SELECT 1","createSession":true}`, http.StatusForbidden),
@@ -404,7 +412,8 @@ func (s *ProxySuite) TestASQLReadIsCountedAsTheOtherReadsAre() {
 }
 
 // TestAnotherGrantedHostKeepsReadOnlysAnswer: beside a SQL read, a POST to another host of the
-// grant gets read-only's answer as before (on the base, e1a71dcc4, every refused POST got it).
+// grant, one with no read and one with a GraphQL read, gets read-only's answer as before (on the
+// base, e1a71dcc4, every refused POST got it).
 func (s *ProxySuite) TestAnotherGrantedHostKeepsReadOnlysAnswer() {
 	fake := s.readBigQuery()
 
@@ -414,6 +423,21 @@ func (s *ProxySuite) TestAnotherGrantedHostKeepsReadOnlysAnswer() {
 	s.Require().NoError(err)
 	s.Equal(http.StatusForbidden, response.StatusCode)
 	s.Equal("egress: POST api.github.test/bigquery/v2/projects/p/queries refused: code in the sandbox only reads through a connector; "+
+		"write with the connector's tools\n", body)
+	s.Empty(fake.requests())
+
+	grant := s.grant(s.placeholder, "bigquery.github.test", "api.github.test")
+	grant.Reads = []core.SandboxRead{{Host: "bigquery.github.test", Path: "/bigquery/v2/projects/*/queries", SQL: true},
+		{Host: "api.github.test", Path: "/graphql", GraphQL: true}}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
+	request := s.request(http.MethodPost, "https://api.github.test/graphql", "Bearer "+s.placeholder, `{"query":"mutation { a }"}`)
+	request.Header.Set("Content-Type", "application/json")
+
+	response, body, err = s.send(s.sandbox(s.credential), request)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal("egress: POST api.github.test/graphql refused: code in the sandbox only reads through a connector; "+
 		"write with the connector's tools\n", body)
 	s.Empty(fake.requests())
 }
@@ -459,4 +483,116 @@ func (s *ProxySuite) TestQueriesAtOnceEachGetTheirOwnDryRun() {
 		s.Equal(1, sent[`{"query":"SELECT `+strings.Repeat("1", i+1)+`"}`], i)
 	}
 	s.Len(fake.requests(), 16)
+}
+
+// TestARefusedDryRunTellsTheModelWhatBigQuerySaid: the 403 of a dry run BigQuery refused carries
+// its error.message, the token and its echoes replaced by the placeholder, cut to 300 bytes at a
+// character's start; the log names the status alone, since the message can quote the SQL.
+func (s *ProxySuite) TestARefusedDryRunTellsTheModelWhatBigQuerySaid() {
+	fake := s.readBigQuery()
+	token := "gho_first-token-of-the-connection"
+	inBase64 := base64.StdEncoding.EncodeToString
+	long := "a" + strings.Repeat("é", 200)
+
+	for _, c := range []struct{ name, message, said string }{
+		{"a syntax error", `Syntax error: Unexpected identifier \"SELEC\" at [1:1]`, `Syntax error: Unexpected identifier "SELEC" at [1:1]`},
+		{"the token echoed", "Not found: " + token + " " + inBase64([]byte(token)) + " " + s.placeholder,
+			"Not found: " + s.placeholder + " " + inBase64([]byte(s.placeholder)) + " " + s.placeholder},
+		{"a long message", long, "a" + strings.Repeat("é", 149)},
+	} {
+		fake.dryRunAnswers(http.StatusBadRequest, `{"error":{"code":400,"message":"`+c.message+`","status":"INVALID_ARGUMENT"}}`)
+		request := s.request(http.MethodPost, queries, "Bearer "+s.placeholder, `{"query":"SELEC 1"}`)
+		request.Header.Set("Content-Type", "application/json")
+
+		response, body, err := s.send(s.sandbox(s.credential), request)
+
+		s.Require().NoError(err, c.name)
+		s.Equal(http.StatusForbidden, response.StatusCode, c.name)
+		s.Equal("egress: POST bigquery.github.test/bigquery/v2/projects/p/queries refused (a jobs.query dry run answered 400: "+c.said+
+			"): "+sqlRefused, body, c.name)
+		s.Len(fake.requests(), 1, c.name)
+	}
+	s.Contains(s.logs.String(), `why="a jobs.query dry run answered 400"`)
+	s.NotContains(s.logs.String(), "Unexpected identifier")
+	s.NotContains(s.logs.String(), "Not found")
+}
+
+// TestASQLReadTakesOneContentType: the dry run carries one Content-Type, so a query sent with
+// two, the second one BigQuery could read the body by, reaches no host.
+func (s *ProxySuite) TestASQLReadTakesOneContentType() {
+	fake := s.readBigQuery()
+	request := s.request(http.MethodPost, queries, "Bearer "+s.placeholder, `{"query":"SELECT 1"}`)
+	request.Header.Add("Content-Type", "application/json")
+	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	response, body, err := s.send(s.sandbox(s.credential), request)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.True(strings.HasSuffix(body, sqlRefused), body)
+	s.Empty(fake.requests())
+	s.Contains(s.logs.String(), `why="a jobs.query POST that is not application/json in UTF-8"`)
+}
+
+// TestAGrantThatEndsDuringTheDryRunSendsNothingOn: the grants are read again after the dry run,
+// so a grant deleted meanwhile gets the 403 of a grant that ended, and grants that cannot be read
+// then a 503; the query reaches BigQuery as the dry run alone.
+func (s *ProxySuite) TestAGrantThatEndsDuringTheDryRunSendsNothingOn() {
+	fake := s.readBigQuery()
+	lost, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	s.Require().NoError(err)
+	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(lost)))
+	s.T().Cleanup(s.proxy.Close)
+	var during func()
+	s.answering(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), `"dryRun":true`) {
+			during()
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		fake.serve(w, r)
+	})
+	query := func() (int, string) {
+		fake.forget()
+		request := s.request(http.MethodPost, queries, "Bearer "+s.placeholder, `{"query":"SELECT 1"}`)
+		request.Header.Set("Content-Type", "application/json")
+		response, body, err := s.send(s.sandbox(s.credential), request)
+		s.Require().NoError(err)
+		return response.StatusCode, body
+	}
+
+	during = func() { s.NoError(s.store.Delete(context.Background(), s.credential)) }
+	status, body := query()
+	s.Equal(http.StatusForbidden, status)
+	s.Equal("egress: the sandbox's grant for this host has ended\n", body)
+	s.Len(fake.requests(), 1)
+
+	grant := s.grant(s.placeholder, "bigquery.github.test")
+	grant.Reads = []core.SandboxRead{{Host: "bigquery.github.test", Path: "/bigquery/v2/projects/*/queries", SQL: true}}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
+	during = lost.Close
+	status, body = query()
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Equal("egress: the sandbox's grants cannot be read just now\n", body)
+	s.Len(fake.requests(), 1)
+}
+
+// TestADryRunsAnswerIsReadToAMiBOnItsOwnConnection: an answer over 1 MiB is no JSON the proxy
+// reads, and each dry run has a connection of its own, closed after its answer, so bytes a host
+// sends after it reach no log.
+func (s *ProxySuite) TestADryRunsAnswerIsReadToAMiBOnItsOwnConnection() {
+	fake := s.readBigQuery()
+	s.mu.Lock()
+	s.addresses = nil
+	s.mu.Unlock()
+
+	s.sendQueries(fake, []queryRequest{queryCase("a SELECT", `{"query":"SELECT 1"}`, http.StatusOK)}, true)
+
+	s.mu.Lock()
+	s.Equal([]string{"bigquery.github.test:443", "bigquery.github.test:443"}, s.addresses, "the dry run and the query dial apart")
+	s.mu.Unlock()
+	answer := `{"statementType":"SELECT","schema":"` + strings.Repeat("x", 1<<20) + `"}`
+	fake.dryRunAnswers(http.StatusOK, answer)
+	s.sendQueries(fake, []queryRequest{queryCase("an answer over 1 MiB", `{"query":"SELECT 1"}`, http.StatusForbidden)}, true)
+	s.Contains(s.logs.String(), `why="a jobs.query dry run whose answer is not JSON"`)
 }

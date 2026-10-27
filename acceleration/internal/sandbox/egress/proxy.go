@@ -260,8 +260,9 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 }
 
 // inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list (to a
-// GraphQL read, with queries alone; to a SQL read, one SELECT, as the host's dry run of it says). It reads the grants again for each, so after Delete no
-// request goes out on a tunnel the credential opened.
+// GraphQL read, with queries alone; to a SQL read, one SELECT, as the host's dry run of it
+// says). It reads the grants again for each, and after a dry run, so after Delete no request
+// goes out on a tunnel the credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
@@ -324,7 +325,7 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		}
 		grant, form, placed := record.placed(host, r.Header.Get("Authorization"))
 		if !placed {
-			if err := p.selectsOrRefuse(w, r, t, logger, query, r.Header.Get("Authorization")); err != nil {
+			if err := p.selectsOrRefuse(w, r, t, logger, query, r.Header.Get("Authorization"), nil); err != nil {
 				return
 			}
 			sent, done := counted(w, t.label, r.Method, decisionGrantedNoToken)
@@ -344,11 +345,6 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			refuse(w, t.label, r.Method, decisionError, status, "egress: the connection gives no token: "+grant.Binding)
 			return
 		}
-		if err := p.selectsOrRefuse(w, r, t, logger, query, form.scheme+" "+form.credential(token)); err != nil {
-			return
-		}
-		sent, done := counted(w, t.label, r.Method, decisionToken)
-		defer done()
 		pairs := echoes(token, grant.Placeholder)
 		if form.basic {
 			pairs = append(pairs, form.credential(token), form.credential(grant.Placeholder))
@@ -356,6 +352,11 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// An echo of the whole Authorization value in base64 holds the token at another
 		// alignment than the token's own base64.
 		pairs = append(pairs, wholeInBase64(form.scheme+" "+form.credential(token), form.scheme+" "+form.credential(grant.Placeholder))...)
+		if err := p.selectsOrRefuse(w, r, t, logger, query, form.scheme+" "+form.credential(token), pairs); err != nil {
+			return
+		}
+		sent, done := counted(w, t.label, r.Method, decisionToken)
+		defer done()
 		forward.Rewrite = func(pr *httputil.ProxyRequest) {
 			p.toHost(pr, t)
 			pr.Out.Header.Set("Authorization", form.scheme+" "+form.credential(token))
@@ -405,11 +406,15 @@ const sqlHint = "code in the sandbox reads BigQuery with one SELECT per request,
 	"DML, DDL and EXPORT DATA; write with the connector's tools"
 
 // refuseWrite answers a request that is no read 403, saying how code in the sandbox reads the
-// host: on a host with a SQL read, with why, when a check of the body said it.
+// host: on a host with a SQL read, with why, when a check of the body said it, and what BigQuery
+// said when it refused the dry run.
 func (p *Proxy) refuseWrite(w http.ResponseWriter, r *http.Request, t tunnel, logger *slog.Logger, sqlHost bool, why error) {
 	logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
 	refused := fmt.Sprintf("egress: %s %s%s refused", r.Method, t.host, r.URL.EscapedPath())
+	var dry refusedDryRun
 	switch {
+	case sqlHost && errors.As(why, &dry) && dry.said != "":
+		refused += " (" + why.Error() + ": " + dry.said + "): " + sqlHint
 	case sqlHost && why != nil:
 		refused += " (" + why.Error() + "): " + sqlHint
 	case sqlHost:
@@ -421,18 +426,33 @@ func (p *Proxy) refuseWrite(w http.ResponseWriter, r *http.Request, t tunnel, lo
 }
 
 // selectsOrRefuse asks the host's dry run whether the request to a SQL read, query, is one
-// SELECT, and answers 403 when it is not. No query, the request of any other read, passes.
+// SELECT, and answers 403 when it is not, BigQuery's words in it with the token's echoes in pairs
+// replaced. No query, the request of any other read, passes. The grants are read again after
+// the dry run, which can take dryRunTimeout: a grant that ended meanwhile sends nothing on.
 func (p *Proxy) selectsOrRefuse(w http.ResponseWriter, r *http.Request, t tunnel, logger *slog.Logger,
-	query map[string]json.RawMessage, authorization string) error {
+	query map[string]json.RawMessage, authorization string, pairs []string) error {
 	if query == nil {
 		return nil
 	}
-	err := p.selects(r.Context(), r, t, query, authorization)
-	if err != nil {
+	if err := p.selects(r.Context(), r, t, query, authorization, pairs); err != nil {
 		p.refuseWrite(w, r, t, logger.With("why", err.Error()), true, err)
+		return err
 	}
-	return err
+	record, _, err := p.lookup(r.Context(), t.credential)
+	if err != nil {
+		p.logger.Warn("the sandbox egress proxy could not read a sandbox's grants", "error", err)
+		refuse(w, t.label, r.Method, decisionError, http.StatusServiceUnavailable, "egress: the sandbox's grants cannot be read just now")
+		return err
+	}
+	if !record.granted(t.host) {
+		refuse(w, t.label, r.Method, decisionDeniedHost, http.StatusForbidden, "egress: the sandbox's grant for this host has ended")
+		return errGrantEnded
+	}
+	return nil
 }
+
+// errGrantEnded is a grant that ended during a request's dry run.
+var errGrantEnded = errors.New("egress: the grant ended during the dry run")
 
 // errEncoded is a substituted request's response in an encoding the rewrite cannot read.
 var errEncoded = errors.New("egress: the host's response is encoded")

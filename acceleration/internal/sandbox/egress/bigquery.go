@@ -23,6 +23,11 @@ const (
 	// maxDryRunAnswer is the most of a dry run's answer the proxy reads for its statementType: the
 	// answer of a SELECT's dry run is its schema and statistics, no rows.
 	maxDryRunAnswer = 1 << 20
+	// maxSaid is the most of a refused dry run's error.message the model gets, 300 bytes. The live
+	// probe (2026-10-27T19:55Z) printed 160 bytes of each, and a DML's filled them: «Access Denied:
+	// Table bigquery-public-data:samples.shakespeare: Permission bigquery.tables.updateData denied
+	// on table ...». 300 keeps such a message whole, not a long query quoted back.
+	maxSaid = 300
 	// dryRunTimeout bounds a dry run, its answer read whole: half of the 60 s google-cloud-core
 	// gives a request (google/cloud/_http/__init__.py, _DEFAULT_TIMEOUT, 2.5.1), so the query it
 	// lets through has the other half.
@@ -58,8 +63,10 @@ func onlyOneQuery(r *http.Request) (map[string]json.RawMessage, error) {
 	if r.URL.RawQuery != "" && r.URL.RawQuery != prettyPrintOff {
 		return nil, errors.New("a jobs.query POST with a URL query")
 	}
+	// The dry run carries one Content-Type, the request every one it was sent with: a host could
+	// read the body by another than the first, which Get reads.
 	media, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" || (params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8")) {
+	if err != nil || len(r.Header.Values("Content-Type")) != 1 || media != "application/json" || (params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8")) {
 		return nil, errors.New("a jobs.query POST that is not application/json in UTF-8")
 	}
 	for _, coding := range r.Header.Values("Content-Encoding") {
@@ -121,8 +128,10 @@ func queryObject(raw []byte) (map[string]json.RawMessage, error) {
 // request itself would, and the host's own parser reads the SQL: BigQuery answers a dry run
 // with the statement's type, SCRIPT for more than one statement, EXPORT_DATA, CREATE_SCHEMA,
 // and a 403 for DML on a table the token cannot write (live probe 2026-10-27T19:55Z). Its error
-// names the answer's status or type alone, never its body.
-func (p *Proxy) selects(ctx context.Context, r *http.Request, t tunnel, members map[string]json.RawMessage, authorization string) error {
+// names the answer's status or type alone, never its body; a refusal's error.message, its
+// token's echoes in pairs replaced by the placeholder's, is in a refusedDryRun's said alone.
+func (p *Proxy) selects(ctx context.Context, r *http.Request, t tunnel, members map[string]json.RawMessage, authorization string,
+	pairs []string) error {
 	members["dryRun"] = json.RawMessage("true")
 	body, err := json.Marshal(members)
 	if err != nil {
@@ -135,7 +144,6 @@ func (p *Proxy) selects(ctx context.Context, r *http.Request, t tunnel, members 
 		return errors.New("a jobs.query request the proxy cannot send again")
 	}
 	dry.Header.Set("Content-Type", "application/json")
-	dry.Header.Set("Accept-Encoding", "identity")
 	if authorization != "" {
 		dry.Header.Set("Authorization", authorization)
 	}
@@ -147,13 +155,13 @@ func (p *Proxy) selects(ctx context.Context, r *http.Request, t tunnel, members 
 		return errors.New("a jobs.query dry run that got no answer (" + errorClass(err) + ")")
 	}
 	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxDryRunAnswer))
 	if response.StatusCode != http.StatusOK {
-		return errors.New("a jobs.query dry run answered " + strconv.Itoa(response.StatusCode))
+		return refusedDryRun{status: response.StatusCode, said: said(raw, pairs)}
 	}
 	var answer struct {
 		StatementType string `json:"statementType"`
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, maxDryRunAnswer))
 	if err != nil || json.Unmarshal(raw, &answer) != nil {
 		return errors.New("a jobs.query dry run whose answer is not JSON")
 	}
@@ -164,4 +172,38 @@ func (p *Proxy) selects(ctx context.Context, r *http.Request, t tunnel, members 
 		return errors.New("a jobs.query " + answer.StatementType + ", not one SELECT")
 	}
 	return nil
+}
+
+// refusedDryRun is a dry run BigQuery did not answer 200. Its Error names the status alone, for
+// the log; said, which may quote the SQL, goes to the model alone.
+type refusedDryRun struct {
+	status int
+	said   string
+}
+
+func (e refusedDryRun) Error() string {
+	return "a jobs.query dry run answered " + strconv.Itoa(e.status)
+}
+
+// said is the error.message of BigQuery's answer raw ({"error":{"message":...}}, live probe
+// 2026-10-27T19:55Z), the token's echoes in pairs replaced, cut to maxSaid bytes at a
+// character's start: the model learns why its SQL was refused.
+func said(raw []byte, pairs []string) string {
+	var answer struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &answer) != nil {
+		return ""
+	}
+	message := strings.NewReplacer(pairs...).Replace(answer.Error.Message)
+	if len(message) <= maxSaid {
+		return message
+	}
+	end := maxSaid
+	for !utf8.RuneStart(message[end]) {
+		end--
+	}
+	return message[:end]
 }
