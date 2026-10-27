@@ -53,6 +53,24 @@ Most of a sandbox's clients cannot use a TLS proxy URL (curl, urllib, wget, node
 - `BeforeRun` asks `Bind` for each late grant's connection and puts the connection and scheme it gives, alone, in the record entry, so the proxy sends the token from the next request on. It withdraws a grant whose connection needs a reconnect and stores the record again, which renews its TTL. With no grant left and no allowed domain, or after a `Close` the store refused, it deletes the record instead.
 - `Close` deletes the record: the next request through the proxy is a 407.
 
+## Metrics
+
+`metrics.go` holds the proxy's Prometheus metrics, served on the router's `/metrics`.
+
+- `router_sandbox_egress_requests_total{host, method, decision, status}` counts requests. A tunnel to a granted host is counted by the requests in it, not by its CONNECT. A tunnel to an allowed domain is counted by its CONNECT, since the proxy reads nothing in it. `status` is the class the sandbox got (`2xx`, `4xx`).
+- `decision` is one of:
+  - `token`: the placeholder was put in place of the token.
+  - `granted_no_token`: a request to a granted host with no placeholder, sent as it is.
+  - `blind`: a tunnel to an allowed domain.
+  - `denied_host`: a host, a port or a tunnel's `Host` the sandbox has no grant for, or a grant that has ended.
+  - `denied_auth`: no proxy credential, or an unknown or expired one (407).
+  - `denied_method`: a method a granted host does not take.
+  - `denied_request`: a request the proxy does not serve: not a CONNECT, a CONNECT with no port, or an upgrade.
+  - `error`: the proxy could not serve it: the grants unreadable, a connection it could not take over, or a connection that gives no token.
+- `router_sandbox_egress_upstream_seconds{host}` is the time a granted host took to answer a request, to its response header or its failure.
+- `router_sandbox_egress_tunnels_open` is the tunnels open now, to granted hosts and to allowed domains.
+- `host` is the entry of a grant's hosts that covers the request, as the connector's manifest wrote it (`*.example.com` is one value, whatever name under it is asked for), or `other` for any other host: an allowed domain, a refused host or a refused credential. `method` is one of RFC 9110's, else `other`. A token, placeholder, proxy credential, session or user is never a label value: the sandbox chooses its hosts and methods, and the label set must not grow with it.
+
 ## Tests
 
-`proxy_test.go` (tag `integration`, needs `ROUTER_REDIS_ADDR`) runs the attack table A1-A14 of the sandbox broker waves against a proxy whose hosts are `httptest` TLS servers and whose sandbox is a Go `http.Client` with the proxy URL. `broker_test.go` runs `brokertest` and the broker's own tests through the same proxy. `tunnel_test.go` runs the forwarder and its commands in a shell, under a directory that stands for the sandbox's root, against the proxy served over TLS (needs `python3`).
+`proxy_test.go` (tag `integration`, needs `ROUTER_REDIS_ADDR`) runs the attack table A1-A14 of the sandbox broker waves, and reads the metrics after real requests, against a proxy whose hosts are `httptest` TLS servers and whose sandbox is a Go `http.Client` with the proxy URL. `broker_test.go` runs `brokertest` and the broker's own tests through the same proxy. `tunnel_test.go` runs the forwarder and its commands in a shell, under a directory that stands for the sandbox's root, against the proxy served over TLS (needs `python3`).

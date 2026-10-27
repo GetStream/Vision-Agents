@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -45,7 +46,7 @@ const threadTurnLease = askTimeout + 30*time.Second
 //	    the session on the channel (ByConversationWhere), else
 //	      FromConfig(the config binding the line now), Text, PersistConversation,
 //	      ConversationID agent:thread-<uuid>               reply lands in the thread channel
-//	    Session.FollowUp(text)                             the person's message is already
+//	    Session.FollowUp(text), its author (WithAuthor)    the person's message is already
 //	                                                       in the channel: none is written
 //	    wait until the turn is over; close the session it opened; let go of the lease
 
@@ -101,7 +102,10 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 			s.logger.Error("could not let go of a thread's turn; it runs out instead", "channel", thread.ChannelID, "error", err)
 		}
 	}()
-	turn, cancelTurn := context.WithTimeout(routing.WithAttribution(context.Background(), chatHookAttribution(thread.CustomerID, event)), askTimeout)
+	// The author is told to the agent by their Stream user alone: the bridge names that user
+	// after the provider's id for them (channelbridge writeInto), a phone number on a texting
+	// line, which no model is told. So each person goes under "Speaker N".
+	turn, cancelTurn := context.WithTimeout(agent.WithAuthor(routing.WithAttribution(context.Background(), chatHookAttribution(thread.CustomerID, event)), event.Message.User.ID), askTimeout)
 	defer cancelTurn()
 
 	// A session a caller opened on the channel through the API answers there; otherwise this

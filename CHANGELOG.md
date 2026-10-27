@@ -48,6 +48,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### The agent tells people apart in a group text chat
+
+In a thread several people write in, such as an iMessage group chat or a Slack thread with two people, the reply model is told who wrote each message once a second person has written: `Speaker 1: What are our names?`, each person under `Speaker N` in the order they first wrote, never their phone number or Slack id, with a note that several people are writing. It read every message as one person's, so it answered Kanat as Ana. A 1:1 chat and a session in writing from the dashboard or an SDK send the model what they did (AI-2014).
+
 ### Scheduled calls ring only SMS numbers, and say why they ended
 
 A scheduled call rings only a number the user texts the agent from, from the agent's SMS line; a WhatsApp-only number is not rung (`no_phone_number`, `no_agent_number`). A call with less than its ring and call limit left in the occurrence, or a run by hand over 15 min late, is `missed`. A run taken over after its call keeps the call's reason, such as `not_answered`, and an edited one-shot whose call was placed is completed rather than rung again. A text channel's own failure, such as a store or line credential error, is `delivery_failed`, not `channel_unreachable`.
