@@ -24,7 +24,9 @@ import (
 
 // clusterEnvVar names a node of a Redis Cluster with more than one shard, which CI does not
 // run. Three `redis-server --cluster-enabled yes` joined by `redis-cli --cluster create` make
-// one.
+// one. Name a node that does not hold slot 3477, where asynq:queues
+// lives (the second of three): a plain client of the node that does is never redirected, so
+// nothing would fail for it.
 const clusterEnvVar = "ROUTER_TEST_REDIS_CLUSTER_ADDR"
 
 // QueueRedisSuite is the knowledge url queue on each kind of Redis the router may be given.
