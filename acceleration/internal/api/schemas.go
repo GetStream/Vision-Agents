@@ -566,7 +566,7 @@ func (e ImageSourceDetail) Valid() bool {
 
 // KnowledgeDocument is the KnowledgeDocument schema.
 type KnowledgeDocument struct {
-	Source string `json:"source" doc:"Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so posting the same source again replaces what it wrote before." example:"pricing.md"`
+	Source string `json:"source" maxLength:"256" doc:"Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so posting the same source again replaces what it wrote before." example:"pricing.md"`
 	Text   string `json:"text" doc:"The document, whole. It is cut into passages here."`
 }
 

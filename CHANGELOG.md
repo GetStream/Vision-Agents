@@ -117,6 +117,10 @@ Delegated work (a skill, a picture to look at, a summary of a long conversation)
 
 Deleting an agent config now writes its tasks' occurrences still running, such as one held through quiet hours, `missed`, as pausing a task does; before, they stayed `running` (AI-1600). A task created, resumed or edited while its config is being deleted is refused with a 404 `agent_config_not_found` (REST) or `unknown_config` (the agent's tools), instead of being left active on the deleted config; the agent's `schedule_task` on a session whose config was deleted is refused the same way (AI-1598). Claiming a guest now moves the guest's scheduled tasks to the account, with their conversations (AI-1532).
 
+### A knowledge source and a subscribed page have a length limit
+
+A document's `source` longer than 256 characters is now a 400 `validation_failed` on `POST /v1/agents/knowledge` and in a sync's `knowledge`, and a page `url` longer than 2,048 characters is one on `POST /v1/agents/knowledge/urls` and in a sync's `knowledge_urls`. Before, both were taken at any length, and each passage of the document or page carries its source, so a long one multiplied what was written to the knowledge base (AI-1989).
+
 ### A scheduled task's reply carries the files its code made
 
 A task delivered by SMS, WhatsApp or iMessage outside a thread now sends the files the turn's code made (`run_code` or delegated work), as an MMS or WhatsApp media after the words; before, only the words went out. A reply of files and no words is delivered on every channel, a thread's included, where it was a `no_reply` failure; a retry sends the same files without a second turn (AI-1951, AI-1950).
