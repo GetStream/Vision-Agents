@@ -174,6 +174,7 @@ Read the task, then its runs, then the logs, in that order.
 | Run `error` | same | See the reason table below |
 | Limit | create answers 409 `too_many_tasks` | The user holds `max_tasks_per_user` active tasks on this config |
 | The tools | the model never calls `schedule_task` | `scheduling.enabled` off, incognito, a guest or anonymous caller, or a `noauth` router |
+| Old history gone | a completed or failed task 404, or old runs missing | A daily job deletes runs finished over 90 days ago, and completed or failed tasks over 90 days old (`ScheduledTasksKept`); active and paused tasks stay |
 | Session deleted | task 404 | Deleting a session deletes the tasks made in it or following up in it (`internal/api/session_delete.go:47`) |
 
 Run `error` codes (`internal/scheduling/scheduler.go:105`):
@@ -189,7 +190,7 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `thread_gone` | A thread task's thread no longer exists, or is not its user's thread of its customer | no |
 | `connection_removed` | A thread task's line (its connection) was removed | no |
 | `no_reply` | The agent said nothing and made no file to carry | yes |
-| `reply_failed` | The reply was cancelled, interrupted or failed | yes |
+| `reply_failed` | The reply failed, or was cancelled or interrupted and, when run once more under `st_<run>_r1`, was cut off again (a thread task's first cut-off also gives it, and the retry runs it again) | yes |
 | `no_phone_number` | The user never texted this agent by SMS; a number used only on WhatsApp is not rung | yes |
 | `no_agent_number` | The config has no SMS line to ring from | yes |
 | `not_answered` | Nobody picked up within the 90 s ring | no |

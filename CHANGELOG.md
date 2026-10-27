@@ -38,6 +38,10 @@ Before billable work starts the router now reserves what it may cost: a search, 
 
 A `session` binding with `sandbox: true` whose user has no connection yet, in a chat session, now gives the sandbox its env var at once. A request with it is refused with a 401 until the user connects; `run_code`'s description tells the model to call `<alias>__list_tools`, which shows the user the connect card and waits. After the consent, the next run sends the user's token, within about 20 seconds under the Daytona broker. A required binding still refuses the session, and a voice session gets nothing, as before (AI-1960). Each `run_code` result also names, until the user logs in, every such binding not yet connected and tells the model, if the code needed it (a 401 from its hosts), to call its `<alias>__list_tools`; under the Daytona broker the run that binds the login says to wait 20 seconds on a 401 (AI-1969). In a chat, a run of code that finds such a binding not connected now shows the user its connect card itself, without waiting and with no tool call by the model, once per open consent; once the user connects, the agent is told to carry on, and the next run sends their token (AI-1982).
 
+### Finished scheduled-task history is deleted after 90 days
+
+A daily job on every router deletes the runs of scheduled tasks that finished more than 90 days ago, and the tasks that completed or failed more than 90 days ago with their runs. An active or paused task is never deleted, however old; its old runs are. Each row copies the user's instructions, and a daily task added a run a day for good. `router replicate` now imports every scheduled task that is active on the source as paused, with its worker's claim cleared: the source goes on delivering it until the move is cut over, so the copy would have delivered it twice. Resume the tasks at cut-over.
+
 ## Bug Fixes
 
 ### Scheduled calls ring only SMS numbers, and say why they ended
@@ -47,6 +51,10 @@ A scheduled call rings only a number the user texts the agent from, from the age
 ### A repeat created with its start passed runs its whole COUNT from now
 
 A scheduled task created with a repeat whose start has passed, over `POST /v1/agents/scheduled-tasks` or the agent's `schedule_task` tool, now starts at its first occurrence after now: its stored `at` is that occurrence, and its COUNT counts from it. "Daily, three times, from three days ago" is three reminders from tomorrow; before, it was refused as `schedule_in_past`, and one from this morning ran twice. A task stored in the second pass of a fall-back hour keeps that instant when it is read back: its upcoming list starts at its `next_run_at`, and a one-shot paused and resumed inside that hour still runs. The prompt of a one-shot whose occurrence an edit re-dued states the time it was due and how late it is from then, not from the edit (AI-1563, AI-1564, AI-1597).
+
+### A scheduled task whose reply was cut off runs again once
+
+A scheduled task's reply that was cancelled or interrupted, such as by a router restart, made every retry of the occurrence fail with `reply_failed`, and the user got nothing. Its turn now runs again once, under a new command id (`st_<run>_r1`), on the retry or on the next channel. A reply that finished is still read back on a retry, not written again. A reply cut off a second time fails as before. A scheduled message on SMS, WhatsApp or iMessage now carries only the agent's reply, not the raw text of work it delegated, so the first attempt and a retry send the same words (AI-1558, AI-1559).
 
 ### An error in an agent.yaml connector entry names its line in the file
 
