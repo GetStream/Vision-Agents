@@ -72,6 +72,14 @@ nothing is sent and the sign-in goes back to the dashboard, as before.
 `declineLogin` does: the router ends the call, runs nothing and tells the agent the person did
 not connect.
 
+### Dart sessions name where a sign-in goes back to
+
+`SessionOptions.returnUrl` in the Dart SDK is sent as the session's `return_url`, as Swift's
+`returnURL` and Kotlin's `returnUrl` are. Left null or empty, nothing is sent and the sign-in
+goes back to the dashboard, as before. `AgentSession.declineLogin(toolCallId)` answers such a
+sign-in with Not now: the router ends the call, runs nothing and tells the agent the person did
+not connect.
+
 ### The Swift SDK catches up with the other client SDKs
 
 `SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.

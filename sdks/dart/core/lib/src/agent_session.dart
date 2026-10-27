@@ -214,6 +214,13 @@ final class AgentSession {
     }
   }
 
+  /// Declines the sign-in that a call of one of the agent's connectors waits for, whose step in
+  /// the conversation is `awaiting_authorization`. The router answers the call itself, so it
+  /// runs nothing and the agent is told the person did not connect. A call that is not waiting
+  /// is left alone.
+  void declineLogin(String toolCallId) =>
+      _held().send(ToolApprovalCommand(toolCallId, allowed: false));
+
   /// Puts the agent on this session's own call, `agent:<session id>`, and returns [session]
   /// as it now is.
   Future<Session> startVoice() async => _session = await _sessions.startVoice(id);
