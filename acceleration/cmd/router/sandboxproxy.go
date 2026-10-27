@@ -7,6 +7,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/concurrency"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
@@ -60,31 +63,85 @@ func sandboxBroker(settings config.CodeSandbox, redis *live.Client, options *ses
 	return nil
 }
 
+// proxyListenRetry is how often a router taking over tries the proxy address again while the
+// router before it still holds it. Between the old router's hand-over and the new one's next
+// try no router listens, and a sandbox's CONNECT is refused: 100ms keeps that gap a tenth of
+// the 1s AI-2030 allows, and a listen that fails is one syscall, so ten a second for the length
+// of an overlap deploy costs nothing.
+const proxyListenRetry = 100 * time.Millisecond
+
 // serveSandboxProxy has serve run proxy on addr, until stop: over TLS when publicURL, the proxy
 // as a sandbox reaches it, is https, and plain HTTP otherwise. Without a proxy it listens on
 // nothing.
+//
+// A router started beside the one it replaces, as an overlap deploy does, finds addr held: it
+// keeps trying until the old router hands the address over, or ends. handOver is that hand-over,
+// for a router that starts draining: it stops taking connections on addr and leaves the tunnels
+// already open, which are the sandboxes' until the router stops. Either may be called more than
+// once, and after the other.
 func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*http.Server, net.Listener),
-	logger *slog.Logger) (stop func() error, err error) {
+	logger *slog.Logger) (stop func() error, handOver func(), err error) {
 	if proxy == nil {
-		return func() error { return nil }, nil
-	}
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, stack.Wrap(err)
+		return func() error { return nil }, func() {}, nil
 	}
 	public, valid := config.ProxyURL(publicURL)
 	secure := valid && public.Scheme == "https"
-	if secure {
-		listener = tls.NewListener(listener, proxy.ListenerTLS(public.Hostname()))
-	}
 	// ErrorLog: a failed handshake is the router's log line, as in a tunnel, not the std log's.
 	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelInfo)}
-	logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr",
-		"tls", secure)
-	go serve(server, listener)
+	start := func(listener net.Listener) {
+		if secure {
+			listener = tls.NewListener(listener, proxy.ListenerTLS(public.Hostname()))
+		}
+		logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr",
+			"tls", secure)
+		go serve(server, listener)
+	}
+	done := make(chan struct{})
+	listener, err := net.Listen("tcp", addr)
+	switch {
+	case err == nil:
+		start(listener)
+	case errors.Is(err, syscall.EADDRINUSE):
+		logger.Info("the sandbox egress proxy address is held, waiting for the router before this one to hand it over",
+			"address", addr, "setting", "code_sandbox.proxy_addr")
+		go func() {
+			ticker := time.NewTicker(proxyListenRetry)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+				}
+				// A listener bound just as the router stops is closed by serve: Serve on a
+				// closed server closes it.
+				if listener, err := net.Listen("tcp", addr); err == nil {
+					start(listener)
+					return
+				}
+			}
+		}()
+	default:
+		return nil, nil, stack.Wrap(err)
+	}
+	var once sync.Once
+	finish := func(handingOver bool) {
+		once.Do(func() {
+			close(done)
+			if !handingOver {
+				return
+			}
+			logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", addr,
+				"setting", "code_sandbox.proxy_addr")
+			// Shutdown closes the listener and leaves the tunnels: they are hijacked connections,
+			// which an http.Server neither closes nor waits for. It waits only for the CONNECTs
+			// still being answered, so it runs on its own; stop ends it.
+			go func() { _ = server.Shutdown(context.Background()) }()
+		})
+	}
 	// Close, not a drain: a tunnel is the sandbox's to reopen.
-	return server.Close, nil
+	return func() error { finish(false); return server.Close() }, func() { finish(true) }, nil
 }
 
 // secretSweeper sweeps the Daytona secrets a crashed router left behind, and is nil where there

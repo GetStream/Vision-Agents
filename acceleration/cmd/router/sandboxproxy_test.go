@@ -85,7 +85,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	proxy, err := newSandboxProxy(settings, redis, &resolver.Resolver{}, nil, nil, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, proxy)
-	stop, err := serveSandboxProxy(proxy, settings.ProxyAddr, settings.ProxyPublicURL, func(server *http.Server, listener net.Listener) {
+	stop, _, err := serveSandboxProxy(proxy, settings.ProxyAddr, settings.ProxyPublicURL, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 // public URL, and stop is safe.
 func TestNoProxyServesNothing(t *testing.T) {
 	address := freeAddress(t)
-	stop, err := serveSandboxProxy(nil, address, tlsPublicURL, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
+	stop, _, err := serveSandboxProxy(nil, address, tlsPublicURL, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stop() })
 
@@ -297,7 +297,7 @@ func newLoggedListenedProxy(t *testing.T, publicURL string, logger *slog.Logger)
 		egress.Record{Session: "w15tlsl-session", Allowed: []string{"example.com"}}, time.Minute))
 	t.Cleanup(func() { _ = sandboxStore(redis).Delete(context.Background(), credential) })
 	listen := freeAddress(t)
-	stop, err := serveSandboxProxy(proxy, listen, publicURL, func(server *http.Server, listener net.Listener) {
+	stop, _, err := serveSandboxProxy(proxy, listen, publicURL, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, logger)
 	require.NoError(t, err)
