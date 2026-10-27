@@ -577,8 +577,8 @@ func (s *ProxySuite) TestAWriteToAnAllowedDomainIsTunnelledAsItIs() {
 // graphQLRequest is one request of code in the sandbox to a GraphQL read, and the status the
 // proxy answers it with.
 type graphQLRequest struct {
-	name, method, target, contentType, body string
-	status                                  int
+	name, method, target, contentType, encoding, body string
+	status                                            int
 }
 
 // graphQLCase is a JSON POST of body to the GraphQL read, answered with status.
@@ -605,6 +605,9 @@ func (s *ProxySuite) sendGraphQL(requests []graphQLRequest) {
 		request := s.request(c.method, c.target, "Bearer "+s.placeholder, c.body)
 		if c.contentType != "" {
 			request.Header.Set("Content-Type", c.contentType)
+		}
+		if c.encoding != "" {
+			request.Header.Set("Content-Encoding", c.encoding)
 		}
 
 		response, body, err := s.send(s.sandbox(s.credential), request)
@@ -719,6 +722,12 @@ func (s *ProxySuite) TestAGraphQLReadTakesAJSONBodyOfAMiBAtMost() {
 		graphQLCase("a body of 1 MiB", full, http.StatusOK),
 		graphQLCase("a byte over 1 MiB", full+" ", http.StatusForbidden),
 		graphQLCase("gzip", zipped.String(), http.StatusForbidden),
+		{name: "JSON sent as gzip", method: http.MethodPost, target: "https://api.github.test/graphql", contentType: "application/json",
+			encoding: "gzip", body: query, status: http.StatusForbidden},
+		{name: "JSON sent as identity and gzip", method: http.MethodPost, target: "https://api.github.test/graphql", contentType: "application/json",
+			encoding: "identity, gzip", body: query, status: http.StatusForbidden},
+		{name: "JSON sent as identity", method: http.MethodPost, target: "https://api.github.test/graphql", contentType: "application/json",
+			encoding: "Identity", body: query, status: http.StatusOK},
 		{name: "a URL query on a POST", method: http.MethodPost, target: "https://api.github.test/graphql?query=mutation%7Bb%7D",
 			contentType: "application/json", body: query, status: http.StatusForbidden},
 		{name: "a PUT", method: http.MethodPut, target: "https://api.github.test/graphql", contentType: "application/json", body: query,
@@ -727,6 +736,7 @@ func (s *ProxySuite) TestAGraphQLReadTakesAJSONBodyOfAMiBAtMost() {
 			status: http.StatusOK},
 	})
 	s.Contains(s.logs.String(), `why="a GraphQL POST over the size the proxy reads"`)
+	s.Contains(s.logs.String(), `why="a GraphQL POST with a content coding"`)
 }
 
 // TestAGraphQLReadReachesTheHostAsSentWhenItsLengthIsUnknown: a body sent chunked is read

@@ -39,6 +39,16 @@ func onlyQueries(r *http.Request) error {
 	if err != nil || media != "application/json" || (params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8")) {
 		return errors.New("a GraphQL POST that is not application/json in UTF-8")
 	}
+	// The proxy reads the bytes as sent, so a host that decoded a content coding (RFC 9110
+	// section 8.4) would read other ones. GitHub decodes none (live probe 2026-10-27: gzip and
+	// deflate bodies get 400 «Problems parsing JSON»).
+	for _, coding := range r.Header.Values("Content-Encoding") {
+		for _, token := range strings.Split(coding, ",") {
+			if token = strings.TrimSpace(token); token != "" && !strings.EqualFold(token, "identity") {
+				return errors.New("a GraphQL POST with a content coding")
+			}
+		}
+	}
 	// A body cut short is checked as far as it came, and the host gets those bytes.
 	body, _ := io.ReadAll(io.LimitReader(r.Body, maxGraphQLBody+1))
 	r.Body = io.NopCloser(bytes.NewReader(body))
