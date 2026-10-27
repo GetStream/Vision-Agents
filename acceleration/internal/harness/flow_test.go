@@ -77,8 +77,8 @@ func (s *FlowSuite) waitAsked(n int) []llm.ResponseParams {
 }
 
 func (s *FlowSuite) TestWordsThatCallSomebodyByAFamilyNameAreForThem() {
-	// Voicebench's child said "Mom, can I get the chicken nuggets there?" at the caller's end,
-	// Gemma ruled it respond, and the agent answered the child.
+	// A child at the caller's end said "Mom, can we go to the park after?", the controller ruled
+	// it respond, and the agent answered the child.
 	s.Contains(flowInstructions, "Words that open by calling somebody else in the room by a kinship term or a nickname")
 	s.Contains(flowInstructions, "addressed to them, not the agent: choose ignore")
 }

@@ -11,9 +11,9 @@ import (
 )
 
 // learnTerms tells the transcriber to expect the names the caller has said and the agent has
-// just said back. A name heard right once can be misheard the next time: in Voicebench Flux
-// heard "Chen" in a caller's first line, the agent said "for Chen", and the caller's "Yes,
-// Chen, two people" came back as "Yes. Ten two people", after which the agent kept asking
+// just said back. A name heard right once can be misheard the next time: the transcriber
+// heard "Moss" in a caller's first line, the agent said "for Moss", and the caller's "Yes,
+// Moss, two people" came back as "Yes. Most two people", after which the agent kept asking
 // for a name. Only a name both sides have said is learned, so a name the agent got wrong is
 // never reinforced.
 func (a *Agent) learnTerms(said string, history []llm.Message) {
