@@ -4,11 +4,18 @@ package api
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/twilio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -294,4 +301,135 @@ func (s *PhoneSuite) TestAnotherCustomersNumberCannotBeDetached() {
 	status, _ := s.serverClient.failure(http.MethodDelete, "/v1/phone/numbers/"+theirs+"/attach", nil)
 
 	s.Equal(http.StatusNotFound, status)
+}
+
+// CallStatusSuite is the path a vendor posts a placed call's status to. Twilio and Telnyx are
+// the real providers, opened with credentials no request is ever sent with: reading a status
+// reaches no vendor.
+type CallStatusSuite struct {
+	RouterSuite
+}
+
+func TestCallStatusSuite(t *testing.T) {
+	runSuite(t, new(CallStatusSuite))
+}
+
+func (s *CallStatusSuite) SetupSuite() {
+	config, err := phone.DefaultConfig()
+	s.Require().NoError(err)
+	// The suites share one process, so the credentials are not set in it: the two vendors
+	// are declared as needing none, and handed some of their own.
+	for i, vendor := range config.Vendors {
+		if vendor.Vendor == "twilio" || vendor.Vendor == "telnyx" {
+			config.Vendors[i].Credentials = nil
+		}
+	}
+	registry := vendors.Registry(config)
+	registry.Register("twilio", func() (phone.Provider, error) {
+		return twilio.New(twilio.Options{AccountSID: "AC1", AuthToken: "t"})
+	})
+	registry.Register("telnyx", func() (phone.Provider, error) {
+		return telnyx.New(telnyx.Options{APIKey: "k"})
+	})
+	s.phoneVendors = registry
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *CallStatusSuite) SetupTest() {
+	s.useFixture("standard")
+}
+
+// placed keeps a call placed at vendor and returns its status token and call id.
+func (s *CallStatusSuite) placed(vendor string) (string, string) {
+	callID := s.utils.uuid()
+	token, err := s.router.phone.Outcomes().Placed(context.Background(), outcome.Call{
+		Key: outcome.Key{
+			CustomerID: s.customerID(), CallType: "default", CallID: callID,
+			Local: s.utils.number(), Remote: s.utils.number(),
+		},
+		Vendor:  vendor,
+		Reports: true,
+	})
+	s.Require().NoError(err)
+	return token, callID
+}
+
+// post posts body to token's status path as a vendor does, with no credential of ours.
+func (s *CallStatusSuite) post(token, contentType, body string) (int, string) {
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+"/v1/phone/status/"+token, strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", contentType)
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	answered, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return response.StatusCode, string(answered)
+}
+
+// postForm posts form as a vendor's status.
+func (s *CallStatusSuite) postForm(token string, form url.Values) int {
+	status, _ := s.post(token, "application/x-www-form-urlencoded", form.Encode())
+	return status
+}
+
+func (s *CallStatusSuite) read(callID string) outcome.Call {
+	call, err := s.router.phone.Outcomes().Read(context.Background(), s.customerID(), callID)
+	s.Require().NoError(err)
+	return call
+}
+
+func (s *CallStatusSuite) TestATwilioStatusIsReachedWithoutACustomer() {
+	busy, busyCall := s.placed("twilio")
+	noAnswer, noAnswerCall := s.placed("twilio")
+	failed, failedCall := s.placed("twilio")
+	completed, completedCall := s.placed("twilio")
+
+	s.Equal(http.StatusNoContent, s.postForm(busy, url.Values{"CallStatus": {"busy"}}))
+	s.Equal(http.StatusNoContent, s.postForm(noAnswer, url.Values{"CallStatus": {"no-answer"}}))
+	s.Equal(http.StatusNoContent, s.postForm(failed, url.Values{"CallStatus": {"failed"}}))
+	s.Equal(http.StatusNoContent, s.postForm(completed, url.Values{"CallStatus": {"completed"}}))
+
+	s.Equal(outcome.Busy, s.read(busyCall).Outcome)
+	s.Equal(outcome.NoAnswer, s.read(noAnswerCall).Outcome)
+	s.Equal(outcome.Failed, s.read(failedCall).Outcome)
+	s.Equal(outcome.Completed, s.read(completedCall).Outcome)
+}
+
+func (s *CallStatusSuite) TestATelnyxStatusIsRecorded() {
+	token, callID := s.placed("telnyx")
+
+	s.Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"busy"}}))
+
+	call := s.read(callID)
+	s.Equal(outcome.Busy, call.Outcome)
+	s.Equal("busy", call.VendorStatus)
+}
+
+func (s *CallStatusSuite) TestAnUnknownStatusTokenIs404() {
+	status, failure := s.post(s.utils.uuid(), "application/x-www-form-urlencoded", "CallStatus=busy")
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, "that call is not waiting for its status")
+}
+
+func (s *CallStatusSuite) TestAStatusThatCannotBeReadIs400() {
+	token, callID := s.placed("twilio")
+
+	empty, _ := s.post(token, "application/x-www-form-urlencoded", "")
+	notAForm, _ := s.post(token, "application/json", `{"CallStatus":"busy"}`)
+
+	s.Equal(http.StatusBadRequest, empty)
+	s.Equal(http.StatusBadRequest, notAForm)
+	call := s.read(callID)
+	s.Empty(call.Outcome)
+	s.Empty(call.VendorStatus)
+}
+
+func (s *CallStatusSuite) TestAStatusOver64KiBIs413() {
+	token, _ := s.placed("twilio")
+
+	status, _ := s.post(token, "application/x-www-form-urlencoded", "CallStatus=busy&pad="+strings.Repeat("a", 64<<10))
+
+	s.Equal(http.StatusRequestEntityTooLarge, status)
 }

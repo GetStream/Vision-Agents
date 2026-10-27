@@ -431,6 +431,9 @@ type RouterSuite struct {
 	// phoneNow, set by a suite before it starts the harness, is the clock the phone service
 	// times call legs and months by. Nil is the wall clock.
 	phoneNow func() time.Time
+	// phoneVendors is the vendors the phone service opens, for a suite to set before it starts
+	// the harness. Nil is every vendor the router knows, with no credentials.
+	phoneVendors *phone.Registry
 	// registrar10DLC is the router's 10DLC service, for a suite to poll and bill with.
 	registrar10DLC *dlc.Service
 	// manageOff builds the router with no manage key, as a deployment that never set
@@ -1253,11 +1256,15 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 	// Every vendor the router knows is declared, and none of them has credentials: what a
 	// vendor does with a real number is its own package's suite, and what is under test
 	// here is the HTTP surface in front of them.
-	config, err := phone.DefaultConfig()
-	s.Require().NoError(err)
+	registry := s.phoneVendors
+	if registry == nil {
+		config, err := phone.DefaultConfig()
+		s.Require().NoError(err)
+		registry = vendors.Registry(config)
+	}
 
 	service, err := phone.NewService(phone.ServiceOptions{
-		Registry:  vendors.Registry(config),
+		Registry:  registry,
 		Store:     s.store,
 		Recorder:  s.phoneRecorder,
 		Now:       s.phoneNow,

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -152,4 +153,97 @@ func (s *OutcomeSuite) TestADialThatFailsLeavesNoOutcome() {
 
 	_, err = s.service.Outcomes().Read(s.ctx, s.customer, sessionID)
 	s.ErrorIs(err, outcome.ErrUnknownCall)
+}
+
+// placeReported places a call and returns it with the token its status URL carries.
+func (s *OutcomeSuite) placeReported() (Placed, string) {
+	placed := s.place()
+	return placed, strings.TrimPrefix(s.vendor.dialed.StatusURL, "https://router.example/v1/phone/status/")
+}
+
+// report posts result and word to the status URL of the call token names.
+func (s *OutcomeSuite) report(token string, result CallResult, word string) error {
+	body := url.Values{"result": {string(result)}, "word": {word}}.Encode()
+	return s.service.ReportStatus(s.ctx, token, "application/x-www-form-urlencoded", []byte(body))
+}
+
+// answered is the placed call's phone joining its Stream call.
+func (s *OutcomeSuite) answered(placed Placed) {
+	call, err := s.service.Outcomes().Read(s.ctx, s.customer, placed.CallID)
+	s.Require().NoError(err)
+	s.Require().NoError(s.service.Outcomes().Answered(s.ctx, call.Key, time.Now()))
+}
+
+// read reads back how the placed call ended.
+func (s *OutcomeSuite) read(callID string) outcome.Call {
+	call, err := s.service.Outcomes().Read(s.ctx, s.customer, callID)
+	s.Require().NoError(err)
+	return call
+}
+
+func (s *OutcomeSuite) TestAVendorsBusyIsTheCallsOutcome() {
+	placed, token := s.placeReported()
+
+	s.Require().NoError(s.report(token, CallBusy, "busy"))
+
+	call := s.read(placed.CallID)
+	s.Equal(outcome.Busy, call.Outcome)
+	s.Equal("busy", call.VendorStatus)
+	s.True(call.NobodyAnswered())
+}
+
+func (s *OutcomeSuite) TestASecondFinalReportDoesNotOverwriteTheFirst() {
+	placed, token := s.placeReported()
+	s.Require().NoError(s.report(token, CallBusy, "busy"))
+
+	s.Require().NoError(s.report(token, CallNoAnswer, "no-answer"))
+
+	call := s.read(placed.CallID)
+	s.Equal(outcome.Busy, call.Outcome)
+	s.Equal("busy", call.VendorStatus)
+}
+
+func (s *OutcomeSuite) TestANoAnswerAfterThePhoneJoinedIsCompleted() {
+	placed, token := s.placeReported()
+	s.answered(placed)
+
+	s.Require().NoError(s.report(token, CallNoAnswer, "no-answer"))
+
+	call := s.read(placed.CallID)
+	s.Equal(outcome.Completed, call.Outcome)
+	s.False(call.NobodyAnswered())
+}
+
+func (s *OutcomeSuite) TestAReportBeforeTheSessionOpensIsStored() {
+	sessionID := uuid.NewString()
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15125550123", SessionID: sessionID,
+	})
+	s.Require().NoError(err)
+	token := strings.TrimPrefix(s.vendor.dialed.StatusURL, "https://router.example/v1/phone/status/")
+
+	s.Require().NoError(s.report(token, CallFailed, "failed"))
+
+	s.Equal(outcome.Failed, s.read(sessionID).Outcome)
+}
+
+func (s *OutcomeSuite) TestANonFinalReportDecidesNothing() {
+	placed, token := s.placeReported()
+
+	s.Require().NoError(s.report(token, "", "ringing"))
+
+	call := s.read(placed.CallID)
+	s.Empty(call.Outcome)
+	s.Nil(call.DecidedAt)
+	s.Nil(call.EndedAt)
+	s.Equal("ringing", call.VendorStatus)
+}
+
+func (s *OutcomeSuite) TestABadTokenChangesNothing() {
+	placed := s.place()
+
+	err := s.report(uuid.NewString(), CallBusy, "busy")
+
+	s.ErrorIs(err, ErrUnknownStatus)
+	s.Empty(s.read(placed.CallID).Outcome)
 }

@@ -667,6 +667,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
+	mux.HandleFunc("POST /v1/phone/status/{token}", s.receiveCallStatus)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)

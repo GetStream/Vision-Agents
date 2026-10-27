@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -398,6 +399,46 @@ func (s *Server) answerPhoneCall(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", plan.ContentType)
 	if _, err := w.Write(plan.Body); err != nil {
 		s.logger.Error("could not serve a call plan", "error", err)
+	}
+}
+
+// callStatusLimit caps a vendor's status post, which is a form of a few hundred bytes.
+const callStatusLimit = 64 << 10
+
+// errNoCallStatus answers a status post for a token no placed call is waiting on, and every
+// status post to a deployment without telephony.
+var errNoCallStatus = notFound("that call is not waiting for its status")
+
+// receiveCallStatus takes how a placed call ended from the vendor that placed it.
+//
+// Like answerPhoneCall it is reached by a telephony vendor rather than a customer, so it
+// carries no customer header: the token made when the call was placed is the only proof.
+func (s *Server) receiveCallStatus(w http.ResponseWriter, r *http.Request) {
+	if s.phone == nil {
+		writeError(w, errNoCallStatus)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, callStatusLimit))
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, payloadTooLarge("a status is at most 64 KiB"))
+		return
+	}
+	if err != nil {
+		writeError(w, invalidRequest("could not read that status"))
+		return
+	}
+
+	err = s.phone.ReportStatus(r.Context(), r.PathValue("token"), r.Header.Get("Content-Type"), body)
+	switch {
+	case errors.Is(err, phone.ErrUnknownStatus):
+		writeError(w, errNoCallStatus)
+	case errors.Is(err, phone.ErrUnreadableStatus):
+		writeError(w, invalidRequest(err.Error()))
+	case err != nil:
+		writeFailure(w, r, err)
+	default:
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

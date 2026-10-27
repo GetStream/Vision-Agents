@@ -1290,6 +1290,55 @@ func (s *Service) Answer(ctx context.Context, token string) (Plan, error) {
 	}, bridge.InitialDigits)
 }
 
+// ErrUnknownStatus is a status post for no call waiting for one: its token is unknown or swept,
+// or its vendor reports no status.
+var ErrUnknownStatus = errors.New("phone: that call is not waiting for its status")
+
+// ErrUnreadableStatus is a status post its vendor's provider could not read.
+var ErrUnreadableStatus = errors.New("phone: that status could not be read")
+
+// ReportStatus takes what a vendor posted to the status URL of the call token was made for.
+func (s *Service) ReportStatus(ctx context.Context, token, contentType string, body []byte) error {
+	if s.outcomes == nil {
+		return stack.Wrap(ErrUnknownStatus)
+	}
+	call, err := s.outcomes.ByToken(ctx, token)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return stack.Wrap(ErrUnknownStatus)
+	}
+	if err != nil {
+		return err
+	}
+	provider, err := s.registry.Open(call.Vendor)
+	if err != nil {
+		return err
+	}
+	reader, ok := provider.(StatusReader)
+	if !ok {
+		return stack.Wrap(fmt.Errorf("%w: %s reports no status", ErrUnknownStatus, call.Vendor))
+	}
+	status, err := reader.ReadStatus(contentType, body)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("%w: %w", ErrUnreadableStatus, err))
+	}
+	_, err = s.report(ctx, token, status)
+	return err
+}
+
+// report hands a vendor's status for the call token was made for to the keeper, which decides
+// what it means.
+func (s *Service) report(ctx context.Context, token string, status CallStatus) (outcome.Call, error) {
+	reported, err := outcomeOf(status.Result)
+	if err != nil {
+		return outcome.Call{}, err
+	}
+	call, err := s.outcomes.Reported(ctx, token, reported, status.Word)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
+	}
+	return call, err
+}
+
 // SweepBridges removes the bridges left behind by calls nobody answered.
 func (s *Service) SweepBridges(ctx context.Context) (int64, error) {
 	if s.store == nil {
