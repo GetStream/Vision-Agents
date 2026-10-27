@@ -195,6 +195,12 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall, connected []s
 	}
 	changes := !readsOnly(call.Name)
 	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
+		// A read asked again after a call that may have changed something reads it again:
+		// what it read before may no longer be so. A call is taken as a change unless its
+		// name says it only reads, which can only cost a read that was not needed.
+		if !changes && changedState(history, i) {
+			return "", false
+		}
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
 			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) ||
 			call.Name == sandbox.ToolName && harness.RunAgain(history[i].Content, connected) {
@@ -262,6 +268,23 @@ func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// changedState reports whether history[i] is the result of a call that may have changed
+// something: it succeeded, and its tool is not one whose name says it only reads.
+func changedState(history []llm.Message, i int) bool {
+	result := history[i]
+	if result.Role != llm.ToolResult || failedResult(result.Content) || undoneResult(result.Content) {
+		return false
+	}
+	for j := i - 1; j >= 0; j-- {
+		for _, asked := range history[j].ToolCalls {
+			if asked.ID == result.ToolCallID {
+				return !readsOnly(asked.Name)
+			}
+		}
+	}
+	return false
 }
 
 // alreadyRefused opens the answer to a call repeated after the tool refused it.

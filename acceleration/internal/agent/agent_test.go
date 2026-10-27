@@ -4028,6 +4028,32 @@ func (s *AgentSuite) TestAVerificationRefusedOnceIsNotSentTheSameValuesAgain() {
 	s.False(again, "a call that could not be made may be tried again")
 }
 
+func (s *AgentSuite) TestAReadAfterAChangeIsReadAgain() {
+	// A basket was read, an item added, and the basket asked for again: answered from the
+	// first read, the caller would be told the item is not in it.
+	read := llm.ToolCall{ID: "c1", Name: "get_basket", Arguments: `{}`}
+	add := llm.ToolCall{ID: "c2", Name: "add_to_basket", Arguments: `{"item":"umbrella"}`}
+	history := []llm.Message{
+		{Role: llm.User, Content: "Add an umbrella and tell me what's in my basket."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{read}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"items":["scarf"]}`},
+	}
+	again := llm.ToolCall{ID: "c3", Name: "get_basket", Arguments: `{}`}
+
+	_, cached := answeredSinceCaller(history, again, nil)
+	s.True(cached, "nothing changed, so the first read still answers")
+
+	failed := append(slices.Clone(history), llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{add}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"error":"out of stock"}`})
+	_, cached = answeredSinceCaller(failed, again, nil)
+	s.True(cached, "an addition that failed changed nothing")
+
+	added := append(slices.Clone(history), llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{add}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"added":"umbrella"}`})
+	_, cached = answeredSinceCaller(added, again, nil)
+	s.False(cached, "an item was added since the basket was read")
+}
+
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
 	for said, asked := range map[string]bool{
 		"What time would you like?":                         true,
