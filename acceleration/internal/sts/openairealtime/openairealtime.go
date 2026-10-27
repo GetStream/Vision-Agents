@@ -1138,8 +1138,10 @@ func (s *STS) handleMessage(event serverEvent) {
 		}
 
 	case eventInputCompleted:
-		s.heardTranscript(strings.TrimSpace(event.Transcript))
+		// The bill goes first: a caller who hangs up once they have the transcript closes
+		// the emitter, which drops every later send.
 		s.transcribed(event)
+		s.heardTranscript(strings.TrimSpace(event.Transcript))
 
 	case eventResponseCreated:
 		s.startTurn(event)
