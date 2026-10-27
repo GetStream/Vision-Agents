@@ -37,7 +37,8 @@ let session = try await agents.agent("myagent").sessions.create()
 let turn = try await session.responses.create("What are your opening hours?")
 // session.responses.items(responseID: turn.id) reads back what the agent did.
 
-// Or watch it arrive: session.turns grows as the reply streams in.
+// Or watch it arrive: session.turns grows as the reply streams in, and every event is on
+// session.events(), an AsyncStream of its own for each caller.
 await session.start()
 _ = try await session.responses.create("And on Sundays?")
 
@@ -49,7 +50,8 @@ await voice.join()
 let channel = try await session.chat()
 ```
 
-`VisionAgents(apiKey:)` reaches Stream's hosted router; pass `url:` for another. The token
+`VisionAgents(apiKey:)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
+region, pass `url: try Backend.regionURL("europe-west4")`. The token
 comes from a closure because your backend mints it and it expires: it is asked for once, then
 again after a 401. The key goes in the query string and the token in the `Authorization`
 header, never in a URL. A router running locally with nothing in front of it is reached by
@@ -195,6 +197,8 @@ Lists page by cursor: pass a page's `nextCursor` back as `cursor` for the next o
 ```swift
 var query = SessionQuery(limit: 50)
 query.state = .live
+query.custom = ["ticket": "4721"]          // the labels SessionOptions.custom opened it with
+query.createdSince = Calendar.current.date(byAdding: .day, value: -7, to: Date())
 let page = try await agents.agent("myagent").sessions.query(query)
 let found = try await agents.agent("myagent").sessions.search("pricing")
 // page.hasMore, page.nextCursor
@@ -226,13 +230,32 @@ the `id` of a `Response`, not the `turnID` a socket event carries:
 ```swift
 let turns = try await agents.responses(sessionID: session.id).items
 try await agents.rewind(sessionID: session.id, to: turns[0].id)
-let branch = try await agents.fork(sessionID: session.id, ForkOptions(responseID: turns[0].id))
+let branch = try await session.fork(ForkOptions(responseID: turns[0].id))
+
+var harder = ForkOptions()
+harder.modelOverwrites = ModelOverwrites(llm: "llm-thinking", thinking: .high)
+let compared = try await session.fork(harder)   // follow it with attach(sessionID:)
 ```
 
 A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
 cannot be rewound, since its transcript would bring the turns back; fork it at the response
 instead. An open `AgentSession` keeps the transcript it
 already showed, so reload it from `responses` after a rewind.
+
+### Reminders
+
+An agent with `scheduling.enabled` in its config can schedule tasks for the user it talks to.
+The app lists them and does what a person does with a reminder; making one, and what the agent
+is told when it comes due, is the backend's:
+
+```swift
+let page = try await agents.scheduledTasks.list()
+_ = try await agents.scheduledTasks.update(page.items[0].id, next: .in("PT15M"))   // snooze
+_ = try await agents.scheduledTasks.pause(page.items[0].id)
+```
+
+A task runs on the user's clock, so open sessions with `options.timezone =
+TimeZone.current.identifier`, which the router remembers as the user's.
 
 ### Guests
 
@@ -254,7 +277,7 @@ Stream's hosted one for now, throws `.configuration`, and your backend mints the
 
 The router is server-side only by default: a handful of operations are marked
 `x-client-accessible` in the spec and everything else answers a device 403. This SDK uses
-fifteen of them, and `generate.py` fails if the filter names anything the spec does not open —
+twenty-two of them, and `generate.py` fails if the filter names anything the spec does not open —
 which is what stops it growing a method that only ever fails.
 
 What that leaves out, and where it went instead:

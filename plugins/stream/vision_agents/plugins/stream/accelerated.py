@@ -44,7 +44,13 @@ from ._generated.models import (
 )
 from ._generated.types import UNSET, Unset
 from ._socket import Socket
-from ._tool_line import Holds, SocketLine, call_of, cancel, run_call
+from ._tool_line import (
+    Holds,
+    SocketLine,
+    tool_call_context_of,
+    cancel,
+    run_with_tool_call_context,
+)
 from .config import ensure_agent
 from .knowledge import Knowledge
 from .sessions import _with_policy
@@ -104,6 +110,7 @@ class Accelerated(OmniLLM):
         video_max_frames: int = 0,
         log_latency: bool = False,
         user_id: str = "",
+        region: Optional[str] = None,
     ):
         """Configure a pipeline to run remotely.
 
@@ -131,6 +138,8 @@ class Accelerated(OmniLLM):
             tool_timeout: How long the model waits for one of your functions before
                 carrying on without it. Zero leaves the backend's default.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+            region: The hosted router in one region, such as `us-east4`, instead of
+                a URL. Defaults to `STREAM_ACCELERATION_REGION`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
             keyterms: Words the transcriber would otherwise get wrong, such as names and
@@ -161,7 +170,9 @@ class Accelerated(OmniLLM):
         self.video_max_frames = video_max_frames
         self.log_latency = log_latency
 
-        self.backend = Backend(url=url, customer_id=customer_id, acting_for=user_id)
+        self.backend = Backend(
+            url=url, customer_id=customer_id, acting_for=user_id, region=region
+        )
         # A knowledge base belongs to the stored config that reads it, so an agent
         # configured here rather than by name has none to fill.
         self.knowledge = Knowledge(config, self.backend)
@@ -559,12 +570,12 @@ class Accelerated(OmniLLM):
             if name == "get_video_frames":
                 result["output"] = await self._capture_video(arguments)
             else:
-                tool_call_context = call_of(
+                tool_call_context = tool_call_context_of(
                     frame,
                     self.router_session_id or "",
                     SocketLine(self._command, self._holds),
                 )
-                output = await run_call(
+                output = await run_with_tool_call_context(
                     self.function_registry,
                     name,
                     arguments,

@@ -119,6 +119,13 @@ func (s *CostSuite) TestAFailureSaysNothingOfMoney() {
 }
 
 func (s *CostSuite) TestAnAcceptedTurnSaysNoCost() {
+	// The balance is said once the router has read the organization's account, which it does
+	// in the background after the app is made.
+	s.Require().Eventually(func() bool {
+		response := s.serverClient.raw(http.MethodGet, "/v1/policies/app", nil)
+		_ = response.Body.Close()
+		return response.Header.Get(headerBalanceMicros) != ""
+	}, 10*time.Second, 50*time.Millisecond, "the organization's account is read")
 	created := s.serverClient.createSession(textSession(nil))
 
 	response := s.answered(s.serverClient, http.MethodPost, "/v1/agents/sessions/"+created.Id+"/responses",
@@ -189,6 +196,7 @@ func (s *CostSuite) TestAnUtteranceCarriesItsCost() {
 	defer speaking.Close() //nolint:errcheck // the test is done with it
 	s.Require().NoError(speaking.WriteJSON(frame{"type": "start", "target": "en-low-latency"}))
 	s.await(speaking, "started")
+	s.speaking().completedByTest.Store(true)
 	line := "your call is important, " + s.utils.uuid()
 	s.Require().NoError(speaking.WriteJSON(frame{"type": "speak", "id": "s1", "text": line}))
 	s.Require().Eventually(func() bool { return slices.Contains(s.voice.spoken(), line) }, settleFor, 10*time.Millisecond)

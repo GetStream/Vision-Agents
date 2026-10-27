@@ -80,8 +80,7 @@ type Request struct {
 	// Attributes chose the price (a service tier, a country) or explain the row.
 	Attributes map[string]string `bun:"attributes,type:jsonb,nullzero"`
 	LatencyMs  *float64          `bun:"latency_ms"`
-	// CostMicros is millionths of a dollar: the cost at the vendor's rates plus the markup in
-	// force.
+	// CostMicros is millionths of a dollar: what the work is charged at its entry's prices.
 	CostMicros int64 `bun:"cost_micros,notnull"`
 	// OutputCostMicros is the part of CostMicros the generated tokens were priced at.
 	OutputCostMicros int64 `bun:"output_cost_micros,notnull"`
@@ -89,8 +88,10 @@ type Request struct {
 	// embedded or file list a router prices with before it reads the database, "quoted" for
 	// an amount the vendor quoted outright, and empty for local or unpriced work.
 	PriceVersion string `bun:"price_version,notnull"`
-	// BaseCostMicros is the cost at the vendor's rates, before the markup, so the margin on
-	// the row is CostMicros - BaseCostMicros.
+	// SKU is the priced item's, as its entry names it: empty for work no entry matched.
+	SKU string `bun:"sku,notnull"`
+	// BaseCostMicros is the cost at the vendor's rates, for reference, so the margin on the
+	// row is CostMicros - BaseCostMicros.
 	BaseCostMicros int64 `bun:"base_cost_micros,notnull"`
 	// Billable is false for free and local work, which counts toward no spend.
 	Billable     bool   `bun:"billable,notnull"`

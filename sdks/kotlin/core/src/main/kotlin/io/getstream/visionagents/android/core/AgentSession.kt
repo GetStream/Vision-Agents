@@ -139,8 +139,12 @@ public class AgentSession internal constructor(
         }
     }
 
-    /** Speaks this without going through the model. */
-    public suspend fun say(text: String) {
+    /**
+     * Speaks this without going through the model. [interrupt] stops what the agent is saying
+     * first, rather than waiting for it to finish.
+     */
+    public suspend fun say(text: String, interrupt: Boolean = false) {
+        if (interrupt) socket.send(Command.Interrupt())
         socket.send(Command.Say(text))
     }
 
@@ -180,6 +184,16 @@ public class AgentSession internal constructor(
                 Command.ToolResult(call.id, error = "The person declined this call.", requestId = call.requestId, turnId = call.turnId),
             )
         }
+    }
+
+    /**
+     * Declines the sign-in that a call of one of the agent's connectors waits for, whose step in
+     * the conversation is `awaiting_authorization`. The router answers the call itself, so it
+     * runs nothing and the agent is told the person did not connect. A call that is not waiting
+     * is left alone.
+     */
+    public suspend fun declineLogin(toolCallId: String) {
+        socket.send(Command.ToolApproval(toolCallId, allowed = false))
     }
 
     /** Puts the agent on the session's call, `agent:<session id>`. See [Sessions.startVoice]. */

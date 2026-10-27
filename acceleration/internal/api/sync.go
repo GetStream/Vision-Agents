@@ -100,7 +100,7 @@ func leftOutOf(sent *[]LeftOutConnector) []store.LeftOutConnector {
 
 // KnowledgeUrlDeclaration is a page an agent directory declares.
 type KnowledgeUrlDeclaration struct {
-	Url          string  `json:"url" example:"https://example.com/pricing"`
+	Url          string  `json:"url" maxLength:"2048" example:"https://example.com/pricing"`
 	Title        *string `json:"title,omitempty" example:"Pricing"`
 	Description  *string `json:"description,omitempty"`
 	RefreshHours *int    `json:"refresh_hours,omitempty" minimum:"1" example:"24" doc:"How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule."`

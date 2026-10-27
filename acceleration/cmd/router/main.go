@@ -523,7 +523,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	priceFiles, err := loadPriceFiles(settings)
+	priceFiles, err := loadPriceFiles(settings, logger)
 	if err != nil {
 		return err
 	}
@@ -2038,9 +2038,9 @@ func buildVoices(
 }
 
 // newPrices is the price list of the price files the router loads (the deployment's own over
-// the embedded vendor.json), at the vendors' rates with no markup, with the models the
-// routing config runs itself marked local: every row is priced by it on a router with no
-// database, and until the database is read on one with. A price: block in the
+// the embedded vendor.json), priced as a first load prices them, with the models the routing
+// config runs itself marked local: every row is priced by it on a router with no database,
+// and until the database is read on one with. A price: block in the
 // routing config is no longer read, which is said at start, and so is billable work the
 // list has no price for, so it can be priced before a row of it is recorded at nothing.
 func newPrices(capabilities routing.Config, files store.PriceLoad, version string, logger *slog.Logger) (*pricing.List, error) {
@@ -2049,7 +2049,7 @@ func newPrices(capabilities routing.Config, files store.PriceLoad, version strin
 			"ROUTER_PRICES_FILE. router prices export --from <config> --out <file> moves them into a file for ROUTER_PRICES_FILE",
 			"providers", ignored)
 	}
-	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), 0, logger)
+	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), logger)
 	if err != nil {
 		return nil, err
 	}
@@ -2062,8 +2062,8 @@ func newPrices(capabilities routing.Config, files store.PriceLoad, version strin
 // newActivePrices is the price list every row is priced by on a router with a database: the
 // one in force in it, read every interval and at each scheduled change, with the models the
 // routing config runs itself marked local. Until a read answers any entry it prices with
-// fallback, which has no markup, so a deployment with its own price file (requireEntries)
-// reports not ready until then rather than serve on it.
+// fallback, which has none of the prices staff set since, so a deployment with its own price
+// file (requireEntries) reports not ready until then rather than serve on it.
 func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities routing.Config, fallback *pricing.List,
 	requireEntries bool, interval time.Duration, logger *slog.Logger) *pricing.Active {
 	return pricing.NewActive(ctx, pricing.ActiveOptions{

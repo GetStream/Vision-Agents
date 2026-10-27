@@ -266,6 +266,20 @@ class AgentSessionTest {
         chat.close()
     }
 
+    @Test
+    fun `saying something over the agent interrupts it first, and only when asked`() = runBlocking {
+        val chat = agents.chat()
+
+        chat.say("one moment", interrupt = true)
+        chat.say("still there?")
+
+        assertEquals("""{"type":"interrupt"}""", router.nextSent())
+        assertEquals("""{"type":"say","text":"one moment"}""", router.nextSent())
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        chat.close()
+        assertEquals("""{"type":"close"}""", router.nextSent())
+    }
+
     private val refundCall =
         """{"type":"tool_call","id":"c1","name":"issue_refund","arguments":"{\"order_id\":\"A-1042\",\"reason\":\"it arrived unopened\"}","request_id":"m1","turn_id":"t1"}"""
 
@@ -328,6 +342,16 @@ class AgentSessionTest {
         chat.say("still there?")
         assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
         assertEquals(emptyList(), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `declining a sign-in tells the router the call is not allowed`() = runBlocking {
+        val chat = agents.chat(SessionOptions())
+
+        chat.declineLogin("c9")
+
+        assertEquals("""{"type":"tool_approval","tool_call_id":"c9","allowed":false}""", router.nextSent())
         chat.close()
     }
 

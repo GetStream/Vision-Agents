@@ -11,6 +11,7 @@ on:
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
+      - 'examples/voice_agents/android_assistant/**'
       - 'acceleration/api/openapi.yaml'
       - '.github/workflows/client-sdks.yml'
   pull_request:
@@ -22,6 +23,7 @@ on:
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
+      - 'examples/voice_agents/android_assistant/**'
       - 'acceleration/api/openapi.yaml'
       - '.github/workflows/client-sdks.yml'
 
@@ -49,6 +51,7 @@ jobs:
             kotlin:
               - 'sdks/kotlin/**'
               - 'examples/voice_agents/android_demo/**'
+              - 'examples/voice_agents/android_assistant/**'
               - 'acceleration/api/openapi.yaml'
               - '.github/workflows/client-sdks.yml'
             dart:
@@ -91,6 +94,10 @@ jobs:
       # Against core as it is in this checkout, through an included build.
       - name: Build android_demo
         working-directory: examples/voice_agents/android_demo
+        run: ./gradlew :app:assembleDebug
+
+      - name: Build android_assistant
+        working-directory: examples/voice_agents/android_assistant
         run: ./gradlew :app:assembleDebug
 
       - uses: astral-sh/setup-uv@v6

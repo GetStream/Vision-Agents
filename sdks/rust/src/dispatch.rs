@@ -475,7 +475,9 @@ impl Dispatch {
                         (offer.tools.clone(), frame.text("arguments").to_string());
                     // Spawned here rather than in the task below, so a tool_cancel read next finds it.
                     let calling = tokio::spawn(async move {
-                        tools.call_as(&name, &arguments, tool_call_context).await
+                        tools
+                            .call_with_tool_call_context(&name, &arguments, tool_call_context)
+                            .await
                     });
                     hosted_calls
                         .lock()

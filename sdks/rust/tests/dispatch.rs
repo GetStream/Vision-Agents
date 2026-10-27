@@ -463,7 +463,7 @@ async fn hosting_payments(
     let agent = server.client().agent("payments");
     agent
         .tools
-        .register_call(
+        .register_with_tool_call_context(
             types::SessionTool {
                 name: "pay".into(),
                 description: "Pays".into(),
@@ -486,7 +486,7 @@ async fn hosting_payments(
         .unwrap();
     agent
         .tools
-        .register_call(
+        .register_with_tool_call_context(
             types::SessionTool {
                 name: "slow".into(),
                 description: "Takes a while".into(),

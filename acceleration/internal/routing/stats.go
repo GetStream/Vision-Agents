@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -211,14 +212,15 @@ func (s *Stat) ProviderCost(work any) {
 
 // ErrorCancelled is the ErrorCode of work its caller gave up on, whether before the provider
 // answered or by closing the stream it had opened: a reply superseded by newer words, the
-// slower of two hedged requests, or one cut off by the caller speaking. It is not successful,
-// but the provider did nothing wrong, so it is kept out of its health. What it generated
-// before it was cut off is still billed.
+// slower of two hedged requests unless it is a timeout (below), or one cut off by the caller
+// speaking. It is not successful, but the provider did nothing wrong, so it is kept out of
+// its health. What it generated before it was cut off is still billed.
 const ErrorCancelled = store.ErrorCancelled
 
 // ErrorTimeout is the ErrorCode of work that ran past a deadline, its caller's or the router's
-// own limit on a provider, before it finished. It failed, and what the provider generated
-// until then is billed.
+// own limit on a provider, before it finished: the first of two hedged requests that still
+// had said nothing when the other answered included. It failed, and what the provider
+// generated until then is billed.
 const ErrorTimeout = "timeout"
 
 // Recorder prices stats and hands them to a Writer, which writes them to Postgres and Redis
@@ -260,7 +262,7 @@ func NewRecorderOn(modality Modality, writer *Writer, pricer pricing.Pricer, log
 func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, gate Gate, writer *Writer, pricer pricing.Pricer, logger *slog.Logger) *Recorder {
 	if pricer == nil {
 		// An empty list cannot be refused.
-		pricer, _ = pricing.NewList("none", nil, 0, logger)
+		pricer, _ = pricing.NewList("none", nil, logger)
 	}
 	r := &Recorder{modality: modality, pricer: pricer, logger: logger, gate: gate, writer: writer}
 	if writer == nil {
@@ -408,13 +410,14 @@ func (r *Recorder) priced(config ProviderConfig, entry Stat) (store.Request, pri
 	request.UserID = userOnRow(entry.CustomerID, entry.UserID)
 	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
 	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
-	request.BaseCostMicros, request.PriceVersion = priced.BaseCostMicros, priced.Version
+	request.BaseCostMicros, request.PriceVersion, request.SKU = priced.BaseCostMicros, priced.Version, priced.SKU
 	if entry.CostMicros != 0 {
-		// Quoted outright by the vendor, such as a number's monthly charge, which no rate
-		// prices: it is resold with the markup, and what the vendor charged is the base.
-		// Generated tokens keep their share of it.
+		// Quoted outright by the vendor, such as a number's monthly charge, which no price
+		// prices: it is resold at pricing.PriceFactorBps, and what the vendor charged is the
+		// base. Generated tokens keep their share of it.
 		resold := r.pricer.Quoted(ItemOf(r.modality, config, entry.Attributes), entry.CostMicros)
 		request.CostMicros, request.BaseCostMicros, request.PriceVersion = resold.CostMicros, resold.BaseCostMicros, resold.Version
+		request.SKU = cmp.Or(resold.SKU, priced.SKU)
 		request.OutputCostMicros = min(priced.OutputCostMicros, resold.CostMicros)
 		request.Billable = priced.Billable || resold.Billable
 	}

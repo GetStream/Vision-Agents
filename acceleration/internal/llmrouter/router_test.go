@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -519,8 +520,9 @@ func (s *LLMRouterSuite) TestClaudesCacheIsCountedAndPricedLikeAnyOtherCache() {
 	timing := <-timings
 	s.EqualValues(100_000, timing.InputTokens, "the whole prompt, cached and written parts included")
 	s.EqualValues(90_000, timing.CachedInputTokens)
-	// $4/M for 1k fresh, $0.20/M for 90k read, $5/M for 9k written, $20/M for 10 out.
-	s.EqualValues(4_000+18_000+45_000+200, timing.CostMicros)
+	// $4/M for 1k fresh, $0.20/M for 90k read, $5/M for 9k written, $20/M for 10 out, priced
+	// at the vendor list's rates times the factor.
+	s.EqualValues((4_000+18_000+45_000+200)*pricing.PriceFactorBps/10_000, timing.CostMicros)
 }
 
 func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabilities() {

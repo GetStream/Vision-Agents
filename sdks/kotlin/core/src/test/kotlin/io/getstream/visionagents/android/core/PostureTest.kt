@@ -80,6 +80,11 @@ class PostureTest {
                     Reply(200, """{"provider":"exa","model":"exa-fast","answer":"Yes.","results":[]}""")
                 arrived.path == "/v1/agents/guests" -> Reply(201, """{"id":"guest-1","token":"t"}""")
                 arrived.path.endsWith("/query") -> Reply(200, pageJson(emptyList()))
+                arrived.path.startsWith("/v1/agents/scheduled-tasks") -> when {
+                    arrived.method == "DELETE" -> Reply(204)
+                    arrived.path == "/v1/agents/scheduled-tasks" || arrived.path.endsWith("/runs") -> Reply(200, pageJson(emptyList()))
+                    else -> Reply(200, taskJson())
+                }
                 arrived.path.endsWith("/responses") && arrived.method == "POST" -> Reply(202, responseJson("r1"))
                 arrived.path.endsWith("/responses") || arrived.path.endsWith("/items") -> Reply(200, pageJson(emptyList()))
                 arrived.path.endsWith("/voice") -> Reply(200, sessionJson())
@@ -103,6 +108,13 @@ class PostureTest {
         sessions.responses("s1").rewind("r1")
         sessions.close("s1")
         sessions.delete("s1")
+        agents.scheduledTasks.list()
+        agents.scheduledTasks.get("t1")
+        agents.scheduledTasks.update("t1", next = ScheduledTask.Next.After("PT15M"))
+        agents.scheduledTasks.pause("t1")
+        agents.scheduledTasks.resume("t1")
+        agents.scheduledTasks.runs("t1")
+        agents.scheduledTasks.delete("t1")
         agents.router().search("pricing")
         agents.guestUser()
 

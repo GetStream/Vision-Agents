@@ -80,6 +80,7 @@ class Client:
         user_id: str = "",
         authenticate: Optional[bool] = None,
         backend: Optional[Backend] = None,
+        region: Optional[str] = None,
     ):
         """Point a client at a router.
 
@@ -88,6 +89,8 @@ class Client:
 
         Args:
             url: The router's base URL. Defaults to ``STREAM_ACCELERATION_URL``.
+            region: The hosted router in one region, such as ``us-east4``, instead of
+                a URL. Defaults to ``STREAM_ACCELERATION_REGION``.
             customer_id: Who the work is billed to, for a router that trusts the header.
             api_key: The public half of a Stream credential.
             api_secret: The secret belonging to it, which is what makes this a backend.
@@ -104,6 +107,7 @@ class Client:
             token=token,
             user_id=user_id,
             authenticate=authenticate,
+            region=region,
         )
         self.memories = Memories(self.backend)
         self.simulations = Simulations(self.backend)
@@ -258,7 +262,7 @@ class Agent:
             @agent.register(needs_approval="Book flight {flight_id}?")
             async def book_flight(flight_id: str) -> str:
                 "Book a flight for the caller"
-                tool_call_context = current_call()
+                tool_call_context = get_tool_call_context()
                 await tool_call_context.update("checking seats")
                 await tool_call_context.disallow_interruptions()
                 return await bookings.book(flight_id, key=tool_call_context.id)

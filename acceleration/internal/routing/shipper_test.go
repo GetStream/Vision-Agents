@@ -265,6 +265,7 @@ func (s *WriterSuite) TestAShippedEventCarriesTheRowsIdentityAndBillable() {
 		request.UsageCategories = []string{"team:core", "support"}
 		request.SessionID, request.AgentID, request.CallID, request.Purpose = "session-1", "agent-1", "call-1", "reply"
 		request.Billable, request.BaseCostMicros, request.PriceVersion = false, 20, "price-change-1"
+		request.SKU = "llm-openai-gpt"
 		request.Meters = pricing.Quantities{pricing.Requests: 2}
 		request.Attributes = map[string]string{"service_tier": "flex"}
 		request.Tags = map[string]string{"project": "p"}
@@ -285,6 +286,7 @@ func (s *WriterSuite) TestAShippedEventCarriesTheRowsIdentityAndBillable() {
 	s.False(event.Billable)
 	s.EqualValues(20, event.BaseCostMicros)
 	s.Equal("price-change-1", event.PriceVersion)
+	s.Equal("llm-openai-gpt", event.SKU)
 	s.Equal(map[string]int64{"output_tokens": 10, "requests": 2}, event.Quantities)
 	s.Equal(map[string]string{"service_tier": "flex"}, event.Attributes)
 	s.Equal(map[string]string{"project": "p"}, event.Tags)
@@ -380,7 +382,8 @@ func (s *WriterSuite) TestAStuckHolderGivesUpAndEveryRouterStillCountsWhatWaits(
 	stale := s.owned(func(request *store.Request) { request.StartedAt = time.Now().UTC().Add(-20 * time.Minute) })
 	writer.enqueue(stale)
 	s.written(1)
-	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true")
+	// Only this test's rows: a row another test left would be shipped too, by the same sweep.
+	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true WHERE customer_id = ?", s.customer)
 	s.Require().NoError(err)
 	// Another transaction holds the row, so marking it shipped waits, as on a database that
 	// stopped answering.
@@ -524,7 +527,8 @@ func (s *WriterSuite) TestTheSweeperPagesPastRowsThatWaitForAnOrganization() {
 	owned := s.owned(func(request *store.Request) { request.StartedAt = earlier.Add(time.Second) })
 	writer.enqueue(owned)
 	s.written(sweepPage + 1)
-	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true")
+	// Only this test's rows: a row another test left would be shipped too, by the same sweep.
+	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true WHERE customer_id = ?", s.customer)
 	s.Require().NoError(err)
 
 	s.swept(s.sweeper(service.Client))

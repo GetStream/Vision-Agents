@@ -880,7 +880,7 @@ func (s *AgentSuite) TestTheHoldPhraseOpeningTheSentenceBeforeACallIsTheOnlyOneI
 	s.ownsTools("order 12 ships tomorrow")
 	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{PreSpeech: "Let me pull up your order."} }
 	s.join(false)
-	s.model.reply = []string{"One moment, I have order twelve for Alvarez."}
+	s.model.reply = []string{"One moment, I have order twelve for Quillon."}
 	s.model.then = []string{"It ships tomorrow."}
 	s.asksFor("lookup_order", `{"order":"12"}`)
 	participant := stt.Participant{ID: "alice"}
@@ -891,7 +891,7 @@ func (s *AgentSuite) TestTheHoldPhraseOpeningTheSentenceBeforeACallIsTheOnlyOneI
 	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
 	spoken := s.voice.spoken()
 	s.Require().NotEmpty(spoken)
-	s.Equal("One moment, I have order twelve for Alvarez.", spoken[0].Text,
+	s.Equal("One moment, I have order twelve for Quillon.", spoken[0].Text,
 		"the hold phrase and the read-back are one utterance, the first the caller hears")
 	holds, texts := 0, make([]string, 0, len(spoken))
 	for _, request := range spoken {
@@ -1566,7 +1566,10 @@ func (s *AgentSuite) TestAToolResultLandingAfterAnInterruptionIsStillSpoken() {
 
 	release()
 
-	s.eventually(func() bool { return s.spokenText("ships tomorrow") },
+	// The controller keeps ruling that "hello? are you there?" is unfinished, so the result
+	// is not said over those words: it goes with the reply to them once patience runs out.
+	s.Require().Eventually(func() bool { return s.spokenText("ships tomorrow") },
+		defaultPatience+settleFor, 5*time.Millisecond,
 		"the result came back after the interruption and was never said")
 }
 

@@ -328,7 +328,7 @@ func (s *EpisodeReadingSuite) textSession(thread string, cards bool, text string
 	created, err := s.manager.Create(persistent.RouterOpensThread(s.ctx, thread), spec)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
-	s.Require().NoError(created.FollowUp(s.ctx, "follow-up-"+uuid.NewString(), text))
+	s.Require().NoError(created.FollowUp(s.ctx, "follow-up-"+uuid.NewString(), text, nil))
 	return s.replyTo(text)
 }
 
@@ -901,10 +901,10 @@ func (s *EpisodeReadingSuite) TestAFollowUpWhoseTurnCouldNotStartIsNotADuplicate
 	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
 	s.Require().NoError(created.current().Close())
 
-	s.Require().Error(created.FollowUp(s.ctx, "st_run", "the task is due"))
+	s.Require().Error(created.FollowUp(s.ctx, "st_run", "the task is due", nil))
 	_, _, known := created.FollowUpReply("st_run")
 	s.False(known, "a follow-up that started no turn is forgotten")
-	s.Error(created.FollowUp(s.ctx, "st_run", "the task is due"), "the retry tries the turn again rather than being answered Duplicate")
+	s.Error(created.FollowUp(s.ctx, "st_run", "the task is due", nil), "the retry tries the turn again rather than being answered Duplicate")
 }
 
 // A follow-up whose turn could not start leaves one cancelled reply in the channel, however the
@@ -921,13 +921,19 @@ func (s *EpisodeReadingSuite) TestAFollowUpWhoseTurnCouldNotStartLeavesOneCancel
 	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
 	s.Require().NoError(created.current().Close())
 
-	s.Require().Error(created.FollowUp(s.ctx, "thread_message", "carry on"))
+	s.Require().Error(created.FollowUp(s.ctx, "thread_message", "carry on", nil))
 
+	// The outbox writes the reply and its cancelling as two Chat calls, so the reply may be
+	// stored still thinking: it is read once it is no longer generating.
 	var stored []map[string]any
 	s.Require().Eventually(func() bool {
 		stored = s.chat.Stored(strings.TrimPrefix(thread, "agent:"))
-		return len(stored) > 0
-	}, settleFor, 10*time.Millisecond, "the refused follow-up wrote no reply")
+		if len(stored) == 0 {
+			return false
+		}
+		custom, _ := stored[0]["custom"].(map[string]any)
+		return custom["generating"] == false
+	}, settleFor, 10*time.Millisecond, "the refused follow-up wrote no finished reply")
 	s.Len(stored, 1)
 	custom, _ := stored[0]["custom"].(map[string]any)
 	message, _ := custom["support_message"].(map[string]any)

@@ -49,6 +49,9 @@ public final class AgentSession: ObservableObject {
     private let socket: SessionSocket
     private let tools: [String: AgentTool]
     private var pump: Task<Void, Never>?
+    /// Whoever is reading `events()`, each with a stream of their own, or nil once the session
+    /// has stopped and there is nothing more to read.
+    private var subscribers: [UUID: AsyncStream<AgentEvent>.Continuation]? = [:]
     /// The frames this device's camera showed lately, while it is on a call with it on, which
     /// answer the router's `get_video_frames`.
     var cameraFrames: CameraFrames?
@@ -98,14 +101,36 @@ public final class AgentSession: ObservableObject {
         }
     }
 
-    /// Speaks this without going through the model.
-    public func say(_ text: String) async throws {
+    /// Every event as it arrives, for a caller building on more than `conversation` holds:
+    /// latency timings, tool events, a frame the router added after this SDK shipped.
+    ///
+    /// Each call is a stream of its own from that moment on; nothing is replayed. A reader more
+    /// than 256 events behind is finished rather than handed a stream with holes in it, and it
+    /// ends when the session does. Tool calls are answered whether or not anybody reads this.
+    public func events() -> AsyncStream<AgentEvent> {
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: AgentEvent.self, bufferingPolicy: .bufferingNewest(256))
+        if subscribers == nil {
+            continuation.finish()
+        } else {
+            subscribers?[UUID()] = continuation
+        }
+        return stream
+    }
+
+    /// Speaks this without going through the model. `interrupt` stops what the agent is saying
+    /// first, rather than waiting for it to finish.
+    public func say(_ text: String, interrupt: Bool = false) async throws {
+        if interrupt {
+            try await socket.send(.interrupt())
+        }
         try await socket.send(.say(text))
     }
 
-    /// Abandons the reply in flight.
-    public func interrupt() async throws {
-        try await socket.send(.interrupt)
+    /// Abandons the reply in flight, or with `requestID` only the one answering that request,
+    /// wherever it got to. An event's `request_id` names it.
+    public func interrupt(requestID: String = "") async throws {
+        try await socket.send(.interrupt(requestID: requestID))
     }
 
     /// Has the agent join the session's call, `agent:<session id>`, and carry the conversation
@@ -133,6 +158,12 @@ public final class AgentSession: ObservableObject {
         session = try await VisionAgents(backend: backend).sessions.update(
             session.id, title: title, description: description, custom: custom)
         return session
+    }
+
+    /// Continues this conversation as a new session held in writing, leaving this one as it
+    /// was. Follow the fork with `VisionAgents.attach(sessionID:)`.
+    public func fork(_ options: ForkOptions = ForkOptions()) async throws -> Session {
+        try await VisionAgents(backend: backend).fork(sessionID: session.id, options)
     }
 
     /// Answers a call waiting in `approvals`.
@@ -181,6 +212,7 @@ public final class AgentSession: ObservableObject {
         isConnected = false
         approvals = []
         conversation.state = .ended
+        finishSubscribers()
     }
 
     /// Deletes this conversation: it is stopped, and its turns and what it remembered go with
@@ -195,10 +227,29 @@ public final class AgentSession: ObservableObject {
         isConnected = false
         approvals = []
         conversation.state = .ended
+        finishSubscribers()
+    }
+
+    private func finishSubscribers() {
+        subscribers?.values.forEach { $0.finish() }
+        subscribers = nil
     }
 
     private func apply(_ event: AgentEvent) {
         conversation.apply(event)
+        for (id, continuation) in subscribers ?? [:] {
+            switch continuation.yield(event) {
+            case .enqueued:
+                break
+            case .dropped:
+                // Fallen behind: finishing says so, where dropping would leave a silent hole.
+                continuation.finish()
+                subscribers?[id] = nil
+            default:
+                // Terminated: the reader stopped reading.
+                subscribers?[id] = nil
+            }
+        }
         if let call = event.toolCall {
             answer(call)
         } else if event.kind == .toolCancel {

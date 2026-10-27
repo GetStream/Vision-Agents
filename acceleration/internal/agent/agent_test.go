@@ -257,6 +257,9 @@ type stubLLM struct {
 	// composed are the requests for a line, kept apart from asked so a test counting the
 	// turns the model was asked for is not thrown by them.
 	composed []llm.ResponseParams
+
+	// capabilities are what the model says it takes: text alone unless a test says more.
+	capabilities llm.Capabilities
 }
 
 func newStubLLM() *stubLLM { return &stubLLM{scripts: map[string]*llmtest.Script{}} }
@@ -418,7 +421,7 @@ func (s *stubLLM) Close() error {
 
 func (s *stubLLM) Provider() string               { return "stub" }
 func (s *stubLLM) Model() string                  { return "stub-llm" }
-func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (s *stubLLM) Capabilities() llm.Capabilities { return s.capabilities }
 
 // sentBy is who each request was asked in the name of.
 func (s *stubLLM) sentBy() []routing.Caller {
@@ -771,6 +774,8 @@ type AgentSuite struct {
 	replacement *stubTTS
 	// subagent is the second model, present only when a test asks for delegation.
 	subagent *stubLLM
+	// sees makes the conversation model one that takes images.
+	sees bool
 	// skills are what the model may hand over, when a test gives the agent a subagent.
 	skills harness.Skills
 	// box is where the agent runs code, and shelf where what the code hands back is
@@ -855,6 +860,7 @@ func (s *AgentSuite) SetupTest() {
 	s.finds = nil
 	s.guards = nil
 	s.subagent = nil
+	s.sees = false
 	s.skills = harness.Skills{}
 	s.box = nil
 	s.shelf = nil
@@ -918,6 +924,9 @@ func (s *AgentSuite) reasoner(logger *slog.Logger) *llmrouter.Router {
 // alone: a text agent joins no call and opens neither speech router.
 func (s *AgentSuite) joinText() {
 	s.model = newStubLLM()
+	if s.sees {
+		s.model.capabilities = llm.Capabilities{InputModalities: []string{llm.ModalityImage}}
+	}
 	s.flow = newStubLLM()
 	s.model.reply = []string{"Hello there. ", "How are you?"}
 
@@ -1954,14 +1963,14 @@ func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
 }
 
 func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
-	// τ³ telecom: get_customer_by_phone returned C1001, a compaction summarised the result
-	// away, and refuel_data with C1001 was refused as an ID no tool had given.
-	tools := []string{"get_customer_by_phone", "get_details_by_id", "refuel_data"}
+	// A lookup returned an account ID, a compaction summarised the result away, and a later
+	// call with that ID was refused as an ID no tool had given.
+	tools := []string{"find_account_by_phone", "get_account", "add_data"}
 	looked := []llm.Message{
-		{Role: llm.User, Content: "It's five five five dash one two three dash two zero zero two."},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_customer_by_phone"}}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"customer_id": "C1001", "full_name": "John Smith"}`},
-		{Role: llm.Assistant, Content: "I found your account, John."},
+		{Role: llm.User, Content: "It's five five five dash zero one nine dash four four one six."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "find_account_by_phone"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"account_id": "AC7310", "full_name": "Robin Hale"}`},
+		{Role: llm.Assistant, Content: "I found your account, Robin."},
 	}
 	recent := []llm.Message{
 		{Role: llm.User, Content: "Can you add two gigabytes to my line?"},
@@ -1972,8 +1981,8 @@ func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 		emitter: emitter,
 		history: append(append([]llm.Message(nil), looked...), recent...),
 	}
-	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "John Smith asked for more data."})
-	refuel := llm.ToolCall{Name: "refuel_data", Arguments: `{"customer_id":"C1001","line_id":"L1002","gb_amount":2}`}
+	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "Robin Hale asked for more data."})
+	refuel := llm.ToolCall{Name: "add_data", Arguments: `{"account_id":"AC7310","line_id":"LN4","gb_amount":2}`}
 
 	_, _, _, unfound := unfoundID(agent.History(), refuel, tools)
 	s.True(unfound, "the model's history no longer holds the result")
@@ -1981,7 +1990,7 @@ func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 	s.False(unfound, "the call's record still does")
 
 	summary := agent.History()[0]
-	agent.applyCompaction(harness.Compacted{Prefix: agent.History()[:2], Summary: "Still John Smith."})
+	agent.applyCompaction(harness.Compacted{Prefix: agent.History()[:2], Summary: "Still Robin Hale."})
 	s.Equal(append(append(append(append([]llm.Message(nil), looked...), summary), recent...), agent.History()...), agent.record(),
 		"what each compaction took is kept once, in the order it happened, ahead of the history")
 }
@@ -2438,6 +2447,99 @@ func (s *AgentSuite) TestAPictureAScheduledTaskSendsIsLookedAtAsScheduled() {
 	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the picture is the customer's spend")
 }
 
+// A picture sent with no text, or only blanks, is still looked at: the vision skill is asked about it.
+func (s *AgentSuite) TestAPictureSentAloneIsLookedAtByTheVisionSkill() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+	picture := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	for asked, text := range []string{"", " "} {
+		_, err := s.agent.RespondTo(s.ctx, text, picture, options.LLM{})
+		s.Require().NoError(err, "text %q", text)
+
+		s.eventually(func() bool { return len(s.subagent.requests()) == asked+1 }, "the vision task was never asked")
+		s.True(llm.HasImage(s.subagent.requests()[asked].Input), "the skill is shown the picture")
+	}
+}
+
+func (s *AgentSuite) TestAPhotoIsStillSeenByTheReplyAfterATool() {
+	s.sees = true
+	s.ownsTools("order 1042 is a pair of running shoes")
+	s.joinText()
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Those are the running shoes from order 1042."}
+	s.asksFor("lookup_order", `{"order":"1042"}`)
+	photo := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	_, err := s.agent.RespondTo(s.ctx, "are these from order 1042?", photo, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the reply after the tool was never asked")
+	afterTool := s.model.requests()[1].Input
+	s.True(slices.ContainsFunc(afterTool, func(message llm.Message) bool { return message.Role == llm.ToolResult }),
+		"the second reply should be the one after the tool")
+	s.True(lastFromCaller(afterTool).HasImage(), "the reply after the tool lost the photo it was asked about")
+}
+
+func (s *AgentSuite) TestAPhotoIsNotShownAgainToALaterTurnsTool() {
+	s.sees = true
+	s.ownsTools("order 1042 is a pair of running shoes")
+	s.joinText()
+	s.model.reply = []string{"Nice shoes."}
+	s.asksFor("lookup_order", `{"order":"1042"}`)
+	s.model.callsOn = 2
+	photo := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	_, err := s.agent.RespondTo(s.ctx, "what do you think of these?", photo, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 }, "the photo was never answered")
+
+	_, err = s.agent.RespondTo(s.ctx, "where is order 1042?", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the reply after the second turn's tool was never asked")
+	s.False(llm.HasImage(s.model.requests()[2].Input), "a photo is seen with the turn it came with alone")
+}
+
+func (s *AgentSuite) TestAnAgentWithAVisionSkillSeesImages() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+
+	s.True(s.agent.SeesImages())
+}
+
+func (s *AgentSuite) TestAnAgentWhoseModelAcceptsImagesSeesThem() {
+	s.sees = true
+	s.joinText()
+
+	s.True(s.agent.SeesImages())
+}
+
+// SeesImages says no exactly where RespondTo refuses a turn's images.
+func (s *AgentSuite) TestAnAgentWithNeitherSeesNoImages() {
+	s.joinText()
+
+	s.False(s.agent.SeesImages())
+	_, err := s.agent.RespondTo(s.ctx, "what is this?", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
+	s.ErrorIs(err, ErrCannotSeeImages)
+}
+
+// lastFromCaller is the caller's latest message in a request's input.
+func lastFromCaller(input []llm.Message) llm.Message {
+	for i := len(input) - 1; i >= 0; i-- {
+		if input[i].Role == llm.User {
+			return input[i]
+		}
+	}
+	return llm.Message{}
+}
+
 func (s *AgentSuite) TestATurnNobodyIsNamedForIsNotAskedInTheNameOfTheLastSender() {
 	s.joinText()
 	user := routing.Caller{UserID: "alice", IP: "203.0.113.7"}
@@ -2591,6 +2693,277 @@ func (s *AgentSuite) TestAnAnswerComingBackDoesNotCutOffTheReplyBeingSpoken() {
 		"the answer coming back should have started a turn of its own after the reply finished")
 	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never spoken")
+}
+
+func (s *AgentSuite) TestAnAnswerTalkedOverWhilePlayingIsToldAgain() {
+	// The reply passing the answer on has been written in full and is still playing when
+	// the caller cuts in. They never heard it, so the next reply still owes it to them.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63.", "We open at nine."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	s.voice.mu.Lock()
+	s.voice.silent = true
+	s.voice.mu.Unlock()
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never written")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
+	s.heardSomeOf(s.model.requests()[1].ID)
+	s.replyWentOut()
+	s.False(s.agent.harness.Pending(), "the reply passing the answer on is playing")
+	s.flow.then = []string{`{"disposition":"respond","floor":"stop"}`}
+
+	s.mutters(participant, "and when do you open")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the caller talking over the answer never cut it off")
+	s.says(participant, "and when do you open")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the caller was never answered")
+	s.Contains(s.model.requests()[2].Instructions, "It is 12.63.",
+		"an answer the caller talked over is still owed to them")
+	s.Contains(s.model.requests()[2].Instructions, "cut off before the caller heard it")
+}
+
+// heardInFull has the agent hand work over, get its answer back and pass it on, and waits for
+// that reply to have been heard to the end.
+func (s *AgentSuite) heardInFull() {
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never written")
+	s.eventually(func() bool { return !s.agent.floor().Talking }, "the answer was never heard to the end")
+	s.False(s.agent.harness.Pending())
+}
+
+func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainByAnInterrupt() {
+	// Stopping the agent once it has nothing left to say cuts nothing off: what it passed
+	// on was heard.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.heardInFull()
+
+	s.agent.Interrupt()
+
+	s.False(s.agent.harness.Pending(), "an answer the caller heard in full is not owed again")
+}
+
+func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainWhenTheVoiceIsLost() {
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63.", "That comes to 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.heardInFull()
+
+	s.voice.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Fatal: true, Err: errors.New("socket closed")})
+
+	s.eventually(func() bool { return countOf[Error](s.reported()) >= 1 }, "the voice was never lost")
+	model := s.model
+	s.never(func() bool { return len(model.requests()) > 2 },
+		"losing the voice after the answer was heard must not have it said again")
+	s.False(s.agent.harness.Pending())
+}
+
+func (s *AgentSuite) TestAnAnswerReadIsNotOwedAgainByAnInterrupt() {
+	// Somebody reading has the whole reply the moment it is written: there is no playing
+	// for an interrupt to cut short.
+	s.delegates()
+	s.joinText()
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63.", "We open at nine."}
+	s.subagent.reply = nil
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "what is 15% of 84.20"))
+	s.heardInFull()
+
+	s.agent.Interrupt()
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "and when do you open"))
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the next message was never answered")
+	s.NotContains(s.model.requests()[2].Instructions, "12.63")
+}
+
+func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainWhenTheCallerSpeaksAfterIt() {
+	// The reply passing the answer on also asked for a tool, so the agent is still working
+	// when the caller speaks again. Stopping that work cuts nothing they had not heard.
+	s.delegates()
+	s.ownsTools("")
+	s.join(true)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63. Let me also look up your order.", "We open at nine."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	s.model.callsOn = 2
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never written")
+	<-runner.began
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.utterances == 0
+	}, "the answer was never heard to the end")
+	s.flow.then = []string{`{"disposition":"respond","floor":"stop"}`}
+
+	s.says(participant, "and when do you open")
+
+	s.eventually(func() bool { return len(s.model.requests()) >= 3 }, "the caller was never answered")
+	s.NotContains(s.model.requests()[2].Instructions, "12.63", "the caller heard the answer before they spoke")
+}
+
+func (s *AgentSuite) TestAnAnswerComingBackWaitsForWordsStillBeingRuledOn() {
+	// The caller asked something else while the subagent worked, and their words held still
+	// long enough to stop counting as talking but are still with the controller. Passing the
+	// answer on now would be said over them, and the ruling would land mid-reply as though
+	// they had cut in. The reply to their words is the one that passes it on.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63, and we open at nine."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	asked := len(s.flow.requests())
+	s.says(participant, "and when do you open")
+	s.eventually(func() bool { return len(s.flow.requests()) > asked }, "the words were never put to the controller")
+
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
+		callerHold+presenceTick+200*time.Millisecond, 20*time.Millisecond,
+		"an answer must not be passed on over words still being ruled on")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller was never answered")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.",
+		"the reply to the caller's words passes on what came back")
+	s.Zero(countOf[Interrupted](s.reported()))
+}
+
+func (s *AgentSuite) TestAToolResultWaitsForWordsStillBeingRuledOn() {
+	// The caller said something else while the tool ran, and it is still with the controller
+	// when the result comes back. Saying the result now would be said over them.
+	s.ownsTools("")
+	s.join(true)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"It ships tomorrow, and we open at nine."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(settleFor):
+		s.FailNow("the tool did not start")
+	}
+	s.eventually(func() bool { return !s.agent.floor().Talking }, "the first reply was never heard")
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	asked := len(s.flow.requests())
+	s.says(participant, "and when do you open")
+	s.eventually(func() bool { return len(s.flow.requests()) > asked }, "the words were never put to the controller")
+	// Long enough held still that they no longer count as the caller talking.
+	s.eventually(func() bool { return !s.agent.converse.Listening() }, "the caller's words never held still")
+
+	release()
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
+		presenceTick+200*time.Millisecond, 20*time.Millisecond,
+		"a tool's result must not be said over words still being ruled on")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller was never answered")
+	s.Zero(countOf[Interrupted](s.reported()))
+}
+
+func (s *AgentSuite) TestAnAnswerIsNotHeldForAWordsRulingThatNeverComes() {
+	// A ruling lost on the way back would otherwise hold what the caller is owed for as long
+	// as they stay quiet.
+	s.delegates()
+	s.join(true)
+	s.agent.converse.undecidedFor = 300 * time.Millisecond
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	ruling := make(chan struct{})
+	defer close(ruling)
+	s.flow.holdCreate = ruling
+	asked := len(s.flow.requests())
+	s.says(participant, "and when do you open")
+	s.eventually(func() bool { return len(s.flow.requests()) > asked }, "the words were never put to the controller")
+
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer was held for good by a ruling that never came")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
 }
 
 func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
@@ -3658,17 +4031,17 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 }
 
 func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
-	booking := llm.ToolCall{ID: "c1", Name: "create_reservation", Arguments: `{"name":"Alvarez","time":"7:30"}`}
+	booking := llm.ToolCall{ID: "c1", Name: "create_reservation", Arguments: `{"name":"Quillon","time":"7:30"}`}
 	history := []llm.Message{
-		{Role: llm.User, Content: "book it for Alvarez at 7:30"},
+		{Role: llm.User, Content: "book it for Quillon at 7:30"},
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{booking}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"name":"Alvarez","time":"7:30"}`},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"name":"Quillon","time":"7:30"}`},
 		{Role: llm.User, Content: "yes, please go ahead"},
 	}
-	again := llm.ToolCall{ID: "c2", Name: "create_reservation", Arguments: `{"time": "7:30", "name": "Alvarez"}`}
+	again := llm.ToolCall{ID: "c2", Name: "create_reservation", Arguments: `{"time": "7:30", "name": "Quillon"}`}
 	earlier, repeated := answeredSinceCaller(history, again, nil)
 	s.True(repeated)
-	s.Contains(earlier, "Alvarez")
+	s.Contains(earlier, "Quillon")
 
 	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "check_availability", Arguments: booking.Arguments}, nil)
 	s.False(repeated, "a lookup is free to run again once the caller has spoken")
@@ -4666,9 +5039,9 @@ func (s *AgentSuite) TestOnlyAResultThatSaysItFailedIsAFailure() {
 }
 
 func (s *AgentSuite) TestACallThatOnlyFillsInABlankIsTheSameCall() {
-	s.True(fillsIn(`{"name": "Alvarez", "phone": ""}`, `{"name": "Alvarez", "phone": "512-550-1422"}`))
+	s.True(fillsIn(`{"name": "Quillon", "phone": ""}`, `{"name": "Quillon", "phone": "512-550-1422"}`))
 	s.False(fillsIn(`{"party_size": 4, "phone": ""}`, `{"party_size": 6, "phone": ""}`))
-	s.True(fillsIn(`{"name": "Alvarez"}`, `{"name": "Alvarez", "phone": "512-550-1422"}`), "a text argument the first call left out")
+	s.True(fillsIn(`{"name": "Quillon"}`, `{"name": "Quillon", "phone": "512-550-1422"}`), "a text argument the first call left out")
 	s.False(fillsIn(`{"party_size": 6}`, `{"party_size": 6, "patio": true}`), "a choice the first call never made")
 	s.True(fillsIn(`{"party_size": 2}`, `{"party_size": 2, "high_chair": false}`), "a choice left at its default")
 }

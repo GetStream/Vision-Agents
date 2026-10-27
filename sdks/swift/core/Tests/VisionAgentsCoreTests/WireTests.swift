@@ -137,7 +137,8 @@ import Testing
     /// under the names in `readCommands`.
     @Test(arguments: [
         (Command.say("welcome"), #"{"text":"welcome","type":"say"}"#),
-        (Command.interrupt, #"{"type":"interrupt"}"#),
+        (Command.interrupt(), #"{"type":"interrupt"}"#),
+        (Command.interrupt(requestID: "m1"), #"{"request_id":"m1","type":"interrupt"}"#),
         (Command.close, #"{"type":"close"}"#),
         (
             Command.toolResult(id: "c1", output: "20 degrees", error: nil),
@@ -201,7 +202,19 @@ import Testing
     }
 
     @Test func anAPIKeyReachesStreamsHostedRouter() {
-        #expect(Backend(apiKey: "key").url.absoluteString == "https://accelerate.gcp.stream-io-api.com")
+        #expect(Backend(apiKey: "key").url.absoluteString == "https://accelerate-us-east4.gcp.stream-io-api.com")
+    }
+
+    @Test func aRegionIsTheHostedRouterThere() throws {
+        #expect(try Backend.regionURL("us-east4").absoluteString == "https://accelerate-us-east4.gcp.stream-io-api.com")
+        #expect(
+            try Backend.regionURL("europe-west4").absoluteString
+                == "https://accelerate-europe-west4.gcp.stream-io-api.com")
+    }
+
+    @Test(arguments: ["", "US-EAST4", "us-east4.evil.com/x", "us-east4\n", "us_east4", "useast4", "us-east"])
+    func anythingButARegionNameIsRefused(_ name: String) {
+        #expect(throws: AgentsError.self) { try Backend.regionURL(name) }
     }
 
     @Test func anAPIKeyWithNoUserSendsNothing() async {
@@ -258,7 +271,7 @@ import Testing
 
         let url = backend.socketURL(path: "/v1/agents/sessions/s1/events")
 
-        #expect(url.absoluteString == "wss://accelerate.gcp.stream-io-api.com/v1/agents/sessions/s1/events?api_key=key")
+        #expect(url.absoluteString == "wss://accelerate-us-east4.gcp.stream-io-api.com/v1/agents/sessions/s1/events?api_key=key")
     }
 
     @Test func aKeyBesideACustomerIsStreamsAlone() async throws {

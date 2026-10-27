@@ -46,7 +46,7 @@ type running struct {
 //
 // A copy of a call still running here waits for it and gets the same answer, and a copy of
 // one that finished gets its receipt. The function runs with the call in its context
-// (CallFrom), within the function's Timeout and its share of the registry's concurrency.
+// (ToolCallContextFrom), within the function's Timeout and its share of the registry's concurrency.
 func (r *Registry) Run(ctx context.Context, call Call, name string, arguments string) (Output, error) {
 	r.mu.RLock()
 	function := r.functions[name]
@@ -173,7 +173,12 @@ func (r *Registry) execute(ctx context.Context, function *Function, call *Call, 
 			return Output{}, fmt.Errorf("tools: %s waited for a place to run and gave up: %w", function.Name, ctx.Err())
 		}
 	}
-	return function.run(WithCall(ctx, call), []byte(arguments))
+	if function.schema != nil {
+		if err := check(function.schema, []byte(arguments)); err != nil {
+			return Output{}, fmt.Errorf("tools: %s was asked for with arguments it cannot take: %w", function.Name, err)
+		}
+	}
+	return function.run(WithToolCallContext(ctx, call), []byte(arguments))
 }
 
 // memoryReceipts keep receipts in this process for receiptsKept.

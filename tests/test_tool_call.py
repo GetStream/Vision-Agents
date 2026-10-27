@@ -4,8 +4,8 @@ from vision_agents.core.llm import (
     FunctionRegistry,
     ToolCall,
     ToolPolicy,
-    calling,
-    current_call,
+    using_tool_call_context,
+    get_tool_call_context,
 )
 
 
@@ -86,7 +86,7 @@ class TestPolicies:
 
 class TestCurrentCall:
     async def test_outside_a_call_there_is_an_empty_one_that_does_nothing(self):
-        tool_call_context = current_call()
+        tool_call_context = get_tool_call_context()
 
         await tool_call_context.update("still going")
         await tool_call_context.say("one moment")
@@ -98,20 +98,20 @@ class TestCurrentCall:
         line = Line()
 
         async def search() -> str:
-            await current_call().update("checking")
-            await current_call().say("One moment.")
-            return current_call().id
+            await get_tool_call_context().update("checking")
+            await get_tool_call_context().say("One moment.")
+            return get_tool_call_context().id
 
-        with calling(ToolCall(id="call-1", line=line)):
+        with using_tool_call_context(ToolCall(id="call-1", line=line)):
             assert await search() == "call-1"
 
         assert line.sent == [
             ("call-1", "checking", False),
             ("call-1", "One moment.", True),
         ]
-        assert current_call() == ToolCall()
+        assert get_tool_call_context() == ToolCall()
 
     async def test_a_call_stopped_before_it_was_held_says_so(self):
-        with calling(ToolCall(id="call-1", line=Line(holds=False))):
+        with using_tool_call_context(ToolCall(id="call-1", line=Line(holds=False))):
             with pytest.raises(CallNotHeld):
-                await current_call().disallow_interruptions()
+                await get_tool_call_context().disallow_interruptions()

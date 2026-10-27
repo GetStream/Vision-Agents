@@ -322,6 +322,13 @@ func (s *ServerSuite) TestAgentStatsReportThePeakAndTheToolsCalled() {
 }
 
 func (s *ServerSuite) TestProvidersReportLiveHealth() {
+	// Health is kept per model in the Redis every suite shares, and VoicesSuite records a
+	// failure for this one (key: live.go, healthKey). Availability is read from all of it, so
+	// the test starts from none. The key is the one this test reads and VoicesSuite writes,
+	// so only deleting it starts clean; no other key is touched.
+	redis := s.live.ShardRedis()
+	s.Require().NoError(redis.Do(s.T().Context(),
+		redis.B().Del().Key("health:stt:stub:stub-model").Build()).Error())
 	s.Require().NoError(s.live.RecordRequest(context.Background(), live.Usage{
 		Modality: "stt", CustomerID: s.customerID(),
 		Provider: "stub", Model: "stub-model",

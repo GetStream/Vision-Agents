@@ -24,7 +24,24 @@ public typealias TokenProvider = @Sendable () async throws -> String
 /// id instead.
 public struct Backend: Sendable {
     /// Stream's hosted router.
-    public static let defaultURL = URL(string: "https://accelerate.gcp.stream-io-api.com")!
+    public static let defaultURL = URL(string: "https://accelerate-us-east4.gcp.stream-io-api.com")!
+
+    /// Stream's hosted router held to one region, such as us-east4: requests to it are served
+    /// there and nowhere else, even when that region is full or down.
+    ///
+    /// Only the shape of the name is checked: which regions are served is the hosted router's
+    /// to say, so offering another needs no release of this SDK. Throws
+    /// `AgentsError.configuration` for a name not shaped like a region.
+    public static func regionURL(_ region: String) throws -> URL {
+        // The match must cover the whole name; `$` would also stop before a trailing newline.
+        let shape = region.range(of: "[a-z]+-[a-z]+[0-9]+", options: [.regularExpression, .anchored])
+        guard shape == region.startIndex..<region.endIndex,
+            let url = URL(string: "https://accelerate-\(region).gcp.stream-io-api.com")
+        else {
+            throw AgentsError.configuration("\"\(region)\" is not a region, such as us-east4")
+        }
+        return url
+    }
 
     /// The router's base URL, with no path.
     public let url: URL

@@ -189,6 +189,11 @@ type converse struct {
 	// patience is how long the same unfinished words are waited on before the caller is
 	// asked what they meant.
 	patience time.Duration
+	// undecidedFor is how long words that have held still, or a turn kept queued once the
+	// agent was quiet, keep a turn nobody asked for waiting, after which their ruling is
+	// taken as lost. See undecidedWithin and Undecided. A field rather than a constant only so tests can shorten
+	// it, as the harness's flow deadline is.
+	undecidedFor time.Duration
 	// record keeps the trail after the process holding it is gone. Nil when the
 	// deployment has nowhere to put it, in which case the decisions are still logged and
 	// still reported live.
@@ -266,6 +271,9 @@ type queuedCandidate struct {
 	// being said in when it was queued, and said is what that line showed of it then.
 	line string
 	said string
+	// declined is when the agent was first quiet enough to answer the turn and kept it
+	// queued because the caller was talking.
+	declined time.Time
 }
 
 // unfinished is a thought the controller keeps wanting to wait on, and when the waiting
@@ -279,6 +287,16 @@ type unfinished struct {
 type judged struct {
 	participant string
 	text        string
+}
+
+// undecidedWithin is how long words the caller has stopped changing can stay with the flow
+// controller before their ruling is taken as lost: callerHold for them to stop counting as
+// the caller talking, one ruling (harness.FlowDeadline), patience if that ruling is to wait,
+// and one more ruling once patience runs out. It is the most a turn nobody asked for is held
+// up by them, which with the default patience is 10.5 s after the words last changed, not
+// patience alone.
+func undecidedWithin(patience time.Duration) time.Duration {
+	return callerHold + harness.FlowDeadline + patience + harness.FlowDeadline
 }
 
 func newConverse(
@@ -296,24 +314,25 @@ func newConverse(
 		logger = slog.Default()
 	}
 	return &converse{
-		cadence:     settling,
-		duplex:      listening,
-		emitter:     emitter,
-		logger:      logger,
-		patience:    patience,
-		record:      record,
-		candidates:  map[string]candidate{},
-		delegated:   map[string]string{},
-		waiting:     map[string]unfinished{},
-		wentOn:      map[string]time.Time{},
-		overlaps:    map[string]string{},
-		overlapping: map[string]overlapState{},
-		reported:    map[ActionKind]judged{},
-		lines:       map[string]string{},
-		grown:       map[string]bool{},
-		lastHeard:   map[string]string{},
-		queuedSaid:  map[string]string{},
-		repeated:    map[string]string{},
+		cadence:      settling,
+		duplex:       listening,
+		emitter:      emitter,
+		logger:       logger,
+		patience:     patience,
+		undecidedFor: undecidedWithin(patience),
+		record:       record,
+		candidates:   map[string]candidate{},
+		delegated:    map[string]string{},
+		waiting:      map[string]unfinished{},
+		wentOn:       map[string]time.Time{},
+		overlaps:     map[string]string{},
+		overlapping:  map[string]overlapState{},
+		reported:     map[ActionKind]judged{},
+		lines:        map[string]string{},
+		grown:        map[string]bool{},
+		lastHeard:    map[string]string{},
+		queuedSaid:   map[string]string{},
+		repeated:     map[string]string{},
 	}
 }
 
@@ -968,6 +987,26 @@ func (c *converse) Listening() bool {
 	return hearing && time.Since(revised) < callerHold
 }
 
+// Undecided reports whether somebody has said something the agent has not yet dealt with:
+// words still being gathered or put to the controller, or a turn queued behind the reply. A
+// turn nobody asked for waits for them, because it would be said over a caller who spoke
+// first and answer none of what they said. Every ruling but a wait settles the words, and a
+// wait runs out with patience; words that have held still for longer than that and the
+// rulings it takes are taken to have lost theirs, and no longer hold up what is owed.
+//
+// A queued turn is handed back by Waiting the first time the agent is quiet and the caller
+// is not talking, and until the agent is quiet nothing owed can start anyway. So the same
+// limit runs from when Waiting first found the agent quiet and kept the turn: one still
+// queued that long after is no longer waited on.
+func (c *converse) Undecided() bool {
+	if _, revised, hearing := c.cadence.Active(); hearing && time.Since(revised) < c.undecidedFor {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.queued != nil && (c.queued.declined.IsZero() || time.Since(c.queued.declined) < c.undecidedFor)
+}
+
 // Waiting hands back the turn held while the agent finished speaking, now that it has.
 //
 // A caller who has started talking again keeps the floor: the turn stays queued, so the
@@ -986,6 +1025,9 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 	// A copy: what is queued changes with the line it is in, under the lock.
 	held := *c.queued
 	listening := c.Listening()
+	if listening && c.queued.declined.IsZero() {
+		c.queued.declined = time.Now()
+	}
 	if !listening {
 		if !c.cadence.CommitHeld(held.candidate.ID) {
 			c.queued = nil
@@ -1196,8 +1238,8 @@ func revisesQueued(held, ready candidate) bool {
 
 // forgetQueuedAnsweredOver drops the turn the same participant has queued once a newer turn of
 // theirs is answered, and returns its words for that answer to take in. Answered on its own
-// after it, the older turn undoes the newer: in Voicebench a caller's correction was answered,
-// then their first request again, and the agent went back to asking about it. Another
+// after it, the older turn undoes the newer: a caller's correction is answered, then their
+// first request again, and the agent goes back to asking about it. Another
 // participant's queued turn is still theirs to be answered.
 //
 // Only words the newer turn does not say are taken in. A revision that kept less of the run
@@ -1248,8 +1290,8 @@ func (c *converse) forgetQueuedAnsweredOver(ready candidate) string {
 // forgetQueuedGrownLocked drops the queued turn once the caller's words still in progress have
 // grown past it. A caller who paused mid-sentence while the agent talked had the first part
 // queued; the rest goes to the controller with it once it settles. Answering the queued part
-// when the agent stops answers half a sentence, and in Voicebench that half was most of the
-// agent's cut-ins on a caller's long turn. Words that only start the same way are a new turn
+// when the agent stops answers half a sentence and cuts into the rest of the caller's long
+// turn. Words that only start the same way are a new turn
 // and leave it queued. The caller holds the lock.
 func (c *converse) forgetQueuedGrownLocked(participant stt.Participant, utterance int64, saying string) (released string, grown bool) {
 	held := c.queued

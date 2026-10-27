@@ -39,8 +39,11 @@ import (
 const TaskIndex = "knowledge:url:index"
 
 const (
-	// queue keeps crawls off whatever else shares the broker.
-	queue = "knowledge"
+	// defaultQueue keeps crawls off whatever else shares the broker.
+	defaultQueue = "knowledge"
+	// againSuffix names the one read queued behind a read already under way, which may have
+	// fetched the page before the read was asked for again.
+	againSuffix = ":again"
 	// indexTimeout is past the crawler's own timeout, so a slow read fails as the
 	// crawler's error rather than as the task being cut off.
 	indexTimeout = 2 * time.Minute
@@ -77,7 +80,10 @@ type Options struct {
 	// RefreshInterval is how often pages are looked over for one due a refresh. Zero is a
 	// minute.
 	RefreshInterval time.Duration
-	Logger          *slog.Logger
+	// Queue is the asynq queue the reads go through, "knowledge" when empty. Services
+	// sharing one Redis are kept apart by naming theirs differently.
+	Queue  string
+	Logger *slog.Logger
 }
 
 // Service is the control plane for the pages a knowledge base is kept filled from, and the
@@ -85,6 +91,8 @@ type Options struct {
 type Service struct {
 	store     *store.Store
 	queue     *asynq.Client
+	tasks     *asynq.Inspector
+	queueName string
 	worker    *asynq.Server
 	reader    search.Reader
 	knowledge *metered.Knowledge
@@ -116,6 +124,9 @@ func New(options Options) (*Service, error) {
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
+	if options.Queue == "" {
+		options.Queue = defaultQueue
+	}
 
 	every := sweep
 	if options.RefreshInterval > 0 {
@@ -123,7 +134,7 @@ func New(options Options) (*Service, error) {
 	}
 	config := asynq.Config{
 		Concurrency: concurrency,
-		Queues:      map[string]int{queue: 1},
+		Queues:      map[string]int{options.Queue: 1},
 		LogLevel:    asynq.WarnLevel,
 	}
 	if interval := options.CheckInterval; interval > 0 {
@@ -135,6 +146,8 @@ func New(options Options) (*Service, error) {
 	return &Service{
 		store:     options.Store,
 		queue:     asynq.NewClient(options.Redis),
+		tasks:     asynq.NewInspector(options.Redis),
+		queueName: options.Queue,
 		worker:    asynq.NewServer(options.Redis, config),
 		reader:    options.Reader,
 		knowledge: options.Knowledge,
@@ -166,7 +179,7 @@ func (s *Service) Close() error {
 		<-s.swept
 	}
 	s.worker.Shutdown()
-	return s.queue.Close()
+	return errors.Join(s.tasks.Close(), s.queue.Close())
 }
 
 // Subscription is a page a knowledge base is to be kept filled from: the url, and what the
@@ -225,7 +238,7 @@ func (s *Service) Add(ctx context.Context, customerID string, wanted Subscriptio
 			return store.KnowledgeURL{}, err
 		}
 	}
-	return page, s.enqueue(ctx, page)
+	return page, s.readAgain(ctx, page)
 }
 
 // List returns the pages a knowledge base is filled from, newest first. An empty namespace
@@ -250,9 +263,8 @@ func (s *Service) Remove(ctx context.Context, customerID, id string) error {
 		return err
 	}
 
-	base := knowledge.Scoped(page.CustomerID, page.Namespace)
 	owner := routing.Owner{CustomerID: page.CustomerID, Attribution: routing.AttributionFrom(ctx)}
-	if err := s.knowledge.For(owner).Delete(ctx, base, ingest.IDs(page.URL, 0, page.Passages)); err != nil {
+	if err := s.knowledge.For(owner).Delete(ctx, page.Namespace, ingest.IDs(page.URL, 0, page.Passages)); err != nil {
 		return err
 	}
 	return s.store.DeleteKnowledgeURL(ctx, customerID, page.ID)
@@ -265,7 +277,7 @@ func (s *Service) Reindex(ctx context.Context, customerID, id string) (store.Kno
 	if err != nil {
 		return store.KnowledgeURL{}, err
 	}
-	return page, s.enqueue(ctx, page)
+	return page, s.readAgain(ctx, page)
 }
 
 // refresh queues a read of every page due one, each sweep, until Close. Every router runs
@@ -320,9 +332,40 @@ func (p indexPayload) owner() routing.Owner {
 }
 
 // enqueue queues a read of the page, for whoever ctx says asked. A read of it already waiting
-// is enough: the task id is the page, so asking twice before the worker gets to it reads it
-// once.
+// or under way is enough: the task id is the page, so asking twice before the worker gets to
+// it reads it once. That is what a scheduled refresh wants: the page read, by any read.
 func (s *Service) enqueue(ctx context.Context, page store.KnowledgeURL) error {
+	if err := s.enqueueAs(ctx, page, page.ID); err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+		return err
+	}
+	return nil
+}
+
+// readAgain queues a read someone asked for, by adding the page or adding it again, or by
+// reindexing it, after whatever the page last showed. A read of it still waiting is enough. A read already under way is not: it may have fetched the page
+// before this was asked, and it holds the page's id until asynq lets go of it, after the page
+// shows it read. One more read is queued behind it, under an id of its own so that asking
+// again meanwhile still reads the page once more rather than once per ask.
+func (s *Service) readAgain(ctx context.Context, page store.KnowledgeURL) error {
+	err := s.enqueueAs(ctx, page, page.ID)
+	if !errors.Is(err, asynq.ErrTaskIDConflict) {
+		return err
+	}
+	if running, inspectErr := s.tasks.GetTaskInfo(s.queueName, page.ID); inspectErr != nil ||
+		running.State != asynq.TaskStateActive {
+		// Waiting, or gone between the two calls, in which case the read just finished and
+		// whoever asked can ask again: either way nothing is lost by stopping here.
+		return nil
+	}
+	if err := s.enqueueAs(ctx, page, page.ID+againSuffix); err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+		return err
+	}
+	return nil
+}
+
+// enqueueAs queues a read of the page under id, and returns asynq.ErrTaskIDConflict when a
+// task holds that id already.
+func (s *Service) enqueueAs(ctx context.Context, page store.KnowledgeURL, id string) error {
 	queued := indexPayload{CustomerID: page.CustomerID, ID: page.ID}
 	if asked := routing.AttributionFrom(ctx); asked.APIKey != "" {
 		queued.Attribution = &asked
@@ -333,13 +376,13 @@ func (s *Service) enqueue(ctx context.Context, page store.KnowledgeURL) error {
 	}
 
 	_, err = s.queue.EnqueueContext(ctx, asynq.NewTask(TaskIndex, payload),
-		asynq.Queue(queue),
-		asynq.TaskID(page.ID),
+		asynq.Queue(s.queueName),
+		asynq.TaskID(id),
 		asynq.MaxRetry(maxRetry),
 		asynq.Timeout(indexTimeout),
 	)
 	if errors.Is(err, asynq.ErrTaskIDConflict) {
-		return nil
+		return err
 	}
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("urls: queue a read of %s: %w", page.URL, err))
@@ -411,14 +454,13 @@ func (s *Service) write(ctx context.Context, writer knowledge.Writer, page *stor
 	if len(passages) == 0 {
 		return fmt.Errorf("urls: there is nothing to read at %s", page.URL)
 	}
-	base := knowledge.Scoped(page.CustomerID, page.Namespace)
-	if err := writer.Upsert(ctx, base, passages); err != nil {
+	if err := writer.Upsert(ctx, page.Namespace, passages); err != nil {
 		return err
 	}
 	// A page that got shorter would otherwise leave its old tail behind, still findable
 	// and no longer on the page it claims to come from.
 	stale := ingest.IDs(page.URL, len(passages), page.Passages)
-	if err := writer.Delete(ctx, base, stale); err != nil {
+	if err := writer.Delete(ctx, page.Namespace, stale); err != nil {
 		return err
 	}
 

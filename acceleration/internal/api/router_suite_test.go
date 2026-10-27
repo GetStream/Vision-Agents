@@ -785,10 +785,10 @@ func (s *RouterSuite) registrations(listener *httptest.Server, logger *slog.Logg
 	return service
 }
 
-// telephonyRecorder records telephony through a writer of its own, priced from the vendor
-// list, and writes what it holds when the suite ends.
+// telephonyRecorder records telephony through a writer of its own, priced at the vendor list's
+// rates, and writes what it holds when the suite ends.
 func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
-	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, logger)
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), logger)
 	s.Require().NoError(err)
 	recorder := routing.NewRecorder(routing.Phone, s.store, s.live, list, logger)
 	s.T().Cleanup(recorder.Close)
@@ -1310,9 +1310,13 @@ func (s *RouterSuite) knowledgeWriter() *metered.Knowledge {
 // Redis database of its own, so neither another suite nor a router running against the
 // same Redis takes the jobs for itself.
 func (s *RouterSuite) pages(redisAddr string) *urls.Service {
+	// Sixteen Redis databases do not go round every suite running at once, so the queue is
+	// also named for the suite: one suite's worker taking another's read loses it.
+	n := redisDB.Add(1)
 	service, err := urls.New(urls.Options{
 		Store:         s.store,
-		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(redisDB.Add(1))%15 + 1},
+		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(n)%15 + 1},
+		Queue:         fmt.Sprintf("knowledge-%d", n),
 		Reader:        pageReader{},
 		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering),
 		CheckInterval: 10 * time.Millisecond,

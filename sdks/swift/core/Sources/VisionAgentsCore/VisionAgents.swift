@@ -26,11 +26,24 @@ public struct SessionOptions: Sendable {
     public var title: String?
     public var description: String?
     public var projectID: String?
+    /// Your own labels, handed back untouched. `SessionQuery.custom` finds the session by them.
+    public var custom: [String: RawJSON] = [:]
     /// What the agent opens the call with.
     public var greeting: Greeting?
     public var llm: String?
     public var stt: String?
     public var tts: String?
+    /// What to change about the models for this session alone: thinking, temperature, a cap on
+    /// every reply and the rest.
+    public var modelOverwrites: ModelOverwrites?
+    /// Has the agent remember the signed-in user: what it learned about them before is recalled
+    /// here, and what it learns here is kept for their next session. Nil remembers nothing, and
+    /// an incognito session never does.
+    public var memory: Memory?
+    /// The user's IANA zone, such as `TimeZone.current.identifier`, which the device knows and
+    /// the router does not. The agent reads dates in it, and it is remembered as the user's for
+    /// the scheduled tasks that follow.
+    public var timezone: String?
     /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
     /// the name you gave it. Prefix it with `custom:` to mean only yours.
     public var voice: String?
@@ -47,6 +60,20 @@ public struct SessionOptions: Sendable {
 
     public init(agent: String? = nil) {
         self.agent = agent
+    }
+
+    /// What a session remembers about the user `setUser` named. It is always theirs: a device
+    /// recalls nobody else's.
+    public struct Memory: Sendable, Hashable {
+        /// Your own labels, which narrow what is recalled. They cannot widen it past the user.
+        public var filter: [String: String]
+        /// Separates two of your apps sharing one memory account.
+        public var appID: String?
+
+        public init(filter: [String: String] = [:], appID: String? = nil) {
+            self.filter = filter
+            self.appID = appID
+        }
     }
 }
 
@@ -83,6 +110,9 @@ public struct VisionAgents: Sendable {
 
     /// Every conversation this caller has, whichever agent holds it.
     public var sessions: Sessions { Sessions(agents: self, agent: nil) }
+
+    /// The reminders and later work agents hold for this user.
+    public var scheduledTasks: ScheduledTasks { ScheduledTasks(backend: backend) }
 
     /// Says who this device is acting for, and how to prove it. See `Backend.setUser`.
     public func setUser(_ user: User, token: @escaping TokenProvider) {
@@ -183,16 +213,24 @@ public struct VisionAgents: Sendable {
         let body = CreateSessionRequest(
             agent: options.agent.flatMap { $0.isEmpty ? nil : $0 },
             configId: options.configID.flatMap { $0.isEmpty ? nil : $0 },
+            custom: options.custom.isEmpty ? nil : options.custom,
             description: options.description,
             greeting: options.greeting?.schema,
             id: options.id.flatMap { $0.isEmpty ? nil : $0 },
             incognito: options.incognito,
             llm: options.llm,
+            // The router remembers only for a user id, and a device only ever means its own user.
+            memory: options.memory.map {
+                SessionMemory(
+                    appId: $0.appID, filter: $0.filter.isEmpty ? nil : $0.filter, userId: backend.user?.id)
+            },
+            modelOverwrites: options.modelOverwrites?.schema,
             projectId: options.projectID,
             returnUrl: options.returnURL?.absoluteString,
             startVoice: options.startVoice ? true : nil,
             stt: options.stt,
             tags: options.tags.isEmpty ? nil : options.tags,
+            timezone: options.timezone,
             title: options.title,
             tools: options.tools.map {
                 SessionTool(
@@ -257,8 +295,13 @@ public struct VisionAgents: Sendable {
     /// Follow the fork the way any session is followed, with `attach(sessionID:)`.
     public func fork(sessionID: String, _ options: ForkOptions = ForkOptions()) async throws -> Session {
         let body = ForkSessionRequest(
-            configId: options.agent.flatMap { $0.isEmpty ? nil : $0 },
+            agent: options.agent.flatMap { $0.isEmpty ? nil : $0 },
+            configId: options.configID.flatMap { $0.isEmpty ? nil : $0 },
+            custom: options.custom,
+            description: options.description,
+            incognito: options.incognito,
             messages: options.withoutHistory ? false : nil,
+            modelOverwrites: options.modelOverwrites?.schema,
             projectId: options.projectID,
             responseId: options.responseID.flatMap { $0.isEmpty ? nil : $0 },
             title: options.title)
@@ -372,11 +415,15 @@ public struct Sessions: Sendable {
             filter: .init(
                 agent: equals(agent),
                 agentId: equals(query.agentID),
+                createdAt: query.createdSince == nil && query.createdBefore == nil
+                    ? nil : .init(gte: query.createdSince, lt: query.createdBefore),
+                custom: query.custom.isEmpty ? nil : query.custom,
                 modality: equals(query.modality?.rawValue),
                 projectId: equals(query.projectID),
                 state: equals(query.state?.rawValue),
                 text: text.map { .init(q: $0) }),
-            limit: query.limit)
+            limit: query.limit,
+            sort: query.sort.map { [.init(field: .init(rawValue: $0.rawValue))] })
         let page = try await agents.backend.call { try await $0.querySessions(sessionQueryPayload: body) }
         return Page(
             items: page.items.map(Session.init), hasMore: page.hasMore, nextCursor: page.nextCursor)

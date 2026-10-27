@@ -214,10 +214,14 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		go func() {
 			select {
 			case <-held:
+				script.OutputText("Done.")
+				script.Done()
 			case <-ctx.Done():
+				// A reply cancelled while it waited ends as a provider's would, with nothing
+				// written. Answering it anyway raced the turn being torn down, so a router
+				// stopped mid-turn could read back a reply it never got.
+				script.Fail(ctx.Err(), "scheduling")
 			}
-			script.OutputText("Done.")
-			script.Done()
 		}()
 		return script.Stream(), nil
 	}
@@ -1683,27 +1687,32 @@ func (s *ScheduledTasksSuite) TestANextMovedWithTheScheduleIsCheckedAgainstTheRu
 func (s *ScheduledTasksSuite) TestARepeatWrittenFromAPastDateStartsAtItsNextOccurrence() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
+	amsterdam, err := time.LoadLocation("Europe/Amsterdam")
+	s.Require().NoError(err)
 	nextOf := func(task ScheduledTask, clock string) {
 		s.Require().NotNil(task.NextRunAt)
 		next, err := time.Parse(time.RFC3339, *task.NextRunAt)
 		s.Require().NoError(err)
 		s.True(next.After(time.Now()), "the next run %s is not in the past", next)
 		s.True(next.Before(time.Now().Add(25*time.Hour)), "a daily task is due within a day")
-		amsterdam, err := time.LoadLocation("Europe/Amsterdam")
-		s.Require().NoError(err)
 		s.Equal(clock, next.In(amsterdam).Format("15:04"))
 	}
+	// The hours are a little ahead of now, the second an hour after the first, so the edit
+	// moves the next run later rather than to within scheduling.MinMove of now, which is
+	// refused. Fixed hours were refused for the minutes before the second one every day.
+	first := time.Now().In(amsterdam).Add(2 * time.Hour).Hour()
+	second := (first + 1) % 24
 	body := taskRequest(config)
-	body.Schedule = ScheduledTaskSchedule{At: pointerTo("2026-01-01T09:00:00"), Repeat: pointerTo("FREQ=DAILY"),
-		Timezone: pointerTo("Europe/Amsterdam")}
+	body.Schedule = ScheduledTaskSchedule{At: pointerTo(fmt.Sprintf("2026-01-01T%02d:00:00", first)),
+		Repeat: pointerTo("FREQ=DAILY"), Timezone: pointerTo("Europe/Amsterdam")}
 	created := s.createTask(user, body)
-	nextOf(created, "09:00")
+	nextOf(created, fmt.Sprintf("%02d:00", first))
 
 	var updated ScheduledTask
 	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
-		UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{At: pointerTo("2026-02-01T10:00:00"),
+		UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{At: pointerTo(fmt.Sprintf("2026-02-01T%02d:00:00", second)),
 			Repeat: pointerTo("FREQ=DAILY")}}, &updated))
-	nextOf(updated, "10:00")
+	nextOf(updated, fmt.Sprintf("%02d:00", second))
 }
 
 // threeDaysAgo is midnight UTC three days back: a daily COUNT=3 from it has

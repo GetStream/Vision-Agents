@@ -82,7 +82,32 @@ void main() {
       final backend = Backend(apiKey: 'key', token: () async => 'token');
 
       expect(backend.url, Backend.defaultUrl);
-      expect(backend.url.toString(), 'https://accelerate.gcp.stream-io-api.com');
+      expect(backend.url.toString(), 'https://accelerate-us-east4.gcp.stream-io-api.com');
+    });
+
+    test('a region is the hosted router there', () {
+      expect(
+        Backend.regionUrl('us-east4').toString(),
+        'https://accelerate-us-east4.gcp.stream-io-api.com',
+      );
+      expect(
+        Backend.regionUrl('europe-west4').toString(),
+        'https://accelerate-europe-west4.gcp.stream-io-api.com',
+      );
+    });
+
+    test('anything but a region name is refused', () {
+      for (final name in [
+        '',
+        'US-EAST4',
+        'us-east4.evil.com/x',
+        'us-east4\n',
+        'us_east4',
+        'useast4',
+        'us-east',
+      ]) {
+        expect(() => Backend.regionUrl(name), throwsArgumentError, reason: name);
+      }
     });
 
     test('an api key with no token asks for nothing but a guest', () async {

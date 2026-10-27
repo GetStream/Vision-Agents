@@ -159,17 +159,16 @@ const textUsePolicy = "Call a tool as soon as every argument it requires is know
 	useArguments
 
 // sayDo holds what the agent says to what its tools did. A voice model told to say a hold
-// phrase before a call can say the outcome instead: in Voicebench Gemma told a caller
-// "You're all set" for a booking it never made. It sits beside the use policy rather than in
-// it, so that stays short.
+// phrase before a call can say the outcome instead, telling a caller "You're all set" for a
+// booking it never made. It sits beside the use policy rather than in it, so that stays short.
 //
-// A go-ahead is acted on there too: in Voicebench the caller said "Please go ahead" with every
-// required argument known, and Gemma asked for a phone number or a seating preference instead,
-// so the call ended with nothing booked.
+// A go-ahead is acted on there too: a caller can say "Please go ahead" with every required
+// argument known and be asked for something optional instead, and the call ends with nothing
+// done.
 //
-// Waiting for agreement is the exception to calling once the arguments are known: Voicebench
-// operators ask for it, and Gemma read the details back and called in the same breath, so a
-// correction the caller made a moment later never reached the call.
+// Waiting for agreement is the exception to calling once the arguments are known: an
+// operator's instructions can ask for it, and a model that reads the details back and calls in
+// the same breath leaves a correction the caller makes a moment later out of the call.
 const sayDo = "Never say something is done (booked, changed, cancelled, sent) unless a " +
 	"tool result in this conversation shows it, nor that you are doing it now (logging, " +
 	"booking, opening a ticket) unless you call the tool in that same reply; if you have " +

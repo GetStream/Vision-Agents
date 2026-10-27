@@ -97,11 +97,12 @@ observing the voice session follows `voice.session` too, as nested reads did und
 `@Observable`. An app holding a session it does not have yet keeps it in an `ObservableObject`
 of its own, the shape of StreamVideo's `CallViewModel`; the demos' `CurrentVoice` is one.
 
-If a public stream of events is ever added, it must be a `func events()` handing each caller
-its own bounded continuation — never one stored `AsyncStream` property. A single stream is not
-a broadcast: two iterators compete for elements. Use `.bufferingNewest(n)`, check the `yield`
-result, and finish a subscriber that falls behind rather than dropping an unknown number of
-events silently. `.unbounded` turns a stalled consumer into a leak.
+The public stream of events is `AgentSession.events()`, handing each caller its own bounded
+continuation — never one stored `AsyncStream` property. A single stream is not a broadcast: two
+iterators compete for elements. It uses `.bufferingNewest(256)`, checks the `yield` result, and
+finishes a subscriber that falls behind rather than dropping an unknown number of events
+silently; every subscriber finishes when the session stops. `.unbounded` turns a stalled
+consumer into a leak.
 
 ## The socket
 
@@ -157,8 +158,9 @@ than a client of its own. It is run with Stream Chat's options: internal, immuta
 enums as `RawRepresentable` classes that keep a value the router added, shared coding keys.
 `generate.py` hands it a copy of the spec in terms it reads: an integer enum is a plain
 integer, a reference to a string-or-object union (`Equals`) is its string shorthand, since the
-generator would drop the field, and a model whose name a hand-written type has is renamed
-(`RENAMED`: `Session` is `SessionPayload`). A collision `RENAMED` misses fails the build.
+generator would drop the field, a required field that may be null is not required, since the
+generator ignores `nullable` and the null would fail to decode, and a model whose name a
+hand-written type has is renamed (`RENAMED`: `Session` is `SessionPayload`). A collision `RENAMED` misses fails the build.
 `DefaultEndpoints.swift` is discarded: it is Stream Chat's request path, written against its
 internals.
 

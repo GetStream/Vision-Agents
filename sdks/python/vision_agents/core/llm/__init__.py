@@ -9,14 +9,15 @@ from .remote import (
     RemotePipelineError,
 )
 from .function_registry import FunctionRegistry, ToolPolicy, function_registry
+from .tool_arguments import ToolArgumentsError
 from .tool_call import (
     CallNotHeld,
     ToolCall,
     ToolConversation,
     ToolLine,
     ToolUser,
-    calling,
-    current_call,
+    get_tool_call_context,
+    using_tool_call_context,
 )
 
 __all__ = [
@@ -36,12 +37,13 @@ __all__ = [
     "RemotePipelineError",
     "FunctionRegistry",
     "ToolPolicy",
+    "ToolArgumentsError",
     "function_registry",
     "CallNotHeld",
     "ToolCall",
     "ToolConversation",
     "ToolLine",
     "ToolUser",
-    "calling",
-    "current_call",
+    "get_tool_call_context",
+    "using_tool_call_context",
 ]

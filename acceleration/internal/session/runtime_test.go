@@ -65,11 +65,11 @@ func (s *RuntimeSuite) SetupSuite() {
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
 	perMinute := map[pricing.Meter]pricing.Rate{pricing.Seconds: {USD: 0.06, Per: 60}}
-	s.prices, err = pricing.NewList("runtime", []pricing.Entry{
+	s.prices, err = pricing.NewList("runtime", pricing.AllAtCost([]pricing.Entry{
 		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityText, Free: true},
 		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVoice, Rates: perMinute},
 		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVideo, Rates: perMinute},
-	}, 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 }
 

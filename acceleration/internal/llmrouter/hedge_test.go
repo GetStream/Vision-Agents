@@ -259,8 +259,8 @@ func TestALateReplyIsAskedOfAnotherCandidateAndTheHedgeCanWin(t *testing.T) {
 		require.Equal(t, "beta", response.Provider)
 		require.Equal(t, "Hello", response.OutputText)
 		require.False(t, r.script("beta").Abandoned())
-		require.Equal(t, map[string]string{"alpha": routing.ErrorCancelled, "beta": "served"}, r.called(),
-			"both calls were reported, the original as one that was cut short")
+		require.Equal(t, map[string]string{"alpha": routing.ErrorTimeout, "beta": "served"}, r.called(),
+			"both calls were reported, the original as one that stalled: it said nothing until it lost")
 	})
 }
 
@@ -301,6 +301,8 @@ func TestAToolCallDecidesTheRaceAsTextDoes(t *testing.T) {
 		response := r.finish("beta", asked)
 		require.Equal(t, "beta", response.Provider)
 		require.Equal(t, "transfer", response.ToolCalls[0].Name)
+		require.Equal(t, map[string]string{"alpha": routing.ErrorCancelled, "beta": "served"}, r.called(),
+			"the original had said something before it lost, so it did not stall")
 	})
 }
 
@@ -317,8 +319,8 @@ func TestARequestStillBeingAskedIsHedgedToo(t *testing.T) {
 		require.True(t, asked.answered())
 		require.Equal(t, "beta", r.finish("beta", asked).Provider)
 		require.Zero(t, r.requests("alpha"), "the original was cancelled while it was still being asked")
-		require.Equal(t, map[string]string{"alpha": routing.ErrorCancelled, "beta": "served"}, r.called(),
-			"a request cancelled before it was answered is reported as any cancelled one is")
+		require.Equal(t, map[string]string{"alpha": routing.ErrorTimeout, "beta": "served"}, r.called(),
+			"a request still being asked when it lost had said nothing, so it stalled")
 	})
 }
 

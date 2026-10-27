@@ -1,8 +1,12 @@
 package mem0
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
 )
 
 // op is the call (search, add, list, delete), status mem0's HTTP status or "none"
@@ -26,3 +30,12 @@ var (
 		Help:      "Deletions whose first list of memories to delete mem0 answered with none",
 	})
 )
+
+// Alerts are the conditions of mem0 refusing the router, one alert per operation and status at
+// most every limit of the loop that runs them: any HTTP error, a spent quota (429) and a revoked
+// key (401) alike, since each leaves recall and remember failing. It does not page: a call goes
+// on without its memories.
+func Alerts(limit time.Duration) []alerts.Condition {
+	return []alerts.Condition{{Name: "mem0_refused", Level: alerts.Warn,
+		Items: alerts.IncreasedPer(calls, limit, []string{"op", "status"}, map[string]string{"outcome": outcomeHTTPError})}}
+}
