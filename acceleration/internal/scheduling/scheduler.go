@@ -317,7 +317,7 @@ func (s *Scheduler) runDue(ctx context.Context) (time.Duration, bool) {
 // it under the claim, so an update or pause that landed meanwhile wins.
 func (s *Scheduler) run(draining context.Context, claim store.ClaimedScheduledTask) {
 	task := claim.Task
-	schedule, err := storedSchedule(task)
+	schedule, err := FromStored(task)
 	if err != nil {
 		// A stored schedule that no longer reads can never run; say so on this
 		// occurrence and pause the task instead of retrying it forever.
@@ -586,13 +586,4 @@ func (s *Scheduler) finish(claim store.ClaimedScheduledTask, outcome store.Sched
 	case !applied:
 		log.Info("a scheduled task changed under its run; the schedule was left alone")
 	}
-}
-
-// storedSchedule rebuilds the schedule a stored task describes.
-func storedSchedule(task store.ScheduledTask) (*Schedule, error) {
-	var until time.Time
-	if task.UntilDate != nil {
-		until = *task.UntilDate
-	}
-	return FromStored(task.StartLocal, task.Timezone, task.RRule, until)
 }

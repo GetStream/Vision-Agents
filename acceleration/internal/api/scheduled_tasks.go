@@ -234,8 +234,9 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 		return nil, scheduleFailure(err)
 	}
 	// A repeat's first occurrence may have passed (09:00 daily, written at
-	// 10:00); it starts at the next one, as the agent's tools do.
-	next, ok := parsed.Next(now)
+	// 10:00); it starts at the next one, its COUNT counted from there, as the
+	// agent's tools do.
+	next, ok := parsed.FromNow(now)
 	if !ok {
 		return nil, scheduleFailure(&scheduling.Error{Code: scheduling.CodeScheduleInPast,
 			Message: "that schedule has no occurrence left; its last one has passed"})
@@ -506,7 +507,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		return nil, conflict("a completed task cannot be resumed; schedule a new one")
 	}
 	if task.State == store.ScheduledTaskPaused || task.State == store.ScheduledTaskFailed {
-		schedule, err := scheduling.FromStored(task.StartLocal, task.Timezone, task.RRule, untilOf(task))
+		schedule, err := scheduling.FromStored(task)
 		if err != nil {
 			return nil, scheduleFailure(err)
 		}
@@ -692,7 +693,7 @@ func scheduledTaskRendered(task store.ScheduledTask, lastRunAt time.Time) Schedu
 	if err != nil {
 		loc = time.UTC
 	}
-	schedule, _ := scheduling.FromStored(task.StartLocal, task.Timezone, task.RRule, untilOf(task))
+	schedule, _ := scheduling.FromStored(task)
 	rendered := ScheduledTask{
 		Id: task.ID, UserId: task.UserID, ConfigId: task.ConfigID, SessionId: task.SessionID,
 		Title: task.Title, Instructions: task.Instructions, State: task.State,
