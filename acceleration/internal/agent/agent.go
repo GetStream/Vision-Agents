@@ -1889,9 +1889,9 @@ func (a *Agent) queueToolReply() {
 	a.mu.Lock()
 	wait := a.pendingTools > 0 || a.generating
 	a.mu.Unlock()
-	// A caller who is talking holds the floor, so the tool result waits for follow to pick
-	// it up rather than being said over them.
-	if wait || a.converse.Listening() {
+	// A caller who is talking holds the floor, and so do words of theirs still being ruled
+	// on, so the tool result waits for follow to pick it up rather than being said over them.
+	if wait || a.converse.Listening() || a.converse.Undecided() {
 		return
 	}
 	if err := a.respondAfterTool(toolPrefix + turnStamp()); err != nil {
