@@ -1064,6 +1064,13 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		outbound.Connected = func(media sipbridge.MediaAddrs) {
 			s.recordBridgeMedia(context.WithoutCancel(ctx), customerID, sessionID, media)
 		}
+		// Call refuses to run without a store, so report always has its keeper.
+		outbound.Ended = func(status CallStatus) {
+			if _, err := s.report(context.WithoutCancel(ctx), token, status); err != nil {
+				s.logger.Error("could not keep how a call through a customer's sip trunk ended",
+					"call", callID, "result", status.Result, "error", err)
+			}
+		}
 	}
 
 	resource := &store.CallResource{

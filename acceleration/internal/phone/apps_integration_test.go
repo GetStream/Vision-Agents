@@ -21,6 +21,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -891,6 +892,7 @@ func (s *AppsSuite) TestASlowCallPlacedRowDoesNotFailTheCallOrLoseItsResourceRow
 // the vendor that was asked to place it.
 type trunkCall struct {
 	placed   Placed
+	service  *Service
 	vendor   *stub
 	logged   *bytes.Buffer
 	password string
@@ -922,7 +924,7 @@ func (s *AppsSuite) callsThroughATrunk() trunkCall {
 		Owner: routing.Owner{CustomerID: s.customer}, From: e164, To: "+15550001111",
 	})
 	s.Require().NoError(err)
-	return trunkCall{placed: placed, vendor: vendor, logged: logged, password: password}
+	return trunkCall{placed: placed, service: service, vendor: vendor, logged: logged, password: password}
 }
 
 func (s *AppsSuite) TestACallThroughACustomersTrunkNamesTheTrunksHostOnly() {
@@ -954,6 +956,19 @@ func (s *AppsSuite) TestACallThroughACustomersTrunkKeepsWhereEachSidesAudioComes
 	row, err := s.store.AgentLog(s.ctx, s.customer, rows[0].ID)
 	s.Require().NoError(err)
 	s.Equal(map[string]any{"stream_media_addr": "203.0.113.10", "customer_media_addr": "198.51.100.7"}, row.Details)
+}
+
+func (s *AppsSuite) TestACallThroughACustomersTrunkKeepsHowItEnded() {
+	call := s.callsThroughATrunk()
+	s.Require().NotNil(call.vendor.dialed.Ended, "the bridge has nobody to tell")
+
+	call.vendor.dialed.Ended(CallStatus{Result: CallBusy, Word: "486"})
+
+	kept, err := call.service.Outcomes().Read(s.ctx, s.customer, call.placed.CallID)
+	s.Require().NoError(err)
+	s.Equal(outcome.Busy, kept.Outcome)
+	s.Equal("486", kept.VendorStatus)
+	s.Empty(call.vendor.dialed.StatusURL, "the bridge tells the router itself")
 }
 
 func (s *AppsSuite) TestABridgeThatSawNoAddressWritesNoRow() {

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -118,22 +119,28 @@ func (p *Provider) Dial(_ context.Context, outbound phone.Outbound) (phone.Diale
 	p.running.Add(1)
 	p.mu.Unlock()
 
-	go p.run(id, config, outbound.Connected)
+	go p.run(id, config, outbound.Connected, outbound.Ended)
 	return phone.Dialed{VendorCallID: id, Status: "queued"}, nil
 }
 
 // run holds one call from dialling to its end. It uses the node's context, never the
 // request's: the request is answered, and its context cancelled, while the phone still rings.
-// connected, when set, is told where each side's audio comes from once the call is up.
-func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbridge.MediaAddrs)) {
+// connected, when set, is told where each side's audio comes from once the call is up, and
+// ended, when set, how the call ended.
+func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbridge.MediaAddrs), ended func(phone.CallStatus)) {
 	defer p.running.Done()
 	log := config.Logger
+	if ended == nil {
+		ended = func(phone.CallStatus) {}
+	}
 
 	bridged, err := p.dial(p.ctx, config)
 	if err != nil {
 		log.Warn("call through a customer's sip trunk did not connect", "error", err)
+		ended(statusOf(err))
 		return
 	}
+	defer ended(statusOf(nil))
 	p.mu.Lock()
 	p.calls[id] = bridged
 	p.mu.Unlock()
@@ -164,6 +171,29 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 		}
 		log.Info("hung up a call through a customer's sip trunk because the node is stopping")
 	}
+}
+
+// statusOf is how a call ended, from what dialling it returned: nil once an answered call
+// has ended, or why it never connected.
+func statusOf(err error) phone.CallStatus {
+	if err == nil {
+		return phone.CallStatus{Result: phone.CallCompleted, Word: "bye"}
+	}
+	if u, ok := errors.AsType[*sipbridge.Unanswered](err); ok {
+		switch u.Code {
+		case 0:
+			return phone.CallStatus{Result: phone.CallNoAnswer, Word: "ring timeout"}
+		case 486, 603:
+			return phone.CallStatus{Result: phone.CallBusy, Word: strconv.Itoa(u.Code)}
+		case 408, 480:
+			return phone.CallStatus{Result: phone.CallNoAnswer, Word: strconv.Itoa(u.Code)}
+		}
+		return phone.CallStatus{Result: phone.CallFailed, Word: strconv.Itoa(u.Code)}
+	}
+	if errors.Is(err, context.Canceled) {
+		return phone.CallStatus{Result: phone.CallCanceled, Word: "canceled"}
+	}
+	return phone.CallStatus{Result: phone.CallFailed, Word: "error"}
 }
 
 // Close hangs up every call this node holds and waits for them, up to ctx.
