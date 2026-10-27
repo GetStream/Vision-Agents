@@ -3,11 +3,14 @@
 package egress_test
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -493,12 +496,17 @@ func (s *ProxySuite) TestARefusedDryRunTellsTheModelWhatBigQuerySaid() {
 	token := "gho_first-token-of-the-connection"
 	inBase64 := base64.StdEncoding.EncodeToString
 	long := "a" + strings.Repeat("é", 200)
+	// The token starts at byte 290 of the message, so byte 300 cuts it: the echoes are replaced
+	// before the cut, or a prefix of the token reaches the model.
+	padded := strings.Repeat("x", 290)
+	cut := (padded + s.placeholder)[:300]
 
 	for _, c := range []struct{ name, message, said string }{
 		{"a syntax error", `Syntax error: Unexpected identifier \"SELEC\" at [1:1]`, `Syntax error: Unexpected identifier "SELEC" at [1:1]`},
 		{"the token echoed", "Not found: " + token + " " + inBase64([]byte(token)) + " " + s.placeholder,
 			"Not found: " + s.placeholder + " " + inBase64([]byte(s.placeholder)) + " " + s.placeholder},
 		{"a long message", long, "a" + strings.Repeat("é", 149)},
+		{"the token at the cut", padded + token, cut},
 	} {
 		fake.dryRunAnswers(http.StatusBadRequest, `{"error":{"code":400,"message":"`+c.message+`","status":"INVALID_ARGUMENT"}}`)
 		request := s.request(http.MethodPost, queries, "Bearer "+s.placeholder, `{"query":"SELEC 1"}`)
@@ -510,6 +518,7 @@ func (s *ProxySuite) TestARefusedDryRunTellsTheModelWhatBigQuerySaid() {
 		s.Equal(http.StatusForbidden, response.StatusCode, c.name)
 		s.Equal("egress: POST bigquery.github.test/bigquery/v2/projects/p/queries refused (a jobs.query dry run answered 400: "+c.said+
 			"): "+sqlRefused, body, c.name)
+		s.NotContains(body, token[:10], c.name)
 		s.Len(fake.requests(), 1, c.name)
 	}
 	s.Contains(s.logs.String(), `why="a jobs.query dry run answered 400"`)
@@ -595,4 +604,58 @@ func (s *ProxySuite) TestADryRunsAnswerIsReadToAMiBOnItsOwnConnection() {
 	fake.dryRunAnswers(http.StatusOK, answer)
 	s.sendQueries(fake, []queryRequest{queryCase("an answer over 1 MiB", `{"query":"SELECT 1"}`, http.StatusForbidden)}, true)
 	s.Contains(s.logs.String(), `why="a jobs.query dry run whose answer is not JSON"`)
+}
+
+// TestAMethodOverrideIsRefusedOnASQLReadBeforeItsDryRun: a jobs.query that carries an override
+// header, or one in the trailer of its chunked body (declared in Trailer or not), gets no dry run
+// and reaches no host, and asks for no token. The same request without it is dry run and sent.
+func (s *ProxySuite) TestAMethodOverrideIsRefusedOnASQLReadBeforeItsDryRun() {
+	fake := s.readBigQuery()
+	query := `{"query":"SELECT 1"}`
+	path := "/bigquery/v2/projects/p/queries"
+	chunked := func(declared, trailer string) string {
+		head := "POST " + path + " HTTP/1.1\r\nHost: bigquery.github.test\r\nAuthorization: Bearer " + s.placeholder +
+			"\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n"
+		if declared != "" {
+			head += "Trailer: " + declared + "\r\n"
+		}
+		return head + "\r\n" + fmt.Sprintf("%x\r\n%s\r\n0\r\n", len(query), query) + trailer + "\r\n"
+	}
+	status := func(raw string) int {
+		conn := s.tunnelTo("bigquery.github.test", &tls.Config{})
+		_, err := io.WriteString(conn, raw)
+		s.Require().NoError(err)
+		response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		s.Require().NoError(err)
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		return response.StatusCode
+	}
+
+	fake.forget()
+	s.Equal(http.StatusOK, status(chunked("", "")))
+	s.Len(fake.requests(), 2, "the control: a dry run, then the request")
+
+	for _, name := range []string{"X-Http-Method-Override", "X-Http-Method", "X-Method-Override"} {
+		fake.forget()
+		asked := s.asked
+		request := s.request(http.MethodPost, queries, "Bearer "+s.placeholder, query)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header[name] = []string{"GET"}
+		response, body, err := s.send(s.sandbox(s.credential), request)
+		s.Require().NoError(err, name)
+		s.Equal(http.StatusForbidden, response.StatusCode, "header "+name)
+		s.True(strings.HasSuffix(body, sqlRefused), "header %s: %s", name, body)
+		s.Empty(fake.requests(), "header "+name)
+		s.Equal(asked, s.asked, "header "+name)
+
+		for _, declared := range []string{"", name} {
+			what := fmt.Sprintf("trailer %s, declared %q", name, declared)
+			s.Equal(http.StatusForbidden, status(chunked(declared, name+": GET\r\n")), what)
+			s.Empty(fake.requests(), what)
+			s.Equal(asked, s.asked, what)
+		}
+		s.Contains(s.logs.String(), `why="a method override header: `+name+`"`)
+		s.Contains(s.logs.String(), `why="a method override trailer: `+name+`"`)
+	}
 }

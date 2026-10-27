@@ -1377,18 +1377,23 @@ func (s *ProxySuite) handshake(config *tls.Config) tls.ConnectionState {
 
 // tunnel is a CONNECT to api.github.test:443, and TLS in it with config.
 func (s *ProxySuite) tunnel(config *tls.Config) *tls.Conn {
+	return s.tunnelTo("api.github.test", config)
+}
+
+// tunnelTo is tunnel to host.
+func (s *ProxySuite) tunnelTo(host string, config *tls.Config) *tls.Conn {
 	conn, err := net.Dial("tcp", s.proxy.Listener.Addr().String())
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = conn.Close() })
 	s.Require().NoError(conn.SetDeadline(time.Now().Add(5 * time.Second)))
-	_, err = fmt.Fprintf(conn, "CONNECT api.github.test:443 HTTP/1.1\r\nHost: api.github.test:443\r\nProxy-Authorization: %s\r\n\r\n",
-		basic("sbx", s.credential))
+	_, err = fmt.Fprintf(conn, "CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\nProxy-Authorization: %s\r\n\r\n",
+		host, host, basic("sbx", s.credential))
 	s.Require().NoError(err)
 	// A one-byte reader keeps no byte of the handshake from tls.Client.
 	response, err := http.ReadResponse(bufio.NewReaderSize(conn, 16), nil)
 	s.Require().NoError(err)
 	s.Require().Equal(http.StatusOK, response.StatusCode)
-	config.ServerName, config.RootCAs = "api.github.test", s.trusted
+	config.ServerName, config.RootCAs = host, s.trusted
 	return tls.Client(conn, config)
 }
 
