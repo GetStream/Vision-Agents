@@ -104,6 +104,10 @@ export {
 
 export { LiveReasoning } from "./reasoning.js";
 
+export { ConversationState, type AgentState, type ConversationSnapshot } from "./state.js";
+
+export { CameraFrames, NoFrames, type CameraFrame } from "./frames.js";
+
 export type { ChatClient, StreamClients, VideoClient } from "./stream.js";
 
 export {
