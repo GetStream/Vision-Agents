@@ -169,7 +169,7 @@ func TestANameIsBookedAsTheCallerSpelledIt(t *testing.T) {
 	heard := []llm.Message{{Role: llm.User, Content: "Sorry about that. The name is Aldenor, o d e n o r. Hold on, the dog is barking."}}
 	for arguments, misspelled := range map[string]bool{
 		`{"name":"Aldenor","guests":3}`: true,
-		`{"name":"Aldinor","guests":3}`: true,
+		`{"name":"Aldinor","guests":3}`: false,
 		`{"name":"Odenor","guests":3}`:  false,
 		`{"name":"odenor","guests":3}`:  false,
 		`{"name":"Moreau","guests":3}`:  false,
@@ -429,6 +429,25 @@ func TestANameTheCallerSpelledIsBookedThoughAnotherSpellingIsClose(t *testing.T)
 	} {
 		_, _, got := misspelledName([]llm.Message{{Role: llm.User, Content: said}},
 			llm.ToolCall{Name: "lookup", Arguments: arguments})
-		assert.True(t, got, "%s: a name no spelling holds exactly is still refused", said)
+		assert.False(t, got, "%s: no word the transcriber wrote beside the spelling", said)
 	}
+}
+
+func TestOnlyTheWordWrittenBesideASpellingIsRefused(t *testing.T) {
+	said := []llm.Message{{Role: llm.User, Content: "Surname Jonas, j o n e s. And my son Joseph is coming too."}}
+	for arguments, misspelled := range map[string]bool{
+		`{"guest_name":"Jonas"}`:                       true,
+		`{"guest_name":"Ann Jonas"}`:                   true,
+		`{"guest_name":"Jones"}`:                       false,
+		`{"guest_name":"Joseph Jones"}`:                false,
+		`{"name":"Jones","companion_name":"Joseph"}`:   false,
+		`{"name":"Jones","restaurant_name":"Jonah's"}`: false,
+	} {
+		_, _, got := misspelledName(said, llm.ToolCall{Name: "add_guest", Arguments: arguments})
+		assert.Equal(t, misspelled, got, arguments)
+	}
+	after := []llm.Message{{Role: llm.User, Content: "It's j o n e s, Jonas."}}
+	_, spelled, got := misspelledName(after, llm.ToolCall{Name: "add_guest", Arguments: `{"guest_name":"Jonas"}`})
+	assert.True(t, got, "the word right after the spelling")
+	assert.Equal(t, "jones", spelled)
 }
