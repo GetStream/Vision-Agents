@@ -1218,8 +1218,8 @@ func revisesQueued(held, ready candidate) bool {
 
 // forgetQueuedAnsweredOver drops the turn the same participant has queued once a newer turn of
 // theirs is answered, and returns its words for that answer to take in. Answered on its own
-// after it, the older turn undoes the newer: in Voicebench a caller's correction was answered,
-// then their first request again, and the agent went back to asking about it. Another
+// after it, the older turn undoes the newer: a caller's correction is answered, then their
+// first request again, and the agent goes back to asking about it. Another
 // participant's queued turn is still theirs to be answered.
 //
 // Only words the newer turn does not say are taken in. A revision that kept less of the run
@@ -1270,8 +1270,8 @@ func (c *converse) forgetQueuedAnsweredOver(ready candidate) string {
 // forgetQueuedGrownLocked drops the queued turn once the caller's words still in progress have
 // grown past it. A caller who paused mid-sentence while the agent talked had the first part
 // queued; the rest goes to the controller with it once it settles. Answering the queued part
-// when the agent stops answers half a sentence, and in Voicebench that half was most of the
-// agent's cut-ins on a caller's long turn. Words that only start the same way are a new turn
+// when the agent stops answers half a sentence and cuts into the rest of the caller's long
+// turn. Words that only start the same way are a new turn
 // and leave it queued. The caller holds the lock.
 func (c *converse) forgetQueuedGrownLocked(participant stt.Participant, utterance int64, saying string) (released string, grown bool) {
 	held := c.queued

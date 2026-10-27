@@ -67,8 +67,8 @@ const (
 	// talking while it is talking.
 	overlapWithin = 5 * time.Second
 	// bargeInWithin is how long the agent has to fall silent after the caller's first
-	// sound of an interruption. It is the benchmark's MaxBargeInStopMS with headroom for
-	// the controller round trip a cascaded loop pays that a full-duplex model does not.
+	// sound of an interruption, with headroom for the controller round trip a cascaded loop
+	// pays that a full-duplex model does not.
 	bargeInWithin = 1 * time.Second
 	// settlePause is how long the conversation has to stay quiet before a test believes
 	// the agent has finished having its say.
