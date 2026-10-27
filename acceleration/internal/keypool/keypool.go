@@ -317,24 +317,55 @@ func (p *Pool) refused(response *http.Response) (time.Duration, bool) {
 	case http.StatusTooManyRequests:
 		return p.retryAfter(response), true
 	case http.StatusUnauthorized, http.StatusPaymentRequired:
-		if response.Body == nil {
-			return 0, false
-		}
-		peeked, _ := io.ReadAll(io.LimitReader(response.Body, drainLimit))
-		response.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(peeked), response.Body), Closer: response.Body}
-		if bytes.Contains(peeked, []byte("quota_exceeded")) {
+		if bytes.Contains(peek(response), []byte("quota_exceeded")) {
 			return MaxCooldown, true
 		}
 	}
 	return 0, false
 }
 
-// rejectsKey reports whether a status says the provider would not take the key at all: a
+// badKeyMarkers are what a provider that answers a key it does not know with a 400 or 403,
+// not a 401, says in the body, as each answered a made-up key on 2026-10-27.
+var badKeyMarkers = [][]byte{
+	// Google's native API (x-goog-api-key, ?key=): a 400 whose google.rpc.ErrorInfo reason
+	// is API_KEY_INVALID.
+	[]byte(`"API_KEY_INVALID"`),
+	// Gemini's OpenAI-compatible endpoint: a 400 that gives no reason, only this message.
+	[]byte("Please pass a valid API key"),
+	// xAI: a 400, on HTTP and on the websocket handshake alike.
+	[]byte("Incorrect API key provided"),
+	// Baseten: a 403.
+	[]byte("please check the api-key you provided"),
+	// Inworld: a 403, gRPC code 7 (PERMISSION_DENIED).
+	[]byte("Invalid authorization credentials"),
+}
+
+// rejectsKey reports whether a response says the provider would not take the key at all: a
 // 401 for a key it does not know, a 402 for an account out of credit, such as Gemini's
-// "prepayment credits are depleted". Each is counted as refused whatever its body says, so a
-// key to replace or top up shows up, even when refused leaves it in turn.
-func rejectsKey(status int) bool {
-	return status == http.StatusUnauthorized || status == http.StatusPaymentRequired
+// "prepayment credits are depleted", or a 400 or 403 whose body says the key is not valid,
+// which is how Google, xAI, Baseten and Inworld refuse one. Each is counted as refused, so a
+// key to replace or top up shows up, even when refused leaves it in turn. Any other 400 or
+// 403 is the request's fault, or a key allowed in but not to this, and is not counted.
+func rejectsKey(response *http.Response) bool {
+	switch response.StatusCode {
+	case http.StatusUnauthorized, http.StatusPaymentRequired:
+		return true
+	case http.StatusBadRequest, http.StatusForbidden:
+		peeked := peek(response)
+		return slices.ContainsFunc(badKeyMarkers, func(marker []byte) bool { return bytes.Contains(peeked, marker) })
+	}
+	return false
+}
+
+// peek reads the start of a response's body and puts it back, so the caller still reads it
+// whole.
+func peek(response *http.Response) []byte {
+	if response.Body == nil {
+		return nil
+	}
+	peeked, _ := io.ReadAll(io.LimitReader(response.Body, drainLimit))
+	response.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(peeked), response.Body), Closer: response.Body}
+	return peeked
 }
 
 // peekedBody is a body with what was read of it put back in front.
@@ -359,7 +390,7 @@ func (p *Pool) sendTimes(ctx context.Context, attempts int, send func(key string
 			return response, err
 		}
 		rest, refused := p.refused(response)
-		if refused || rejectsKey(response.StatusCode) {
+		if refused || rejectsKey(response) {
 			p.countRefused(strconv.Itoa(response.StatusCode))
 		}
 		if !refused {
@@ -505,7 +536,7 @@ func (p *Pool) Dial(
 			return conn, response, key, err
 		}
 		rest, refused := p.refused(response)
-		if refused || rejectsKey(response.StatusCode) {
+		if refused || rejectsKey(response) {
 			p.countRefused(strconv.Itoa(response.StatusCode))
 		}
 		if !refused {
