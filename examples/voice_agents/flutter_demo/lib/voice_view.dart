@@ -372,7 +372,11 @@ class _CallControls extends StatelessWidget {
                 backgroundColor: Colors.red,
                 foregroundColor: Colors.white,
               ),
-              onPressed: onHangUp,
+              // Not until the call is joined, or failed to: leaving while it is still being
+              // joined would let the join land after it, in a call nobody can leave.
+              onPressed: state.isJoined || state.failure != null
+                  ? onHangUp
+                  : null,
               icon: const Icon(Icons.call_end),
             ),
           ],
@@ -410,6 +414,9 @@ class _ApprovalCardState extends State<_ApprovalCard> {
         allowed: decision == AIToolApprovalDecision.allowed,
       );
     } on StateError catch (error) {
+      setState(() => _state = AIToolApprovalFailed(decision, error));
+    } on AgentsException catch (error) {
+      // The socket closed under the card, so the answer cannot go; the person may try again.
       setState(() => _state = AIToolApprovalFailed(decision, error));
     }
   }

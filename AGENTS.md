@@ -17,7 +17,7 @@ Work happens on the `accelerate` branch here, and the agents docs live in getstr
 | `examples/voice_agents/` | Runnable agents. `simple_voice_ai` is the smallest one                  |
 | `tui/`            | Go terminal UI for a conversation with an agent: the terminal counterpart of `dashboard/` |
 | `sdks/kotlin/` | Client-side SDK for Android: one module, `core`; its views are Stream Chat's AI components |
-| `sdks/dart/` | Client-side SDK for Flutter: a core, ui and rtc package |
+| `sdks/dart/` | Client-side SDK for Flutter: a core, chat and rtc package; its views are Stream Chat's AI components (`stream_chat_flutter_ai`) |
 | `sdks/dotnet/`, `sdks/ruby/`, `sdks/rust/`, `sdks/php/` | Server-side SDKs: agents, dispatch, folder sync and the router. Built and tested in Docker; each has an `sdk-<lang>` skill |
 | `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
 | `performance_benchmark/` | Load benchmark: ramps real WebRTC callers against the router's mock models until it breaks |

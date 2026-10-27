@@ -69,7 +69,7 @@ the registry so another user gets their own. `Backend.give` holds the app's own 
 `LiveValue<T>`: a `value` and a `stream` that emits the current value first, then each change.
 `LiveValueController` skips equal values and conflates while a listener is paused. No
 dependency on provider, riverpod, bloc or rxdart — a host adapts it in a line, such as a
-`StreamBuilder` over `stream`.
+`StreamBuilder` over `stream` with `initialData: value`, without which its first frame has no data.
 
 The state machine is an **immutable value**, `Conversation`, with `apply(event)` returning the
 next value (or `this` when nothing changed, so equality skips a rebuild). That is what makes it

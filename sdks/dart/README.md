@@ -62,8 +62,9 @@ agents.useVideo(yourVideoClient);
 ```
 
 State is a `LiveValue`: the current value, and a stream that starts with it. Nothing here
-depends on a state-management package; a `StreamBuilder` over `value.stream` is all a widget
-needs, since the stream starts with the current value.
+depends on a state-management package; a `StreamBuilder(stream: value.stream, initialData:
+value.value)` is all a widget needs. Give it the current value as `initialData`: a `StreamBuilder`
+draws its first frame before the stream's first event, with no data.
 
 A conversation kept in Stream Chat is shown with Stream Chat's AI components:
 `AIConversationView` over the channel's messages, `AIMessagePart.parseAll` for each reply's steps,

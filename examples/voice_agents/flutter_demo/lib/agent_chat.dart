@@ -147,7 +147,11 @@ class AgentChat extends ChangeNotifier {
   /// Stops the reply in flight. What was written so far is kept.
   void stop() {
     _askedAfter = null;
-    session.interrupt();
+    try {
+      session.interrupt();
+    } on SocketClosedException {
+      // Nothing is answering: the reply in flight stopped with the socket.
+    }
     notifyListeners();
   }
 
