@@ -109,10 +109,6 @@ func (s *StoreSuite) TestTheFirstSyncSeedsEverything() {
 	s.EqualValues(1_200_000, quote.CostMicros)
 	s.EqualValues(1_000_000, quote.BaseCostMicros)
 	s.Equal("llm-openai-a", quote.SKU)
-	var markups int
-	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
-		"SELECT count(*) FROM price_entries WHERE markup_bps IS NOT NULL").Scan(&markups))
-	s.Zero(markups, "no markup is written")
 }
 
 // TestASeedKeepsAFilesOwnPriceAndSKU: an entry the file prices is written at that price, under
@@ -351,7 +347,7 @@ func (s *StoreSuite) TestNothingElseAboutAChangeCanBeUpdated() {
 	s.write("20990101000000_later", time.Now().Add(time.Hour))
 
 	_, reason := s.store.DB().ExecContext(s.ctx, "UPDATE price_changes SET reason = 'rewritten' WHERE name = '20990101000000_later'")
-	_, both := s.store.DB().ExecContext(s.ctx, "UPDATE price_changes SET cancelled_at = now(), markup_bps = 1000 WHERE name = '20990101000000_later'")
+	_, both := s.store.DB().ExecContext(s.ctx, "UPDATE price_changes SET cancelled_at = now(), source = 'rewritten' WHERE name = '20990101000000_later'")
 
 	s.ErrorContains(reason, "a price change can only be cancelled")
 	s.ErrorContains(both, "a price change can only be cancelled")
