@@ -16,9 +16,9 @@ T = TypeVar("T", bound="PriceEntryInputRates")
 
 @_attrs_define
 class PriceEntryInputRates:
-    """The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens,
-    characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter,
-    and a rate of more than $1000 a unit, are refused.
+    """The vendor's cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_tokens,
+    output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows.
+    Required unless the entry is free or withdrawn. An unknown meter, and a rate of more than $1000 a unit, are refused.
 
     """
 

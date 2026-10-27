@@ -32,6 +32,8 @@ final readonly class Price
         // What a customer is charged, by meter.
         /** @var array<string, mixed>|null */
         public ?array $rates = null,
+        // The item's SKU, the same across its price changes, which every usage event of its work records. Absent for...
+        public ?string $sku = null,
         // What a customer is charged for long prompts.
         /** @var list<PriceTier>|null */
         public ?array $tiers = null,
@@ -58,6 +60,7 @@ final readonly class Price
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             effectiveAt: array_key_exists('effective_at', $data) && $data['effective_at'] !== null ? Json::date($data, 'effective_at') : null,
             rates: array_key_exists('rates', $data) && $data['rates'] !== null ? Json::object($data, 'rates') : null,
+            sku: array_key_exists('sku', $data) && $data['sku'] !== null ? Json::string($data, 'sku') : null,
             tiers: array_key_exists('tiers', $data) && $data['tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'tiers')) : null,
             when: array_key_exists('when', $data) && $data['when'] !== null ? Json::stringMap($data, 'when') : null,
             withdrawn: array_key_exists('withdrawn', $data) && $data['withdrawn'] !== null ? Json::bool($data, 'withdrawn') : null,
@@ -88,6 +91,9 @@ final readonly class Price
         }
         if ($this->rates !== null) {
             $out['rates'] = Json::objectValue($this->rates);
+        }
+        if ($this->sku !== null) {
+            $out['sku'] = $this->sku;
         }
         if ($this->tiers !== null) {
             $out['tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->tiers);

@@ -60,11 +60,10 @@ type priceSource struct {
 	store *Store
 }
 
-// Active reads the entries, the markup and the next change in one snapshot, so a change
-// committed between the reads cannot leave the list with half of it.
-func (p priceSource) Active(ctx context.Context, at time.Time) ([]pricing.Entry, int64, time.Time, error) {
+// Active reads the entries and the next change in one snapshot, so a change committed between
+// the reads cannot leave the list with half of it.
+func (p priceSource) Active(ctx context.Context, at time.Time) ([]pricing.Entry, time.Time, error) {
 	var entries []pricing.Entry
-	var markup int64
 	var next time.Time
 	err := p.store.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		rows, err := activePriceEntries(ctx, tx, at)
@@ -77,9 +76,6 @@ func (p priceSource) Active(ctx context.Context, at time.Time) ([]pricing.Entry,
 			entry.EffectiveAt = row.EffectiveAt.UTC()
 			entries = append(entries, entry)
 		}
-		if markup, err = activeMarkup(ctx, tx, at); err != nil {
-			return err
-		}
 		found, ok, err := nextPriceChangeAt(ctx, tx, at)
 		if ok {
 			next = found
@@ -87,9 +83,9 @@ func (p priceSource) Active(ctx context.Context, at time.Time) ([]pricing.Entry,
 		return err
 	})
 	if err != nil {
-		return nil, 0, time.Time{}, stack.Wrap(fmt.Errorf("store: the price list in force: %w", err))
+		return nil, time.Time{}, stack.Wrap(fmt.Errorf("store: the price list in force: %w", err))
 	}
-	return entries, markup, next, nil
+	return entries, next, nil
 }
 
 func (p priceSource) Upcoming(ctx context.Context, after time.Time) ([]pricing.UpcomingEntry, error) {
@@ -106,36 +102,13 @@ func (p priceSource) Upcoming(ctx context.Context, after time.Time) ([]pricing.U
 	return upcoming, nil
 }
 
-func (p priceSource) UpcomingMarkups(ctx context.Context, after time.Time) ([]pricing.UpcomingMarkup, error) {
-	var changes []PriceChange
-	err := p.store.db.NewSelect().Model(&changes).
-		Where("cancelled_at IS NULL").
-		Where("effective_at > ?", after).
-		Where("markup_bps IS NOT NULL").
-		Order("effective_at", "name").
-		Scan(ctx)
-	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: upcoming markups: %w", err))
-	}
-	markups := make([]pricing.UpcomingMarkup, 0, len(changes))
-	for _, change := range changes {
-		markups = append(markups, pricing.UpcomingMarkup{
-			Change: change.Name, EffectiveAt: change.EffectiveAt, MarkupBps: *change.MarkupBps, Reason: change.Reason,
-		})
-	}
-	return markups, nil
-}
-
 // PriceListSnapshot is the price list in force at a moment and what is scheduled after it,
 // read in one snapshot so a change committed between the reads cannot show half of itself.
 type PriceListSnapshot struct {
-	Entries   []PriceEntry
-	MarkupBps int64
+	Entries []PriceEntry
 	// Upcoming are the entries of the changes not cancelled that take effect later, soonest
-	// first, and UpcomingMarkupBps the list's markup at each one's effective time, by the
-	// time's Unix microseconds.
-	Upcoming          []UpcomingPriceEntry
-	UpcomingMarkupBps map[int64]int64
+	// first.
+	Upcoming []UpcomingPriceEntry
 }
 
 // PriceListAt reads the price list in force at at, and what is scheduled after it.
@@ -146,23 +119,8 @@ func (s *Store) PriceListAt(ctx context.Context, at time.Time) (PriceListSnapsho
 		if list.Entries, err = activePriceEntries(ctx, tx, at); err != nil {
 			return err
 		}
-		if list.MarkupBps, err = activeMarkup(ctx, tx, at); err != nil {
-			return err
-		}
-		if list.Upcoming, err = upcomingPriceEntries(ctx, tx, at); err != nil {
-			return err
-		}
-		list.UpcomingMarkupBps = map[int64]int64{}
-		for _, entry := range list.Upcoming {
-			key := entry.EffectiveAt.UnixMicro()
-			if _, ok := list.UpcomingMarkupBps[key]; ok {
-				continue
-			}
-			if list.UpcomingMarkupBps[key], err = activeMarkup(ctx, tx, entry.EffectiveAt); err != nil {
-				return err
-			}
-		}
-		return nil
+		list.Upcoming, err = upcomingPriceEntries(ctx, tx, at)
+		return err
 	})
 	if err != nil {
 		return PriceListSnapshot{}, stack.Wrap(fmt.Errorf("store: price list at %s: %w", at.Format(time.RFC3339), err))
@@ -170,8 +128,9 @@ func (s *Store) PriceListAt(ctx context.Context, at time.Time) (PriceListSnapsho
 	return list, nil
 }
 
-// PriceEntryWrite is an entry a change writes: the item's whole entry under its When, at the
-// vendor's rates, or its withdrawal.
+// PriceEntryWrite is an entry a change writes: the item's whole entry under its When, its
+// vendor's rates and its price, or its withdrawal. An Entry.SKU left empty is assigned
+// (AssignSKUs).
 type PriceEntryWrite struct {
 	pricing.Entry
 	// Withdrawn stops pricing the item under Entry.When from the change's effective time on;
@@ -186,9 +145,7 @@ type PriceChangeWrite struct {
 	Reason string
 	Source string
 	// EffectiveAt nil, or no later than now, is now.
-	EffectiveAt *time.Time
-	// MarkupBps sets the list's markup from the effective time on; nil leaves it.
-	MarkupBps      *int64
+	EffectiveAt    *time.Time
 	Entries        []PriceEntryWrite
 	IdempotencyKey string
 	ActorID        string
@@ -198,9 +155,15 @@ type PriceChangeWrite struct {
 // PriceListAt is the price list in force at the moment a change would take effect, before it.
 type PriceListAt struct {
 	// Now is the database's clock, and At when the change would take effect.
-	Now, At   time.Time
-	Entries   []PriceEntry
-	MarkupBps int64
+	Now, At time.Time
+	Entries []PriceEntry
+	// SKUs is the SKU every entry of a change not cancelled gave its item, for AssignSKUs.
+	SKUs []PriceSKU
+}
+
+// Assign is AssignSKUs of writes on the list a change lands on.
+func (l PriceListAt) Assign(writes []PriceEntryWrite) ([]PriceEntryWrite, error) {
+	return AssignSKUs(l.SKUs, l.At, writes)
 }
 
 // effectiveAt is when a change asked to take effect at asked does, by the database's clock.
@@ -230,7 +193,7 @@ func priceListAt(ctx context.Context, db bun.IDB, asked *time.Time) (PriceListAt
 	if list.Entries, err = activePriceEntries(ctx, db, list.At); err != nil {
 		return PriceListAt{}, err
 	}
-	if list.MarkupBps, err = activeMarkup(ctx, db, list.At); err != nil {
+	if list.SKUs, err = priceSKUs(ctx, db); err != nil {
 		return PriceListAt{}, err
 	}
 	return list, nil
@@ -255,11 +218,14 @@ func (s *Store) PriceListBefore(ctx context.Context, asked *time.Time) (PriceLis
 }
 
 // CreatePriceChange writes a change, its entries and its audit row in one transaction, under
-// the lock a router's start loads its price files under. check is handed the list the change
-// lands on and refuses the change by returning an error, which CreatePriceChange returns as it
-// is. A change already written under the write's idempotency key is answered instead, with
-// replayed true, when it is the same change, and ErrPriceChangeKeyReused when it is not.
-func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite, check func(PriceListAt) error) (PriceChange, []PriceEntry, bool, error) {
+// the lock a router's start loads its price files under. Each entry is given its SKU
+// (AssignSKUs), which refuses the change with ErrSKUInUse or ErrSKUChanged. check is handed
+// the list the change lands on and the entries with their SKUs, and refuses the change by
+// returning an error, which CreatePriceChange returns as it is. A change already written under
+// the write's idempotency key is answered instead, with replayed true, when it is the same
+// change, and ErrPriceChangeKeyReused when it is not.
+func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite,
+	check func(PriceListAt, []PriceEntryWrite) error) (PriceChange, []PriceEntry, bool, error) {
 	var change PriceChange
 	var rows []PriceEntry
 	var replayed bool
@@ -298,7 +264,11 @@ func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite, c
 		if err != nil {
 			return err
 		}
-		if err := check(before); err != nil {
+		writes, err := before.Assign(write.Entries)
+		if err != nil {
+			return refusedByCheck{err}
+		}
+		if err := check(before, writes); err != nil {
 			return refusedByCheck{err}
 		}
 		change = PriceChange{
@@ -307,7 +277,6 @@ func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite, c
 			Reason:         write.Reason,
 			Source:         write.Source,
 			EffectiveAt:    before.At,
-			MarkupBps:      write.MarkupBps,
 			CreatedBy:      write.ActorID,
 			IdempotencyKey: write.IdempotencyKey,
 		}
@@ -318,32 +287,29 @@ func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite, c
 		if taken {
 			return ErrPriceChangeExists
 		}
-		if _, err := tx.NewInsert().Model(&change).Returning("*").Exec(ctx); err != nil {
+		if _, err := tx.NewInsert().Model(&change).Returning(priceChangeColumns).Exec(ctx); err != nil {
 			return err
 		}
-		rows = make([]PriceEntry, 0, len(write.Entries))
-		names := make([]string, 0, len(write.Entries))
-		for _, entry := range write.Entries {
+		rows = make([]PriceEntry, 0, len(writes))
+		names := make([]string, 0, len(writes))
+		for _, entry := range writes {
 			row := priceEntryOf(change.Name, entry.Entry)
 			row.Withdrawn = entry.Withdrawn
 			rows = append(rows, row)
-			name := prices.Name(entry.Entry)
+			name := prices.Name(entry.Entry) + " (" + entry.SKU + ")"
 			if entry.Withdrawn {
 				name += " (withdrawn)"
 			}
 			names = append(names, name)
 		}
 		if len(rows) > 0 {
-			if _, err := tx.NewInsert().Model(&rows).Returning("*").Exec(ctx); err != nil {
+			if _, err := tx.NewInsert().Model(&rows).Returning(priceEntryColumns).Exec(ctx); err != nil {
 				return err
 			}
 		}
 		changes := []AuditChange{{Field: "effective_at", After: change.EffectiveAt}}
 		if len(names) > 0 {
 			changes = append(changes, AuditChange{Field: "entries", After: names})
-		}
-		if change.MarkupBps != nil {
-			changes = append(changes, AuditChange{Field: "markup_bps", Before: before.MarkupBps, After: *change.MarkupBps})
 		}
 		return recordAuditEntry(ctx, tx, &AuditEntry{
 			ResourceType: AuditResourcePriceList,
@@ -381,11 +347,12 @@ func (r refusedByCheck) Error() string { return r.err.Error() }
 // resubmit is answered with it. The effective time asked for matches when it is the one
 // written, or when it was no later than the moment the change was made, which it then took.
 // Entries are compared in the order they were written, so a resubmit must list them in the
-// order the first did: the same entries in another order are another body.
+// order the first did: the same entries in another order are another body. An entry that
+// asked for no SKU matches the one it was given.
 func samePriceChange(change PriceChange, rows []PriceEntry, write PriceChangeWrite) bool {
 	_, name, _ := cutStamp(change.Name)
 	if change.Kind != PriceChangeAPI || name != write.Name || change.Reason != write.Reason || change.Source != write.Source ||
-		!reflect.DeepEqual(change.MarkupBps, write.MarkupBps) || len(rows) != len(write.Entries) {
+		len(rows) != len(write.Entries) {
 		return false
 	}
 	if write.EffectiveAt != nil {
@@ -400,6 +367,9 @@ func samePriceChange(change PriceChange, rows []PriceEntry, write PriceChangeWri
 	for i, row := range rows {
 		asked := priceEntryOf(change.Name, write.Entries[i].Entry)
 		asked.Withdrawn = write.Entries[i].Withdrawn
+		if asked.SKU == "" {
+			asked.SKU = row.SKU
+		}
 		if row.Withdrawn != asked.Withdrawn || !reflect.DeepEqual(row.Entry(), asked.Entry()) {
 			return false
 		}

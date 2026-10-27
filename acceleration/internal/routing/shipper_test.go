@@ -265,6 +265,7 @@ func (s *WriterSuite) TestAShippedEventCarriesTheRowsIdentityAndBillable() {
 		request.UsageCategories = []string{"team:core", "support"}
 		request.SessionID, request.AgentID, request.CallID, request.Purpose = "session-1", "agent-1", "call-1", "reply"
 		request.Billable, request.BaseCostMicros, request.PriceVersion = false, 20, "price-change-1"
+		request.SKU = "llm-openai-gpt"
 		request.Meters = pricing.Quantities{pricing.Requests: 2}
 		request.Attributes = map[string]string{"service_tier": "flex"}
 		request.Tags = map[string]string{"project": "p"}
@@ -285,6 +286,7 @@ func (s *WriterSuite) TestAShippedEventCarriesTheRowsIdentityAndBillable() {
 	s.False(event.Billable)
 	s.EqualValues(20, event.BaseCostMicros)
 	s.Equal("price-change-1", event.PriceVersion)
+	s.Equal("llm-openai-gpt", event.SKU)
 	s.Equal(map[string]int64{"output_tokens": 10, "requests": 2}, event.Quantities)
 	s.Equal(map[string]string{"service_tier": "flex"}, event.Attributes)
 	s.Equal(map[string]string{"project": "p"}, event.Tags)

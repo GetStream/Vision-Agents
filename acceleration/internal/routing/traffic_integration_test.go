@@ -128,16 +128,16 @@ func (s *RecorderSuite) TestTheTimingsAreBucketedFrom25MillisecondsTo60SecondsFi
 	}
 }
 
-func (s *RecorderSuite) TestABillableRowCountsItsCostWithTheMarkupNotTheVendorsCharge() {
+func (s *RecorderSuite) TestABillableRowCountsItsPriceNotTheVendorsCharge() {
 	vendor := vendorOfItsOwn()
 	vendor.Price = Price{PerMillionInputTokens: 2}
-	prices, err := pricing.NewList(pricing.ActiveVersion, PriceEntries(Config{LLM: {Providers: []ProviderConfig{vendor}}}), 2500, nil)
+	prices, err := pricing.NewList(pricing.ActiveVersion, pricing.PricedAll(PriceEntries(Config{LLM: {Providers: []ProviderConfig{vendor}}})), nil)
 	s.Require().NoError(err)
 
 	row := s.recordedAs(LLM, prices, vendor, Stat{Success: true, Usage: Usage{InputTokens: 1_000}})[0]
 
 	s.Require().True(row.Billable)
-	s.Require().NotEqual(row.BaseCostMicros, row.CostMicros, "a markup, so the two differ")
+	s.Require().NotEqual(row.BaseCostMicros, row.CostMicros, "priced above its cost, so the two differ")
 	s.Equal(map[string]float64{"modality=llm,model=m": float64(row.CostMicros)}, traffic(trafficCost, "provider", vendor.Provider))
 }
 

@@ -65,7 +65,7 @@ func (s *MeteredSuite) SetupSuite() {
 	s.Require().NoError(opened.Migrate(s.ctx))
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
-	s.prices, err = pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	s.prices, err = pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 }
 

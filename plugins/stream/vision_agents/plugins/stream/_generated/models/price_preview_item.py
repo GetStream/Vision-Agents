@@ -10,7 +10,7 @@ from typing_extensions import Self
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.price_preview_item_rate_factors import PricePreviewItemRateFactors
+    from ..models.price_preview_item_price_factors import PricePreviewItemPriceFactors
     from ..models.price_preview_item_when import PricePreviewItemWhen
     from ..models.priced_entry import PricedEntry
 
@@ -27,11 +27,10 @@ class PricePreviewItem:
         provider (str):
         after (PricedEntry | Unset):
         before (PricedEntry | Unset):
-        markup_factor (float | Unset): The factor the markup it is sold at moves by. Absent when either is 0.
         needs_confirmation (bool | Unset):
-        rate_factors (PricePreviewItemRateFactors | Unset): By meter, the factor its vendor rate moves by. Absent for a
-            meter with no rate before or after.
-        unpriced (bool | Unset): It is priced before the change and billable with no rate after.
+        price_factors (PricePreviewItemPriceFactors | Unset): By meter, the factor its price moves by. Absent for a
+            meter with no price before or after.
+        unpriced (bool | Unset): It is priced before the change and billable with no price after.
         when (PricePreviewItemWhen | Unset): The item attributes the entry applies to, such as {"service_tier": "flex"}.
             Absent is the item's default entry.
     """
@@ -41,9 +40,8 @@ class PricePreviewItem:
     provider: str
     after: PricedEntry | Unset = UNSET
     before: PricedEntry | Unset = UNSET
-    markup_factor: float | Unset = UNSET
     needs_confirmation: bool | Unset = UNSET
-    rate_factors: PricePreviewItemRateFactors | Unset = UNSET
+    price_factors: PricePreviewItemPriceFactors | Unset = UNSET
     unpriced: bool | Unset = UNSET
     when: PricePreviewItemWhen | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -63,13 +61,11 @@ class PricePreviewItem:
         if not isinstance(self.before, Unset):
             before = self.before.to_dict()
 
-        markup_factor = self.markup_factor
-
         needs_confirmation = self.needs_confirmation
 
-        rate_factors: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.rate_factors, Unset):
-            rate_factors = self.rate_factors.to_dict()
+        price_factors: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.price_factors, Unset):
+            price_factors = self.price_factors.to_dict()
 
         unpriced = self.unpriced
 
@@ -90,12 +86,10 @@ class PricePreviewItem:
             field_dict["after"] = after
         if before is not UNSET:
             field_dict["before"] = before
-        if markup_factor is not UNSET:
-            field_dict["markup_factor"] = markup_factor
         if needs_confirmation is not UNSET:
             field_dict["needs_confirmation"] = needs_confirmation
-        if rate_factors is not UNSET:
-            field_dict["rate_factors"] = rate_factors
+        if price_factors is not UNSET:
+            field_dict["price_factors"] = price_factors
         if unpriced is not UNSET:
             field_dict["unpriced"] = unpriced
         if when is not UNSET:
@@ -105,7 +99,9 @@ class PricePreviewItem:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.price_preview_item_rate_factors import PricePreviewItemRateFactors
+        from ..models.price_preview_item_price_factors import (
+            PricePreviewItemPriceFactors,
+        )
         from ..models.price_preview_item_when import PricePreviewItemWhen
         from ..models.priced_entry import PricedEntry
 
@@ -130,16 +126,14 @@ class PricePreviewItem:
         else:
             before = PricedEntry.from_dict(_before)
 
-        markup_factor = d.pop("markup_factor", UNSET)
-
         needs_confirmation = d.pop("needs_confirmation", UNSET)
 
-        _rate_factors = d.pop("rate_factors", UNSET)
-        rate_factors: PricePreviewItemRateFactors | Unset
-        if isinstance(_rate_factors, Unset):
-            rate_factors = UNSET
+        _price_factors = d.pop("price_factors", UNSET)
+        price_factors: PricePreviewItemPriceFactors | Unset
+        if isinstance(_price_factors, Unset):
+            price_factors = UNSET
         else:
-            rate_factors = PricePreviewItemRateFactors.from_dict(_rate_factors)
+            price_factors = PricePreviewItemPriceFactors.from_dict(_price_factors)
 
         unpriced = d.pop("unpriced", UNSET)
 
@@ -156,9 +150,8 @@ class PricePreviewItem:
             provider=provider,
             after=after,
             before=before,
-            markup_factor=markup_factor,
             needs_confirmation=needs_confirmation,
-            rate_factors=rate_factors,
+            price_factors=price_factors,
             unpriced=unpriced,
             when=when,
         )

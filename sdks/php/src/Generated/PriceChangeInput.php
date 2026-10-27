@@ -21,11 +21,9 @@ final readonly class PriceChangeInput
         public ?bool $confirm = null,
         // When the change takes effect. Absent is now; it may be up to two years ahead, but never more than 5 minutes...
         public ?\DateTimeImmutable $effectiveAt = null,
-        // Each replaces its item's entry under its when whole: every rate, tier and markup it has.
+        // Each replaces its item's entry under its when whole: its cost, its price and every tier of both.
         /** @var list<PriceEntryInput>|null */
         public ?array $entries = null,
-        // The list's markup in basis points from effective_at on. Absent leaves it.
-        public ?int $markupBps = null,
     ) {
     }
 
@@ -41,7 +39,6 @@ final readonly class PriceChangeInput
             confirm: array_key_exists('confirm', $data) && $data['confirm'] !== null ? Json::bool($data, 'confirm') : null,
             effectiveAt: array_key_exists('effective_at', $data) && $data['effective_at'] !== null ? Json::date($data, 'effective_at') : null,
             entries: array_key_exists('entries', $data) && $data['entries'] !== null ? array_map(PriceEntryInput::fromArray(...), Json::objects($data, 'entries')) : null,
-            markupBps: array_key_exists('markup_bps', $data) && $data['markup_bps'] !== null ? Json::int($data, 'markup_bps') : null,
         );
     }
 
@@ -64,9 +61,6 @@ final readonly class PriceChangeInput
         }
         if ($this->entries !== null) {
             $out['entries'] = array_map(static fn (PriceEntryInput $each): array => $each->toArray(), $this->entries);
-        }
-        if ($this->markupBps !== null) {
-            $out['markup_bps'] = $this->markupBps;
         }
         return $out;
     }
