@@ -119,6 +119,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 A Linq message's text is now every text part joined by a newline, not only the first part: a caption an iPhone sends after a photo got no reply before. A connection takes `linq` revision 2 at its next write. A channel manifest reads text in pieces with `messages.text_parts` (AI-2092).
 
+### OpenAI Realtime bills a caller turn's transcription when the session closes right after it
+
+A session closed as soon as the caller's transcript arrived could lose the row for that transcription: the transcript was passed on before its usage, and closing the session dropped the usage. The usage now goes first, so a transcript that was passed on always has its row (AI-2062).
+
 ### A photo is still seen after the model calls a tool
 
 A question asked with photos was answered as though none came when the model called a tool before answering, such as loading the `vision` skill: the photos went only with the turn's first model call. They now go with every reply of that turn, the replies to its tool results included, on the person's message, and the next turn drops them.

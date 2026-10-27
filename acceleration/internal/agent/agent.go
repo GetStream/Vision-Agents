@@ -27,7 +27,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -672,7 +671,7 @@ func New(options Options) (*Agent, error) {
 	if options.Knowledge != nil && options.KnowledgeNamespace != "" {
 		agent.knowledge = newKnowledgeReader(
 			options.Knowledge.For(owner),
-			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
+			options.KnowledgeNamespace,
 			options.KnowledgeLimit,
 		)
 	}

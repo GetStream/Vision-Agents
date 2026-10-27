@@ -3,6 +3,7 @@ package metered
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -88,7 +89,8 @@ func (k *Knowledge) meter(owner routing.Owner, model string) routing.Meter {
 
 // OwnedKnowledge is a knowledge.Store and a knowledge.Writer for one owner. Each call is a
 // routing.Call: one row, a lookup for a search or a fetch, a write for an upsert or a delete,
-// with what the provider billed it.
+// with what the provider billed it. Callers name a knowledge base as the customer does, and
+// each call scopes it to the owner's customer.
 type OwnedKnowledge struct {
 	knowledge *Knowledge
 	owner     routing.Owner
@@ -101,6 +103,7 @@ var (
 
 // Search looks a question up.
 func (o OwnedKnowledge) Search(ctx context.Context, query knowledge.Query) ([]knowledge.Document, error) {
+	query.Namespace = o.scoped(query.Namespace)
 	found, err := routing.Call(ctx, o.knowledge.meter(o.owner, KnowledgeLookup), func(ctx context.Context) (knowledge.Found, error) {
 		return o.knowledge.backend.Search(ctx, query)
 	})
@@ -109,6 +112,7 @@ func (o OwnedKnowledge) Search(ctx context.Context, query knowledge.Query) ([]kn
 
 // Fetch reads passages back by id. Asking for none asks the provider nothing.
 func (o OwnedKnowledge) Fetch(ctx context.Context, namespace string, ids []string) ([]knowledge.Document, error) {
+	namespace = o.scoped(namespace)
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -122,6 +126,7 @@ func (o OwnedKnowledge) Fetch(ctx context.Context, namespace string, ids []strin
 // requests before it, which the provider billed, are billed too. Writing none asks the
 // provider nothing.
 func (o OwnedKnowledge) Upsert(ctx context.Context, namespace string, documents []knowledge.Document) error {
+	namespace = o.scoped(namespace)
 	for batch := range slices.Chunk(documents, knowledge.WriteBatch) {
 		_, err := routing.Call(ctx, o.knowledge.meter(o.owner, KnowledgeWrite), func(ctx context.Context) (knowledge.Billed, error) {
 			return o.knowledge.backend.Upsert(ctx, namespace, batch)
@@ -136,6 +141,7 @@ func (o OwnedKnowledge) Upsert(ctx context.Context, namespace string, documents 
 // Delete removes passages by id, a row per request as Upsert writes them. Removing none asks
 // the provider nothing.
 func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []string) error {
+	namespace = o.scoped(namespace)
 	for batch := range slices.Chunk(ids, knowledge.WriteBatch) {
 		_, err := routing.Call(ctx, o.knowledge.meter(o.owner, KnowledgeWrite), func(ctx context.Context) (knowledge.Billed, error) {
 			return o.knowledge.backend.Delete(ctx, namespace, batch)
@@ -145,6 +151,16 @@ func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []stri
 		}
 	}
 	return nil
+}
+
+// scoped is the provider's name for the owner's knowledge base namespace. An empty name
+// stays empty so the backend refuses it: with the customer prefix it would be a base of
+// its own that nothing meant to write to.
+func (o OwnedKnowledge) scoped(namespace string) string {
+	if strings.TrimSpace(namespace) == "" {
+		return namespace
+	}
+	return knowledge.Scoped(o.owner.CustomerID, namespace)
 }
 
 // Provider is the backend's name.
