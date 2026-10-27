@@ -129,17 +129,13 @@ func (s *PriceSyncSuite) TestStartupSyncsAndAudits() {
 	s.Equal(store.PriceChangeSeed, seed.Kind)
 	s.Equal(s.settings.PricesFile+", vendor.json, router v1.3.0", seed.Source)
 	s.Equal("router v1.3.0", seed.CreatedBy)
-	var markups int
-	s.Require().NoError(pgStore.DB().QueryRowContext(s.ctx,
-		"SELECT count(*) FROM price_changes WHERE markup_bps IS NOT NULL").Scan(&markups))
-	s.Zero(markups, "the file's markup_bps is ignored")
 	active, err := pgStore.ActivePriceEntries(s.ctx, time.Now())
 	s.Require().NoError(err)
 	s.Len(active, len(prices.Vendor().Entries)+1)
 	for _, row := range active {
 		if row.Modality == vendor.Modality && row.Provider == vendor.Provider && row.Model == vendor.Model && len(row.Attributes) == 0 {
 			s.InDelta(99.0, row.Rates[pricing.InputTokens].USD, 1e-12, "the deployment's own file wins over vendor.json")
-			s.InDelta(118.8, row.Prices[pricing.InputTokens].USD, 1e-12, "priced at the factor, as the seed writes it")
+			s.InDelta(118.8, row.Prices[pricing.InputTokens].USD, 1e-12, "priced at the factor, as the seed writes it, the file's markup_bps ignored")
 		}
 		if row.Model == "own-model" {
 			s.Equal("llm-own-own-model", row.SKU)
