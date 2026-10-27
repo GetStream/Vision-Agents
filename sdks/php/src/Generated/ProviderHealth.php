@@ -11,7 +11,7 @@ use GetStream\VisionAgents\Json;
 final readonly class ProviderHealth
 {
     public function __construct(
-        // False once the error rate crosses the configured threshold, and for a speech-to-text model for one health w...
+        // False once the health window holds enough requests to judge and their error rate crosses the configured thr...
         public bool $available,
         public float $errorRate,
         public int $errors,
