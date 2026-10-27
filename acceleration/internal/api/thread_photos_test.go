@@ -178,6 +178,43 @@ func (s *SlackChannelSuite) TestAThreadMessageWithNeitherTextNorAPhotoIsNotAnswe
 		"only the message with text was answered")
 }
 
+// AI-2095: a photo answered in a thread is in the next turn's history as a note that it was
+// sent, beside the reply that saw it, and not handed to the model again: the session that
+// answers the next message reads the thread back from the channel.
+func (s *SlackChannelSuite) TestAPhotoAnsweredInAThreadIsANoteInTheNextTurnsHistory() {
+	s.answersWith("vision/vision-model")
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	question := "what colour is this bike? " + s.utils.uuid()
+	s.sentInThread(channel, question, s.photo("/photo.png"))
+	s.posted(1)
+	asked := len(s.vision.requests())
+
+	s.sentInThread(channel, "what colour was it?")
+
+	s.posted(2)
+	input := s.vision.requests()[asked].Input
+	s.Contains(input, llm.Message{Role: llm.User, Content: question + "\n\n[sent with a photo, not shown again]", Author: "U0000ALICE"})
+	s.Contains(input, llm.Message{Role: llm.Assistant, Content: "Two roses."}, "the reply that saw the photo")
+	s.False(llm.HasImage(input), "no photo is handed over again")
+}
+
+// AI-2095: a photo sent alone and answered in a thread is in the next turn's history too, as
+// the note alone.
+func (s *SlackChannelSuite) TestAPhotoSentAloneInAThreadIsANoteInTheNextTurnsHistory() {
+	s.answersWith("vision/vision-model")
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.sentInThread(channel, "", s.photo("/photo.png"))
+	s.posted(1)
+	asked := len(s.vision.requests())
+
+	s.sentInThread(channel, "what colour was it?")
+
+	s.posted(2)
+	input := s.vision.requests()[asked].Input
+	s.Contains(input, llm.Message{Role: llm.User, Content: "[sent with a photo, not shown again]", Author: "U0000ALICE"})
+	s.False(llm.HasImage(input))
+}
+
 // answersWith has the test's agent answer with model.
 func (s *SlackChannelSuite) answersWith(model string) {
 	s.config.LLM = model
