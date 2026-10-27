@@ -33,8 +33,9 @@ const minChunk = 500
 // passage is the other half of what multiplied a document. It is counted in bytes, as
 // passages are: 128 four-byte characters repeated in a 500-byte passage would leave no
 // room for anything else. With minChunk, a document's passages are at most about
-// (500 + 256 + 128 + 66) / (500 - 128), about 2.6, times its size, counting a 256-byte
-// name, " > " and a 63-byte id.
+// (500 + name + 3 + 128 + 63) / (500 - 133) times its size: the passage, its source and
+// its id over what is left once the repeated heading line is in. A name is at most 256
+// characters, which is about 2.6 for 256 bytes and 4.7 for 1,024.
 const maxHeading = 128
 
 // IDSeparator divides the file a passage came from from its place in that file. Keeping
