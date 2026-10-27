@@ -18,10 +18,10 @@ import (
 
 // errNoKnowledge is what the paths say when the deployment has no knowledge provider. Filling
 // a base that nothing can read is not worth pretending to do.
-// maxKnowledgeBody is the most an ingest reads. Documents ride whole in the body as text, so
+// MaxKnowledgeBody is the most an ingest reads. Documents ride whole in the body as text, so
 // a 5 MB file is more than Huma's 1 MB default would take; the rest is room for JSON
 // escaping.
-const maxKnowledgeBody = 8 << 20
+const MaxKnowledgeBody = 8 << 20
 
 // uploadReadTimeout is how long a large upload has to arrive. Huma gives a body 5 seconds,
 // which a document or recording near its limit outlasts on an ordinary connection.
@@ -358,7 +358,7 @@ func (s *Server) registerKnowledge(api huma.API) {
 		OperationID:     "ingestKnowledge",
 		Method:          http.MethodPost,
 		Path:            "/v1/agents/knowledge",
-		MaxBodyBytes:    maxKnowledgeBody,
+		MaxBodyBytes:    MaxKnowledgeBody,
 		BodyReadTimeout: uploadReadTimeout,
 		Summary:         "Fill a knowledge base with what the business wrote down",
 		Description: "The writing half of the lookup a config's knowledge_namespace gives an agent. Each " +

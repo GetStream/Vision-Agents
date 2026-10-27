@@ -34,9 +34,9 @@ require (
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
-	github.com/redis/rueidis v1.0.76
-	github.com/redis/rueidis/rueidisaside v1.0.76
-	github.com/redis/rueidis/rueidisotel v1.0.76
+	github.com/redis/rueidis v1.0.79
+	github.com/redis/rueidis/rueidisaside v1.0.79
+	github.com/redis/rueidis/rueidisotel v1.0.79
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/seiflotfy/cuckoofilter v0.0.0-20201222105146-bc6005554a0c
 	github.com/stretchr/testify v1.12.1

@@ -124,6 +124,31 @@ func (s *DocumentsSuite) TestALaterPassageRepeatsTheConfiguredLengthOfItsHeading
 	}
 }
 
+func (s *DocumentsSuite) TestAMinimumChunkOfZeroCutsAtTheSizeAskedFor() {
+	content := "# Refunds\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
+	off := Limits{MinChunk: 0, MaxHeading: DefaultLimits.MaxHeading}
+
+	s.Greater(len(Split("refunds.md", content, 1, off)), len(Split("refunds.md", content, 1, DefaultLimits)))
+}
+
+func (s *DocumentsSuite) TestAHeadingLimitOfZeroRepeatsNoHeading() {
+	content := "# Refund policy\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
+
+	passages := Split("refunds.md", content, DefaultChunk, Limits{MinChunk: DefaultLimits.MinChunk, MaxHeading: 0})
+
+	s.Require().Greater(len(passages), 1)
+	for _, passage := range passages[1:] {
+		s.True(strings.HasPrefix(passage.Text, "Refunds take"), passage.Text[:40])
+		s.Equal("refunds.md", passage.Source)
+	}
+}
+
+func (s *DocumentsSuite) TestThePassageSizeMultipleStaysInTheLimits() {
+	s.InDelta(2.6, DefaultLimits.SizeMultiple(), 0.05)
+	s.InDelta(5.6, Limits{MinChunk: 500, MaxHeading: 300}.SizeMultiple(), 0.05)
+	s.True(math.IsInf(Limits{MinChunk: 0, MaxHeading: 0}.SizeMultiple(), 1), "no minimum bounds nothing")
+}
+
 func (s *DocumentsSuite) TestASectionThatIsOnlyANameIsNotWorthStoring() {
 	// A heading with the next heading under it says nothing. Handed back as an answer it
 	// gives the model a title where it needed something to read.

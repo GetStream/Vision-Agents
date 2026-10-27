@@ -492,6 +492,9 @@ func (s *RouterSuite) SetupSuite() {
 		s.T().Skip("ROUTER_POSTGRES_DSN and ROUTER_REDIS_ADDR must be set")
 	}
 	s.forgetPhoneVendors()
+	if s.knowledgeLimits == (ingest.Limits{}) {
+		s.knowledgeLimits = ingest.DefaultLimits
+	}
 	ctx := context.Background()
 	logger := slog.New(slog.DiscardHandler)
 	if s.logs != nil {

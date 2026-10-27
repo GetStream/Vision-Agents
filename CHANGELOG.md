@@ -129,7 +129,7 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ### The knowledge passage limits are configurable
 
-`knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A value of 0 or below is the default (AI-1992).
+`knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A `min_chunk` of 0 is no minimum, and a `max_heading` of 0 repeats no heading (AI-1992). The router does not start with a negative value, or with a `max_heading` not less than a `min_chunk` above 0. It warns at startup when the limits let a document's passages be more than 4 times its size, with how much one 8 MiB ingest request can then write, and when there is no minimum, which bounds nothing (AI-1993).
 
 ## Bug Fixes
 
@@ -144,6 +144,10 @@ Under the egress proxy broker, a request from sandbox code to a connector's host
 ### An end user's device opens only its own memories
 
 A session created by an end user's device (`POST /v1/agents/sessions` or the session socket's start frame) with a `memory.user_id` other than the caller's own user id is refused with `403`, and an anonymous caller naming any `memory.user_id` is refused too. Before, a signed-in user could name another user of the same app, read that user's memories through the agent and add to them. A backend may still name any of its users. `MEM0_API_KEY` is read as one key: a comma-separated list or `MEM0_API_KEY_1` is no longer taken as a pool, since a mem0 key belongs to one project.
+
+### A saved policy applies at once and stays applied
+
+The router that saves a policy, an API key or an agent config now reads the new value on its very next request: before, about one read in four made right after the save still got the old value, for a few milliseconds. A save whose request was cancelled just after it committed also left the old value in place; it now clears it. A read that loaded the old value just before a save can no longer write it back to Redis afterwards, where every router kept reading it for up to an hour. The router now uses rueidis v1.0.79 (AI-2104).
 
 ### An iMessage photo's caption is answered
 
