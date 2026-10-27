@@ -290,23 +290,13 @@ func (s *LinqChannelSuite) TestAReplyLinqRefusesIsSentByTheNextHandOff() {
 // received is a message.received of the 2026-02-03 version (events) in chat, to line, from
 // sender, with one text part.
 func (s *LinqChannelSuite) received(chat, line, sender, text string) []byte {
-	return s.receivedIn(map[string]any{"id": chat, "is_group": false}, line, sender, text)
-}
-
-// inGroup is a message.received from sender in a group chat (data.chat.is_group true) on the
-// suite's line.
-func (s *LinqChannelSuite) inGroup(chat, sender, text string) []byte {
-	return s.receivedIn(map[string]any{"id": chat, "is_group": true}, s.line, sender, text)
-}
-
-// receivedIn is a message.received in the data.chat given, to line, from sender.
-func (s *LinqChannelSuite) receivedIn(chat map[string]any, line, sender, text string) []byte {
-	chat["owner_handle"] = map[string]any{"handle": line, "is_me": true, "service": "iMessage", "status": "active"}
 	raw, err := json.Marshal(map[string]any{
 		"api_version": "v3", "webhook_version": "2026-02-03", "event_type": "message.received",
 		"event_id": s.utils.uuid(), "created_at": time.Now().UTC().Format(time.RFC3339Nano), "partner_id": "synthetic-partner",
 		"data": map[string]any{
-			"chat": chat, "id": s.utils.uuid(), "direction": "inbound",
+			"chat": map[string]any{"id": chat, "is_group": false,
+				"owner_handle": map[string]any{"handle": line, "is_me": true, "service": "iMessage", "status": "active"}},
+			"id": s.utils.uuid(), "direction": "inbound",
 			"sender_handle": map[string]any{"handle": sender, "is_me": false, "service": "iMessage", "status": "active"},
 			"parts":         []map[string]any{{"type": "text", "value": text}},
 		},
@@ -533,11 +523,11 @@ func (s *LinqChannelSuite) TestAStopFromAnyoneInAGroupIsConfirmedAndSilencesTheG
 	s.Equal(telnyxStopped, stopped.text)
 	s.Equal(1, s.liveIMessageOptOuts(member))
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
-	s.agentReplied(channel, 1)
+	s.answeredAfter(channel, 0)
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Anyone there?"), time.Now()))
 	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut, "a scheduled delivery into the group is refused too")
-	s.Contains(s.logged.String(), `msg="dropped an inbound message in a chat with a person who opted out" connector=linq channel=`+channel)
+	s.Contains(s.logged.String(), `level=INFO msg="dropped an inbound message in a chat with a person who opted out" connector=linq channel=`+channel)
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "START"), time.Now()))
 
@@ -580,7 +570,7 @@ func (s *LinqChannelSuite) TestAPersonWhoOptedOutInTheirOwnChatSilencesAGroupThe
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(group, member, "Hello"), time.Now()))
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
-	s.agentReplied(channel, 1)
+	s.answeredAfter(channel, 0)
 	s.Never(func() bool { return s.holds(channel, "Hello") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 }
@@ -589,14 +579,14 @@ func (s *LinqChannelSuite) TestAPersonWhoOptedOutInTheirOwnChatSilencesAGroupThe
 // people the chat reaches: the group is silenced by their STOP.
 func (s *LinqChannelSuite) TestAnAuthorCountsWhenTheChatDoesNotSayItIsAGroup() {
 	chat, member := s.utils.uuid(), "+12025550198"
-	s.Require().Equal(http.StatusOK, s.deliver(s.receivedIn(map[string]any{"id": chat}, s.line, "+12025550199", "Hi all"), time.Now()))
+	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, "+12025550199", "Hi all"), nil), time.Now()))
 	channel := s.threadChannel(chat)
 	s.written(channel, 1)
 
-	s.Require().Equal(http.StatusOK, s.deliver(s.receivedIn(map[string]any{"id": chat}, s.line, member, "STOP"), time.Now()))
+	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, member, "STOP"), nil), time.Now()))
 
 	s.took(1)
-	s.Require().Equal(http.StatusOK, s.deliver(s.receivedIn(map[string]any{"id": chat}, s.line, "+12025550199", "Anyone there?"), time.Now()))
+	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, "+12025550199", "Anyone there?"), nil), time.Now()))
 	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 }
@@ -641,6 +631,34 @@ func (s *LinqChannelSuite) TestAStopInOnePersonsChatLeavesAnotherPersonsChatAnsw
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.Equal("Noted.", s.took(2)[1].text)
 	s.NoError(s.reachable(channel))
+}
+
+// A store that cannot record a chat's member fails the delivery and releases its claim, so
+// Linq's retry of the same event is taken: the STOP is recorded and silences the chat. The table
+// is renamed away: the suite's database is its own (SetupSuite), and a defer puts it back.
+func (s *LinqChannelSuite) TestAMemberTheStoreCannotRecordLeavesTheMessageToTheRetry() {
+	ctx := context.Background()
+	chat, member := s.utils.uuid(), "+12025550198"
+	body := s.inGroup(chat, member, "STOP")
+	_, err := s.store.DB().ExecContext(ctx, "ALTER TABLE channel_thread_members RENAME TO channel_thread_members_off")
+	s.Require().NoError(err)
+	restored := false
+	restore := func() {
+		if !restored {
+			restored = true
+			_, err := s.store.DB().ExecContext(ctx, "ALTER TABLE channel_thread_members_off RENAME TO channel_thread_members")
+			s.Require().NoError(err)
+		}
+	}
+	defer restore()
+
+	s.NotEqual(http.StatusOK, s.deliver(body, time.Now()))
+	restore()
+	s.Zero(s.liveIMessageOptOuts(member))
+
+	s.Require().Equal(http.StatusOK, s.deliver(body, time.Now()))
+	s.Equal(telnyxStopped, s.took(1)[0].text)
+	s.ErrorIs(s.reachable(s.threadChannel(chat)), channelbridge.ErrOptedOut)
 }
 
 // AI-2016: Linq refuses the STOP confirmation to a person who texted STOP with 403 (error
@@ -703,16 +721,7 @@ func (s *LinqChannelSuite) index(channel, text string) int {
 	return -1
 }
 
-// agentReplied waits until the agent wrote count replies into a thread channel, each of which
-// the conversation hands to the bridge once written.
-func (s *LinqChannelSuite) agentReplied(channel string, count int) {
-	s.Require().Eventually(func() bool {
-		replies := 0
-		for _, stored := range s.chat.Stored(channel) {
-			if stored["user_id"] == channel {
-				replies++
-			}
-		}
-		return replies >= count
-	}, settleFor, 10*time.Millisecond, "the agent wrote fewer than %d replies into %s", count, channel)
+// inGroup is a message.received from sender in a group chat (data.chat.is_group true).
+func (s *LinqChannelSuite) inGroup(chat, sender, text string) []byte {
+	return s.chatSays(s.received(chat, s.line, sender, text), true)
 }
