@@ -12,12 +12,17 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.6.0
+  # The microphone, asked for before a call on Android. iOS asks by itself when the call
+  # first uses it.
+  permission_handler: ^12.0.3
+  # The share sheet a reply's share button opens.
+  share_plus: ^13.3.1
   # Stream Chat's AI components: the conversation, its steps, the composer and the voice glow.
-  # From the branch that adds AIConversationView and the voice views, until they are released.
+  # From main, pinned, until they are released.
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: renefloor/flu-1043-aivoiceglowview-and-aivoicewaveview-show-what-a-voice-agent
+      ref: b92690920b181197cc668b2c9c2241b0c7d07842
       path: packages/stream_chat_flutter_ai
   # The channel a written conversation is kept in; the version vision_agents_chat pins.
   stream_chat: 10.4.0

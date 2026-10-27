@@ -19,10 +19,16 @@ class AgentChat extends ChangeNotifier {
   /// Opens the session's channel and starts following it.
   static Future<AgentChat> open(AgentSession session) async {
     final channel = await session.chat();
-    await channel.watch();
+    final watched = await channel.watch(
+      messagesPagination: const stream.PaginationParams(limit: _pageSize),
+    );
     final chat = AgentChat._(session, channel).._listen();
+    chat.hasOlderMessages = (watched.messages?.length ?? 0) >= _pageSize;
     return chat;
   }
+
+  /// How many messages are loaded at a time.
+  static const _pageSize = 30;
 
   final AgentSession session;
   final stream.Channel _channel;
@@ -64,7 +70,6 @@ class AgentChat extends ChangeNotifier {
         }),
       )
       ..add(session.conversation.stream.listen((_) => notifyListeners()));
-    hasOlderMessages = messages.length >= 30;
   }
 
   /// The messages as Stream's AI components show them.
@@ -110,10 +115,10 @@ class AgentChat extends ChangeNotifier {
     final state = await _channel.query(
       messagesPagination: stream.PaginationParams(
         lessThan: first.id,
-        limit: 30,
+        limit: _pageSize,
       ),
     );
-    hasOlderMessages = (state.messages?.length ?? 0) >= 30;
+    hasOlderMessages = (state.messages?.length ?? 0) >= _pageSize;
     notifyListeners();
   }
 

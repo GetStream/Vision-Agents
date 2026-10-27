@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'chat_view.dart';
 import 'demo.dart';
+import 'notice.dart';
 import 'voice_view.dart';
 
 void main() => runApp(const FlutterDemoApp());
@@ -52,14 +53,14 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     if (Demo.streamApiKey.isEmpty) {
-      return const Scaffold(
-        body: Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              'No Stream key yet.\n\nRun with --dart-define=STREAM_API_KEY=<the router\'s STREAM_API_KEY>.',
-              textAlign: TextAlign.center,
-            ),
+      return Scaffold(
+        appBar: AppBar(title: const Text('Larkspur support')),
+        body: const Center(
+          child: Notice(
+            icon: Icons.key_outlined,
+            title: 'No Stream key yet',
+            message:
+                "Run with --dart-define=STREAM_API_KEY=<the router's STREAM_API_KEY>.",
           ),
         ),
       );

@@ -46,3 +46,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# A local override of the dependencies, such as a checkout of stream-chat-flutter-ai.
+pubspec_overrides.yaml

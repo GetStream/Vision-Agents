@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
 
 import 'agent_chat.dart';
 import 'demo.dart';
+import 'notice.dart';
 
 /// A written conversation.
 ///
@@ -59,12 +61,10 @@ class _ChatViewState extends State<ChatView> {
     if (chat != null) return _AgentConversation(chat: chat);
     if (_failure case final failure?) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            'Could not start\n\n$failure',
-            textAlign: TextAlign.center,
-          ),
+        child: Notice(
+          icon: Icons.warning_amber_outlined,
+          title: 'Could not start',
+          message: failure,
         ),
       );
     }
@@ -103,9 +103,9 @@ class _AgentConversationState extends State<_AgentConversation> {
     ),
   );
 
-  /// Stream's components, with what the person can do under each finished reply: copy it
-  /// and rate it, and the composer without its attachment button. Made once, since new
-  /// builders rebuild every component that reads them.
+  /// Stream's components, with what the person can do under each finished reply: copy it,
+  /// share it and rate it, and the composer without its attachment button. Made once, since
+  /// new builders rebuild every component that reads them.
   late final _components = AIComponentBuilders(
     replyActions: _replyActions,
     composer: const _Composer(),
@@ -125,8 +125,8 @@ class _AgentConversationState extends State<_AgentConversation> {
     super.dispose();
   }
 
-  /// What the person can do under a finished reply: copy it and rate it. Asking for a reply
-  /// again needs the router to replace one, which it does not yet.
+  /// What the person can do under a finished reply: copy it, share it and rate it. Asking for
+  /// a reply again needs the router to replace one, which it does not yet.
   Widget _replyActions(BuildContext context, AIReplyActionsProps props) {
     final chat = widget.chat;
     // Read here, from the chat, so the thumbs change as soon as the rating does.
@@ -136,6 +136,9 @@ class _AgentConversationState extends State<_AgentConversation> {
         text: props.text,
         actions: AIReplyActions(
           rating: chat.ratings[props.message.id],
+          onShare: (text, origin) => SharePlus.instance.share(
+            ShareParams(text: text, sharePositionOrigin: origin),
+          ),
           onRate: (rating) => chat.rate(props.message.id, rating),
         ),
       ),
@@ -169,7 +172,11 @@ class _AgentConversationState extends State<_AgentConversation> {
               footer: workingOn == null
                   ? null
                   : AITypingIndicatorView(text: workingOn),
-              emptyContent: const _Empty(),
+              emptyContent: const Notice(
+                icon: Icons.inventory_2_outlined,
+                title: 'Ask about an order',
+                message: 'Orders A-1042 and A-1043 are on this account.',
+              ),
             ),
           ),
           if (chat.messages.isEmpty)
@@ -199,34 +206,6 @@ class _AgentConversationState extends State<_AgentConversation> {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _Empty extends StatelessWidget {
-  const _Empty();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          Icons.inventory_2_outlined,
-          size: 40,
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-        const SizedBox(height: 12),
-        Text('Ask about an order', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 4),
-        Text(
-          'Orders A-1042 and A-1043 are on this account.',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-      ],
     );
   }
 }
