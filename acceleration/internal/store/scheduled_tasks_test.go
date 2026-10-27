@@ -958,7 +958,11 @@ func (s *StoreSuite) TestTheLastRunOfEveryTaskIsReadAtOnce() {
 }
 
 func (s *StoreSuite) TestDeletingAConfigPausesOnlyItsActiveTasks() {
-	created := s.task("one", nil)
+	// Its last change a day ago, read back as Postgres keeps it: the pause stamps updated_at with
+	// Postgres's clock, which need not agree with this process's to the microsecond.
+	s.aged("one", "acme", ScheduledTaskActive, day)
+	created, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
 	s.task("done", func(task *ScheduledTask) { task.State = ScheduledTaskCompleted })
 	s.task("other-config", func(task *ScheduledTask) { task.ConfigID = "config-2" })
 	s.task("no-config", func(task *ScheduledTask) { task.ConfigID = "" })
