@@ -482,6 +482,41 @@ func (s *ConverseSuite) TestATurnQueuedBehindAnOverlapAskIsHeardOnceItIsAnswered
 	}, "the queued turn was answered without being reported as what the caller said")
 }
 
+func (s *ConverseSuite) TestATurnKeptQueuedOnceTheAgentIsQuietStopsHoldingUpWhatIsOwed() {
+	// Kept queued because the caller was talking when the agent went quiet, a turn nothing
+	// hands back must not hold an owed turn for good.
+	s.build(DuplexOptions{})
+	s.converse.undecidedFor = 200 * time.Millisecond
+	s.overhears("could you also check the side door", s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+	s.True(s.converse.Undecided(), "a turn just queued holds up what is owed")
+
+	s.converse.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "and the"}, s.quiet())
+	s.Require().True(s.converse.Listening())
+	_, handed := s.converse.Waiting(s.quiet())
+	s.Require().False(handed, "the caller is talking, so the turn stays queued")
+
+	s.eventually(func() bool { return !s.converse.Undecided() }, "a turn left queued held up what is owed for good")
+	s.converse.mu.Lock()
+	defer s.converse.mu.Unlock()
+	s.NotNil(s.converse.queued, "the turn is still queued, only no longer waited on")
+}
+
+func (s *ConverseSuite) TestATurnQueuedWhileTheAgentTalksHoldsUpWhatIsOwedPastTheLimit() {
+	// However long the agent's reply runs, the turn queued behind it is still the next thing
+	// to answer when it ends.
+	s.build(DuplexOptions{})
+	s.converse.undecidedFor = 50 * time.Millisecond
+	s.overhears("could you also check the side door", s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+	_, handed := s.converse.Waiting(s.talking())
+	s.Require().False(handed)
+
+	s.Never(func() bool { return !s.converse.Undecided() }, 200*time.Millisecond, 10*time.Millisecond)
+}
+
 func (s *ConverseSuite) TestATurnQueuedAfterItsRulingIsHeardOnlyOnce() {
 	s.build(DuplexOptions{})
 	ready := s.settle("book a table for four", s.talking())
