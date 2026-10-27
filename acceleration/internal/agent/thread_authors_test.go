@@ -91,6 +91,24 @@ func (s *AgentSuite) TestATypedTurnWithoutAnAuthorInAThreadIsNotNamed() {
 	s.Equal("It is noon.", contentsOf(asked.Input)[2])
 }
 
+// A typed turn nobody wrote in a thread two people wrote in keeps them named, and the note
+// says they write.
+func (s *AgentSuite) TestATypedTurnWithoutAnAuthorAfterTwoAuthorsKeepsThemNamed() {
+	s.joinText()
+	s.agent.RestoreHistory([]llm.Message{
+		{Role: llm.User, Content: "remind us at noon", Author: "linq-kanat"},
+		{Role: llm.Assistant, Content: "Will do."},
+		{Role: llm.User, Content: "me too", Author: "linq-ana"},
+		{Role: llm.Assistant, Content: "Both of you, then."},
+	})
+
+	asked := s.writes("", "It is noon.")
+
+	s.Equal("be brief\n\n"+severalWriters, asked.Instructions)
+	s.Equal([]string{"Speaker 1: remind us at noon", "Will do.", "Speaker 2: me too", "Both of you, then.", "It is noon."},
+		contentsOf(asked.Input))
+}
+
 // The control: a 1:1 chat on a thread channel and a session in writing that names no author
 // (dashboard, SDK) send what base af17ef057 sends for the same turns. The expected request is
 // the one a probe on af17ef057 printed for this history and turn, with no authors.

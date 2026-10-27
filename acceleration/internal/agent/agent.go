@@ -394,8 +394,11 @@ type Agent struct {
 	// speakers are the people, by personOf, who have had a turn answered, each with the
 	// label their words go under. Once there are two, every new turn names who said it,
 	// because the model cannot tell them apart otherwise. Turns typed with RespondTo are
-	// the caller's and are never counted.
+	// the caller's and are never counted, unless they name who wrote them (WithAuthor).
 	speakers map[string]nameTag
+	// writers is whether speakers counts people who wrote rather than spoke, so the model
+	// is told about several people in writing (severalWriters), not in a call.
+	writers bool
 	// speakingTurn is the turn the agent is currently on. It says which reply an
 	// interruption would abandon and which one the floor belongs to; it does not decide
 	// what may be heard, because the agent starts a turn for itself while the turn before
@@ -1968,6 +1971,7 @@ func (a *Agent) respondTurn(
 	if listened.author != "" {
 		// Counted and named as a speaker is; everything else still answers the typed caller.
 		said = stt.Participant{ID: listened.author, UserID: listened.author}
+		a.writers = true
 	}
 	a.keepTurnLocked(said, text)
 	history := a.replayLocked()
@@ -2307,7 +2311,7 @@ func (a *Agent) instructions() string {
 	if a.voicePrompt != "" {
 		parts = append(parts, a.voicePrompt)
 	}
-	if len(a.speakers) > 1 && a.options.Text {
+	if len(a.speakers) > 1 && a.writers {
 		parts = append(parts, severalWriters)
 	} else if len(a.speakers) > 1 {
 		parts = append(parts, severalSpeakers)
@@ -3650,6 +3654,7 @@ func (a *Agent) RestoreHistory(history []llm.Message) {
 		if message.Author != "" {
 			author := stt.Participant{ID: message.Author, UserID: message.Author}
 			a.speakers[personOf(author)] = a.speakerLocked(author)
+			a.writers = true
 		}
 	}
 	if len(a.speakers) < 2 {
