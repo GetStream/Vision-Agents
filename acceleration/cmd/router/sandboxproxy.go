@@ -161,7 +161,14 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 		}
 	}
 	// Close, not a drain: a tunnel is the sandbox's to reopen.
-	stop = func() error { finish(false); return server.Close() }
+	// finish has closed the listener already, so Close finding it closed is no failure.
+	stop = func() error {
+		finish(false)
+		if err := server.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			return err
+		}
+		return nil
+	}
 	if !overlap {
 		return stop, func() {}, nil
 	}
