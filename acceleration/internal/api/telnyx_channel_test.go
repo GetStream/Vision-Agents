@@ -34,8 +34,8 @@ import (
 // agent to it. The test's Telnyx, a local TLS server the bridge's replies dial, delivers
 // message.received events signed with Ed25519 to POST /v1/connectors/events/telnyx/{app id}
 // and takes the replies at /v2/messages. Telnyx's pages, opened October 8, 2026:
-// https://developers.telnyx().com/docs/messaging/messages/receiving-webhooks (webhooks) and
-// https://developers.telnyx().com/docs/messaging/messages/send-message (send).
+// https://developers.telnyx.com/docs/messaging/messages/receiving-webhooks (webhooks) and
+// https://developers.telnyx.com/docs/messaging/messages/send-message (send).
 type TelnyxChannelSuite struct {
 	telnyxLine
 }
