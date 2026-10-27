@@ -5,6 +5,7 @@ package tools
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -182,14 +183,35 @@ func collect(t reflect.Type, seen map[reflect.Type]bool, properties map[string]a
 	return nil
 }
 
+// JSONSchemaTag is the struct tag other Go JSON Schema libraries read, such as
+// invopop/jsonschema: comma-separated key=value pairs, `enum` once per value, and `\,` for a
+// comma inside a value, as in `jsonschema:"description=Full name,minLength=1"`.
+const JSONSchemaTag = "jsonschema"
+
+// numberKeywords and countKeywords are the constraints a tag gives as a number and as a whole
+// count; textKeywords are taken as written.
+var (
+	numberKeywords = []string{"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"}
+	countKeywords  = []string{"minLength", "maxLength", "minItems", "maxItems"}
+	textKeywords   = []string{"pattern", "format", "title"}
+)
+
 // constrain adds what a field's tags say beyond its description: `enum` as comma-separated
-// values, `minimum` and `maximum`, `pattern`, `format`, and one `example`. Values are read
+// values, the bounds in numberKeywords and countKeywords, `pattern`, `format`, a `default`
+// and one `example`, each as a tag of its own or inside a `jsonschema` tag. Values are read
 // as the field's own type, so an enum on an int is numbers.
 func constrain(schema map[string]any, tag reflect.StructTag) error {
 	kind, _ := schema["type"].(string)
-	if values, ok := tag.Lookup("enum"); ok {
+	tags, err := keywordsOf(tag)
+	if err != nil {
+		return err
+	}
+	if description, ok := tags["description"]; ok && schema["description"] == nil {
+		schema["description"] = description[0]
+	}
+	if values, ok := tags["enum"]; ok {
 		var enum []any
-		for _, value := range strings.Split(values, ",") {
+		for _, value := range values {
 			parsed, err := valueOf(kind, strings.TrimSpace(value))
 			if err != nil {
 				return fmt.Errorf("enum: %w", err)
@@ -198,28 +220,98 @@ func constrain(schema map[string]any, tag reflect.StructTag) error {
 		}
 		schema["enum"] = enum
 	}
-	for _, bound := range []string{"minimum", "maximum"} {
-		if value, ok := tag.Lookup(bound); ok {
-			number, err := strconv.ParseFloat(value, 64)
+	for _, keyword := range numberKeywords {
+		if value, ok := tags[keyword]; ok {
+			number, err := strconv.ParseFloat(value[0], 64)
 			if err != nil {
-				return fmt.Errorf("%s %q is not a number", bound, value)
+				return fmt.Errorf("%s %q is not a number", keyword, value[0])
 			}
-			schema[bound] = number
+			schema[keyword] = number
 		}
 	}
-	for _, key := range []string{"pattern", "format"} {
-		if value, ok := tag.Lookup(key); ok {
-			schema[key] = value
+	for _, keyword := range countKeywords {
+		if value, ok := tags[keyword]; ok {
+			count, err := strconv.Atoi(value[0])
+			if err != nil || count < 0 {
+				return fmt.Errorf("%s %q is not a count", keyword, value[0])
+			}
+			schema[keyword] = count
 		}
 	}
-	if value, ok := tag.Lookup("example"); ok {
-		parsed, err := valueOf(kind, value)
+	for _, keyword := range textKeywords {
+		if value, ok := tags[keyword]; ok {
+			schema[keyword] = value[0]
+		}
+	}
+	if value, ok := tags["default"]; ok {
+		parsed, err := valueOf(kind, value[0])
+		if err != nil {
+			return fmt.Errorf("default: %w", err)
+		}
+		schema["default"] = parsed
+	}
+	if value, ok := tags["example"]; ok {
+		parsed, err := valueOf(kind, value[0])
 		if err != nil {
 			return fmt.Errorf("example: %w", err)
 		}
 		schema["examples"] = []any{parsed}
 	}
 	return nil
+}
+
+// keywordsOf gathers a field's constraints from its tags of their own and its `jsonschema`
+// tag, each keyword with its values: several for an enum, one for the rest.
+func keywordsOf(tag reflect.StructTag) (map[string][]string, error) {
+	keywords := map[string][]string{}
+	if values, ok := tag.Lookup("enum"); ok {
+		keywords["enum"] = strings.Split(values, ",")
+	}
+	for _, keyword := range slices.Concat(numberKeywords, countKeywords, textKeywords, []string{"default", "example"}) {
+		if value, ok := tag.Lookup(keyword); ok {
+			keywords[keyword] = []string{value}
+		}
+	}
+	written, ok := tag.Lookup(JSONSchemaTag)
+	if !ok {
+		return keywords, nil
+	}
+	for _, pair := range splitUnescaped(written) {
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok {
+			// A bare word, such as required or nullable, says nothing a schema here carries.
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "enum" {
+			keywords[key] = append(keywords[key], value)
+			continue
+		}
+		if key == "examples" {
+			key = "example"
+		}
+		keywords[key] = []string{value}
+	}
+	return keywords, nil
+}
+
+// splitUnescaped splits a `jsonschema` tag at each comma not written as `\,`.
+func splitUnescaped(tag string) []string {
+	var parts []string
+	var part strings.Builder
+	for i := 0; i < len(tag); i++ {
+		switch {
+		case tag[i] == '\\' && i+1 < len(tag) && tag[i+1] == ',':
+			part.WriteByte(',')
+			i++
+		case tag[i] == ',':
+			parts = append(parts, part.String())
+			part.Reset()
+		default:
+			part.WriteByte(tag[i])
+		}
+	}
+	return append(parts, part.String())
 }
 
 // valueOf reads a tag's value as a JSON Schema type names it.
