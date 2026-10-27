@@ -231,6 +231,38 @@ func (s *BrokerSuite) TestCodeInTheSandboxReadsGitHubAndWritesNothing() {
 	s.Empty(s.rig.host.authorizations())
 }
 
+// TestCodeInTheSandboxQueriesGitHubsGraphQLAndMutatesNothing: under GitHub's manifest, gh's
+// query to api.github.com/graphql reaches GitHub with the token, and a mutation there reaches no
+// host and gets read-only's answer.
+func (s *BrokerSuite) TestCodeInTheSandboxQueriesGitHubsGraphQLAndMutatesNothing() {
+	mount, err := s.broker.Prepare(s.ctx, []sandbox.Grant{s.withGit()})
+	s.Require().NoError(err)
+	graphQL := func(body string) (int, string) {
+		request, err := http.NewRequestWithContext(s.ctx, http.MethodPost, "https://api.github.com/graphql", strings.NewReader(body))
+		s.Require().NoError(err)
+		request.Header.Set("Authorization", "Bearer "+mount.Env["GITHUB_TOKEN"])
+		// gh's GraphQL client sends {"query", "variables"} with this Content-Type (cli/go-gh at
+		// ca859e00, pkg/api/graphql_client.go:69, pkg/api/http_client.go:31 and :169).
+		request.Header.Set("Content-Type", "application/json; charset=utf-8")
+		response, err := s.rig.sandboxClient(s.T(), mount).Do(request)
+		s.Require().NoError(err)
+		defer response.Body.Close()
+		answer, err := io.ReadAll(response.Body)
+		s.Require().NoError(err)
+		return response.StatusCode, string(answer)
+	}
+
+	status, answer := graphQL(`{"query":"mutation { addStar(input: {starrableId: \"R_1\"}) { clientMutationId } }"}`)
+	s.Equal(http.StatusForbidden, status)
+	s.Equal("egress: POST api.github.com/graphql refused: code in the sandbox only reads through a connector; "+
+		"write with the connector's tools\n", answer)
+	s.Empty(s.rig.host.authorizations())
+
+	status, _ = graphQL(`{"query":"query { viewer { login } }","variables":{}}`)
+	s.Equal(http.StatusOK, status)
+	s.Equal([]string{"Bearer gho_live-token-of-the-connection"}, s.rig.host.authorizations())
+}
+
 // TestTheBundleHoldsTheSandboxsRootsAndTheCA: a host of the config's allowed domains, which
 // the proxy tunnels to as it is, is verified with the image's own roots, from the first file of
 // them it has, and an image with none runs no code. Daytona's netleash CA, which nothing passes

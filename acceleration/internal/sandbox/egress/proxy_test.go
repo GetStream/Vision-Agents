@@ -574,6 +574,202 @@ func (s *ProxySuite) TestAWriteToAnAllowedDomainIsTunnelledAsItIs() {
 	s.Equal("written", s.outside.requests()[0].Body)
 }
 
+// graphQLRequest is one request of code in the sandbox to a GraphQL read, and the status the
+// proxy answers it with.
+type graphQLRequest struct {
+	name, method, target, contentType, encoding, body string
+	status                                            int
+}
+
+// graphQLCase is a JSON POST of body to the GraphQL read, answered with status.
+func graphQLCase(name, body string, status int) graphQLRequest {
+	return graphQLRequest{name: name, method: http.MethodPost, target: "https://api.github.test/graphql",
+		contentType: "application/json", body: body, status: status}
+}
+
+// readGraphQL gives the test's grant a GraphQL read of POST api.github.test/graphql, and reads,
+// when given, beside it.
+func (s *ProxySuite) readGraphQL(reads ...core.SandboxRead) {
+	grant := s.grant(s.placeholder, "api.github.test")
+	grant.Reads = append([]core.SandboxRead{{Host: "api.github.test", Path: "/graphql", GraphQL: true}}, reads...)
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
+}
+
+// sendGraphQL sends each request by the sandbox. One the proxy lets through reaches the host
+// with the token and its body byte for byte; one it refuses reaches no host, asks for no token,
+// and gets read-only's answer.
+func (s *ProxySuite) sendGraphQL(requests []graphQLRequest) {
+	for _, c := range requests {
+		s.granted.forget()
+		asked := s.asked
+		request := s.request(c.method, c.target, "Bearer "+s.placeholder, c.body)
+		if c.contentType != "" {
+			request.Header.Set("Content-Type", c.contentType)
+		}
+		if c.encoding != "" {
+			request.Header.Set("Content-Encoding", c.encoding)
+		}
+
+		response, body, err := s.send(s.sandbox(s.credential), request)
+
+		s.Require().NoError(err, c.name)
+		s.Equal(c.status, response.StatusCode, c.name)
+		if c.status != http.StatusOK {
+			s.Empty(s.granted.requests(), c.name)
+			s.Equal(asked, s.asked, c.name)
+			s.Equal("egress: "+c.method+" api.github.test/graphql refused: code in the sandbox only reads through a connector; "+
+				"write with the connector's tools\n", body, c.name)
+			continue
+		}
+		s.Require().Len(s.granted.requests(), 1, c.name)
+		s.Equal("Bearer gho_first-token-of-the-connection", s.granted.requests()[0].Authorization, c.name)
+		s.Equal(c.body, s.granted.requests()[0].Body, c.name)
+	}
+}
+
+// TestAGraphQLReadTakesADocumentOfQueriesAlone: a POST to a GraphQL read reaches the host only
+// when every operation of its document is a query (GraphQL over HTTP,
+// https://http-spec.graphql.org/draft/, 4.4 POST). A parser reads the document, so a comment, a
+// string or a fragment that says mutation is no mutation, and an operation named query is.
+func (s *ProxySuite) TestAGraphQLReadTakesADocumentOfQueriesAlone() {
+	s.readGraphQL()
+
+	s.sendGraphQL([]graphQLRequest{
+		graphQLCase("a query", `{"query":"query { viewer { login } }"}`, http.StatusOK),
+		graphQLCase("the shorthand", `{"query":"{ viewer { login } }"}`, http.StatusOK),
+		graphQLCase("operations named, one chosen", `{"query":"query A { a } query B { b }","operationName":"B","variables":{"x":1}}`, http.StatusOK),
+		graphQLCase("operationName and variables null", `{"query":"{ a }","operationName":null,"variables":null}`, http.StatusOK),
+		graphQLCase("a fragment", `{"query":"query { ...F } fragment F on Query { viewer { login } }"}`, http.StatusOK),
+		graphQLCase("mutation in a comment", `{"query":"# mutation { addStar }\nquery { a }"}`, http.StatusOK),
+		graphQLCase("mutation in a string", `{"query":"query { search(query: \"mutation { addStar }\") { n } }"}`, http.StatusOK),
+		graphQLCase("mutation in a block string", `{"query":"query { search(query: \"\"\"\nmutation { addStar }\"\"\") { n } }"}`, http.StatusOK),
+		graphQLCase("a fragment named mutation", `{"query":"query { ...mutation } fragment mutation on Query { a }"}`, http.StatusOK),
+		graphQLCase("a key escaped", `{"\u0071uery":"{ a }"}`, http.StatusOK),
+		graphQLCase("a key escaped, a mutation", `{"\u0071uery":"mutation { b }"}`, http.StatusForbidden),
+		graphQLCase("a mutation", `{"query":"mutation { addStar(input: {starrableId: \"x\"}) { clientMutationId } }"}`, http.StatusForbidden),
+		graphQLCase("a mutation named query", `{"query":"mutation query { a }"}`, http.StatusForbidden),
+		graphQLCase("a subscription", `{"query":"subscription { a }"}`, http.StatusForbidden),
+		graphQLCase("a query and a mutation, the query chosen", `{"query":"query A { a } mutation B { b }","operationName":"A"}`, http.StatusForbidden),
+		graphQLCase("the shorthand and a mutation", `{"query":"{ a } mutation { b }"}`, http.StatusForbidden),
+		graphQLCase("fragments alone", `{"query":"fragment F on Query { a }"}`, http.StatusForbidden),
+		graphQLCase("an empty document", `{"query":""}`, http.StatusForbidden),
+		graphQLCase("invalid GraphQL", `{"query":"query { a "}`, http.StatusForbidden),
+		graphQLCase("a document of another kind", `{"query":"type Query { a: String }"}`, http.StatusForbidden),
+	})
+}
+
+// TestAGraphQLReadTakesOneJSONRequestAlone: the body is one JSON request with query and only the
+// members the proxy reads, once each. Anything else could hold an operation the host reads
+// another way than the proxy: a persisted document's id, a key the host takes the first of, a
+// second JSON value. A batch is refused, as GitHub refuses it (400 «Body should be a JSON
+// object», live probe 2026-10-27).
+func (s *ProxySuite) TestAGraphQLReadTakesOneJSONRequestAlone() {
+	s.readGraphQL()
+
+	s.sendGraphQL([]graphQLRequest{
+		graphQLCase("a batch of queries", ` [{"query":"{ a }"},{"query":"query { b }"}]`, http.StatusForbidden),
+		graphQLCase("a batch with a mutation", `[{"query":"{ a }"},{"query":"mutation { b }"}]`, http.StatusForbidden),
+		graphQLCase("an empty batch", `[]`, http.StatusForbidden),
+		graphQLCase("a batch of strings", `["{ a }"]`, http.StatusForbidden),
+		graphQLCase("a batch of batches", `[[{"query":"{ a }"}]]`, http.StatusForbidden),
+		graphQLCase("a batch of a key and a value", `[["query","{ a }"]]`, http.StatusForbidden),
+		graphQLCase("an empty body", ``, http.StatusForbidden),
+		graphQLCase("GraphQL as it is", `query { a }`, http.StatusForbidden),
+		graphQLCase("null", `null`, http.StatusForbidden),
+		graphQLCase("a string", `"{ a }"`, http.StatusForbidden),
+		graphQLCase("an empty object", `{}`, http.StatusForbidden),
+		graphQLCase("a null query", `{"query":null}`, http.StatusForbidden),
+		graphQLCase("a number for a query", `{"query":1}`, http.StatusForbidden),
+		graphQLCase("an array for a query", `{"query":["{ a }"]}`, http.StatusForbidden),
+		graphQLCase("a persisted query's hash", `{"query":"{ a }","extensions":{"persistedQuery":{"sha256Hash":"x"}}}`, http.StatusForbidden),
+		graphQLCase("a document's id", `{"query":"{ a }","id":"m1"}`, http.StatusForbidden),
+		graphQLCase("query twice, a mutation last", `{"query":"{ a }","query":"mutation { b }"}`, http.StatusForbidden),
+		graphQLCase("query twice, a mutation first", `{"query":"mutation { b }","query":"{ a }"}`, http.StatusForbidden),
+		graphQLCase("Query beside query", `{"Query":"mutation { b }","query":"{ a }"}`, http.StatusForbidden),
+		graphQLCase("a second JSON value", `{"query":"{ a }"}{"query":"mutation { b }"}`, http.StatusForbidden),
+		graphQLCase("a JSON object cut short", `{"query":"{ a }"`, http.StatusForbidden),
+	})
+	s.Contains(s.logs.String(), `why="a GraphQL request that is no JSON object"`)
+}
+
+// TestAGraphQLReadTakesAJSONBodyOfAMiBAtMost: the proxy reads a body as application/json in UTF-8
+// (4.4 POST), of 1 MiB at most, with no URL query, which a host could read an operation from
+// too. A GET is a read as before, with its query in the URL.
+func (s *ProxySuite) TestAGraphQLReadTakesAJSONBodyOfAMiBAtMost() {
+	s.readGraphQL()
+	query := `{"query":"{ a }"}`
+	// 1 MiB is egress.maxGraphQLBody; JSON takes whitespace after its value (RFC 8259 section 2).
+	full := query + strings.Repeat(" ", 1<<20-len(query))
+	withType := func(contentType string, status int) graphQLRequest {
+		c := graphQLCase(contentType, query, status)
+		c.contentType = contentType
+		return c
+	}
+	zipped := &bytes.Buffer{}
+	writer := gzip.NewWriter(zipped)
+	_, _ = writer.Write([]byte(query))
+	s.Require().NoError(writer.Close())
+
+	s.sendGraphQL([]graphQLRequest{
+		withType("application/json; charset=utf-8", http.StatusOK),
+		withType("application/json; charset=UTF-8", http.StatusOK),
+		withType("Application/JSON", http.StatusOK),
+		withType("application/json; charset=iso-8859-1", http.StatusForbidden),
+		withType("application/graphql", http.StatusForbidden),
+		withType("text/plain", http.StatusForbidden),
+		withType("application/x-www-form-urlencoded", http.StatusForbidden),
+		withType("", http.StatusForbidden),
+		withType("application/json; charset", http.StatusForbidden),
+		graphQLCase("a body of 1 MiB", full, http.StatusOK),
+		graphQLCase("a byte over 1 MiB", full+" ", http.StatusForbidden),
+		graphQLCase("gzip", zipped.String(), http.StatusForbidden),
+		{name: "JSON sent as gzip", method: http.MethodPost, target: "https://api.github.test/graphql", contentType: "application/json",
+			encoding: "gzip", body: query, status: http.StatusForbidden},
+		{name: "JSON sent as identity and gzip", method: http.MethodPost, target: "https://api.github.test/graphql", contentType: "application/json",
+			encoding: "identity, gzip", body: query, status: http.StatusForbidden},
+		{name: "JSON sent as identity", method: http.MethodPost, target: "https://api.github.test/graphql", contentType: "application/json",
+			encoding: "Identity", body: query, status: http.StatusOK},
+		{name: "a URL query on a POST", method: http.MethodPost, target: "https://api.github.test/graphql?query=mutation%7Bb%7D",
+			contentType: "application/json", body: query, status: http.StatusForbidden},
+		{name: "a PUT", method: http.MethodPut, target: "https://api.github.test/graphql", contentType: "application/json", body: query,
+			status: http.StatusForbidden},
+		{name: "a GET with a query in the URL", method: http.MethodGet, target: "https://api.github.test/graphql?query=%7Ba%7D",
+			status: http.StatusOK},
+	})
+	s.Contains(s.logs.String(), `why="a GraphQL POST over the size the proxy reads"`)
+	s.Contains(s.logs.String(), `why="a GraphQL POST with a content coding"`)
+}
+
+// TestAGraphQLReadReachesTheHostAsSentWhenItsLengthIsUnknown: a body sent chunked is read
+// whole and reaches the host with the same bytes.
+func (s *ProxySuite) TestAGraphQLReadReachesTheHostAsSentWhenItsLengthIsUnknown() {
+	s.readGraphQL()
+	query := `{"query":"query { viewer { login } }"}`
+	request := s.request(http.MethodPost, "https://api.github.test/graphql", "Bearer "+s.placeholder, "")
+	request.Header.Set("Content-Type", "application/json")
+	request.Body, request.ContentLength = io.NopCloser(struct{ io.Reader }{strings.NewReader(query)}), -1
+
+	response, _, err := s.send(s.sandbox(s.credential), request)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Require().Len(s.granted.requests(), 1)
+	s.Equal(query, s.granted.requests()[0].Body)
+}
+
+// TestAGraphQLReadHoldsBesideAnotherReadOfItsPath: a GraphQL read beside a read of the same
+// method and path still takes queries alone, and the refusal's log names why, never the body.
+func (s *ProxySuite) TestAGraphQLReadHoldsBesideAnotherReadOfItsPath() {
+	s.readGraphQL(core.SandboxRead{Host: "api.github.test", Method: http.MethodPost, Path: "/*"})
+
+	s.sendGraphQL([]graphQLRequest{
+		graphQLCase("a query", `{"query":"{ a }"}`, http.StatusOK),
+		graphQLCase("a mutation", `{"query":"mutation { secretField }"}`, http.StatusForbidden),
+	})
+	s.Contains(s.logs.String(), `why="a GraphQL mutation"`)
+	s.NotContains(s.logs.String(), "secretField")
+}
+
 // TestAHostOutsideTheGrantsIsRefusedAndNeverReached is A2.
 func (s *ProxySuite) TestAHostOutsideTheGrantsIsRefusedAndNeverReached() {
 	_, _, err := s.send(s.sandbox(s.credential), s.request(http.MethodGet, "https://outside.test/echo", "Bearer "+s.placeholder, ""))

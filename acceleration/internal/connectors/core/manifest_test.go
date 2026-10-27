@@ -1133,28 +1133,36 @@ func (s *ManifestSuite) TestASandboxHostIsALowercaseHostNameOrAWildcardDomain() 
 }
 
 // A read names a host of the block, a method in upper case as a client sends it (RFC 9110
-// section 9.1), and a path.Match pattern from the path's leading slash.
+// section 9.1), and a path.Match pattern from the path's leading slash. A GraphQL read takes a
+// POST and leaves its method out, so a router that predates it matches it to no request.
 func (s *ManifestSuite) TestASandboxReadIsAMethodToAPathOfOneOfItsHosts() {
 	block := "sandbox:\n  env: EXAMPLE_TOKEN\n  hosts: [api.example.com, \"*.example.org\"]\n  reads:\n"
 	parsed, err := ParseManifest(minimal(block + "    - {host: api.example.com, method: POST, path: /*/*/git-upload-pack}\n" +
-		"    - {host: \"*.example.org\", method: QUERY, path: /search}\n"))
+		"    - {host: \"*.example.org\", method: QUERY, path: /search}\n" +
+		"    - {host: api.example.com, path: /graphql, graphql: true}\n"))
 	s.Require().NoError(err)
 	s.Equal([]SandboxRead{{Host: "api.example.com", Method: "POST", Path: "/*/*/git-upload-pack"},
-		{Host: "*.example.org", Method: "QUERY", Path: "/search"}}, parsed.Sandbox.Reads)
+		{Host: "*.example.org", Method: "QUERY", Path: "/search"},
+		{Host: "api.example.com", Path: "/graphql", GraphQL: true}}, parsed.Sandbox.Reads)
 
 	for read, field := range map[string]string{
-		"{host: other.example.com, method: POST, path: /x}":    "sandbox.reads[0].host:",
-		"{host: example.org, method: POST, path: /x}":          "sandbox.reads[0].host:",
-		"{host: \"\", method: POST, path: /x}":                 "sandbox.reads[0].host:",
-		"{method: POST, path: /x}":                             "sandbox.reads[0].host:",
-		"{host: api.example.com, method: post, path: /x}":      "sandbox.reads[0].method:",
-		"{host: api.example.com, method: \"PO ST\", path: /x}": "sandbox.reads[0].method:",
-		"{host: api.example.com, method: \"\", path: /x}":      "sandbox.reads[0].method:",
-		"{host: api.example.com, path: /x}":                    "sandbox.reads[0].method:",
-		"{host: api.example.com, method: POST, path: x/y}":     "sandbox.reads[0].path:",
-		"{host: api.example.com, method: POST, path: \"\"}":    "sandbox.reads[0].path:",
-		"{host: api.example.com, method: POST, path: \"/[\"}":  "sandbox.reads[0].path:",
-		"{host: api.example.com, method: POST}":                "sandbox.reads[0].path:",
+		"{host: other.example.com, method: POST, path: /x}":                    "sandbox.reads[0].host:",
+		"{host: example.org, method: POST, path: /x}":                          "sandbox.reads[0].host:",
+		"{host: \"\", method: POST, path: /x}":                                 "sandbox.reads[0].host:",
+		"{method: POST, path: /x}":                                             "sandbox.reads[0].host:",
+		"{host: api.example.com, method: post, path: /x}":                      "sandbox.reads[0].method:",
+		"{host: api.example.com, method: \"PO ST\", path: /x}":                 "sandbox.reads[0].method:",
+		"{host: api.example.com, method: \"\", path: /x}":                      "sandbox.reads[0].method:",
+		"{host: api.example.com, path: /x}":                                    "sandbox.reads[0].method:",
+		"{host: api.example.com, method: POST, path: x/y}":                     "sandbox.reads[0].path:",
+		"{host: api.example.com, method: POST, path: \"\"}":                    "sandbox.reads[0].path:",
+		"{host: api.example.com, method: POST, path: \"/[\"}":                  "sandbox.reads[0].path:",
+		"{host: api.example.com, method: POST}":                                "sandbox.reads[0].path:",
+		"{host: api.example.com, method: POST, path: /graphql, graphql: true}": "sandbox.reads[0].method:",
+		"{host: api.example.com, method: GET, path: /graphql, graphql: true}":  "sandbox.reads[0].method:",
+		"{host: api.example.com, path: /graphql, graphql: false}":              "sandbox.reads[0].method:",
+		"{host: other.example.com, path: /graphql, graphql: true}":             "sandbox.reads[0].host:",
+		"{host: api.example.com, path: graphql, graphql: true}":                "sandbox.reads[0].path:",
 	} {
 		_, err := ParseManifest(minimal(block + "    - " + read + "\n"))
 
@@ -1164,6 +1172,8 @@ func (s *ManifestSuite) TestASandboxReadIsAMethodToAPathOfOneOfItsHosts() {
 	s.ErrorContains(err, "field body not found", "an unknown field")
 	_, err = ParseManifest(minimal(block + "    - {host: api.example.com, method: [POST], path: /x}\n"))
 	s.Error(err, "a method that is no string")
+	_, err = ParseManifest(minimal(block + "    - {host: api.example.com, path: /x, graphql: queries}\n"))
+	s.Error(err, "graphql that is no bool")
 }
 
 // A block without reads marshals as it did before the field existed, so the seeder finds

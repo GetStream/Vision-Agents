@@ -251,6 +251,8 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   GET or a HEAD gets 403 «… refused: code in the sandbox only reads through a connector; write with
   the connector's tools», unless the connector's latest `sandbox.reads` lists it (GitHub revision 8:
   `POST github.com/<owner>/<repo>.git/git-upload-pack`, so clone and fetch work; push is refused).
+  A read with `graphql: true` takes a POST whose every GraphQL operation is a query (GitHub
+  revision 9: `POST api.github.com/graphql`, so `gh`'s queries work and its mutations get the 403).
   Connections pinned to an earlier revision get the reads without a reconnect. Allowed domains
   take any method. Under the Daytona broker nothing checks methods: code can write with the token
   (`internal/sandbox/egress/AGENTS.md`, «Read-only»).

@@ -70,12 +70,12 @@ func (s *ConnectorsSuite) TestOnlyAConnectorThatReadsMessagesIsAChannel() {
 	s.False(listed["slack"])
 }
 
-// TestGitHubShowsWhatASandboxGetsForItsAPI: github's sandbox block (revision 8), in a read and
+// TestGitHubShowsWhatASandboxGetsForItsAPI: github's sandbox block (revision 9), in a read and
 // in the list, is what code in a sandbox reads (env) and where its token may go (hosts).
 func (s *ConnectorsSuite) TestGitHubShowsWhatASandboxGetsForItsAPI() {
 	want := &ConnectorSandbox{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com", "github.com"}}
 	github := s.get("github")
-	s.Equal(8, github.Revision)
+	s.Equal(9, github.Revision)
 	s.Equal(want, github.Sandbox)
 	for _, item := range s.list("").Items {
 		if item.ID == "github" {

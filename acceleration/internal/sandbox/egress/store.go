@@ -90,26 +90,31 @@ func (r Record) granted(host string) bool {
 // reads says whether a request with method to target's path on host only reads: a GET or a HEAD,
 // or one of a grant's reads for host. Methods are case-sensitive (RFC 9110 section 9.1), so get
 // is not GET. Only a path as the host gets it, with no escape, dot segment or empty segment, is
-// matched, so no other spelling of a path reaches another resource behind a pattern.
+// matched, so no other spelling of a path reaches another resource behind a pattern. When a read
+// that matches is a GraphQL one it says graphQL, whatever other reads match: the request reads
+// only if its body holds queries alone.
 // git push's first request, a GET of info/refs for git-receive-pack (gitprotocol-http(5),
 // https://git-scm.com/docs/gitprotocol-http, "Smart Clients"), is not a read: git prints the
 // body of a refusal there to the model, and drops the body of a refused POST.
-func (r Record) reads(host, method string, target *url.URL) bool {
+func (r Record) reads(host, method string, target *url.URL) (reads, graphQL bool) {
 	if method == http.MethodGet || method == http.MethodHead {
-		return !strings.HasSuffix(target.Path, "/info/refs") || !slices.Contains(target.Query()["service"], "git-receive-pack")
+		return !strings.HasSuffix(target.Path, "/info/refs") || !slices.Contains(target.Query()["service"], "git-receive-pack"), false
 	}
 	at := target.EscapedPath()
 	if at != target.Path || path.Clean(at) != at {
-		return false
+		return false, false
 	}
 	for _, grant := range r.Grants {
 		for _, read := range grant.Reads {
+			if read.GraphQL {
+				read.Method = http.MethodPost
+			}
 			if matched, _ := path.Match(read.Path, at); matched && read.Method == method && covers([]string{read.Host}, host) {
-				return true
+				reads, graphQL = true, graphQL || read.GraphQL
 			}
 		}
 	}
-	return false
+	return reads, graphQL
 }
 
 // hostLabel is how the metrics name host: the entry of a grant's hosts that covers it, which

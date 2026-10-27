@@ -20,6 +20,8 @@
 #   [secrets] https://www.daytona.io/docs/en/secrets.md
 # Opened October 27, 2026:
 #   [smart]   https://git-scm.com/docs/gitprotocol-http
+#   [graphql] https://docs.github.com/en/graphql/guides/forming-calls-with-graphql
+#   [ghapi]   https://cli.github.com/manual/gh_api
 # Opened October 22, 2026:
 #   [remotes] https://docs.github.com/en/get-started/git-basics/about-remote-repositories
 #   [install] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
@@ -44,8 +46,9 @@ id: github
 # tools beside the default ones. 6 adds sandbox, so code in a session's sandbox can call
 # GitHub's REST API with the connection's token. 7 (AI-1576) adds github.com to sandbox.hosts,
 # so git over HTTPS reaches it through both brokers. 8 adds sandbox.reads: under the proxy
-# broker code in the sandbox reads only, and git clone and fetch read with a POST.
-revision: 8
+# broker code in the sandbox reads only, and git clone and fetch read with a POST. 9 adds the
+# GraphQL endpoint as a read of queries alone, so gh reads through it.
+revision: 9
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -194,3 +197,11 @@ sandbox:
     - host: github.com
       method: POST
       path: /*/*/git-upload-pack
+    # [graphql]: «For GitHub.com, that endpoint is: https://api.github.com/graphql», and «you'll
+    # provide a JSON-encoded body whether you're performing a query or a mutation, so the HTTP
+    # verb is POST». gh reads through it ([ghapi]: «graphql to access the GitHub API v4»). The
+    # proxy lets a POST there through only when every operation in its body is a query. A
+    # GraphQL read names no method: a router before revision 9's code refuses the POST.
+    - host: api.github.com
+      path: /graphql
+      graphql: true

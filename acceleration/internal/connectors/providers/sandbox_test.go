@@ -23,28 +23,31 @@ func TestSandboxSuite(t *testing.T) {
 
 // From revision 7 github.com too, where git sends the token as Basic auth's password. From
 // revision 8 git clone and fetch read there with a POST to git-upload-pack
-// (https://git-scm.com/docs/gitprotocol-http); a push's git-receive-pack is no read.
+// (https://git-scm.com/docs/gitprotocol-http); a push's git-receive-pack is no read. From
+// revision 9 gh reads with a POST of queries to api.github.com/graphql
+// (https://docs.github.com/en/graphql/guides/forming-calls-with-graphql).
 func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIAndGitHosts() {
 	github := s.manifest("github")
-	s.Equal(8, github.Revision)
+	s.Equal(9, github.Revision)
 
 	for _, scheme := range github.Schemes {
 		resolved, err := github.Resolve(scheme, nil, nil)
 		s.Require().NoError(err, scheme)
 
 		s.Equal(&core.SandboxRule{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com", "github.com"},
-			Reads: []core.SandboxRead{{Host: "github.com", Method: "POST", Path: "/*/*/git-upload-pack"}}}, resolved.Sandbox, scheme)
+			Reads: []core.SandboxRead{{Host: "github.com", Method: "POST", Path: "/*/*/git-upload-pack"},
+				{Host: "api.github.com", Path: "/graphql", GraphQL: true}}}, resolved.Sandbox, scheme)
 	}
 }
 
-// Revision 8 adds reads alone, which a session takes from the latest revision, so a connection
-// pinned to revision 7 reads as one on 8 and is not marked outdated.
+// Revisions 8 and 9 add reads alone, which a session takes from the latest revision, so a
+// connection pinned to revision 7 reads as one on 9 and is not marked outdated.
 func (s *SandboxSuite) TestGitHubsReadsNeedNoReconnect() {
 	raw, err := fs.ReadFile(providers.FS, "github.yaml")
 	s.Require().NoError(err)
 	before, _, found := strings.Cut(string(raw), "  reads:\n")
 	s.Require().True(found)
-	seven, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 8\n", "revision: 7\n", 1)))
+	seven, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 9\n", "revision: 7\n", 1)))
 	s.Require().NoError(err)
 	s.Equal(7, seven.Revision)
 	s.Nil(seven.Sandbox.Reads)
