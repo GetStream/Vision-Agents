@@ -32,6 +32,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
 	"github.com/redis/rueidis"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
@@ -146,9 +147,13 @@ func (s *RouterSuite) BeforeTest(_, _ string) {
 	count, err := s.store.DB().NewSelect().Model((*store.ScheduledTask)(nil)).Count(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, count, "a task is left from an earlier test or run")
+	// A database that stalls past the driver's 10s read timeout fails the delete, and the next
+	// test would then fail on this one's tasks; the delete is tried again until it lands.
 	t.Cleanup(func() {
-		_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(context.Background())
-		require.NoError(t, err)
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(context.Background())
+			assert.NoError(c, err)
+		}, time.Minute, 100*time.Millisecond, "the tasks were never deleted")
 	})
 }
 
