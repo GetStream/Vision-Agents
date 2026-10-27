@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
@@ -51,15 +53,30 @@ func (s *ProxyQuotaSuite) TearDownSuite() {
 	}
 }
 
-// SetupTest forgets every address's day, since every test here calls from the same one.
+// SetupTest forgets the day this test's app spent, since every test here calls from the same address.
+// Only its own app's buckets: the Redis is every suite's.
 func (s *ProxyQuotaSuite) SetupTest() {
 	s.app = strings.ReplaceAll(s.T().Name(), "/", "-")
 	ctx := s.T().Context()
-	spent, err := s.redis.Do(ctx, s.redis.B().Keys().Pattern("quota:*:ip:*").Build()).AsStrSlice()
+	spent, err := s.redis.Do(ctx, s.redis.B().Keys().Pattern("quota:*:ip:"+s.app+":*").Build()).AsStrSlice()
 	s.Require().NoError(err)
 	if len(spent) > 0 {
 		s.Require().NoError(s.redis.Do(ctx, s.redis.B().Del().Key(spent...).Build()).Error())
 	}
+}
+
+func (s *ProxyQuotaSuite) TestForgettingATestsDayLeavesAnotherAppsAddressBucketsAlone() {
+	// The Redis the limiter counts in is every suite's, and another suite's day is its own.
+	other := "quota:2000-01-01:ip:" + s.app + "-other:127.0.0.1"
+	ctx := s.T().Context()
+	s.Require().NoError(s.redis.Do(ctx, s.redis.B().Set().Key(other).Value("1").Ex(time.Minute).Build()).Error())
+	s.T().Cleanup(func() { s.redis.Do(context.Background(), s.redis.B().Del().Key(other).Build()) })
+
+	s.SetupTest()
+
+	kept, err := s.redis.Do(ctx, s.redis.B().Exists().Key(other).Build()).AsInt64()
+	s.Require().NoError(err)
+	s.EqualValues(1, kept)
 }
 
 func (s *ProxyQuotaSuite) TestOneUserSpendingTheirDayDoesNotSpendEveryoneElsesBehindTheProxy() {

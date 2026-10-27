@@ -89,10 +89,6 @@ func (s *QuotaSuite) TestABackendIsNotCountedAgainstADaysAllowance() {
 func (s *QuotaSuite) TestABackendsRepliesForAUserAreNotChargedToTheirDay() {
 	// The backend asks for a reply on the user's behalf, which it is trusted with. The
 	// counted model reports what each reply cost, so the reply's row says it was answered.
-	// An app of its own keeps other suites' answers from the same address out of its day.
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
-	s.backend = s.serverClient.actingFor(s.client)
 	request := textSession(nil)
 	request.Llm = pointerTo("counted/counted-model")
 	opened := s.backend.createSession(request)
@@ -155,9 +151,6 @@ func (s *QuotaSuite) TestAUsersTurnsOverTheSocketOfAnUnrecordedSessionTheirBacke
 
 func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCountedByTheDefault() {
 	// The router's default of one a day guards against devices, so it never counts a backend.
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
-	s.backend = s.serverClient.actingFor(s.client)
 	opened := s.backendOpensACountedSession()
 
 	for turn := range 3 {
@@ -175,9 +168,6 @@ func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCoun
 func (s *QuotaSuite) TestAnAppsQuotaCountsItsBackendsTurnsForTheUser() {
 	// A quota the app set is its rule about its user, so what its backend asks for in the
 	// user's name counts as much as what the user's device does.
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
-	s.backend = s.serverClient.actingFor(s.client)
 	s.putQuota(2)
 	opened := s.backendOpensACountedSession()
 	status, failure := s.backend.failure(http.MethodPost, "/v1/agents/sessions/"+opened+"/respond",
@@ -199,9 +189,6 @@ func (s *QuotaSuite) TestAnAppsQuotaCountsItsBackendsTurnsForTheUser() {
 func (s *QuotaSuite) TestAUsersOwnSessionIsCountedOnTheirDayWhoeverSendsItsTurns() {
 	// Unchanged by who sends a turn: a backend answering for the user in the user's own
 	// session spends the user's day, as it always has.
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
-	s.backend = s.serverClient.actingFor(s.client)
 	request := textSession(nil)
 	request.Llm = pointerTo("counted/counted-model")
 	opened := s.client.createSession(request)
@@ -215,15 +202,10 @@ func (s *QuotaSuite) TestAUsersOwnSessionIsCountedOnTheirDayWhoeverSendsItsTurns
 
 func (s *QuotaSuite) TestAnAppWithNoPolicyIsHeldToTheDeploymentsLimit() {
 	// An app that set nothing is refused at the deployment's default.
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
-
 	s.Equal(1, s.messagesBeforeRefusal())
 }
 
 func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
 	s.putQuota(3)
 
 	s.Equal(3, s.messagesBeforeRefusal())
@@ -244,9 +226,6 @@ func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
 }
 
 func (s *QuotaSuite) TestAChangedLimitAppliesAtOnceOnTheNodeThatStoredIt() {
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
-	s.backend = s.serverClient.actingFor(s.client)
 	s.spendTheDay()
 	s.Equal(http.StatusTooManyRequests, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil),
 		"the router's default of one message is spent, and the decision is now cached")
@@ -257,8 +236,6 @@ func (s *QuotaSuite) TestAChangedLimitAppliesAtOnceOnTheNodeThatStoredIt() {
 }
 
 func (s *QuotaSuite) TestAnAppsLimitOfZeroRefusesNobody() {
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
 	s.putQuota(0)
 
 	for range 3 {
@@ -271,8 +248,6 @@ func (s *QuotaSuite) TestAnAppsLimitOfZeroRefusesNobody() {
 }
 
 func (s *QuotaSuite) TestACountedAnswerSaysWhatIsLeftOfTheDay() {
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
 	s.putQuota(3)
 	s.spend(s.client)
 
@@ -323,7 +298,6 @@ func (s *QuotaSuite) spend(client *testClient) {
 func (s *QuotaSuite) TestAnAnonymousCallerClaimingAUsersIDIsHeldToTheAppsQuota() {
 	// The user's own quota of 0 is no cap. A device going by their id with no token is
 	// anybody, so it is held to the app's two messages and spends nothing of the user's day.
-	s.useApp(s.data.createApp())
 	vip := s.data.createUser()
 	s.putQuota(2)
 	none := int64(0)
@@ -344,9 +318,6 @@ func (s *QuotaSuite) TestAnAnonymousCallerClaimingAUsersIDIsHeldToTheAppsQuota()
 }
 
 func (s *QuotaSuite) TestABackendStillReadsASpentUsersSessionAndIsRefusedOnlyNewWork() {
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
-	s.backend = s.serverClient.actingFor(s.client)
 	s.putQuota(1)
 	opened := s.backend.createSession(textSession(nil))
 	s.spend(s.client)
