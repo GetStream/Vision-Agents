@@ -324,20 +324,32 @@ func (p *Pool) refused(response *http.Response) (time.Duration, bool) {
 	return 0, false
 }
 
-// badKeyMarkers are what a provider that answers a key it does not know with a 400 or 403,
-// not a 401, says in the body, as each answered a made-up key on 2026-10-27.
-var badKeyMarkers = [][]byte{
+// badKeyMarker is what a provider that answers a key it does not know with a 400 or 403, not
+// a 401, says in the body, as each answered a made-up key on 2026-10-27. It counts only on its
+// own status, so a generic text on another status is not taken for a bad key.
+type badKeyMarker struct {
+	status int
+	text   []byte
+}
+
+var badKeyMarkers = []badKeyMarker{
 	// Google's native API (x-goog-api-key, ?key=): a 400 whose google.rpc.ErrorInfo reason
 	// is API_KEY_INVALID.
-	[]byte(`"API_KEY_INVALID"`),
+	{http.StatusBadRequest, []byte(`"API_KEY_INVALID"`)},
 	// Gemini's OpenAI-compatible endpoint: a 400 that gives no reason, only this message.
-	[]byte("Please pass a valid API key"),
+	{http.StatusBadRequest, []byte("Please pass a valid API key")},
 	// xAI: a 400, on HTTP and on the websocket handshake alike.
-	[]byte("Incorrect API key provided"),
-	// Baseten: a 403.
-	[]byte("please check the api-key you provided"),
-	// Inworld: a 403, gRPC code 7 (PERMISSION_DENIED).
-	[]byte("Invalid authorization credentials"),
+	{http.StatusBadRequest, []byte("Incorrect API key provided")},
+	// Baseten's inference API: a 403.
+	{http.StatusForbidden, []byte("please check the api-key you provided")},
+	// Baseten's dedicated deployments (HTTP and websocket handshake): a 403 with only this
+	// generic text, so it counts on a 403 alone.
+	{http.StatusForbidden, []byte("Authentication failed")},
+	// Inworld: a 403, gRPC code 7 (PERMISSION_DENIED), for a key that is not base64 of
+	// id:secret...
+	{http.StatusForbidden, []byte("Invalid authorization credentials")},
+	// ...and for a key of that shape that is revoked or made up.
+	{http.StatusForbidden, []byte("API key does not exist or was deleted")},
 }
 
 // rejectsKey reports whether a response says the provider would not take the key at all: a
@@ -352,7 +364,9 @@ func rejectsKey(response *http.Response) bool {
 		return true
 	case http.StatusBadRequest, http.StatusForbidden:
 		peeked := peek(response)
-		return slices.ContainsFunc(badKeyMarkers, func(marker []byte) bool { return bytes.Contains(peeked, marker) })
+		return slices.ContainsFunc(badKeyMarkers, func(marker badKeyMarker) bool {
+			return marker.status == response.StatusCode && bytes.Contains(peeked, marker.text)
+		})
 	}
 	return false
 }

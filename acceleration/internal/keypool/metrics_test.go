@@ -544,7 +544,9 @@ var badKeyAnswers = []struct {
 	{"xai", http.StatusBadRequest, `{"code":"invalid-argument","error":"Incorrect API key provided. You can obtain an API key from https://console.x.ai."}`},
 	{"xai handshake", http.StatusBadRequest, `{"code":"Client specified an invalid argument","error":"Incorrect API key provided. You can obtain an API key from https://console.x.ai."}`},
 	{"baseten", http.StatusForbidden, "{\"error\":\"please check the api-key you provided\"}\n"},
-	{"inworld", http.StatusForbidden, `{"code":7,"message":"Invalid authorization credentials","details":[]}`},
+	{"baseten dedicated deployment", http.StatusForbidden, "{\n\t\"error\": \"Authentication failed\"\n}\n"},
+	{"inworld key not in base64 id:secret", http.StatusForbidden, `{"code":7,"message":"Invalid authorization credentials","details":[]}`},
+	{"inworld key in the real shape", http.StatusForbidden, `{"code":7,"message":"API key does not exist or was deleted: \"Ym9n***\"","details":[]}`},
 }
 
 // sender sends a request carrying a key through a pool, the way a provider does.
@@ -640,6 +642,9 @@ func (s *RefusedAttemptsSuite) TestA400Or403IsCountedOnlyWhenItsBodySaysTheKeyIs
 		{"bad request", http.StatusBadRequest, `{"error":{"code":400,"message":"Invalid JSON payload received. Unknown name \"foo\": Cannot find field.","status":"INVALID_ARGUMENT"}}`, false},
 		{"other google reason", http.StatusBadRequest, `{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_SERVICE_BLOCKED"}]}}`, false},
 		{"model not allowed", http.StatusForbidden, `{"error":"you do not have access to this model"}`, false},
+		{"baseten text on a 400", http.StatusBadRequest, `{"error":"Authentication failed"}`, false},
+		{"xai text on a 403", http.StatusForbidden, marker, false},
+		{"google reason on a 403", http.StatusForbidden, `"API_KEY_INVALID"`, false},
 		{"empty 400", http.StatusBadRequest, "", false},
 		{"empty 403", http.StatusForbidden, "", false},
 		{"not json 400", http.StatusBadRequest, "<html>Bad Request</html>", false},
@@ -699,4 +704,61 @@ func (s *RefusedAttemptsSuite) TestARefusalWithoutABodyIsCountedOnItsStatusAlone
 			}
 		})
 	}
+}
+
+// A handshake answered with a 400 or 403 that is not about the key is not counted, and is
+// handed back as it came.
+func (s *RefusedAttemptsSuite) TestAHandshakeRefusedForAnotherReasonThan400Or403IsNotCounted() {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"bad request", http.StatusBadRequest, `{"error":{"code":400,"message":"Invalid JSON payload received.","status":"INVALID_ARGUMENT"}}`},
+		{"model not allowed", http.StatusForbidden, `{"error":"you do not have access to this model"}`},
+		{"empty 400", http.StatusBadRequest, ""},
+		{"empty 403", http.StatusForbidden, ""},
+	} {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			p := s.pool("dialother")
+			s.answerWith(tc.status, tc.body, p.keys[0])
+
+			response, key, err := s.dial(p.Pool)
+
+			s.Require().Error(err)
+			s.Equal(tc.status, response.StatusCode)
+			body, readErr := io.ReadAll(response.Body)
+			s.Require().NoError(readErr)
+			s.Equal(tc.body, string(body))
+			s.Equal(p.keys[0], key)
+			s.Empty(s.counted(p.keyVars[0]))
+		})
+	}
+}
+
+// closeSpy is a body that records that it was closed.
+type closeSpy struct {
+	io.Reader
+	closed bool
+}
+
+func (c *closeSpy) Close() error {
+	c.closed = true
+	return nil
+}
+
+// Closing the body a counted 400 or 403 is handed back with closes the provider's own body.
+func (s *RefusedAttemptsSuite) TestClosingACountedAnswersBodyClosesTheProvidersBody() {
+	p := s.pool("closes")
+	provider := &closeSpy{Reader: strings.NewReader(`{"error":"Incorrect API key provided"}`)}
+
+	response, err := p.Send(context.Background(), func(string) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{}, Body: provider}, nil
+	})
+
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.True(provider.closed)
+	s.Equal(map[string]float64{"400": 1}, s.counted(p.keyVars[0]))
 }
