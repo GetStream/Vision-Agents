@@ -12,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -46,8 +47,9 @@ const threadTurnLease = askTimeout + 30*time.Second
 //	    the session on the channel (ByConversationWhere), else
 //	      FromConfig(the config binding the line now), Text, PersistConversation,
 //	      ConversationID agent:thread-<uuid>               reply lands in the thread channel
-//	    Session.FollowUp(text), its author (WithAuthor)    the person's message is already
-//	                                                       in the channel: none is written
+//	    Session.FollowUp(text, photos), its author         the person's message is already
+//	      (WithAuthor); no photos for an agent that        in the channel: none is written
+//	      cannot see, a note instead (threadPhotos)
 //	    wait until the turn is over; close the session it opened; let go of the lease
 
 // linkedThread is the external thread a channel holds, when it is a thread channel of the
@@ -137,9 +139,13 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 	// rather than a second answer. Only a reply another way into the session is
 	// still writing is waited out; any other failure ends the message, as each
 	// attempt whose turn did not start leaves a cancelled reply in the channel.
+	text, images := s.threadPhotos(turn, found, thread, event)
+	if text == "" && len(images) == 0 {
+		return
+	}
 	followUpID := "thread_" + store.NewID()
 	for {
-		err = found.FollowUp(turn, followUpID, event.Message.Text)
+		err = found.FollowUp(turn, followUpID, text, images)
 		if !errors.Is(err, conversation.ErrResponseRunning) || turn.Err() != nil {
 			break
 		}
@@ -153,6 +159,35 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 		time.Sleep(threadTurnPoll)
 	}
 }
+
+// threadPhotos is what a thread's message tells the model: its text, and the photos sent
+// with it, read into bytes (fetchImages). An agent with nothing that looks at a photo is
+// handed none, as RespondTo would refuse the turn with ErrCannotSeeImages and the person would
+// hear nothing; it is told the person sent one, so it says it cannot see it. Photos that cannot
+// be fetched end the message: empty text and no images.
+func (s *Server) threadPhotos(ctx context.Context, found *session.Session, thread store.ChannelThread, event messageEvent) (string, []llm.ImagePart) {
+	text, images := event.Message.Text, event.photos()
+	switch {
+	case len(images) == 0:
+		return text, nil
+	case !found.SeesImages() && text == "":
+		return unseenPhoto, nil
+	case !found.SeesImages():
+		return text + "\n\n" + unseenPhotoWithText, nil
+	}
+	if err := fetchImages(ctx, s.imageHTTP, images); err != nil {
+		s.logger.Error("could not fetch the photos of a message in a thread channel", "channel", thread.ChannelID, "error", err)
+		return "", nil
+	}
+	return text, images
+}
+
+// unseenPhoto and unseenPhotoWithText are the turn of an agent that cannot see, for a photo
+// sent alone and one sent with text.
+const (
+	unseenPhoto         = "(The person sent a photo, which you cannot see. Reply in one short sentence that you cannot look at photos.)"
+	unseenPhotoWithText = "(The person also sent a photo, which you cannot see. Answer their message, and say in your reply that you cannot see the photo.)"
+)
 
 // takeThreadTurn waits for a thread channel's turn and leases it to holder for threadTurnLease.
 func (s *Server) takeThreadTurn(ctx context.Context, channelID, holder string) error {

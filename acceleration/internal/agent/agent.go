@@ -874,6 +874,16 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", nil, asked, sender, scheduled, "")
 }
 
+// SeesImages reports whether a turn's images reach something that looks at them: a vision
+// skill, or a conversation model that accepts images. RespondTo refuses a turn with images
+// with ErrCannotSeeImages when neither is there.
+func (a *Agent) SeesImages() bool {
+	a.mu.Lock()
+	current, model := a.harness, a.llm
+	a.mu.Unlock()
+	return current != nil && current.Offers(visionSkill) || model != nil && model.Capabilities().Accepts(llm.ModalityImage)
+}
+
 // CheckAsked reports whether the conversation model takes what a caller asked to change
 // about one reply, so a reasoning effort it does not answer to is refused before the turn
 // starts rather than failing it.

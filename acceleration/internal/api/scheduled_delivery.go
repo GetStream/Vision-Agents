@@ -1027,7 +1027,7 @@ func (s *Server) carryOutAnswered(ctx context.Context, created *session.Session,
 func followUpWithin(ctx context.Context, found *session.Session, delivery scheduledDelivery) error {
 	deadline := time.Now().Add(scheduledWindow)
 	for {
-		err := found.FollowUp(ctx, delivery.CommandID, delivery.Text)
+		err := found.FollowUp(ctx, delivery.CommandID, delivery.Text, nil)
 		if err == nil {
 			return nil
 		}
