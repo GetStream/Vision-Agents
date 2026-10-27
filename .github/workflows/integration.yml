@@ -87,9 +87,6 @@ jobs:
             mem0: true
           - package: internal/memory/mem0
             mem0: true
-          # AI-2036
-          - package: internal/policy
-            skip: '^TestPolicySuite$/^TestAColdStartReadsItsFirstAccountsInBatches$'
           # AI-2037
           - package: internal/connectors/resolver
             skip: '^TestResolverSuite$/^TestAConnectedConnectionResolvesToACredentialTheProviderTakes$'
