@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // A photo sent with text in a thread channel reaches the model as the bytes fetched, with the
@@ -91,22 +92,75 @@ func (s *SlackChannelSuite) TestATextOnlyThreadMessageIsAnsweredFromItsText() {
 	s.Empty(imagesIn(said))
 }
 
-// A photo that cannot be fetched ends the message: the agent is not handed a turn that says
-// nothing of a photo the person sent.
-func (s *SlackChannelSuite) TestAPhotoThatCannotBeFetchedIsNotAnswered() {
+// A photo sent alone that cannot be fetched is answered with a short reply that it could not
+// be opened, and its URL, which may carry the signature that lets anyone fetch it, is not
+// logged.
+func (s *SlackChannelSuite) TestAPhotoAloneThatCannotBeFetchedGetsAShortReply() {
 	s.answersWith("vision/vision-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	asked := len(s.vision.requests())
+	signature := "SECRETSIG" + s.utils.uuid()
 
-	s.sentInThread(channel, "what is this?", s.photo("/gone.png"))
+	// Port 1 takes no connection, so the fetch fails in transport, the error that names the URL.
+	s.sentInThread(channel, "", map[string]any{"type": "image", "image_url": "http://127.0.0.1:1/x.jpg?signature=" + signature})
 
-	s.Require().Eventually(func() bool {
-		return strings.Contains(s.logged.String(), "could not fetch the photos of a message in a thread channel")
-	}, settleFor, 10*time.Millisecond)
-	s.Require().Eventually(func() bool {
-		thread, err := s.store.ChannelThread(context.Background(), channel)
-		return err == nil && thread.TurnHolder == ""
-	}, settleFor, 10*time.Millisecond, "the thread's turn is let go of")
-	s.Never(func() bool { return len(s.slack.Posts()) > 0 }, time.Second, 10*time.Millisecond, "nothing was answered")
+	s.Equal("Two roses.", s.posted(1)[0].Text)
+	said := s.lastTurn(s.vision.requests()[asked:])
+	s.Equal(unfetchedPhoto, said.Content)
+	s.Empty(imagesIn(said))
+	s.Contains(s.logged.String(), "could not fetch a photo of a message in a thread channel")
+	s.Contains(s.logged.String(), "127.0.0.1:1")
+	s.NotContains(s.logged.String(), signature, "a photo's signed URL stays out of the log")
+}
+
+// A photo that cannot be fetched is dropped from a message with text and other photos: the
+// model is handed the rest and told to say it could not open that one.
+func (s *SlackChannelSuite) TestAPhotoThatCannotBeFetchedIsDroppedAndTheRestAnswered() {
+	s.answersWith("vision/vision-model")
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	asked := len(s.vision.requests())
+	question := "what are these? " + s.utils.uuid()
+
+	s.sentInThread(channel, question, s.photo("/photo.png"), s.photo("/gone.png"))
+
+	s.Equal("Two roses.", s.posted(1)[0].Text)
+	turn := s.turnWithImages(s.vision.requests()[asked:])
+	s.Equal(question+"\n\n"+unfetchedPhotoWithMore, turn.Content+llm.TextOf(turn.Parts))
+	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(turn), "the photo fetched, alone")
+}
+
+// Photos sent with no text of which one cannot be fetched: the model is handed the other and
+// told to say it could not open that one.
+func (s *SlackChannelSuite) TestPhotosSentAloneOfWhichOneCannotBeFetchedAreAnsweredFromTheRest() {
+	s.answersWith("vision/vision-model")
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	asked := len(s.vision.requests())
+
+	s.sentInThread(channel, "", s.photo("/gone.png"), s.photo("/photo.png"))
+
+	s.Equal("Two roses.", s.posted(1)[0].Text)
+	turn := s.turnWithImages(s.vision.requests()[asked:])
+	s.Equal(unfetchedPhotoWithMore, turn.Content+llm.TextOf(turn.Parts))
+	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(turn))
+}
+
+// A photo sent alone to a thread whose agent config names a vision skill is answered. A thread
+// is held in writing, which runs no subagent (Spec.Normalize), so the skill cannot look at it
+// and the agent says it cannot.
+func (s *SlackChannelSuite) TestAPhotoSentAloneToAnAgentWithAVisionSkillIsAnswered() {
+	s.config.LLM, s.config.Subagent, s.config.Skills = "holding/holding-model", "vision/vision-model", []string{"vision"}
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.Require().NoError(s.store.CreateSkill(context.Background(), &store.Skill{
+		CustomerID: s.customerID(), ConfigID: s.config.ID, Name: "vision",
+		Description: "look at photos", Instructions: "Describe the photo.",
+	}))
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	asked := len(s.holding.requests())
+
+	s.sentInThread(channel, "", s.photo("/photo.png"))
+
+	s.Equal("Held.", s.posted(1)[0].Text)
+	s.Equal(unseenPhoto, s.lastTurn(s.holding.requests()[asked:]).Content)
 }
 
 // Control, as on base: a thread message with neither text nor a photo, such as a file alone or

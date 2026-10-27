@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 
@@ -48,8 +49,9 @@ const threadTurnLease = askTimeout + 30*time.Second
 //	      FromConfig(the config binding the line now), Text, PersistConversation,
 //	      ConversationID agent:thread-<uuid>               reply lands in the thread channel
 //	    Session.FollowUp(text, photos), its author         the person's message is already
-//	      (WithAuthor); no photos for an agent that        in the channel: none is written
-//	      cannot see, a note instead (threadPhotos)
+//	      (WithAuthor); a photo the agent cannot see       in the channel: none is written
+//	      or that cannot be fetched is dropped, with a
+//	      note to the turn (threadPhotos)
 //	    wait until the turn is over; close the session it opened; let go of the lease
 
 // linkedThread is the external thread a channel holds, when it is a thread channel of the
@@ -139,10 +141,7 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 	// rather than a second answer. Only a reply another way into the session is
 	// still writing is waited out; any other failure ends the message, as each
 	// attempt whose turn did not start leaves a cancelled reply in the channel.
-	text, images, fetched := s.threadPhotos(turn, found, thread, event)
-	if !fetched {
-		return
-	}
+	text, images := s.threadPhotos(turn, found, thread, event)
 	followUpID := "thread_" + store.NewID()
 	for {
 		err = found.FollowUp(turn, followUpID, text, images)
@@ -161,32 +160,58 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 }
 
 // threadPhotos is what a thread's message tells the model: its text, and the photos sent
-// with it, read into bytes (fetchImages). An agent with nothing that looks at a photo is
-// handed none, as RespondTo would refuse the turn with ErrCannotSeeImages and the person would
-// hear nothing; it is told the person sent one, so it says it cannot see it. fetched is false
-// when a photo could not be fetched, which ends the message.
-func (s *Server) threadPhotos(ctx context.Context, found *session.Session, thread store.ChannelThread, event messageEvent) (text string, images []llm.ImagePart, fetched bool) {
-	text, images = event.Message.Text, event.photos()
-	switch {
-	case len(images) == 0:
-		return text, nil, true
-	case !found.SeesImages() && text == "":
-		return unseenPhoto, nil, true
-	case !found.SeesImages():
-		return text + "\n\n" + unseenPhotoWithText, nil, true
+// with it, read into bytes (fetchImages). A photo the model is not handed, as the agent has
+// nothing that looks at one (RespondTo would refuse the turn with ErrCannotSeeImages) or it
+// could not be fetched, is dropped and the turn is told of it, so the reply says so rather
+// than the person hearing nothing.
+func (s *Server) threadPhotos(ctx context.Context, found *session.Session, thread store.ChannelThread, event messageEvent) (string, []llm.ImagePart) {
+	text, sent := event.Message.Text, event.photos()
+	if len(sent) == 0 {
+		return text, nil
 	}
-	if err := fetchImages(ctx, s.imageHTTP, images); err != nil {
-		s.logger.Error("could not fetch the photos of a message in a thread channel", "channel", thread.ChannelID, "error", err)
-		return "", nil, false
+	if !found.SeesImages() {
+		return withPhotoNote(text, nil, unseenPhoto, unseenPhotoWithText), nil
 	}
-	return text, images, true
+	if fetchImages(ctx, s.imageHTTP, sent) == nil {
+		return text, sent
+	}
+	var images []llm.ImagePart
+	for index, photo := range sent {
+		if photo.Data != nil {
+			images = append(images, photo)
+			continue
+		}
+		// The host alone: a photo's URL may carry the signature that lets anyone fetch it.
+		host := ""
+		if parsed, err := url.Parse(photo.URL); err == nil {
+			host = parsed.Host
+		}
+		s.logger.Warn("could not fetch a photo of a message in a thread channel", "channel", thread.ChannelID, "photo", index, "host", host)
+	}
+	return withPhotoNote(text, images, unfetchedPhoto, unfetchedPhotoWithMore), images
 }
 
-// unseenPhoto and unseenPhotoWithText are the turn of an agent that cannot see, for a photo
-// sent alone and one sent with text.
+// withPhotoNote is text with the note that says a photo was dropped: alone, the note for a
+// message with nothing else left in it, else the note for one with text or photos left.
+func withPhotoNote(text string, images []llm.ImagePart, alone, withMore string) string {
+	switch {
+	case text != "":
+		return text + "\n\n" + withMore
+	case len(images) == 0:
+		return alone
+	default:
+		return withMore
+	}
+}
+
+// The turn of a message whose photos are dropped: unseenPhoto and unseenPhotoWithText for an
+// agent that cannot see, unfetchedPhoto and unfetchedPhotoWithMore for a photo that could not
+// be fetched; each for a photo sent alone and one sent with text or other photos.
 const (
-	unseenPhoto         = "(The person sent a photo, which you cannot see. Reply in one short sentence that you cannot look at photos.)"
-	unseenPhotoWithText = "(The person also sent a photo, which you cannot see. Answer their message, and say in your reply that you cannot see the photo.)"
+	unseenPhoto            = "(The person sent a photo, which you cannot see. Reply in one short sentence that you cannot look at photos.)"
+	unseenPhotoWithText    = "(The person also sent a photo, which you cannot see. Answer their message, and say in your reply that you cannot see the photo.)"
+	unfetchedPhoto         = "(The person sent a photo, which could not be opened. Reply in one short sentence that you could not open it.)"
+	unfetchedPhotoWithMore = "(The person also sent a photo that could not be opened. Answer the rest of their message, and say in your reply that you could not open that photo.)"
 )
 
 // takeThreadTurn waits for a thread channel's turn and leases it to holder for threadTurnLease.
