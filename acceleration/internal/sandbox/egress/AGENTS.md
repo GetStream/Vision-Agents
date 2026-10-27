@@ -28,6 +28,12 @@ Most of a sandbox's clients cannot use a TLS proxy URL (curl, urllib, wget, node
 Code in the sandbox reads a granted host and writes through the connector's tools, which a binding can make ask the user first. So the proxy lets a request to a granted host through only when it is a GET or a HEAD, or one of the grants' `reads` (`core.SandboxRead`) matches it: the method as sent (case-sensitive, RFC 9110 section 9.1), the host, and a `path.Match` pattern over the path. Any other request gets 403, `egress: POST api.github.com/repos/o/r/issues refused: code in the sandbox only reads through a connector; write with the connector's tools`, reaches no host and asks for no token, with the placeholder or without it.
 
 - A read lists a request that reads with another method: GitHub's is `POST github.com/*/*/git-upload-pack`, which git clone and fetch send (gitprotocol-http(5)). A push's `git-receive-pack` is refused.
+- A GraphQL read (`graphql: true`) takes a POST of queries alone, where a query and a mutation are both a POST: GitHub's is `api.github.com/graphql`, which `gh` reads through. It names no method, so a router that predates the field reads the stored revision as a read of no method and refuses the POST. The proxy reads the body (`onlyQueries`, `graphql.go`), puts the same bytes back for the host, and refuses with the same 403 unless:
+  - the URL has no query, and `Content-Type` is `application/json`, with no charset or UTF-8 (GraphQL over HTTP, https://http-spec.graphql.org/draft/, 4.4 POST): `application/graphql`, a form or gzip are refused;
+  - the body is 1 MiB at most and valid JSON: one request object, or a non-empty batch (an array) of them;
+  - each object holds `query`, and `operationName` and `variables` at most, each key once: a persisted query's hash, an `extensions` or a key sent twice is refused, since the host could read an operation the proxy did not;
+  - each `query` parses (`github.com/vektah/gqlparser/v2`, no schema) to a document with an operation, and every operation in it is a `query`, whatever `operationName` picks. A parser, not a keyword search: `mutation` in a comment, a string or a fragment's name is no mutation.
+  - A GraphQL read that matches beside a plain one still takes queries alone. The log names the failed check (`why`), never the body.
 - Only a path as the host gets it is matched: one with a percent escape, a dot segment or an empty segment is refused, so no other spelling of a path reaches another resource behind a pattern.
 - A session takes the reads from the connector's latest revision, whatever revision the connection pins (`sandboxGrant`, `lateGrant` in `internal/session/sandbox_grants.go`). `Manifest.ReadsAsConnection` leaves them out, so a new read needs no reconnect.
 - A tunnel to an allowed domain is not read, so it takes any method, as before.
@@ -42,7 +48,9 @@ Code in the sandbox reads a granted host and writes through the connector's tool
 ## Known limits
 
 - Read-only trusts a host's methods: a host that writes on a GET or a HEAD, or on a request a read lists, lets code write. A host that takes the method from a header reads it on a POST (Google's `X-HTTP-Method-Override`, https://docs.cloud.google.com/apis/docs/http, «Long request URLs»), which the proxy refuses unless a read lists it.
-- A read that uses POST and is not listed is refused: GraphQL queries (`gh`, Linear) and Git LFS's batch API among them.
+- A read that uses POST and is not listed is refused: Linear's GraphQL (no sandbox block yet) and Git LFS's batch API among them.
+- A GET to a GraphQL read is a read like any GET, its operation in the URL included. GraphQL over HTTP says a GET «MUST NOT be used for executing mutation operations» (4.3 GET); a host that runs one anyway lets code write. Whether GitHub does is `unverified`.
+- A GraphQL read trusts the host to parse the document as gqlparser does. A query field that writes is a write the proxy lets through.
 - A host that echoes the token in a form the rewrite does not know (another escape, split across headers, its case changed) gives it to the sandbox. Grant only hosts that do not.
 - A host that keeps the token it was sent and returns it later, in the response to a request that carries no placeholder, gives it to the sandbox: only a response to a request with the token is rewritten.
 - Sandbox code has root (passwordless `sudo`, live probe 2026-10-21). No control inside the sandbox protects anything: code can change its env, its CA files and its routes. The controls are the token, which stays in the router; Daytona's network allow list, which lets the sandbox reach the proxy's address alone (that code with root cannot bypass it by changing its routes, NET_ADMIN: unverified); and the grant check in step 3.

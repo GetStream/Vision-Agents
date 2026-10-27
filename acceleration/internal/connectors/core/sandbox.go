@@ -35,11 +35,18 @@ type SandboxRead struct {
 	// Host is one of the rule's Hosts, as it is written there.
 	Host string `yaml:"host" json:"host"`
 	// Method is the request's method as sent, in upper case: methods are case-sensitive (RFC 9110
-	// section 9.1).
+	// section 9.1). A GraphQL read leaves it out.
 	Method string `yaml:"method" json:"method"`
 	// Path is a path.Match pattern over the request's path, from its leading slash: * matches
 	// within one segment.
 	Path string `yaml:"path" json:"path"`
+	// GraphQL makes it a GraphQL endpoint, where a query and a mutation are both a POST
+	// (GraphQL over HTTP, https://http-spec.graphql.org/draft/, 4.4 POST): the proxy lets a POST
+	// through only when every operation in its body is a query. Its Method is left out, so a
+	// router that predates this field, which reads the stored revision without it, matches the
+	// read to no request and refuses the POST. Left out of the JSON when false, so a read without
+	// it is stored as it was.
+	GraphQL bool `yaml:"graphql,omitempty" json:"graphql,omitempty"`
 }
 
 var (
@@ -81,7 +88,10 @@ func (m Manifest) checkSandbox(fail func(field, format string, args ...any)) {
 		if !slices.Contains(m.Sandbox.Hosts, read.Host) {
 			fail(field+".host", "%q is not one of sandbox.hosts", read.Host)
 		}
-		if !sandboxMethod.MatchString(read.Method) {
+		switch {
+		case read.GraphQL && read.Method != "":
+			fail(field+".method", "%q is set on a GraphQL read, which takes a POST and leaves its method out", read.Method)
+		case !read.GraphQL && !sandboxMethod.MatchString(read.Method):
 			fail(field+".method", "%q is not a method in upper-case letters", read.Method)
 		}
 		// path.Match reports a malformed pattern whatever it is matched against.

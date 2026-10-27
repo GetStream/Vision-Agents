@@ -242,9 +242,9 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 	_ = server.Serve(&single{conn: tlsConn})
 }
 
-// inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list. It
-// reads the grants again for each, so after Delete no request goes out on a tunnel the
-// credential opened.
+// inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list (to a
+// GraphQL read, with queries alone). It reads the grants again for each, so after Delete no
+// request goes out on a tunnel the credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
@@ -276,7 +276,14 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		logger := p.logger.With("session", record.Session, "host", host)
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
-		if !record.reads(host, r.Method, r.URL) {
+		reads, graphQL := record.reads(host, r.Method, r.URL)
+		if graphQL {
+			// Its error names the check alone, never the body's bytes.
+			if err := onlyQueries(r); err != nil {
+				reads, logger = false, logger.With("why", err.Error())
+			}
+		}
+		if !reads {
 			logger.Warn("the sandbox egress proxy refused a request that may write", "method", r.Method)
 			http.Error(w, fmt.Sprintf("egress: %s %s%s refused: code in the sandbox only reads through a connector; "+
 				"write with the connector's tools", r.Method, host, r.URL.EscapedPath()), http.StatusForbidden)
