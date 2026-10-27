@@ -468,6 +468,9 @@ type Agent struct {
 	// scheduled says that last thing was a turn a scheduled task fired, kept the same way,
 	// so neither it nor the replies that finish it are counted on an end user's day.
 	scheduled bool
+	// turnImages are the images that last thing came with, kept the same way, so the reply
+	// after a tool still sees what it was asked about. The next turn drops them.
+	turnImages []llm.ImagePart
 
 	joined bool
 	closed bool
@@ -1931,6 +1934,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.owedTurn = ""
 	instructions := a.instructions()
 	asked := a.asked
+	images := a.turnImages
 	a.mu.Unlock()
 
 	a.turns.started(turnID, kindTool)
@@ -1941,6 +1945,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
+		Images:       images,
 		AfterTool:    true,
 		Answers:      answers,
 		Asked:        asked,
@@ -1973,7 +1978,7 @@ func (a *Agent) respondTurn(
 		said = stt.Participant{ID: listened.author, UserID: listened.author}
 		a.writers = true
 	}
-	a.keepTurnLocked(said, text)
+	a.keepTurnLocked(said, text, images)
 	history := a.replayLocked()
 	// This turn is answered, however it was asked, so what is speculated on next is a turn
 	// of its own.
@@ -2052,9 +2057,11 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 }
 
 // keepTurnLocked adds a turn being answered to the conversation and counts who said it.
-// What tools showed the model before it stand as a note from here on (toolPicturesSeen).
-func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
+// What tools showed the model before it stand as a note from here on (toolPicturesSeen),
+// and only this turn's images go with its replies.
+func (a *Agent) keepTurnLocked(participant stt.Participant, text string, images []llm.ImagePart) {
 	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
+	a.turnImages = images
 	if a.missed.participant == participant.ID {
 		a.missed = unheardReply{}
 	}

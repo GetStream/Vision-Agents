@@ -257,6 +257,9 @@ type stubLLM struct {
 	// composed are the requests for a line, kept apart from asked so a test counting the
 	// turns the model was asked for is not thrown by them.
 	composed []llm.ResponseParams
+
+	// capabilities are what the model says it takes: text alone unless a test says more.
+	capabilities llm.Capabilities
 }
 
 func newStubLLM() *stubLLM { return &stubLLM{scripts: map[string]*llmtest.Script{}} }
@@ -418,7 +421,7 @@ func (s *stubLLM) Close() error {
 
 func (s *stubLLM) Provider() string               { return "stub" }
 func (s *stubLLM) Model() string                  { return "stub-llm" }
-func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (s *stubLLM) Capabilities() llm.Capabilities { return s.capabilities }
 
 // sentBy is who each request was asked in the name of.
 func (s *stubLLM) sentBy() []routing.Caller {
@@ -771,6 +774,8 @@ type AgentSuite struct {
 	replacement *stubTTS
 	// subagent is the second model, present only when a test asks for delegation.
 	subagent *stubLLM
+	// sees makes the conversation model one that takes images.
+	sees bool
 	// skills are what the model may hand over, when a test gives the agent a subagent.
 	skills harness.Skills
 	// box is where the agent runs code, and shelf where what the code hands back is
@@ -855,6 +860,7 @@ func (s *AgentSuite) SetupTest() {
 	s.finds = nil
 	s.guards = nil
 	s.subagent = nil
+	s.sees = false
 	s.skills = harness.Skills{}
 	s.box = nil
 	s.shelf = nil
@@ -918,6 +924,9 @@ func (s *AgentSuite) reasoner(logger *slog.Logger) *llmrouter.Router {
 // alone: a text agent joins no call and opens neither speech router.
 func (s *AgentSuite) joinText() {
 	s.model = newStubLLM()
+	if s.sees {
+		s.model.capabilities = llm.Capabilities{InputModalities: []string{llm.ModalityImage}}
+	}
 	s.flow = newStubLLM()
 	s.model.reply = []string{"Hello there. ", "How are you?"}
 
@@ -2436,6 +2445,55 @@ func (s *AgentSuite) TestAPictureAScheduledTaskSendsIsLookedAtAsScheduled() {
 
 	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "the vision task was never asked")
 	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the picture is the customer's spend")
+}
+
+func (s *AgentSuite) TestAPhotoIsStillSeenByTheReplyAfterATool() {
+	s.sees = true
+	s.ownsTools("order 1042 is a pair of running shoes")
+	s.joinText()
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Those are the running shoes from order 1042."}
+	s.asksFor("lookup_order", `{"order":"1042"}`)
+	photo := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	_, err := s.agent.RespondTo(s.ctx, "are these from order 1042?", photo, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the reply after the tool was never asked")
+	afterTool := s.model.requests()[1].Input
+	s.True(slices.ContainsFunc(afterTool, func(message llm.Message) bool { return message.Role == llm.ToolResult }),
+		"the second reply should be the one after the tool")
+	s.True(lastFromCaller(afterTool).HasImage(), "the reply after the tool lost the photo it was asked about")
+}
+
+func (s *AgentSuite) TestAPhotoIsNotShownAgainToALaterTurnsTool() {
+	s.sees = true
+	s.ownsTools("order 1042 is a pair of running shoes")
+	s.joinText()
+	s.model.reply = []string{"Nice shoes."}
+	s.asksFor("lookup_order", `{"order":"1042"}`)
+	s.model.callsOn = 2
+	photo := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	_, err := s.agent.RespondTo(s.ctx, "what do you think of these?", photo, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 }, "the photo was never answered")
+
+	_, err = s.agent.RespondTo(s.ctx, "where is order 1042?", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the reply after the second turn's tool was never asked")
+	s.False(llm.HasImage(s.model.requests()[2].Input), "a photo is seen with the turn it came with alone")
+}
+
+// lastFromCaller is the caller's latest message in a request's input.
+func lastFromCaller(input []llm.Message) llm.Message {
+	for i := len(input) - 1; i >= 0; i-- {
+		if input[i].Role == llm.User {
+			return input[i]
+		}
+	}
+	return llm.Message{}
 }
 
 func (s *AgentSuite) TestATurnNobodyIsNamedForIsNotAskedInTheNameOfTheLastSender() {

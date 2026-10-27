@@ -2,6 +2,18 @@
 
 ## Features
 
+### A Node.js tool's parameters can be a Zod schema
+
+`parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.
+
+### Go holds a tool's arguments to its JSON Schema
+
+Every call's arguments are checked against the schema the model was told before the function runs, and arguments that do not fit fail the call with each one and why, such as `/seats: maximum: got 12, want 9`. Struct tags describe more than `schema`: `enum`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`, `minItems`, `maxItems`, `pattern`, `format`, `default` and `example`, and an invopop-style `jsonschema:"..."` tag. `tools.RegisterSchema` takes the schema as a `map[string]any`, raw JSON or another library's schema type, and the new `tools.RegisterWithSchema` takes one the same way and decodes the arguments into a struct.
+
+### Python describes a tool's arguments with Pydantic
+
+A function registered with `register_function` is described to the model by Pydantic from its signature: a parameter can be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit. A function that takes one Pydantic model is given the model's fields as its arguments, and is handed the parsed model. Each call's arguments are checked and converted before the function runs; arguments that do not fit raise `ToolArgumentsError`, a `TypeError`, naming each one and why, which the model is told. `parameters_schema=` is unchanged. `pydantic>=2.7` is now a dependency.
+
 ### A 1:1 iMessage chat can schedule reminders
 
 An agent answering a Linq (iMessage) chat is now offered the scheduling tools when the chat is 1:1: the latest message says `data.chat.is_group` `false`. The task belongs to the person who wrote, and comes back into the chat, `delivered_to` `imessage`. A group chat, a chat whose message does not say, and a chat linked before this release get no tools; a chat that becomes a group loses them, and its tasks fail `thread_gone`. Migration `20261116100000_channel_thread_people` adds the table `channel_thread_people` (AI-1867).
@@ -56,6 +68,19 @@ not connect.
 
 `SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.
 
+### Kotlin sessions remember the user and name their timezone, lists filter by date and label, and say can interrupt
+
+`SessionOptions.memory` in the Kotlin SDK (a `SessionOptions.Memory` of `filter` and `appId`)
+sends `memory` with `user_id` set to the user `setUser` named, as Swift's `memory` does, so a
+phone's session recalls what the agent learned about them and keeps what it learns; an
+incognito session still remembers nothing. `SessionQuery` takes `createdSince` and
+`createdBefore` (`kotlin.time.Instant`, sent as `filter.created_at` `$gte` and `$lt`),
+`custom` (sent as `filter.custom`, every pair held) and `sort` (`SessionQuery.Sort.UpdatedAt`
+or `Relevance`, sent as `sort: [{"field": ...}]`). `AgentSession.say(text, interrupt = true)`
+sends `interrupt` and then `say`, so the reply in flight stops before the words are spoken. `SessionOptions.timezone`
+(an IANA zone, such as `TimeZone.getDefault().id`) is sent as `timezone`, so the agent reads dates
+in the user's zone and remembers it for the scheduled tasks that follow.
+
 ### A tool on a speech-to-speech conversation can say how it is going
 
 `/v1/sts/stream` now takes `tool_update` (`tool_call_id`, `text`, `verbatim`) for a call the model is waiting on, and has the model say it the way an agent session does: once no reply is being spoken and the caller is not talking, a newer update for the call replacing one not yet said, and the call's `tool_result` dropping it. A status is said in the model's own words, `verbatim` words as written or close to them. An update for a call the model is not waiting on, or to a model that cannot be told about an open call, is dropped. `tool_hold` is answered with `tool_held` for an open call, and with `tool_cancel` for one the model cancelled or was answered for. In Python, `stream.STS` runs each function with `current_call()` set, so `update()`, `say()` and `disallow_interruptions()` work there as they do on `stream.Accelerated`; before, they did nothing.
@@ -85,6 +110,14 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 A daily job on every router deletes the runs of scheduled tasks that finished more than 90 days ago, and the tasks that completed or failed more than 90 days ago with their runs. An active or paused task is never deleted, however old; its old runs are. Each row copies the user's instructions, and a daily task added a run a day for good. `router replicate` now imports every scheduled task that is active on the source as paused, with its worker's claim cleared: the source goes on delivering it until the move is cut over, so the copy would have delivered it twice. Resume the tasks at cut-over.
 
 ## Bug Fixes
+
+### A photo is still seen after the model calls a tool
+
+A question asked with photos was answered as though none came when the model called a tool before answering, such as loading the `vision` skill: the photos went only with the turn's first model call. They now go with every reply of that turn, the replies to its tool results included, on the person's message, and the next turn drops them.
+
+### A knowledge document no longer grows thousands of times when it is cut into passages
+
+Only the first 128 bytes of a heading, cut between characters, are now repeated at the top of each later passage of its section and in each passage's `source`; the first passage keeps the heading as written. A `chunk_size` under 500 on `POST /v1/agents/knowledge` is raised to 500, and so is the URL crawler's and `cmd/knowledge`'s. Before, a long heading over one-character paragraphs with `chunk_size` 1 turned 1 MiB into about 1 GB of passages, and an 8 MiB request could run a router out of memory (AI-1988).
 
 ### The agent tells people apart in a group text chat
 
@@ -167,6 +200,10 @@ A `connectors:` entry in agent.yaml may say `sandbox: true` and `require_approva
 When the provider lists a granted tool with another schema than the one approved, a session's binding now opens with its other tools (while it still offers one tool), also when the binding is required (reported in `connector_unavailable` as `tool_unavailable`) or has sandbox access (the sandbox keeps it), and when the person connects it in the conversation: that login no longer waits until its consent expires. A call of the left-out tool answers `tool_unavailable` with what gives it back: for a tool granted by name or by pattern, an admin's approval of the new schema (`POST /v1/agents/connections/{id}/tools/approve`); for a schema digest the agent config names, saving the config at the new schema. A login's `list_tools` names it under `left_out`. A granted tool the provider no longer lists is still unknown to the session, and still fails a required binding (AI-1932).
 
 ## Breaking Changes
+
+### Go and Python refuse tool arguments that do not fit the schema
+
+A call whose arguments break the tool's schema, such as a missing required field, a value outside its bounds or one not in its `enum`, now fails without running the function, where it used to run with what was sent. Python converts the arguments it accepts to the annotated types, so a function annotated `int` is handed an `int` when the model sent `"2"`.
 
 ### The helpers that read and set a tool's call are named after the tool call context
 
