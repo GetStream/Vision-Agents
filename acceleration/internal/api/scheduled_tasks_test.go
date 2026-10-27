@@ -3063,7 +3063,7 @@ func (s *ScheduledTasksSuite) TestATurnCancelledBeforeItsReplyRunsAgainOnTheRetr
 }
 
 // A turn whose router stopped under it, as on a deploy, is interrupted, and the retry, which
-// reopens the conversation on another router, runs the turn again.
+// runs on another router sharing the conversations, runs the turn again.
 func (s *ScheduledTasksSuite) TestATurnInterruptedByItsRouterStoppingRunsAgainOnTheRetry() {
 	other, stopping, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.DiscardHandler))
 	// The stopping node texts through the suite's channels, as every node of a deployment does.

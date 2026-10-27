@@ -469,9 +469,10 @@ func readBackReply(ctx context.Context, found *session.Session, id string) (conv
 }
 
 // captured is what a captured turn said and made, or why there is nothing to
-// carry. A reply of files alone, such as a chart, is carried.
+// carry. A reply of files alone, such as a chart, is carried. Turns join with
+// a blank line, as the conversation joins them, so a read-back says the same.
 func captured(said []string, files []sandbox.Attachment) (string, []sandbox.Attachment, error) {
-	text := strings.Join(said, "\n")
+	text := strings.Join(said, "\n\n")
 	if text == "" && len(files) == 0 {
 		return "", nil, undelivered(scheduling.ReasonNoReply, errors.New("the agent said and made nothing to carry"))
 	}

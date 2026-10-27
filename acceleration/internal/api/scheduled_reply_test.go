@@ -30,6 +30,13 @@ func TestATurnThatOnlyMadeAFileIsCarried(t *testing.T) {
 	require.Equal(t, []sandbox.Attachment{chart}, files)
 }
 
+func TestAReplyOfTwoTurnsIsJoinedAsTheConversationJoinsThem(t *testing.T) {
+	text, _, err := captured([]string{"First.", "Second."}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "First.\n\nSecond.", text)
+}
+
 func TestTheFilesCodeHandedBackAreThoseOfARunAndOfSettledWork(t *testing.T) {
 	chart := sandbox.Attachment{Name: "chart.png", MIME: "image/png", URL: "https://cdn.example/chart.png"}
 
