@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import inspect
 import re
-from typing import Any, Callable, Dict, List, Optional, Type, Union, get_type_hints
-from dataclasses import dataclass
-from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Type, get_type_hints
+from dataclasses import dataclass, field
 
 from .llm_types import ToolSchema
+from .tool_arguments import Arguments
 
 
 @dataclass
@@ -55,6 +55,9 @@ class FunctionDefinition:
     function: Callable
     returns: Optional[Type] = None
     policy: ToolPolicy = ToolPolicy()
+    # What the model is told the function takes, and what each call's arguments are parsed
+    # by before it runs.
+    arguments: Arguments = field(kw_only=True)
 
 
 @dataclass
@@ -142,8 +145,9 @@ class FunctionRegistry:
                 return func
 
             # Otherwise, extract from type hints
-            type_hints = get_type_hints(func)
+            type_hints = get_type_hints(func, include_extras=True)
             sig = inspect.signature(func)
+            arguments = Arguments(func_name, func, type_hints)
 
             parameters = []
             for param_name, param in sig.parameters.items():
@@ -152,12 +156,6 @@ class FunctionRegistry:
 
                 param_type = type_hints.get(param_name, type(None))
                 param_description = None
-
-                # Check if there's a docstring with parameter descriptions
-                if func.__doc__:
-                    # Simple extraction of parameter descriptions from docstring
-                    # This is a basic implementation - could be enhanced with proper parsing
-                    pass
 
                 parameters.append(
                     FunctionParameter(
@@ -174,7 +172,7 @@ class FunctionRegistry:
             # Determine return type
             return_type = type_hints.get("return", None)
 
-            _check_approval(func_name, approval, {param.name for param in parameters})
+            _check_approval(func_name, approval, arguments.names)
             function_def = FunctionDefinition(
                 name=func_name,
                 description=func_description,
@@ -182,6 +180,7 @@ class FunctionRegistry:
                 function=func,
                 returns=return_type,
                 policy=policy,
+                arguments=arguments,
             )
 
             self.functions[func_name] = function_def
@@ -246,19 +245,7 @@ class FunctionRegistry:
         if isinstance(func_def, _ExplicitSchemaFunction):
             return await func_def.function(**arguments)
 
-        # Drop arguments the function does not take: a model sometimes adds one it saw on
-        # another tool, like a search tool's `query` on a tool that takes nothing.
-        names = {param.name for param in func_def.parameters}
-        arguments = {k: v for k, v in arguments.items() if k in names}
-
-        # Validate required parameters for introspected functions
-        for param in func_def.parameters:
-            if param.required and param.name not in arguments:
-                raise TypeError(
-                    f"Missing required parameter '{param.name}' for function '{name}'"
-                )
-
-        return await func_def.function(**arguments)
+        return await func_def.function(**func_def.arguments.parse(arguments))
 
     def get_callable(self, name: str) -> Callable:
         """
@@ -280,71 +267,11 @@ class FunctionRegistry:
 
     def _function_to_tool_schema(self, func_def: FunctionDefinition) -> ToolSchema:
         """Convert a function definition to a tool schema."""
-        properties = {}
-        required = []
-
-        for param in func_def.parameters:
-            param_schema = self._type_to_json_schema(param.type)
-            if param.description:
-                param_schema["description"] = param.description
-
-            properties[param.name] = param_schema
-
-            if param.required:
-                required.append(param.name)
-
-        schema = {"type": "object", "properties": properties}
-
-        if required:
-            schema["required"] = required
-
         return ToolSchema(
             name=func_def.name,
             description=func_def.description,
-            parameters_schema=schema,
+            parameters_schema=func_def.arguments.json_schema(),
         )
-
-    def _type_to_json_schema(self, type_hint: Type) -> Dict[str, Any]:
-        """Convert a Python type hint to a JSON schema."""
-        # Handle basic types
-        if type_hint is str:
-            return {"type": "string"}
-        elif type_hint is int:
-            return {"type": "integer"}
-        elif type_hint is float:
-            return {"type": "number"}
-        elif type_hint is bool:
-            return {"type": "boolean"}
-        elif type_hint is list or type_hint is List:
-            return {"type": "array"}
-        elif type_hint is dict or type_hint is Dict:
-            return {"type": "object"}
-
-        # Handle Optional types
-        if hasattr(type_hint, "__origin__") and type_hint.__origin__ is Union:
-            # Check if it's Optional (Union[SomeType, None])
-            args = type_hint.__args__
-            if len(args) == 2 and type(None) in args:
-                non_none_type = args[0] if args[1] is type(None) else args[1]
-                return self._type_to_json_schema(non_none_type)
-
-        # Handle List types
-        if hasattr(type_hint, "__origin__") and type_hint.__origin__ is list:
-            if hasattr(type_hint, "__args__") and type_hint.__args__:
-                item_type = type_hint.__args__[0]
-                return {"type": "array", "items": self._type_to_json_schema(item_type)}
-            return {"type": "array"}
-
-        # Handle Dict types
-        if hasattr(type_hint, "__origin__") and type_hint.__origin__ is dict:
-            return {"type": "object"}
-
-        # Handle Enum types
-        if inspect.isclass(type_hint) and issubclass(type_hint, Enum):
-            return {"type": "string", "enum": [e.value for e in type_hint]}
-
-        # Default fallback
-        return {"type": "string"}
 
 
 def _check_approval(name: str, approval: str, arguments: Any) -> None:

@@ -143,6 +143,31 @@ The model asks for a tool over the session socket, this process runs it, and the
 goes back the same way. A tool that throws is reported to the model, because the model is
 mid-sentence waiting for it and can only say something useful if it is told.
 
+`parameters` can also be a Zod 4 schema, or any schema that implements
+[Standard JSON Schema](https://standardschema.dev), such as ArkType's or Valibot's:
+
+```ts
+import { z } from "zod";
+
+agent.tools.register({
+  name: "book_flight",
+  description: "Book a flight for the caller",
+  parameters: z.object({
+    flight_id: z.string().regex(/^[A-Z]{2}\d{1,4}$/).describe("e.g. LH400"),
+    seats: z.number().int().min(1).max(9),
+    cabin: z.enum(["economy", "business", "first"]).default("economy"),
+  }),
+  run: async ({ flight_id, seats, cabin }) => bookings.book(flight_id, seats, cabin),
+});
+```
+
+The model is told the JSON Schema the Zod schema describes, and each call's arguments are
+parsed by it before `run`, which is handed what it parsed, typed from the schema. Arguments it
+refuses fail the call with what was wrong, such as `seats: Too big: expected number to be
+<=9`, and the model can try again. A rule JSON Schema cannot say, such as a `refine`, still
+holds; the model is just not told it. A JSON Schema written out is told to the model as it is,
+and its arguments reach `run` unchecked. The package does not depend on Zod.
+
 A tool can say how the backend treats its calls, and read the call it is running for:
 
 ```ts

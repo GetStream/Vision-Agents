@@ -2,6 +2,18 @@
 
 ## Features
 
+### A Node.js tool's parameters can be a Zod schema
+
+`parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.
+
+### Go holds a tool's arguments to its JSON Schema
+
+Every call's arguments are checked against the schema the model was told before the function runs, and arguments that do not fit fail the call with each one and why, such as `/seats: maximum: got 12, want 9`. Struct tags describe more than `schema`: `enum`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`, `minItems`, `maxItems`, `pattern`, `format`, `default` and `example`, and an invopop-style `jsonschema:"..."` tag. `tools.RegisterSchema` takes the schema as a `map[string]any`, raw JSON or another library's schema type, and the new `tools.RegisterWithSchema` takes one the same way and decodes the arguments into a struct.
+
+### Python describes a tool's arguments with Pydantic
+
+A function registered with `register_function` is described to the model by Pydantic from its signature: a parameter can be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit. A function that takes one Pydantic model is given the model's fields as its arguments, and is handed the parsed model. Each call's arguments are checked and converted before the function runs; arguments that do not fit raise `ToolArgumentsError`, a `TypeError`, naming each one and why, which the model is told. `parameters_schema=` is unchanged. `pydantic>=2.7` is now a dependency.
+
 ### A 1:1 iMessage chat can schedule reminders
 
 An agent answering a Linq (iMessage) chat is now offered the scheduling tools when the chat is 1:1: the latest message says `data.chat.is_group` `false`. The task belongs to the person who wrote, and comes back into the chat, `delivered_to` `imessage`. A group chat, a chat whose message does not say, and a chat linked before this release get no tools; a chat that becomes a group loses them, and its tasks fail `thread_gone`. Migration `20261116100000_channel_thread_people` adds the table `channel_thread_people` (AI-1867).
@@ -166,6 +178,10 @@ A `connectors:` entry in agent.yaml may say `sandbox: true` and `require_approva
 When the provider lists a granted tool with another schema than the one approved, a session's binding now opens with its other tools (while it still offers one tool), also when the binding is required (reported in `connector_unavailable` as `tool_unavailable`) or has sandbox access (the sandbox keeps it), and when the person connects it in the conversation: that login no longer waits until its consent expires. A call of the left-out tool answers `tool_unavailable` with what gives it back: for a tool granted by name or by pattern, an admin's approval of the new schema (`POST /v1/agents/connections/{id}/tools/approve`); for a schema digest the agent config names, saving the config at the new schema. A login's `list_tools` names it under `left_out`. A granted tool the provider no longer lists is still unknown to the session, and still fails a required binding (AI-1932).
 
 ## Breaking Changes
+
+### Go and Python refuse tool arguments that do not fit the schema
+
+A call whose arguments break the tool's schema, such as a missing required field, a value outside its bounds or one not in its `enum`, now fails without running the function, where it used to run with what was sent. Python converts the arguments it accepts to the annotated types, so a function annotated `int` is handed an `int` when the model sent `"2"`.
 
 ### The helpers that read and set a tool's call are named after the tool call context
 

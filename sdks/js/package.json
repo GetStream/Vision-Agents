@@ -71,7 +71,8 @@
     "openapi-typescript": "^7.13.0",
     "stream-chat": "^9.54.0",
     "typescript": "^5.7.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "@stream-io/video-client": ">=1.0.0",
