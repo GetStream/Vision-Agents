@@ -137,9 +137,12 @@ func (s *RunsSuite) TestARunsSpendIsBrokenDownByItsTags() {
 
 	s.run(CreateRunRequest{ConfigId: s.config("counted/counted-model"), Input: "count me", Tags: &tags})
 
-	// A model call's spend is recorded off the request path, so the run can answer first.
-	s.Require().Eventually(func() bool { return len(s.spend("group_by=review_item")) == 1 },
-		5*time.Second, 20*time.Millisecond)
+	// A model call's spend is recorded off the request path, so the run can answer first, and
+	// its row can be read before its cost is: what the run spent is there once the cost is.
+	s.Require().Eventually(func() bool {
+		buckets := s.spend("group_by=review_item")
+		return len(buckets) == 1 && buckets[0].CostMicrosTotal > 0
+	}, 5*time.Second, 20*time.Millisecond)
 	for key, value := range tags {
 		buckets := s.spend("group_by=" + key)
 		s.Require().Len(buckets, 1, key)
