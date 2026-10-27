@@ -71,6 +71,24 @@ public class Backend(
     public companion object {
         /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
         public const val DEFAULT_URL: String = "https://accelerate.gcp.stream-io-api.com"
+
+        /**
+         * The shape of a region name, such as us-east4 or europe-west4. Only the shape is
+         * checked: which regions are served is the hosted router's to say, so offering another
+         * needs no release of this SDK.
+         */
+        private val REGION = Regex("[a-z]+-[a-z]+[0-9]+")
+
+        /**
+         * Stream's hosted router held to one [region], such as us-east4: requests to it are
+         * served there and nowhere else, even when that region is full or down.
+         *
+         * @throws IllegalArgumentException when [region] is not shaped like a region name.
+         */
+        public fun regionUrl(region: String): String {
+            require(REGION.matches(region)) { "\"$region\" is not a region, such as us-east4" }
+            return "https://accelerate-$region.gcp.stream-io-api.com"
+        }
     }
 
     /** The router's base URL, with no trailing slash. */

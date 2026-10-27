@@ -38,7 +38,8 @@ await voice.join();
 await agents.disconnect();
 ```
 
-`VisionAgents(apiKey: ...)` reaches Stream's hosted router; pass `url:` for another. A router
+`VisionAgents(apiKey: ...)` reaches Stream's hosted router; pass `url:` for another. To hold it to
+one region, pass `url: Backend.regionUrl('us-east4')`. A router
 running locally with nothing in front of it is reached by customer id instead:
 `VisionAgents(url: Uri.parse('http://localhost:8080'), customerId: 'acme')`. Pass `apiKey`,
 `userId` and `token` beside it and the key is Stream's alone, so chat and video connect on a

@@ -131,7 +131,9 @@ let api = Client::new(ClientOptions {
 ```
 
 `url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
-set for a self-hosted or local one. The hosted router is reached through Stream's proxy,
+set for a self-hosted or local one. `region: Some("us-east4".into())`, or
+`STREAM_ACCELERATION_REGION`, holds the client to the hosted router in that one region
+instead. The hosted router is reached through Stream's proxy,
 which is on by default for it; a self-hosted deployment behind the same proxy wants
 `authenticate: Some(true)`, or `STREAM_ACCELERATION_AUTHENTICATE`. Pass the client to an
 agent with `.client(api)`.

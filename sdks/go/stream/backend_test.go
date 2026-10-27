@@ -95,6 +95,77 @@ func TestABackendToldNothingIsTheHostedRouter(t *testing.T) {
 	}
 }
 
+func TestARegionIsTheHostedRouterThere(t *testing.T) {
+	t.Setenv(URLEnv, "")
+	t.Setenv(RegionEnv, "")
+	t.Setenv(CustomerEnv, "acme")
+	t.Setenv(APIKeyEnv, "ntv9")
+	t.Setenv(APISecretEnv, "shh")
+
+	resolved, err := Backend{Region: "us-east4"}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.URL != "https://accelerate-us-east4.gcp.stream-io-api.com" || !resolved.Authenticate {
+		t.Errorf("resolved to %s, authenticating %v", resolved.URL, resolved.Authenticate)
+	}
+}
+
+func TestARegionInTheEnvironmentGivesWayToAURLThere(t *testing.T) {
+	t.Setenv(CustomerEnv, "acme")
+	t.Setenv(RegionEnv, "us-east4")
+
+	t.Setenv(URLEnv, "http://localhost:8080")
+	resolved, err := Backend{}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.URL != "http://localhost:8080" {
+		t.Errorf("resolved to %s", resolved.URL)
+	}
+
+	t.Setenv(URLEnv, "")
+	t.Setenv(APIKeyEnv, "ntv9")
+	t.Setenv(APISecretEnv, "shh")
+	resolved, err = Backend{}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.URL != "https://accelerate-us-east4.gcp.stream-io-api.com" || !resolved.Authenticate {
+		t.Errorf("resolved to %s, authenticating %v", resolved.URL, resolved.Authenticate)
+	}
+}
+
+func TestARegionPassedInBeatsAURLInTheEnvironment(t *testing.T) {
+	t.Setenv(URLEnv, "http://localhost:8080")
+	t.Setenv(CustomerEnv, "acme")
+	t.Setenv(APIKeyEnv, "ntv9")
+	t.Setenv(APISecretEnv, "shh")
+
+	resolved, err := Backend{Region: "europe-west4"}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.URL != "https://accelerate-europe-west4.gcp.stream-io-api.com" {
+		t.Errorf("resolved to %s", resolved.URL)
+	}
+}
+
+func TestAURLAndARegionTogetherAreRefused(t *testing.T) {
+	_, err := Backend{URL: "https://acceleration.example.com", Region: "us-east4"}.Resolve()
+	if err == nil {
+		t.Fatal("a URL and a region resolved")
+	}
+}
+
+func TestAnythingButARegionNameIsRefused(t *testing.T) {
+	for _, name := range []string{"US-EAST4", "us-east4.evil.com/x", "us_east4", "useast4", "us-east"} {
+		if _, err := (Backend{Region: name, CustomerID: "acme"}).Resolve(); err == nil {
+			t.Errorf("%q resolved", name)
+		}
+	}
+}
+
 func TestABackendNobodyIsBilledForIsRefused(t *testing.T) {
 	t.Setenv(URLEnv, "http://localhost:8080")
 	t.Setenv(CustomerEnv, "")

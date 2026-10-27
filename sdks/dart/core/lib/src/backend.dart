@@ -49,6 +49,22 @@ final class Backend {
   /// Stream's hosted router, which is where a client goes when nothing says otherwise.
   static final Uri defaultUrl = Uri.parse('https://accelerate.gcp.stream-io-api.com');
 
+  /// The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
+  /// which regions are served is the hosted router's to say, so offering another needs no
+  /// release of this SDK.
+  static final _region = RegExp(r'^[a-z]+-[a-z]+[0-9]+$');
+
+  /// Stream's hosted router held to one [region], such as us-east4: requests to it are served
+  /// there and nowhere else, even when that region is full or down.
+  ///
+  /// Throws an [ArgumentError] for a name not shaped like a region.
+  static Uri regionUrl(String region) {
+    if (!_region.hasMatch(region)) {
+      throw ArgumentError.value(region, 'region', 'is not a region, such as us-east4');
+    }
+    return Uri.parse('https://accelerate-$region.gcp.stream-io-api.com');
+  }
+
   /// The router's base URL. Stream's hosted router unless another is named.
   final Uri url;
 

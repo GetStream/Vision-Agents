@@ -5,6 +5,8 @@ export const DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com";
 
 /** The environment the same variables are read from as in the Go and Python clients. */
 export const URL_ENV = "STREAM_ACCELERATION_URL";
+/** Holds this SDK to the hosted router in one region, such as us-east4. */
+export const REGION_ENV = "STREAM_ACCELERATION_REGION";
 export const CUSTOMER_ENV = "STREAM_ACCELERATION_CUSTOMER_ID";
 export const API_KEY_ENV = "STREAM_API_KEY";
 export const API_SECRET_ENV = "STREAM_API_SECRET";
@@ -12,6 +14,37 @@ export const AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE";
 
 /** How long a token minted here lasts. Short, because it is minted per request. */
 const TOKEN_VALIDITY_SECONDS = 60 * 60;
+
+/**
+ * The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
+ * which regions are served is the hosted router's to say, so offering another needs no
+ * release of this SDK.
+ */
+const REGION = /^[a-z]+-[a-z]+[0-9]+$/;
+const REGION_PREFIX = "https://accelerate-";
+const REGION_SUFFIX = ".gcp.stream-io-api.com";
+
+/**
+ * The hosted router held to one region: requests to it are served there and nowhere else,
+ * even when that region is full or down.
+ */
+export function regionUrl(name: string): string {
+  if (!REGION.test(name)) {
+    throw new ConfigurationError(`${JSON.stringify(name)} is not a region, such as us-east4`);
+  }
+  return REGION_PREFIX + name + REGION_SUFFIX;
+}
+
+/** Whether url is the hosted router, in any region or none, which is always behind the proxy. */
+function hosted(url: string): boolean {
+  if (url === DEFAULT_URL) {
+    return true;
+  }
+  if (!url.startsWith(REGION_PREFIX) || !url.endsWith(REGION_SUFFIX)) {
+    return false;
+  }
+  return REGION.test(url.slice(REGION_PREFIX.length, -REGION_SUFFIX.length));
+}
 
 /** A token the SDK was handed, or a function that fetches a fresh one. */
 export type TokenSource = string | (() => string | Promise<string>);
@@ -47,10 +80,16 @@ export type WebSocketConstructor = new (url: string) => WebSocketLike;
 
 export interface BackendOptions {
   /**
-   * The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted
-   * router, so only a self-hosted or local router needs it.
+   * The router's base URL. Falls back to `region`, then `STREAM_ACCELERATION_URL`, then
+   * `STREAM_ACCELERATION_REGION`, then Stream's hosted router, so only a self-hosted or
+   * local router needs it.
    */
   url?: string;
+  /**
+   * Holds this SDK to the hosted router in one region, such as `us-east4`. It cannot be
+   * passed together with `url`.
+   */
+  region?: string;
   /**
    * Who the work is billed to, taken at face value.
    *
@@ -151,7 +190,7 @@ export class Backend {
   private readonly webSocketImpl: WebSocketConstructor | undefined;
 
   constructor(options: BackendOptions = {}) {
-    this.url = (options.url ?? env(URL_ENV) ?? DEFAULT_URL).replace(/\/+$/, "");
+    this.url = routerUrl(options).replace(/\/+$/, "");
     this.customerId = options.customerId ?? env(CUSTOMER_ENV) ?? "";
     // The same reasoning as the secret below: naming a customer is choosing the way a
     // router with nothing in front of it is reached, and a key that happens to be in the
@@ -168,7 +207,7 @@ export class Backend {
     this.token = options.token;
     this.userIdValue = options.userId ?? "";
     this.authenticate =
-      options.authenticate ?? (boolean(env(AUTHENTICATE_ENV)) || this.url === DEFAULT_URL);
+      options.authenticate ?? (boolean(env(AUTHENTICATE_ENV)) || hosted(this.url));
     // A customer that was named is chosen over a key that was also passed, because the key
     // is then there for Stream's own clients. The proxy reads no customer, so it never is.
     this.byCustomer =
@@ -532,6 +571,28 @@ export function env(name: string): string | undefined {
     .process?.env;
   const value = values?.[name];
   return value ? value : undefined;
+}
+
+/**
+ * Where the options say the router is: a URL passed in, then a region passed in, then the
+ * same two from the environment, then the hosted router.
+ */
+function routerUrl(options: BackendOptions): string {
+  if (options.url && options.region) {
+    throw new ConfigurationError("pass a url or a region, not both");
+  }
+  if (options.url) {
+    return options.url;
+  }
+  if (options.region) {
+    return regionUrl(options.region);
+  }
+  const url = env(URL_ENV);
+  if (url) {
+    return url;
+  }
+  const region = env(REGION_ENV);
+  return region ? regionUrl(region) : DEFAULT_URL;
 }
 
 function globalWebSocket(): WebSocketConstructor | undefined {

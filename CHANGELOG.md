@@ -2,6 +2,10 @@
 
 ## Features
 
+### The SDKs can hold a session to one region
+
+`STREAM_ACCELERATION_REGION=us-east4`, or the `region` option (`Region` in Go and .NET), points a server SDK at `https://accelerate-us-east4.gcp.stream-io-api.com`: production served from that region only, with no spilling into another (GetStream/chat#19561). It authenticates the way the default router does. A URL, passed in or in `STREAM_ACCELERATION_URL`, wins over a region in the environment; a URL and a region both passed in are refused, as is a name that is not shaped like a region. The Kotlin, Swift and Dart SDKs build the URL with `Backend.regionUrl` (`Backend.regionURL` in Swift). Today us-east4 is the only region offered; another is added in the load balancer, with no SDK release.
+
 ### A Node.js tool's parameters can be a Zod schema
 
 `parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.

@@ -205,6 +205,18 @@ import Testing
         #expect(Backend(apiKey: "key").url.absoluteString == "https://accelerate.gcp.stream-io-api.com")
     }
 
+    @Test func aRegionIsTheHostedRouterThere() throws {
+        #expect(try Backend.regionURL("us-east4").absoluteString == "https://accelerate-us-east4.gcp.stream-io-api.com")
+        #expect(
+            try Backend.regionURL("europe-west4").absoluteString
+                == "https://accelerate-europe-west4.gcp.stream-io-api.com")
+    }
+
+    @Test(arguments: ["", "US-EAST4", "us-east4.evil.com/x", "us-east4\n", "us_east4", "useast4", "us-east"])
+    func anythingButARegionNameIsRefused(_ name: String) {
+        #expect(throws: AgentsError.self) { try Backend.regionURL(name) }
+    }
+
     @Test func anAPIKeyWithNoUserSendsNothing() async {
         await #expect(throws: AgentsError.self) { try await Backend(apiKey: "key").headers() }
     }
