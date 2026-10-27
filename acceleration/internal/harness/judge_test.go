@@ -155,7 +155,7 @@ func (s *JudgeSuite) TestACoughOverTheAgentNeverTakesTheFloor() {
 func (s *JudgeSuite) TestWordsForSomebodyElseAreIgnored() {
 	s.answer(map[string]float64{"addressed_to_agent": 0.1, "finished": 0.9})
 
-	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "Mom, can I have the nuggets?"})
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "Mom, can we go to the park after?"})
 
 	s.Equal(Ignore, got.Disposition)
 }

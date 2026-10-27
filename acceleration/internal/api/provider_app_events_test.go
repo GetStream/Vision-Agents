@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -48,6 +49,8 @@ type SlackChannelSuite struct {
 	transcribed *openedTranscripts
 	// logged is what the router logged, at debug and up.
 	logged *lockedLog
+	// images serves a PNG at /photo.png and nothing anywhere else, for photos sent in a thread.
+	images *httptest.Server
 }
 
 // botMention is how a message names the test workspace's bot, U0000BOT (fakeprovider's
@@ -75,6 +78,15 @@ func (s *SlackChannelSuite) SetupSuite() {
 	s.transcripts = s.transcribed.open
 	s.logged = &lockedLog{}
 	s.logs = s.logged
+	s.imageHTTP = &http.Client{}
+	s.images = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/photo.png" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(pngStart)
+	}))
+	s.T().Cleanup(s.images.Close)
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
