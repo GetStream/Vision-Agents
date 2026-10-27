@@ -263,9 +263,8 @@ func (s *Service) Remove(ctx context.Context, customerID, id string) error {
 		return err
 	}
 
-	base := knowledge.Scoped(page.CustomerID, page.Namespace)
 	owner := routing.Owner{CustomerID: page.CustomerID, Attribution: routing.AttributionFrom(ctx)}
-	if err := s.knowledge.For(owner).Delete(ctx, base, ingest.IDs(page.URL, 0, page.Passages)); err != nil {
+	if err := s.knowledge.For(owner).Delete(ctx, page.Namespace, ingest.IDs(page.URL, 0, page.Passages)); err != nil {
 		return err
 	}
 	return s.store.DeleteKnowledgeURL(ctx, customerID, page.ID)
@@ -446,14 +445,13 @@ func (s *Service) write(ctx context.Context, writer knowledge.Writer, page *stor
 	if len(passages) == 0 {
 		return fmt.Errorf("urls: there is nothing to read at %s", page.URL)
 	}
-	base := knowledge.Scoped(page.CustomerID, page.Namespace)
-	if err := writer.Upsert(ctx, base, passages); err != nil {
+	if err := writer.Upsert(ctx, page.Namespace, passages); err != nil {
 		return err
 	}
 	// A page that got shorter would otherwise leave its old tail behind, still findable
 	// and no longer on the page it claims to come from.
 	stale := ingest.IDs(page.URL, len(passages), page.Passages)
-	if err := writer.Delete(ctx, base, stale); err != nil {
+	if err := writer.Delete(ctx, page.Namespace, stale); err != nil {
 		return err
 	}
 

@@ -166,7 +166,7 @@ func (s *Server) listKnowledgeDocumentPassages(ctx context.Context, request *lis
 func (s *Server) knowledgePassages(
 	ctx context.Context, customerID, namespace, source string, count int,
 ) ([]KnowledgePassage, error) {
-	found, err := s.knowledgeFor(ctx, customerID).Fetch(ctx, knowledge.Scoped(customerID, namespace), ingest.IDs(source, 0, count))
+	found, err := s.knowledgeFor(ctx, customerID).Fetch(ctx, namespace, ingest.IDs(source, 0, count))
 	if err != nil {
 		return nil, err
 	}
@@ -217,9 +217,8 @@ func (s *Server) fillKnowledge(
 	if len(passages) == 0 {
 		return 0, 0, stack.Wrap(errors.New("there is nothing to read in these documents"))
 	}
-	base := knowledge.Scoped(customerID, namespace)
 	writer := s.knowledgeFor(ctx, customerID)
-	if err := writer.Upsert(ctx, base, passages); err != nil {
+	if err := writer.Upsert(ctx, namespace, passages); err != nil {
 		return 0, 0, err
 	}
 	if s.store == nil {
@@ -241,7 +240,7 @@ func (s *Server) fillKnowledge(
 		document := &written[i]
 		was, had := before[document.Source]
 		stale := ingest.IDs(document.Source, document.Passages, was.Passages)
-		if err := writer.Delete(ctx, base, stale); err != nil {
+		if err := writer.Delete(ctx, namespace, stale); err != nil {
 			return 0, 0, err
 		}
 		if err := s.store.SaveKnowledgeDocument(ctx, document); err != nil {
@@ -320,8 +319,7 @@ func (s *Server) forgetKnowledge(
 // avoiding.
 func (s *Server) removeKnowledgeDocument(ctx context.Context, document store.KnowledgeDocument) error {
 	ids := ingest.IDs(document.Source, 0, document.Passages)
-	base := knowledge.Scoped(document.CustomerID, document.Namespace)
-	if err := s.knowledgeFor(ctx, document.CustomerID).Delete(ctx, base, ids); err != nil {
+	if err := s.knowledgeFor(ctx, document.CustomerID).Delete(ctx, document.Namespace, ids); err != nil {
 		return err
 	}
 	if err := s.store.DeleteKnowledgeDocument(ctx, document.CustomerID, document.ID); err != nil {
