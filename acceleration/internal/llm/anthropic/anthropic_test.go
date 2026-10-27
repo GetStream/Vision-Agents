@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -321,7 +322,9 @@ func (s *AnthropicSuite) TestARefusalMidStreamIsNotTransient() {
 	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
 
 	s.ErrorContains(err, "Not this")
-	s.False(llm.Transient(err))
+	failure, ok := errors.AsType[*llm.ProviderFailure](err)
+	s.Require().True(ok, "Anthropic named it")
+	s.False(failure.Transient)
 }
 
 func (s *AnthropicSuite) TestTheCompatibilityPathStaysSelectable() {

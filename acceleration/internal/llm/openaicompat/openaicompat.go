@@ -14,7 +14,6 @@ package openaicompat
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -24,7 +23,6 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -240,7 +238,8 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 // named keeps what a provider said about a failure it sent inside a stream, as an `error`
 // object in an event. Providers on this API fill it in differently, so only two readings are
 // trusted: an HTTP status given as its code, and the names OpenAI's own API gives its side's
-// failures. Anything else is left unclassified.
+// failures. A number outside the status range is the provider's own code, which TransientStatus
+// does not count.
 func named(err error) error {
 	sent, ok := errors.AsType[*ssestream.StreamError](err)
 	if !ok {
@@ -255,22 +254,20 @@ func named(err error) error {
 	if json.Unmarshal(sent.Event.Data, &event) != nil {
 		return err
 	}
-	var status int
+	var number int
 	var code string
-	if json.Unmarshal(event.Error.Code, &status) != nil {
+	if json.Unmarshal(event.Error.Code, &number) != nil {
 		_ = json.Unmarshal(event.Error.Code, &code)
 	}
-	failure := &llm.ProviderFailure{Err: err, Code: cmp.Or(code, event.Error.Type)}
 	switch {
-	case status != 0:
-		failure.Code, failure.Transient = strconv.Itoa(status), llm.TransientStatus(status)
-	case code == "server_error" || code == "rate_limit_exceeded" ||
-		event.Error.Type == "server_error" || event.Error.Type == "rate_limit_exceeded":
-		failure.Transient = true
-	case failure.Code == "":
-		return err
+	case number != 0:
+		return &llm.ProviderFailure{Err: err, Transient: llm.TransientStatus(number)}
+	case code == "server_error" || code == "rate_limit_exceeded" || event.Error.Type == "server_error":
+		return &llm.ProviderFailure{Err: err, Transient: true}
+	case code != "" || event.Error.Type != "":
+		return &llm.ProviderFailure{Err: err}
 	}
-	return failure
+	return err
 }
 
 // withBody adds the provider's own words to an API error the client could not read them
