@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -102,6 +103,23 @@ VALUES (?, 'agent_configs', 'insert', '{}', now() - make_interval(secs => ?))`,
 
 	stopped := make(chan error, 1)
 	go func() { stopped <- run(s.settings, slog.New(slog.DiscardHandler)) }()
+	// A failed wait below ends the test with the router still up; run has a handler for
+	// SIGTERM only while it waits, so stop it here and not by the signal killing the binary.
+	var stopRouter sync.Once
+	s.T().Cleanup(func() {
+		stopRouter.Do(func() {
+			select {
+			case <-stopped:
+			default:
+				s.NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
+				select {
+				case <-stopped:
+				case <-time.After(30 * time.Second):
+					s.Fail("the router did not stop on SIGTERM")
+				}
+			}
+		})
+	})
 
 	pruned := func() bool {
 		return left(runs) == 0 && left(changes) == 0 && left(unredacted) == 0
@@ -110,6 +128,7 @@ VALUES (?, 'agent_configs', 'insert', '{}', now() - make_interval(secs => ?))`,
 	for !pruned() {
 		select {
 		case err := <-stopped:
+			stopRouter.Do(func() {})
 			s.Require().Failf("the router stopped before it was told to", "error: %v", err)
 		case <-deadline:
 			s.Require().Failf("what is past its retention is still there",
@@ -119,9 +138,16 @@ VALUES (?, 'agent_configs', 'insert', '{}', now() - make_interval(secs => ?))`,
 	}
 
 	// run is waiting on the signal it asked for, so the signal stops it rather than the test.
+	select {
+	case err := <-stopped:
+		stopRouter.Do(func() {})
+		s.Require().Failf("the router stopped before it was told to", "error: %v", err)
+	default:
+	}
 	s.Require().NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
 	select {
 	case err := <-stopped:
+		stopRouter.Do(func() {})
 		s.Require().NoError(err)
 	case <-time.After(30 * time.Second):
 		s.Require().Fail("the router did not stop on SIGTERM")

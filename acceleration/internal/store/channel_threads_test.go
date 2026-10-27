@@ -209,7 +209,9 @@ func (s *StoreSuite) TestTwoRoutersAskingAtOnceGetOneTurn() {
 func (s *StoreSuite) TestATurnWhoseLeaseRanOutCanBeTaken() {
 	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
 	s.Require().NoError(err)
-	_, err = s.store.TakeChannelThreadTurn(s.ctx, "thread-one", "router-a", time.Now().Add(-time.Second))
+	_, err = s.store.TakeChannelThreadTurn(s.ctx, "thread-one", "router-a", time.Now().Add(time.Minute))
+	s.Require().NoError(err)
+	_, err = s.store.DB().ExecContext(s.ctx, "UPDATE channel_threads SET turn_until = now() - interval '1 second' WHERE channel_id = 'thread-one'")
 	s.Require().NoError(err)
 
 	taken, err := s.store.TakeChannelThreadTurn(s.ctx, "thread-one", "router-b", time.Now().Add(time.Minute))
