@@ -218,7 +218,7 @@ func (s *URLsSuite) SetupTest() {
 	// which is what the tests about orphans and removal depend on.
 	service, err := New(Options{
 		Store: s.store, Redis: s.redis, Reader: s.reader, Knowledge: metered.NewKnowledge(s.base, s.recorder),
-		ChunkSize: 200, CheckInterval: 10 * time.Millisecond, RefreshInterval: 10 * time.Millisecond,
+		ChunkSize: 200, Limits: ingest.DefaultLimits, CheckInterval: 10 * time.Millisecond, RefreshInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)
 	s.Require().NoError(service.Start())
@@ -460,7 +460,7 @@ func (s *URLsSuite) TestAPageRemovedBeforeItWasReadWritesNothing() {
 	// Nothing is reading until the page is gone, so the read finds nothing to read into.
 	s.Require().NoError(s.service.Close())
 	service, err := New(Options{Store: s.store, Redis: s.redis, Reader: s.reader,
-		Knowledge: metered.NewKnowledge(s.base, s.recorder), CheckInterval: 10 * time.Millisecond})
+		Knowledge: metered.NewKnowledge(s.base, s.recorder), Limits: ingest.DefaultLimits, CheckInterval: 10 * time.Millisecond})
 	s.Require().NoError(err)
 	s.service = service
 

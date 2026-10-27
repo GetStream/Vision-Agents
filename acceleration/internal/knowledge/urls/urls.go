@@ -73,8 +73,8 @@ type Options struct {
 	Knowledge *metered.Knowledge
 	// ChunkSize is how much of a page goes in one passage. Zero is the ingest default.
 	ChunkSize int
-	// Limits bound how much larger a page's passages can be than the page. Zero is
-	// ingest.DefaultLimits.
+	// Limits bound how much larger a page's passages can be than the page, as the router's
+	// settings name them.
 	Limits ingest.Limits
 	// CheckInterval is how often the worker looks for reads that are due, and how long a
 	// failed one waits before it is tried again. Zero is asynq's defaults: a second between

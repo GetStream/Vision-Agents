@@ -189,7 +189,7 @@ type Options struct {
 	// knowledge provider, in which case there is nothing to fill and the path says so.
 	Knowledge *metered.Knowledge
 	// KnowledgeLimits bound how much larger a posted document's passages can be than the
-	// document. Zero is ingest.DefaultLimits.
+	// document, as the router's settings name them.
 	KnowledgeLimits ingest.Limits
 	// KnowledgeURLs keeps those bases filled from pages published elsewhere. Absent
 	// without a database or without something that can read a page, in which case the url

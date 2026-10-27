@@ -708,6 +708,15 @@ func (c Config) validate() error {
 	if c.Runs.ConcurrentPerApp < 0 {
 		return fmt.Errorf("config: runs.concurrent_per_app cannot be negative, got %d", c.Runs.ConcurrentPerApp)
 	}
+	if c.Knowledge.MinChunk < 0 || c.Knowledge.MaxHeading < 0 {
+		return fmt.Errorf("config: knowledge.min_chunk and knowledge.max_heading cannot be negative, got %d and %d",
+			c.Knowledge.MinChunk, c.Knowledge.MaxHeading)
+	}
+	// A heading repeated whole in a passage no bigger than it leaves no room for the passage.
+	if c.Knowledge.MinChunk > 0 && c.Knowledge.MaxHeading >= c.Knowledge.MinChunk {
+		return fmt.Errorf("config: knowledge.max_heading (%d) must be less than knowledge.min_chunk (%d)",
+			c.Knowledge.MaxHeading, c.Knowledge.MinChunk)
+	}
 	if c.RateLimit.MessagesPerDay < 0 || c.RateLimit.TokensPerDay < 0 {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
 			c.RateLimit.MessagesPerDay, c.RateLimit.TokensPerDay)

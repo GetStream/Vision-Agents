@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -673,6 +674,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// and app, so a deployment without a database enforces none of them, and may run only
 	// with limits off. Money is read from the usage service, and from Postgres without one.
 	warnLimits(settings, logger)
+	warnKnowledgeLimits(settings, logger)
 	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
 		return err
 	}
@@ -1977,6 +1979,27 @@ func knowledgeCost(settings config.Knowledge) turbopuffer.Cost {
 // knowledgeLimits are how documents are cut into passages, as the settings name them.
 func knowledgeLimits(settings config.Knowledge) ingest.Limits {
 	return ingest.Limits{MinChunk: settings.MinChunk, MaxHeading: settings.MaxHeading}
+}
+
+// maxKnowledgeGrowth is how many times larger than a document its passages may be before
+// the router warns of it at startup.
+const maxKnowledgeGrowth = 4
+
+// warnKnowledgeLimits says at startup when the knowledge limits let one ingest request write
+// many times what it sent.
+func warnKnowledgeLimits(settings config.Config, logger *slog.Logger) {
+	growth := knowledgeLimits(settings.Knowledge).Growth()
+	switch {
+	case math.IsInf(growth, 1):
+		logger.Warn("knowledge has no minimum chunk, so nothing bounds how much a document grows when it is cut "+
+			"into passages", "set", "ROUTER_KNOWLEDGE_MIN_CHUNK")
+	case growth > maxKnowledgeGrowth:
+		logger.Warn("the knowledge limits let a document grow many times when it is cut into passages: lower the "+
+			"heading limit or raise the minimum chunk",
+			"growth", fmt.Sprintf("%.1f", growth),
+			"request_bytes", api.MaxKnowledgeBody, "written_bytes", int64(growth*api.MaxKnowledgeBody),
+			"set", "ROUTER_KNOWLEDGE_MAX_HEADING or ROUTER_KNOWLEDGE_MIN_CHUNK")
+	}
 }
 
 // buildLibrary wires the catalogues the speech providers publish, so a voice can be picked
