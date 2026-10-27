@@ -56,8 +56,10 @@ for when it opens.
 
 The chat asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
 `XAI_API_KEY`. Web search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or `PERPLEXITY_API_KEY`.
-Stream Chat 7.16.0 is on `https://stream-io-repo.com` rather than Maven Central, which
-`settings.gradle.kts` adds.
+Stream Chat is on `https://stream-io-repo.com` rather than Maven Central, which
+`settings.gradle.kts` adds. The sign-in card and `AIConversation`'s `contentPadding` are only in
+a snapshot of it so far, `7.16.1-202610271134-SNAPSHOT` from `https://snapshots.stream-io-repo.com`,
+which is kept seven days; the app moves to the release that has them.
 
 ## What the app shows
 
@@ -111,6 +113,12 @@ Stream Chat 7.16.0 is on `https://stream-io-repo.com` rather than Maven Central,
   browser has no Auth Tab, it is a Custom Tab, and the redirect comes back through
   `SignInCallbackActivity`, which the app's scheme opens. `MainActivity` provides it as
   `LocalSignIn`.
+- **Connect Gmail and Linear in the chat.** A call that waits for the person's account shows
+  Stream's sign-in card on its step. Connect hands the card's page to `SignIn.authenticate`, and
+  the account is connected when the page comes back with `status=connected`; the call then
+  carries on at the router. Not now is `AgentSession.declineLogin`, which ends the call there.
+  The composer floats over the conversation, which `contentPadding` keeps clear of it, so the
+  latest message and the scroll-to-latest button are never under it.
 
 The app is the user `juno-owner`, Alex, as the iOS app is, so both phones list the same
 conversations. `Assistant.kt` holds the whole configuration: the router's and the backend's
@@ -118,12 +126,5 @@ URLs, the customer id, the Stream key, the agent's name and the user.
 
 ## What is not here yet
 
-- The connector sign-in card. A Gmail or Linear call that waits for a sign-in shows its step,
-  with no Connect or Not now yet: Stream's Android AI components have no card for it in 7.16.0
-  (iOS has `AIToolAuthorizationView`), and `AgentSession` in the Kotlin SDK has no
-  `declineLogin` for Not now. `SignIn.authenticate` is what Connect will call once the card is
-  there. Until then, connect Gmail and Linear from the iOS app, which is the same
-  `juno-owner`, and the Android app uses those connections. `send_email` asked before Gmail
-  is connected tells the agent to call a Gmail tool first, which waits for that sign-in.
 - Think harder, which iOS offers in the composer's options: Stream's Android composer has no
   options sheet.
