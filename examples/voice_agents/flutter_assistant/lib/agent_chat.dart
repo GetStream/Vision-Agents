@@ -71,7 +71,8 @@ class AgentChat extends ChangeNotifier {
           }
         }),
       )
-      ..add(session.conversation.stream.listen((_) => notifyListeners()));
+      ..add(session.conversation.stream.listen((_) => notifyListeners()))
+      ..add(session.connection.stream.listen((_) => notifyListeners()));
   }
 
   /// The messages as Stream's AI components show them.
@@ -162,7 +163,11 @@ class AgentChat extends ChangeNotifier {
   /// Stops the reply in flight. What was written so far is kept.
   void stop() {
     _askedAfter = null;
-    session.interrupt();
+    try {
+      session.interrupt();
+    } on SocketClosedException {
+      // Nothing is answering: the reply in flight stopped with the socket.
+    }
     notifyListeners();
   }
 

@@ -19,6 +19,20 @@ void main() {
       );
     });
 
+    test('takes a due time only with its date, time and UTC offset', () {
+      expect(
+        DeviceTools.parseDue('2026-10-16T18:00:00+02:00'),
+        DateTime.utc(2026, 10, 16, 16),
+      );
+      expect(
+        DeviceTools.parseDue('2026-10-16T18:00Z'),
+        DateTime.utc(2026, 10, 16, 18),
+      );
+      expect(DeviceTools.parseDue('2026-10-16'), isNull);
+      expect(DeviceTools.parseDue('2026-10-16T18:00:00'), isNull);
+      expect(DeviceTools.parseDue('tomorrow at 6'), isNull);
+    });
+
     test('reads a day only as YYYY-MM-DD', () {
       expect(DeviceTools.parseDay('2026-10-16'), DateTime(2026, 10, 16));
       expect(DeviceTools.parseDay('2026-02-30'), isNull);

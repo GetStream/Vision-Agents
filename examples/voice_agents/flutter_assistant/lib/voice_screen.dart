@@ -517,6 +517,8 @@ class _ApprovalCardState extends State<_ApprovalCard> {
       );
     } on StateError catch (error) {
       setState(() => _state = AIToolApprovalFailed(decision, error));
+    } on SocketClosedException catch (error) {
+      setState(() => _state = AIToolApprovalFailed(decision, error));
     }
   }
 

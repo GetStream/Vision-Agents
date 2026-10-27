@@ -157,9 +157,10 @@ class _ChatScreenState extends State<ChatScreen> {
   /// its channel.
   Future<AgentChat?> _start() async {
     _failure = null;
+    final sessionId = widget.sessionId;
+    AgentSession? session;
     try {
-      final sessionId = widget.sessionId;
-      final session = sessionId != null
+      session = sessionId != null
           ? await Assistant.agents.attach(sessionId, tools: Assistant.tools)
           : await Assistant.agents
                 .agent(Assistant.agentName)
@@ -178,8 +179,20 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _chat = chat);
       return chat;
     } on Object catch (error) {
+      // A session that opened but whose channel did not is let go of, and a new one deleted,
+      // so asking again does not leave another socket open and another conversation listed.
+      if (session != null) unawaited(_discard(session, isNew: sessionId == null));
       if (mounted) setState(() => _failure = '$error');
       return null;
+    }
+  }
+
+  static Future<void> _discard(AgentSession session, {required bool isNew}) async {
+    try {
+      await session.close();
+      if (isNew) await Assistant.sessions.delete(session.id);
+    } on Object {
+      // Left in the list, where the person can delete it.
     }
   }
 
@@ -306,7 +319,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final theme = Theme.of(context);
     final surface = theme.colorScheme.surface;
     final failure =
-        _failure ?? chat?.failure ?? chat?.session.conversation.value.failure;
+        _failure ??
+        chat?.failure ??
+        chat?.session.conversation.value.failure ??
+        // The socket dropped, such as when the phone changed networks: the tools and the
+        // questions they ask stop until the conversation is opened again.
+        chat?.session.failure?.toString();
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(

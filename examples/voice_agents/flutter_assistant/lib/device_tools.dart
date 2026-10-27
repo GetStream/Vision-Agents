@@ -173,7 +173,7 @@ abstract final class DeviceTools {
     run: (arguments) async {
       final title = '${arguments['title'] ?? ''}';
       if (title.isEmpty) throw const ToolFailure('A reminder needs a title.');
-      final due = DateTime.tryParse('${arguments['due'] ?? ''}');
+      final due = parseDue('${arguments['due'] ?? ''}');
       if (due == null && !Platform.isIOS) {
         throw const ToolFailure(
           'A reminder needs a due time, such as 2026-10-16T18:00:00+02:00.',
@@ -243,6 +243,17 @@ abstract final class DeviceTools {
         'Today as a date is ${DateFormat('yyyy-MM-dd').format(now)}. '
         'Their language is $language.';
   }
+
+  /// When a reminder is due, from an ISO 8601 date and time with its UTC offset, or null when
+  /// [text] is not one. A date alone, or a time with no offset, is not taken as midnight or as
+  /// the phone's own time: iOS then adds the reminder with no due time, and Android asks for one,
+  /// as the iOS and Android apps do.
+  static DateTime? parseDue(String text) =>
+      RegExp(
+        r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$',
+      ).hasMatch(text)
+      ? DateTime.tryParse(text)
+      : null;
 
   /// A day as YYYY-MM-DD, or null when [text] is not one.
   static DateTime? parseDay(String text) {

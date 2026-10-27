@@ -81,12 +81,12 @@ until they are released.
   the chat. The chat's socket stays open and runs the tools, and a tool that asks first asks on a
   card over the call; the call is followed by a second session with none. The agent is Stream's
   voice glow, moving with its voice in Stream's colors and with yours in red, with a word for
-  what it is doing and captions a sentence at a time, paced to its voice, as in the
-  [Flutter demo](../flutter_demo). The microphone is asked for as voice mode opens. Hang up, the
+  what it is doing and captions a sentence at a time, paced to its voice, as swift_assistant's
+  are. The microphone is asked for as voice mode opens. Hang up, the
   close button or Back take the agent off the call and go back to the chat.
-- **The camera** button in voice mode shows Juno what the phone is pointing at, through the back
-  lens, with a preview of it. Try it on a phone or the Android emulator, whose camera is a test
-  scene; the iOS simulator has none.
+- **The camera** button in voice mode turns on the phone's back camera on the call, with a
+  preview of it. Juno cannot look through it yet (see below). Try it on a phone or the Android
+  emulator, whose camera is a test scene; the iOS simulator has none.
 - **Tools on the phone**, in `device_tools.dart`: `get_local_context` (date, time, timezone),
   `get_location` (asks first), `list_events` (the calendar), `add_reminder` (asks first) and
   `send_email` (asks first, showing who it goes to). A tool that asks first asks on its step in
