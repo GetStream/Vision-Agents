@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 // TimingsField is the custom field on a voice reply that carries how long each stage of its
@@ -66,23 +68,51 @@ func messageFromVoice(wire getstream.MessageResponse, voiceAgent string) (Messag
 }
 
 // messageFromThread reads a person's message the channel bridge wrote into a thread channel:
-// one with text and no source, which is how the bridge writes it so the message hook takes
-// it as written to the agent. Everything the conversation itself writes has a source, so in
-// a thread channel a message without one is a person's. The text is untrusted user content.
+// one with text or a photo and no source, which is how the bridge writes it so the message
+// hook takes it as written to the agent. Everything the conversation itself writes has a
+// source, so in a thread channel a message without one is a person's. The text is untrusted
+// user content. Its photos are kept as Files, which history tells the model were sent
+// (entryOf) without handing them over again: the reply to the message saw them.
 func messageFromThread(wire getstream.MessageResponse, thread bool) (Message, bool) {
 	if !thread || wire.DeletedAt != nil || wire.CreatedAt.Time == nil || wire.ID == "" || len(wire.ID) > 128 ||
-		wire.User.ID == "" || wire.Text == "" {
+		wire.User.ID == "" {
 		return Message{}, false
 	}
 	if _, sourced := wire.Custom["source"]; sourced {
 		return Message{}, false
 	}
 	m := Message{ID: wire.ID, Role: "user", Text: wire.Text, State: "completed", Saved: true,
-		StartedAt: *wire.CreatedAt.Time, authorID: wire.User.ID, written: true}
+		StartedAt: *wire.CreatedAt.Time, authorID: wire.User.ID, written: true, Files: threadPhotos(wire.Attachments)}
 	if wire.User.Name != nil {
 		m.authorName = *wire.User.Name
 	}
-	return m, true
+	return m, m.Text != "" || len(m.Files) > 0
+}
+
+// threadPhotos are the photos sent with a person's message in a thread channel, at most
+// maxFiles: the attachments the message hook answers as photos (api messageEvent.photos), an
+// image with its URL in image_url or asset_url that is no preview of a link in the text.
+func threadPhotos(attachments []getstream.Attachment) []sandbox.Attachment {
+	var photos []sandbox.Attachment
+	for _, attachment := range attachments {
+		if len(photos) == maxFiles {
+			break
+		}
+		if attachment.Type == nil || *attachment.Type != "image" || attachment.OGScrapeUrl != nil && *attachment.OGScrapeUrl != "" {
+			continue
+		}
+		source := ""
+		if attachment.ImageUrl != nil {
+			source = *attachment.ImageUrl
+		}
+		if source == "" && attachment.AssetUrl != nil {
+			source = *attachment.AssetUrl
+		}
+		if source != "" {
+			photos = append(photos, sandbox.Attachment{URL: source})
+		}
+	}
+	return photos
 }
 
 // artifactsFromAttachments reads back the artifacts ChatAttachments wrote, keeping only the
