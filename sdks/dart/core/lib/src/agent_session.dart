@@ -132,9 +132,8 @@ final class AgentSession {
         // for an app holding one.
         'decisions': 'false',
         if (interim) 'interim': 'true',
-        // The router sends a tool's calls only to a socket that runs it. Saying which, none
-        // included, is what makes this one, whatever the router takes a socket with no auth
-        // type for.
+        // The router sends a tool's calls only to a socket that says it runs that tool, so this
+        // one names this session's tools, or none.
         'tools': _tools.keys.join(','),
       }),
     );

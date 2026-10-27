@@ -30,9 +30,8 @@ final class StreamCredentials {
 /// is still reached by customer id.
 ///
 /// Every request is sent as a device's, with `Stream-Auth-Type: jwt`. A socket carries no auth
-/// type, since a browser cannot send one: a router verifying tokens reads it as the device all
-/// the same, and one in `proxy` mode as a backend. So a session's socket says which tools it
-/// runs rather than relying on that.
+/// type, since a browser cannot send one, and a router in `proxy` mode takes it for a backend.
+/// That is why a session's socket names the tools it runs.
 final class Backend {
   Backend({
     Uri? url,

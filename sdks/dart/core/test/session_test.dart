@@ -54,7 +54,7 @@ void main() {
       await chat.close();
     });
 
-    test('attached with no tools, says it runs none, so it never answers a call', () async {
+    test('attached with no tools, says on the socket it runs none', () async {
       router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
 
       final watching = await agents.attach('s1');

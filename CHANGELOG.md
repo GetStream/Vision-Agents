@@ -50,7 +50,7 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ### The Dart SDK's device tools are called again on a router in proxy mode
 
-A Dart or Flutter app's tools (`AgentTool`) were never called on a router running with `ROUTER_AUTH_MODE=proxy`: every call failed at once and the model said it could not do it. Since the router sends a tool's calls only to a socket that runs it, and the Dart socket carries no auth type, the router took it for a backend rather than the device that opened the session. The session socket now names the tools it runs in `tools` (empty when there are none), as the Go SDK does.
+A Dart or Flutter app's tools (`AgentTool`) were never called on a router running with `ROUTER_AUTH_MODE=proxy`: every call failed at once and the model said it could not do it. Since the router sends a tool's calls only to a socket that runs it, and the Dart socket carries no auth type, the router took it for a backend rather than the device that opened the session. The session socket now names the tools it runs in `tools` (empty when there are none), as the Go SDK does (#1326).
 
 ### The agent tells people apart in a group text chat
 
