@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -38,14 +40,14 @@ type Subject struct {
 	// reaches no request, and a refresh the provider refused still sends the newest.
 	Live bool
 	// Elsewhere is a broker whose egress runs outside this process, in the provider's network
-	// (Daytona), so no test here can push through it. Only such a subject may leave Push nil.
+	// (Daytona), so no test here can clone through it. Only such a subject may leave Clone nil.
 	Elsewhere bool
-	// Push is git in the sandbox the broker's last Prepare made: it commits a file holding
-	// content and pushes it to https://github.com/octo/hello.git with ref, the value of a
-	// grant's env var, as Basic auth's password. It returns the Authorization of each request
-	// github.com got, the file as github.com keeps it, and every other header value and the URL of
-	// each request. Nil only when Elsewhere.
-	Push func(ref, content string) (authorizations []string, pushed string, elsewhere []string)
+	// Clone is git in the sandbox the broker's last Prepare made: it clones
+	// https://github.com/octo/hello.git, whose main holds a file of content, with ref, the value
+	// of a grant's env var, as Basic auth's password. It returns the Authorization of each request
+	// github.com got, the file as cloned, and every other header value and the URL of each
+	// request. Nil only when Elsewhere.
+	Clone func(ref, content string) (authorizations []string, cloned string, elsewhere []string)
 }
 
 // BrokerContract is the suite. New builds a broker for session over tokens and bind, logging
@@ -438,10 +440,12 @@ func (s *BrokerContract) TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried(
 	s.Empty(subject.Left(), "Close deletes what an earlier try could not")
 }
 
-// TestAGitPushCarriesTheTokenInAuthorizationAlone is A15: git sends the placeholder as Basic
-// auth's password, and github.com gets the token there and nowhere else. A commit holding the
-// placeholder is pushed with the placeholder as it is: the body is never rewritten.
-func (s *BrokerContract) TestAGitPushCarriesTheTokenInAuthorizationAlone() {
+// TestAGitCloneCarriesTheTokenInAuthorizationAlone is A15: git sends the placeholder as Basic
+// auth's password, and github.com gets the token there and nowhere else. A clone reads with a
+// POST to git-upload-pack, which GitHub's manifest lists among the sandbox's reads, so it passes
+// an egress that lets code only read. A file holding the placeholder is cloned as it is: the
+// placeholder is never rewritten.
+func (s *BrokerContract) TestAGitCloneCarriesTheTokenInAuthorizationAlone() {
 	subject := s.subject("session-1")
 	if subject.Elsewhere {
 		// Daytona: its egress runs in Daytona's network, which no test here reaches. What a test
@@ -450,21 +454,25 @@ func (s *BrokerContract) TestAGitPushCarriesTheTokenInAuthorizationAlone() {
 		// 01a16514-923c-7843-9214-40a94453f194.
 		s.T().Skip("the broker's egress runs outside this process: the live E2E checks git")
 	}
-	s.Require().NotNil(subject.Push, "a broker whose egress runs here must push through it")
+	s.Require().NotNil(subject.Clone, "a broker whose egress runs here must clone through it")
+	raw, err := fs.ReadFile(providers.FS, "github.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
 	github := grant("github", "GITHUB_TOKEN")
-	github.Hosts = append(github.Hosts, "github.com")
+	github.Hosts, github.Reads = append(github.Hosts, "github.com"), manifest.Sandbox.Reads
 	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{github})
 	s.Require().NoError(s.returned(err))
 	placeholder := ref(mount, "GITHUB_TOKEN")
 
-	authorizations, pushed, elsewhere := subject.Push(placeholder, "GITHUB_TOKEN="+placeholder+"\n")
+	authorizations, cloned, elsewhere := subject.Clone(placeholder, "GITHUB_TOKEN="+placeholder+"\n")
 
 	token := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:gho_first"))
 	s.Contains(authorizations, token)
 	for _, authorization := range authorizations {
 		s.Contains([]string{"", token}, authorization, "github.com gets the token or no credential")
 	}
-	s.Equal("GITHUB_TOKEN="+placeholder+"\n", pushed)
+	s.Equal("GITHUB_TOKEN="+placeholder+"\n", cloned)
 	s.NotEmpty(elsewhere)
 	for _, value := range elsewhere {
 		s.NotContains(value, "gho_first", "the token is in Authorization alone")

@@ -430,8 +430,12 @@ func (s *ProxySuite) TestAPlaceholderInAnyOtherFormIsSentAsItIs() {
 	s.Zero(s.asked)
 }
 
-// TestThePlaceholderInTheBodyQueryOrAnotherHeaderIsSentAsItIs is A3 and A4.
+// TestThePlaceholderInTheBodyQueryOrAnotherHeaderIsSentAsItIs is A3 and A4, in a POST the
+// grant reads with.
 func (s *ProxySuite) TestThePlaceholderInTheBodyQueryOrAnotherHeaderIsSentAsItIs() {
+	grant := s.grant(s.placeholder, "api.github.test")
+	grant.Reads = []core.SandboxRead{{Host: "api.github.test", Method: http.MethodPost, Path: "/echo"}}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
 	request := s.request(http.MethodPost, "https://api.github.test/echo?key="+s.placeholder, "Bearer "+s.placeholder, "token="+s.placeholder)
 	request.Header.Set("X-Token", s.placeholder)
 
@@ -444,6 +448,130 @@ func (s *ProxySuite) TestThePlaceholderInTheBodyQueryOrAnotherHeaderIsSentAsItIs
 	s.Equal("token="+s.placeholder, seen.Body)
 	s.Equal(s.placeholder, seen.Token)
 	s.Equal("Bearer gho_first-token-of-the-connection", seen.Authorization)
+}
+
+// TestAGrantedHostTakesOnlyAGetOrAHead: code in the sandbox reads a granted host. Any other
+// method, with the placeholder or without it, reaches no host and asks for no token, and its
+// answer tells the model to write with the connector's tools. A method is case-sensitive (RFC
+// 9110 section 9.1), so get is not GET.
+func (s *ProxySuite) TestAGrantedHostTakesOnlyAGetOrAHead() {
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		response, _, err := s.send(s.sandbox(s.credential), s.request(method, "https://api.github.test/echo", "Bearer "+s.placeholder, ""))
+		s.Require().NoError(err, method)
+		s.Equal(http.StatusOK, response.StatusCode, method)
+	}
+	s.Equal([]string{"Bearer gho_first-token-of-the-connection", "Bearer gho_first-token-of-the-connection"}, s.granted.authorizations())
+	s.granted.forget()
+	asked := s.asked
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions, "get"} {
+		for _, authorization := range []string{"Bearer " + s.placeholder, ""} {
+			response, body, err := s.send(s.sandbox(s.credential), s.request(method, "https://api.github.test/repos/o/r/issues", authorization, "{}"))
+
+			s.Require().NoError(err, method)
+			s.Equal(http.StatusForbidden, response.StatusCode, method)
+			s.Equal("egress: "+method+" api.github.test/repos/o/r/issues refused: code in the sandbox only reads through a connector; "+
+				"write with the connector's tools\n", body, method)
+		}
+	}
+	s.Empty(s.granted.requests())
+	s.Equal(asked, s.asked)
+	s.Contains(s.logs.String(), "refused a request that may write")
+}
+
+// TestARefusedMethodIsCountedAndLoggedBounded: a method a granted host does not take is
+// counted as denied_method under its bounded label, and the log keeps only its first 32 bytes.
+func (s *ProxySuite) TestARefusedMethodIsCountedAndLoggedBounded() {
+	long := strings.Repeat("WRITE", 200)
+	posted := s.requestCount("api.github.test", "POST", "denied_method", "4xx")
+	odd := s.requestCount("api.github.test", "other", "denied_method", "4xx")
+
+	for _, method := range []string{http.MethodPost, long} {
+		response, _, err := s.send(s.sandbox(s.credential), s.request(method, "https://api.github.test/echo", "", "{}"))
+		s.Require().NoError(err)
+		s.Equal(http.StatusForbidden, response.StatusCode)
+	}
+
+	s.Equal(posted+1, s.requestCount("api.github.test", "POST", "denied_method", "4xx"))
+	s.Equal(odd+1, s.requestCount("api.github.test", "other", "denied_method", "4xx"))
+	s.Contains(s.logs.String(), long[:32]+"…")
+	s.NotContains(s.logs.String(), long[:33])
+}
+
+// TestGitPushIsRefusedAtItsFirstRequest: git push first GETs info/refs for git-receive-pack,
+// and git shows the model the body of a refusal there; a clone's GET for git-upload-pack
+// reads.
+func (s *ProxySuite) TestGitPushIsRefusedAtItsFirstRequest() {
+	for target, status := range map[string]int{
+		"https://api.github.test/o/r.git/info/refs?service=git-receive-pack":                         http.StatusForbidden,
+		"https://api.github.test/o/r/info/refs?service=git-receive-pack":                             http.StatusForbidden,
+		"https://api.github.test/o/r.git/info/refs?service=git-upload-pack&service=git-receive-pack": http.StatusForbidden,
+		"https://api.github.test/o/r.git/info/refs?service=git-upload-pack":                          http.StatusOK,
+		"https://api.github.test/o/r.git/info/refs":                                                  http.StatusOK,
+		"https://api.github.test/echo?service=git-receive-pack":                                      http.StatusOK,
+	} {
+		s.granted.forget()
+
+		response, body, err := s.send(s.sandbox(s.credential), s.request(http.MethodGet, target, "Bearer "+s.placeholder, ""))
+
+		s.Require().NoError(err, target)
+		s.Equal(status, response.StatusCode, target)
+		if status == http.StatusForbidden {
+			s.Empty(s.granted.requests(), target)
+			s.Contains(body, "refused: code in the sandbox only reads through a connector; write with the connector's tools", target)
+		} else {
+			s.Len(s.granted.requests(), 1, target)
+		}
+	}
+}
+
+// TestAReadTakesItsMethodToItsPathOnItsHostAlone: a grant's read lets one more method through, to
+// the paths its pattern matches on its host, as the host gets them: a path spelled another way
+// (an escape, a dot segment, an empty segment) is refused even where its pattern would match.
+func (s *ProxySuite) TestAReadTakesItsMethodToItsPathOnItsHostAlone() {
+	grant := s.grant(s.placeholder, "api.github.test", "*.github.test")
+	grant.Reads = []core.SandboxRead{{Host: "api.github.test", Method: http.MethodPost, Path: "/*/*/git-upload-pack"}}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
+	for target, status := range map[string]int{
+		"POST https://api.github.test/o/r.git/git-upload-pack":     http.StatusOK,
+		"POST https://api.github.test/o/r/git-upload-pack":         http.StatusOK,
+		"POST https://api.github.test/o/r.git/git-receive-pack":    http.StatusForbidden,
+		"PUT https://api.github.test/o/r.git/git-upload-pack":      http.StatusForbidden,
+		"POST https://api.github.test/o/r.git/git-upload-pack/x":   http.StatusForbidden,
+		"POST https://api.github.test/o/x/r.git/git-upload-pack":   http.StatusForbidden,
+		"POST https://other.github.test/o/r.git/git-upload-pack":   http.StatusForbidden,
+		"POST https://api.github.test/o/r%2Egit/git-upload-pack":   http.StatusForbidden,
+		"POST https://api.github.test/o/../git-upload-pack":        http.StatusForbidden,
+		"POST https://api.github.test//r.git/git-upload-pack":      http.StatusForbidden,
+		"POST https://api.github.test/o/r.git/git-upload-pack?x=1": http.StatusOK,
+		"post https://api.github.test/o/r.git/git-upload-pack":     http.StatusForbidden,
+	} {
+		method, target, _ := strings.Cut(target, " ")
+		s.granted.forget()
+
+		response, _, err := s.send(s.sandbox(s.credential), s.request(method, target, "Bearer "+s.placeholder, "0000"))
+
+		s.Require().NoError(err, target)
+		s.Equal(status, response.StatusCode, method+" "+target)
+		if status == http.StatusOK {
+			s.Equal([]string{"Bearer gho_first-token-of-the-connection"}, s.granted.authorizations(), target)
+		} else {
+			s.Empty(s.granted.requests(), target)
+		}
+	}
+}
+
+// TestAWriteToAnAllowedDomainIsTunnelledAsItIs: the proxy reads nothing in a tunnel to an
+// allowed domain, so it takes any method there, as before (a POST reached outside.test on the
+// base, 37d4ed61b).
+func (s *ProxySuite) TestAWriteToAnAllowedDomainIsTunnelledAsItIs() {
+	s.allow("outside.test")
+
+	response, _, err := s.send(s.direct(), s.request(http.MethodPost, "https://outside.test/echo", "", "written"))
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Require().Len(s.outside.requests(), 1)
+	s.Equal("written", s.outside.requests()[0].Body)
 }
 
 // TestAHostOutsideTheGrantsIsRefusedAndNeverReached is A2.
@@ -1472,8 +1600,14 @@ func (s *ProxySuite) TestGrantsThatCannotBeReadInAnOpenTunnelAreCountedAsAnError
 	s.Equal(counted+1, s.requestCount("api.github.test", "GET", "error", "5xx"))
 }
 
-// TestEveryStandardMethodIsItsOwnLabel: RFC 9110 section 9.1's methods, in a tunnel.
+// TestEveryStandardMethodIsItsOwnLabel: RFC 9110 section 9.1's methods, in a tunnel, each one
+// the grant reads with.
 func (s *ProxySuite) TestEveryStandardMethodIsItsOwnLabel() {
+	grant := s.grant(s.placeholder, "api.github.test")
+	for _, method := range []string{"POST", "PUT", "DELETE", "OPTIONS", "TRACE", "PATCH"} {
+		grant.Reads = append(grant.Reads, core.SandboxRead{Host: "api.github.test", Method: method, Path: "/echo"})
+	}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
 	client := s.sandbox(s.credential)
 	for _, method := range []string{"GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "TRACE", "PATCH"} {
 		counted := s.requestCount("api.github.test", method, "granted_no_token", "2xx")
@@ -1523,9 +1657,11 @@ func (s *ProxySuite) TestTheStatusIsTheClassTheSandboxGot() {
 
 // TestTheLabelsHoldNoNameTheSandboxChoosesNorAnySecret: a wildcard grant is one host label
 // whatever name under it is asked for, an unknown method is "other", and no token,
-// placeholder, credential or session is a label value.
+// placeholder, credential or session is a label value. The grant reads with the unknown method.
 func (s *ProxySuite) TestTheLabelsHoldNoNameTheSandboxChoosesNorAnySecret() {
-	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "*.github.test")}})
+	grant := s.grant(s.placeholder, "*.github.test")
+	grant.Reads = []core.SandboxRead{{Host: "*.github.test", Method: "BREW", Path: "/echo"}}
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{grant}})
 	wildcard := s.requestCount("*.github.test", "GET", "token", "2xx")
 	odd := s.requestCount("*.github.test", "other", "granted_no_token", "2xx")
 	client := s.sandbox(s.credential)

@@ -116,8 +116,9 @@ type Manifest struct {
 // revision (connectorOf, internal/api/connectors.go); and sensitive and each source's outbound
 // and read_only_tools, which only the sensitive-connector check reads, from the connector's
 // latest revision whatever a connection pins (SensitiveBindingsComplaint,
-// internal/api/configs.go). Any other field counts, the name among them: a consent shows the
-// pinned name (ConnectorConsents, internal/api/authorizations.go).
+// internal/api/configs.go); and sandbox.reads, which a session reads from the connector's latest
+// revision (sandboxGrant, internal/session/sandbox_grants.go). Any other field counts, the name
+// among them: a consent shows the pinned name (ConnectorConsents, internal/api/authorizations.go).
 func (m Manifest) ReadsAsConnection(other Manifest) bool {
 	return reflect.DeepEqual(m.connectionReads(), other.connectionReads())
 }
@@ -129,6 +130,11 @@ func (m Manifest) connectionReads() Manifest {
 	m.Sources = slices.Clone(m.Sources)
 	for i := range m.Sources {
 		m.Sources[i].Outbound, m.Sources[i].ReadOnlyTools = nil, nil
+	}
+	if m.Sandbox != nil {
+		sandbox := *m.Sandbox
+		sandbox.Reads = nil
+		m.Sandbox = &sandbox
 	}
 	return m
 }
