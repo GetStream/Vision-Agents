@@ -14,13 +14,13 @@ import (
 
 // unfoundID reports an ID argument whose value no tool has returned, under that key or as an
 // "id", with the IDs the tools have returned so far. Models pass made-up values as IDs: a
-// person's own identifier as an appointment's, a time and a name as an appointment ID, or an
-// error code as a ticket that was never opened.
+// person's own identifier as a booking's, a time and a name as a booking ID, or an error
+// code as a case that was never opened.
 //
-// Only an ID one of the tools hands out is checked: "ticket_id" when there is a create_ticket,
-// "appointment_id" when there is a lookup_appointment. Any other ID, such as a member_id, is
-// the caller's to give, and so is one the caller said along with what it is ("my ticket is
-// 6631"). The error code "seven twenty", said where no ticket was mentioned, is not a ticket.
+// Only an ID one of the tools hands out is checked: "case_id" when there is an open_case,
+// "booking_id" when there is a find_booking. Any other ID, such as a card_id, is the
+// caller's to give, and so is one the caller said along with what it is ("my case is
+// 6631"). The error code "seven twenty", said where no case was mentioned, is not a case.
 func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, value string, known []string, found bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -88,8 +88,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 }
 
 // missingID reports a handed-out ID the tool takes but the call left out, once a tool that
-// makes or finds that thing has returned one: a dispatch sent with no ticket_id right after
-// create_ticket returned one runs with none.
+// makes or finds that thing has returned one: a courier sent with no case_id right after
+// open_case returned one runs with none.
 func missingID(history []llm.Message, call llm.ToolCall, tools harness.Tools) (key string, known []string, missing bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -143,7 +143,7 @@ func missingID(history []llm.Message, call llm.ToolCall, tools harness.Tools) (k
 // emptyNamed reports a string argument sent empty that the tool's description asks for.
 // A verification described as needing a PIN and an address, sent with the address empty
 // before the caller had finished reading it out, verifies nothing. One the description
-// offers as an alternative ("member ID or phone") may be left empty.
+// offers as an alternative ("card ID or phone") may be left empty.
 func emptyNamed(call llm.ToolCall, tools harness.Tools) (string, bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -184,7 +184,7 @@ func emptyNamed(call llm.ToolCall, tools harness.Tools) (string, bool) {
 			continue
 		}
 		// One left out counts only where the description lists it among what the tool
-		// takes ("..., and service address"), not where it only names the thing ("Look up
+		// takes ("..., and home address"), not where it only names the thing ("Look up
 		// an order").
 		if !given && !slices.Contains(words[max(0, len(words)-3):], "and") {
 			continue
@@ -326,7 +326,7 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 
 var digitRun = regexp.MustCompile(`\d+`)
 
-// numberGroup is one number as written, its dashes and brackets included: "512-555-0142".
+// numberGroup is one number as written, its dashes and brackets included: "512-555-0178".
 // Numbers apart are kept apart, so "2745, last four 6305" holds no 5630.
 var numberGroup = regexp.MustCompile(`\d(?:[\d().-]*\d)?`)
 
@@ -388,7 +388,7 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 }
 
 // spelledNames are the names a caller spelled out in one message, lowercase: three or more
-// single letters read out one at a time, "o d e n o r", "P-A-T-E-L", "J. O. H. N.".
+// single letters read out one at a time, "o d e n o r", "K-O-V-A-C", "J. O. H. N.".
 //
 // A spelling's letters are joined by one kind of separator, spaces, commas, hyphens or
 // periods, and a change of separator ends it: in "k l e i n. I need" the period ends the
@@ -396,7 +396,7 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 // counts when it stands alone: in "that's a l m e i d a" the s ends a word, and read as a
 // spelled letter it made Almeida "Salmeida".
 //
-// A caller who says a name and then spells it with the next one in a single breath ("Kay
+// A caller saying a name and then spelling it with the next one in a single breath ("Kay
 // Jensen. That's k a i j e n s e n") gives the transcriber no pause to write. A spelling
 // that opens or closes with a name said in the same message is also read as the two
 // names, so Kai and Jensen are each spelled as well as kaijensen.
@@ -523,7 +523,7 @@ func listedID(key string) string {
 	return ""
 }
 
-// entityOf is what an ID argument names: "appointment" for "appointment_id".
+// entityOf is what an ID argument names: "booking" for "booking_id".
 func entityOf(key string) string {
 	return strings.ReplaceAll(strings.TrimSuffix(key, "_id"), "_", " ")
 }
