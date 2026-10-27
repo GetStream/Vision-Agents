@@ -48,8 +48,8 @@ func rmsDB(samples []int16) float64 {
 }
 
 func (s *LevellerSuite) TestAQuietPhraseIsRaisedTowardsTheRestOfTheSpeech() {
-	// A sentence at about -23 dBFS, then a phrase 20 dB below it, as ElevenLabs read "I have
-	// your reservation for" in Voicebench.
+	// A sentence at about -23 dBFS, then a phrase 20 dB below it, as an expressive voice can
+	// read one.
 	loud := sine(1000, 0.1)
 	quiet := sine(1500, 0.01)
 

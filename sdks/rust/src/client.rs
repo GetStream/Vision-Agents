@@ -84,6 +84,7 @@ impl Client {
         let backend = &self.inner.backend;
         Client::new(ClientOptions {
             url: Some(backend.url.clone()),
+            region: None,
             customer_id: Some(backend.customer_id.clone()),
             api_key: Some(backend.api_key.clone()),
             // A token is the whole credential, so holding one stops this being a backend.

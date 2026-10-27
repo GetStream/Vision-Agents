@@ -1469,8 +1469,8 @@ func (s *HarnessSuite) TestASkillTheModelInventedIsIgnored() {
 }
 
 func (s *HarnessSuite) TestAMistakeRepeatedInTheFollowUpDoesNotEarnAnother() {
-	// Voicebench: Gemma answered each correction with the same skill tag, and every answer
-	// earned another turn, so the agent talked to itself for two minutes to a silent caller.
+	// A model can answer each correction with the same skill tag. If every answer earned
+	// another turn, the agent would talk to itself for as long as the caller stayed silent.
 	s.build(true)
 	s.respond("turn-1", "hello")
 	s.reply("turn-1", `One moment. <ask skill="teleport">do the thing</ask>`)

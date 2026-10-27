@@ -23,7 +23,6 @@ class PriceList:
     Attributes:
         at (datetime.datetime): The moment the list is read at.
         entries (list[PriceEntry]):
-        markup_bps (int): The list's markup in basis points, added to every entry with none of its own.
         unpriced (list[PriceItem]): The items the routing config routes whose work is billable and that no entry prices:
             each records its rows at nothing until a change prices it, or marks it free.
         upcoming (list[UpcomingPriceEntry]): The entries of the changes not cancelled that take effect after at, soonest
@@ -32,7 +31,6 @@ class PriceList:
 
     at: datetime.datetime
     entries: list[PriceEntry]
-    markup_bps: int
     unpriced: list[PriceItem]
     upcoming: list[UpcomingPriceEntry]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -44,8 +42,6 @@ class PriceList:
         for entries_item_data in self.entries:
             entries_item = entries_item_data.to_dict()
             entries.append(entries_item)
-
-        markup_bps = self.markup_bps
 
         unpriced = []
         for unpriced_item_data in self.unpriced:
@@ -63,7 +59,6 @@ class PriceList:
             {
                 "at": at,
                 "entries": entries,
-                "markup_bps": markup_bps,
                 "unpriced": unpriced,
                 "upcoming": upcoming,
             }
@@ -87,8 +82,6 @@ class PriceList:
 
             entries.append(entries_item)
 
-        markup_bps = d.pop("markup_bps")
-
         unpriced = []
         _unpriced = d.pop("unpriced")
         for unpriced_item_data in _unpriced:
@@ -106,7 +99,6 @@ class PriceList:
         price_list = cls(
             at=at,
             entries=entries,
-            markup_bps=markup_bps,
             unpriced=unpriced,
             upcoming=upcoming,
         )

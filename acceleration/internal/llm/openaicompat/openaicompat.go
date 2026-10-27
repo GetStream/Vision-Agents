@@ -106,7 +106,7 @@ type Options struct {
 	// spoken.
 	ToolCallText bool
 	// ReplayReasoning sends each earlier assistant turn's thinking back with it, for a model
-	// trained on conversations that kept it, such as PhoneLLM Max.
+	// trained on conversations that kept it.
 	ReplayReasoning bool
 	// ResultsFollowCalls is set for a server that refuses a conversation in which anything
 	// comes between a tool call and its results, as MiniMax's does with a 400: what the
@@ -804,7 +804,7 @@ func costTicksMicros(extra map[string]respjson.Field) int64 {
 func reasoning(extra map[string]respjson.Field) string {
 	field, ok := extra[reasoningField]
 	if !ok {
-		// vLLM 0.31 streams it as "reasoning", PhoneLLM Max's one-sentence thought included.
+		// vLLM 0.31 streams it as "reasoning", a thought only a sentence long included.
 		field, ok = extra[replayedReasoningField]
 	}
 	if !ok {

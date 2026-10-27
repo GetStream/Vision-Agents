@@ -16,6 +16,9 @@ export STREAM_ACCELERATION_URL=http://localhost:8080
 export STREAM_ACCELERATION_CUSTOMER_ID=acme
 ```
 
+Unset, it is Stream's hosted router in us-east4. `STREAM_ACCELERATION_REGION=europe-west4`, or
+`stream.Backend{Region: "europe-west4"}`, is the one in another region.
+
 ## In writing
 
 ```go

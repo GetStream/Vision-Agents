@@ -10,19 +10,20 @@ import (
 )
 
 // Prices is the price list for work on the config's providers when nobody passed one: the
-// rates the config sets itself, then the vendor list embedded in the binary, with the
-// providers it marks local, with no markup. A router passes the list it was given instead.
+// rates the config sets itself, charged as they are written, then the vendor list embedded in
+// the binary, priced as a first load prices it, with the providers it marks local. A router
+// passes the list it was given instead.
 func Prices(config Config, logger *slog.Logger) (*pricing.List, error) {
 	var own []pricing.Entry
 	for _, entry := range PriceEntries(config) {
 		if entry.Free || len(entry.Rates) > 0 || len(entry.Tiers) > 0 {
 			entry.Local = false
 			entry.Version = "config"
-			own = append(own, entry)
+			own = append(own, pricing.AtCost(entry))
 		}
 	}
 	entries := prices.Merge(prices.File{Entries: own}, prices.Vendor())
-	return pricing.NewList(prices.EmbeddedVersion(""), prices.WithLocal(entries, LocalItems(config)), 0, logger)
+	return pricing.NewList(prices.EmbeddedVersion(""), prices.WithLocal(entries, LocalItems(config)), logger)
 }
 
 // PriceEntries is the price list the config's price: blocks declare, at the vendors' rates:
@@ -155,11 +156,11 @@ func LocalItems(config Config) []pricing.Item {
 
 // quote prices what one unit of work used. A customer's own model carries its price in its
 // config: its name is the customer's, so no list shared by every customer can hold it. Its
-// cost is what the customer's host bills them, so it is shown but counts toward no spend,
-// and a model with no rate is free rather than unpriced.
+// cost is what the customer's host bills them, so it is shown at those rates but counts toward
+// no spend, and a model with no rate is free rather than unpriced.
 func quote(pricer pricing.Pricer, modality Modality, config ProviderConfig, attributes map[string]string, used pricing.Quantities) pricing.Quote {
 	if config.Provider == CustomProvider {
-		own := entryOf(modality, config).Quote(used)
+		own := pricing.AtCost(entryOf(modality, config)).Quote(used)
 		own.Billable, own.Unpriced = false, false
 		return own
 	}

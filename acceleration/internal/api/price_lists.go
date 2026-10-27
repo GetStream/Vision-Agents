@@ -30,9 +30,8 @@ const idempotencyHeader = "Idempotency-Key"
 // service's limit, so one key a caller makes fits both.
 const maxIdempotencyKeyLength = 255
 
-// confirmationFactor is how far a vendor rate, or the markup an item gets, may move before a
-// change must be confirmed: by this factor or more either way, which is a misplaced decimal
-// point rather than a vendor's new price.
+// confirmationFactor is how far a price may move before a change must be confirmed: by this
+// factor or more either way, which is a misplaced decimal point rather than a new price.
 const confirmationFactor = 2
 
 var (
@@ -50,7 +49,7 @@ var (
 		Message: "a price change of that name was made this second: send it under another name, or again in a moment"}
 	errPriceChangeInPast = invalidRequest(fmt.Sprintf("effective_at is more than %s ago: a change never "+
 		"rewrites what was already billed. A time up to then is taken as now", store.PriceChangeGrace))
-	errNothingToChange = invalidRequest("a price change sets at least one entry or the markup")
+	errNothingToChange = invalidRequest("a price change sets at least one entry")
 )
 
 // priceListBusyRetry is the wait a write refused with price_list_busy is told to take: about
@@ -69,6 +68,19 @@ func priceListBusy() error {
 // invalidPrice is a change whose entries do not make a price list, naming what is wrong.
 func invalidPrice(message string) APIError {
 	return APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidPrice, Message: message}
+}
+
+// refusedSKU is the 400 a change whose SKUs AssignSKUs refused answers, or nil for any other
+// error.
+func refusedSKU(err error) error {
+	message := func() string { return strings.TrimPrefix(err.Error(), "store: ") }
+	switch {
+	case errors.Is(err, store.ErrSKUInUse):
+		return APIError{Type: ErrorTypeInvalidRequest, Code: codeSKUInUse, Message: message()}
+	case errors.Is(err, store.ErrSKUChanged):
+		return APIError{Type: ErrorTypeInvalidRequest, Code: codeSKUChanged, Message: message()}
+	}
+	return nil
 }
 
 // checkIdempotencyKey refuses a key the usage service would refuse too: 1 to 255 characters of
@@ -110,21 +122,18 @@ type PriceItem struct {
 	When     map[string]string `json:"when,omitempty" doc:"The item attributes the entry applies to, such as {\"service_tier\": \"flex\"}. Absent is the item's default entry."`
 }
 
-// PriceEntry is one item's entry in force: the vendor's rates, its own markup, and what
-// customers are charged.
+// PriceEntry is one item's entry in force: its SKU, the vendor's cost and its price.
 type PriceEntry struct {
 	PriceItem
-	Free  bool                 `json:"free,omitempty" doc:"The vendor charges nothing for it."`
-	Local bool                 `json:"local,omitempty" doc:"The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing."`
-	Rates map[string]PriceRate `json:"rates,omitempty" doc:"The vendor's rates, by meter."`
-	Tiers []PriceTier          `json:"tiers,omitempty" doc:"The vendor's rates for long prompts."`
-	// MarkupBps is the entry's own; ChargedMarkupBps is the one it is sold at.
-	MarkupBps        *int64               `json:"markup_bps,omitempty" doc:"The entry's own markup in basis points, replacing the list's. Absent takes the list's."`
-	ChargedMarkupBps int64                `json:"charged_markup_bps" doc:"The markup the entry is sold at: its own, else the list's."`
-	ChargedRates     map[string]PriceRate `json:"charged_rates,omitempty" doc:"What customers are charged: each rate with the markup added, to 12 significant digits."`
-	ChargedTiers     []PriceTier          `json:"charged_tiers,omitempty" doc:"What customers are charged for long prompts."`
-	Version          string               `json:"version,omitempty" doc:"The price change that wrote the entry, which every row it prices names as its price_version."`
-	EffectiveAt      *time.Time           `json:"effective_at,omitempty" doc:"When the entry took effect, or takes effect."`
+	SKU         string               `json:"sku,omitempty" doc:"The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices."`
+	Free        bool                 `json:"free,omitempty" doc:"The vendor charges nothing for it."`
+	Local       bool                 `json:"local,omitempty" doc:"The deployment runs the model itself, as its routing config says. Local work with no price costs nothing."`
+	Rates       map[string]PriceRate `json:"rates,omitempty" doc:"The vendor's cost, by meter, for reference: nothing is charged from it."`
+	Tiers       []PriceTier          `json:"tiers,omitempty" doc:"The vendor's cost for long prompts, for reference."`
+	Prices      map[string]PriceRate `json:"prices,omitempty" doc:"What customers are charged, by the meters of rates."`
+	PriceTiers  []PriceTier          `json:"price_tiers,omitempty" doc:"What customers are charged for long prompts, at the thresholds of tiers."`
+	Version     string               `json:"version,omitempty" doc:"The price change that wrote the entry, which every row it prices names as its price_version."`
+	EffectiveAt *time.Time           `json:"effective_at,omitempty" doc:"When the entry took effect, or takes effect."`
 }
 
 // UpcomingPriceEntry is an entry a scheduled change sets.
@@ -136,11 +145,10 @@ type UpcomingPriceEntry struct {
 
 // PriceList is the price list in force at a moment.
 type PriceList struct {
-	At        time.Time            `json:"at" doc:"The moment the list is read at."`
-	MarkupBps int64                `json:"markup_bps" doc:"The list's markup in basis points, added to every entry with none of its own."`
-	Entries   []PriceEntry         `json:"entries" nullable:"false"`
-	Unpriced  []PriceItem          `json:"unpriced" nullable:"false" doc:"The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free."`
-	Upcoming  []UpcomingPriceEntry `json:"upcoming" nullable:"false" doc:"The entries of the changes not cancelled that take effect after at, soonest first."`
+	At       time.Time            `json:"at" doc:"The moment the list is read at."`
+	Entries  []PriceEntry         `json:"entries" nullable:"false"`
+	Unpriced []PriceItem          `json:"unpriced" nullable:"false" doc:"The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free."`
+	Upcoming []UpcomingPriceEntry `json:"upcoming" nullable:"false" doc:"The entries of the changes not cancelled that take effect after at, soonest first."`
 }
 
 // PriceChangeKind is what wrote a price change.
@@ -154,14 +162,16 @@ func (PriceChangeKind) Schema(registry huma.Registry) *huma.Schema {
 		store.PriceChangeSeed, store.PriceChangeRelease, store.PriceChangeAPI)
 }
 
-// PriceChangeEntry is an entry a change wrote, at the vendor's rates.
+// PriceChangeEntry is an entry a change wrote: its SKU, the vendor's cost and its price.
 type PriceChangeEntry struct {
 	PriceItem
-	Free      bool                 `json:"free,omitempty"`
-	Rates     map[string]PriceRate `json:"rates,omitempty" doc:"The vendor's rates, by meter."`
-	Tiers     []PriceTier          `json:"tiers,omitempty"`
-	MarkupBps *int64               `json:"markup_bps,omitempty" doc:"The entry's own markup in basis points. Absent takes the list's."`
-	Withdrawn bool                 `json:"withdrawn,omitempty" doc:"The change stopped pricing the item under its when."`
+	SKU        string               `json:"sku" doc:"The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing."`
+	Free       bool                 `json:"free,omitempty"`
+	Rates      map[string]PriceRate `json:"rates,omitempty" doc:"The vendor's cost, by meter, for reference."`
+	Tiers      []PriceTier          `json:"tiers,omitempty" doc:"The vendor's cost for long prompts, for reference."`
+	Prices     map[string]PriceRate `json:"prices,omitempty" doc:"What customers are charged, by meter."`
+	PriceTiers []PriceTier          `json:"price_tiers,omitempty" doc:"What customers are charged for long prompts."`
+	Withdrawn  bool                 `json:"withdrawn,omitempty" doc:"The change stopped pricing the item under its when."`
 }
 
 // PriceChange is one write to the price list. None is ever deleted, and none of its entries is
@@ -172,7 +182,6 @@ type PriceChange struct {
 	Reason       string             `json:"reason"`
 	Source       string             `json:"source"`
 	EffectiveAt  time.Time          `json:"effective_at"`
-	MarkupBps    *int64             `json:"markup_bps,omitempty" doc:"The list's markup from effective_at on. Absent left it as it was."`
 	CreatedBy    string             `json:"created_by" doc:"The actor that made it, or the router release that loaded it."`
 	CreatedAt    time.Time          `json:"created_at"`
 	CancelledAt  *time.Time         `json:"cancelled_at,omitempty"`
@@ -188,40 +197,41 @@ type PriceChangePage struct {
 	NextCursor *string       "json:\"next_cursor,omitempty\" doc:\"Pass as `cursor` for the next page. Absent on the last one.\""
 }
 
-// PriceEntryInput is one item's entry as a change writes it, at the vendor's rates, or its
-// withdrawal.
+// PriceEntryInput is one item's entry as a change writes it, its vendor's cost and its price,
+// or its withdrawal.
 type PriceEntryInput struct {
 	PriceItem
-	Free      bool                 `json:"free,omitempty" doc:"The vendor charges nothing for it."`
-	Rates     map[string]PriceRate `json:"rates,omitempty" doc:"The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused."`
-	Tiers     []PriceTier          `json:"tiers,omitempty" doc:"Rates for long prompts. Each tier rates every meter the entry does."`
-	MarkupBps *int64               `json:"markup_bps,omitempty" doc:"The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's."`
-	Withdrawn bool                 `json:"withdrawn,omitempty" doc:"Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate."`
-	Local     bool                 `json:"local,omitempty" doc:"Refused with invalid_price: a model is local when the routing config says so."`
-	Version   string               `json:"version,omitempty" doc:"Refused with invalid_price: an entry's version is the change that writes it."`
+	SKU        string               `json:"sku,omitempty" maxLength:"255" pattern:"^[a-z0-9]+(-[a-z0-9]+)*$" doc:"The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed."`
+	Free       bool                 `json:"free,omitempty" doc:"The vendor charges nothing for it. A free entry has no price."`
+	Rates      map[string]PriceRate `json:"rates,omitempty" doc:"The vendor's cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. Required unless the entry is free or withdrawn. An unknown meter, and a rate of more than $1000 a unit, are refused."`
+	Tiers      []PriceTier          `json:"tiers,omitempty" doc:"The vendor's cost for long prompts. Each tier rates every meter the entry does."`
+	Prices     map[string]PriceRate `json:"prices,omitempty" doc:"What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is."`
+	PriceTiers []PriceTier          `json:"price_tiers,omitempty" doc:"What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its meters, or 400 price_tiers_mismatch."`
+	Withdrawn  bool                 `json:"withdrawn,omitempty" doc:"Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate, price or SKU."`
+	Local      bool                 `json:"local,omitempty" doc:"Refused with invalid_price: a model is local when the routing config says so."`
+	Version    string               `json:"version,omitempty" doc:"Refused with invalid_price: an entry's version is the change that writes it."`
 }
 
-// PriceChangeInput is one change to the price list: new entries, a new markup, or both.
+// PriceChangeInput is one change to the price list: the entries it writes.
 type PriceChangeInput struct {
 	Name        string            `json:"name" pattern:"^[a-z0-9_]{1,48}$" doc:"1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it."`
 	Reason      string            `json:"reason" minLength:"1" maxLength:"2000" doc:"What changed, from what to what. At least one sentence; trimmed, and refused when blank."`
 	Source      string            `json:"source" minLength:"1" maxLength:"1000" doc:"The vendor's page and the date it was read, or the operator's own decision. Trimmed, and refused when blank."`
 	EffectiveAt *time.Time        `json:"effective_at,omitempty" doc:"When the change takes effect. Absent is now; it may be up to two years ahead, but never more than 5 minutes in the past, and a time up to 5 minutes past is taken as now."`
-	MarkupBps   *int64            `json:"markup_bps,omitempty" minimum:"0" maximum:"100000" doc:"The list's markup in basis points from effective_at on. Absent leaves it."`
-	Entries     []PriceEntryInput `json:"entries,omitempty" maxItems:"1000" doc:"Each replaces its item's entry under its when whole: every rate, tier and markup it has."`
+	Entries     []PriceEntryInput `json:"entries,omitempty" maxItems:"1000" doc:"Each replaces its item's entry under its when whole: its cost, its price and every tier of both."`
 	Confirm     bool              `json:"confirm,omitempty" doc:"Required when the preview answers confirmation_required."`
 }
 
 // PricedEntry is how an item is priced before or after a change.
 type PricedEntry struct {
-	Free         bool                 `json:"free,omitempty"`
-	Local        bool                 `json:"local,omitempty"`
-	Rates        map[string]PriceRate `json:"rates,omitempty" doc:"The vendor's rates."`
-	Tiers        []PriceTier          `json:"tiers,omitempty"`
-	MarkupBps    int64                `json:"markup_bps" doc:"The markup it is sold at."`
-	ChargedRates map[string]PriceRate `json:"charged_rates,omitempty"`
-	ChargedTiers []PriceTier          `json:"charged_tiers,omitempty"`
-	Version      string               `json:"version,omitempty" doc:"The change that wrote it. Absent for the change previewed."`
+	SKU        string               `json:"sku,omitempty" doc:"The SKU it is priced under."`
+	Free       bool                 `json:"free,omitempty"`
+	Local      bool                 `json:"local,omitempty"`
+	Rates      map[string]PriceRate `json:"rates,omitempty" doc:"The vendor's cost, for reference."`
+	Tiers      []PriceTier          `json:"tiers,omitempty"`
+	Prices     map[string]PriceRate `json:"prices,omitempty" doc:"What customers are charged."`
+	PriceTiers []PriceTier          `json:"price_tiers,omitempty"`
+	Version    string               `json:"version,omitempty" doc:"The change that wrote it. Absent for the change previewed."`
 }
 
 // PricePreviewItem is one item a change moves.
@@ -229,17 +239,14 @@ type PricePreviewItem struct {
 	PriceItem
 	Before            *PricedEntry       `json:"before,omitempty" doc:"How it is priced before the change. Absent when nothing prices it."`
 	After             *PricedEntry       `json:"after,omitempty" doc:"How it is priced after. Absent when nothing will."`
-	RateFactors       map[string]float64 `json:"rate_factors,omitempty" doc:"By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after."`
-	MarkupFactor      *float64           `json:"markup_factor,omitempty" doc:"The factor the markup it is sold at moves by. Absent when either is 0."`
-	Unpriced          bool               `json:"unpriced,omitempty" doc:"It is priced before the change and billable with no rate after."`
+	PriceFactors      map[string]float64 `json:"price_factors,omitempty" doc:"By meter, the factor its price moves by. Absent for a meter with no price before or after."`
+	Unpriced          bool               `json:"unpriced,omitempty" doc:"It is priced before the change and billable with no price after."`
 	NeedsConfirmation bool               `json:"needs_confirmation,omitempty"`
 }
 
 // PricePreview is what a change would do, written nowhere.
 type PricePreview struct {
 	EffectiveAt          time.Time          `json:"effective_at" doc:"When the change would take effect."`
-	MarkupBpsBefore      int64              `json:"markup_bps_before"`
-	MarkupBpsAfter       int64              `json:"markup_bps_after"`
 	Items                []PricePreviewItem `json:"items" nullable:"false"`
 	ConfirmationRequired bool               `json:"confirmation_required" doc:"createPriceChange answers 409 confirmation_required without confirm: true."`
 	NeedsConfirmation    []PriceItem        `json:"needs_confirmation,omitempty" doc:"The items that make it so."`
@@ -351,33 +358,31 @@ func (s *Server) getActivePriceList(ctx context.Context, request *getActivePrice
 	if err != nil {
 		return nil, err
 	}
-	rows, markup := snapshot.Entries, snapshot.MarkupBps
+	rows := snapshot.Entries
 	config := s.routedConfig()
 	local := routing.LocalItems(config)
 	entries := make([]pricing.Entry, 0, len(rows))
 	for _, row := range rows {
 		entries = append(entries, row.Entry())
 	}
-	list, err := pricing.NewList(pricing.ActiveVersion, pricing.WithLocal(entries, local), markup, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList(pricing.ActiveVersion, pricing.WithLocal(entries, local), slog.New(slog.DiscardHandler))
 	if err != nil {
 		return nil, err
 	}
-	answer := PriceList{At: at.UTC(), MarkupBps: markup, Entries: []PriceEntry{}, Unpriced: []PriceItem{}, Upcoming: []UpcomingPriceEntry{}}
+	answer := PriceList{At: at.UTC(), Entries: []PriceEntry{}, Unpriced: []PriceItem{}, Upcoming: []UpcomingPriceEntry{}}
 	for _, row := range rows {
 		entry := row.Entry()
 		entry.Local = isLocal(entry, local)
-		answer.Entries = append(answer.Entries, renderPriceEntry(entry, markup, row.EffectiveAt))
+		answer.Entries = append(answer.Entries, renderPriceEntry(entry, row.EffectiveAt))
 	}
 	for _, item := range list.Unpriced(routing.Items(config)) {
 		answer.Unpriced = append(answer.Unpriced, priceItemOf(item))
 	}
-	// A scheduled entry is charged at the markup in force when it takes effect.
 	for _, row := range snapshot.Upcoming {
 		entry := row.Entry()
 		entry.Local = isLocal(entry, local)
 		answer.Upcoming = append(answer.Upcoming, UpcomingPriceEntry{
-			PriceEntry: renderPriceEntry(entry, snapshot.UpcomingMarkupBps[row.EffectiveAt.UnixMicro()], row.EffectiveAt),
-			Withdrawn:  row.Withdrawn, Reason: row.Reason,
+			PriceEntry: renderPriceEntry(entry, row.EffectiveAt), Withdrawn: row.Withdrawn, Reason: row.Reason,
 		})
 	}
 	return &priceListResponse{Body: answer}, nil
@@ -440,7 +445,14 @@ func (s *Server) previewPriceChange(ctx context.Context, request *previewPriceCh
 	if err != nil {
 		return nil, err
 	}
-	preview, err := s.previewOf(before, writes, input.MarkupBps)
+	writes, err = before.Assign(writes)
+	if refused := refusedSKU(err); refused != nil {
+		return nil, refused
+	}
+	if err != nil {
+		return nil, err
+	}
+	preview, err := s.previewOf(before, writes)
 	if err != nil {
 		return nil, err
 	}
@@ -465,10 +477,9 @@ func (s *Server) createPriceChange(ctx context.Context, request *createPriceChan
 	actor := managedBy(ctx)
 	change, rows, replayed, err := s.store.CreatePriceChange(ctx, store.PriceChangeWrite{
 		Name: input.Name, Reason: input.Reason, Source: input.Source, EffectiveAt: input.EffectiveAt,
-		MarkupBps: input.MarkupBps, Entries: writes, IdempotencyKey: request.IdempotencyKey,
-		ActorID: actor.ID, ActorName: actor.Name,
-	}, func(before store.PriceListAt) error {
-		preview, err := s.previewOf(before, writes, input.MarkupBps)
+		Entries: writes, IdempotencyKey: request.IdempotencyKey, ActorID: actor.ID, ActorName: actor.Name,
+	}, func(before store.PriceListAt, assigned []store.PriceEntryWrite) error {
+		preview, err := s.previewOf(before, assigned)
 		if err != nil {
 			return err
 		}
@@ -477,6 +488,9 @@ func (s *Server) createPriceChange(ctx context.Context, request *createPriceChan
 		}
 		return nil
 	})
+	if refused := refusedSKU(err); refused != nil {
+		return nil, refused
+	}
 	switch {
 	case errors.Is(err, store.ErrPriceListNotSeeded):
 		return nil, errPriceListNotSeeded
@@ -545,7 +559,7 @@ func confirmationRequired(items []PriceItem) APIError {
 		names = append(names, prices.Name(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, When: item.When}))
 	}
 	return APIError{Type: ErrorTypeConflict, Code: codeConfirmationRequired, Message: fmt.Sprintf(
-		"the change moves a vendor rate or a markup by a factor of %d or more, or leaves a routed model unpriced, "+
+		"the change moves a price by a factor of %d or more, or leaves a routed model unpriced, "+
 			"so it needs confirm: true: %s", confirmationFactor, strings.Join(names, "; "))}
 }
 
@@ -568,10 +582,11 @@ func normalized(input PriceChangeInput) (PriceChangeInput, error) {
 }
 
 // priceEntryWrites checks what a change asks for before the database is read: at least one
-// entry or a markup, and no entry setting what no column holds, writing an item twice, or
-// withdrawing with rates. Whether its entries make a list is checked against the list in force.
+// entry, and no entry setting what no column holds, writing an item twice, withdrawing with a
+// rate, a price or a SKU, or a price that is not in the shape of its vendor cost. Whether its
+// entries make a list, and their SKUs, are checked against the list in force.
 func priceEntryWrites(input PriceChangeInput) ([]store.PriceEntryWrite, error) {
-	if len(input.Entries) == 0 && input.MarkupBps == nil {
+	if len(input.Entries) == 0 {
 		return nil, errNothingToChange
 	}
 	writes := make([]store.PriceEntryWrite, 0, len(input.Entries))
@@ -579,6 +594,7 @@ func priceEntryWrites(input PriceChangeInput) ([]store.PriceEntryWrite, error) {
 	for _, entry := range input.Entries {
 		written := pricingEntryOf(entry)
 		name := prices.Name(written)
+		priced := len(entry.Rates) > 0 || len(entry.Tiers) > 0 || len(entry.Prices) > 0 || len(entry.PriceTiers) > 0
 		switch {
 		case entry.Local:
 			return nil, invalidPrice(name + " sets local: a model is local when the routing config says so")
@@ -586,8 +602,19 @@ func priceEntryWrites(input PriceChangeInput) ([]store.PriceEntryWrite, error) {
 			return nil, invalidPrice(name + " sets a version: an entry's version is the change that writes it")
 		case seen[name]:
 			return nil, invalidPrice(name + " is in the change twice")
-		case entry.Withdrawn && (entry.Free || len(entry.Rates) > 0 || len(entry.Tiers) > 0 || entry.MarkupBps != nil):
-			return nil, invalidPrice(name + " is withdrawn and priced at once: a withdrawal carries no rate")
+		case entry.Withdrawn && (entry.Free || priced || entry.SKU != ""):
+			return nil, invalidPrice(name + " is withdrawn and priced at once: a withdrawal carries no rate, price or SKU")
+		case entry.Free && (len(entry.Prices) > 0 || len(entry.PriceTiers) > 0):
+			return nil, invalidPrice(name + " is free and has a price: a free entry carries none")
+		case !entry.Free && !entry.Withdrawn && len(entry.Rates) == 0:
+			return nil, invalidPrice(name + " has no rates: an entry that is not free sets the vendor's cost in rates and its price in prices")
+		}
+		if !entry.Free && !entry.Withdrawn {
+			if err := pricing.Validate(written); errors.Is(err, pricing.ErrPriceMeters) {
+				return nil, APIError{Type: ErrorTypeInvalidRequest, Code: codePriceMetersMismatch, Message: strings.TrimPrefix(err.Error(), "pricing: ")}
+			} else if errors.Is(err, pricing.ErrPriceTiers) {
+				return nil, APIError{Type: ErrorTypeInvalidRequest, Code: codePriceTiersMismatch, Message: strings.TrimPrefix(err.Error(), "pricing: ")}
+			}
 		}
 		seen[name] = true
 		writes = append(writes, store.PriceEntryWrite{Entry: written, Withdrawn: entry.Withdrawn})
@@ -595,10 +622,10 @@ func priceEntryWrites(input PriceChangeInput) ([]store.PriceEntryWrite, error) {
 	return writes, nil
 }
 
-// previewOf is what writes and markup do to the list a change lands on: every item it moves,
-// before and after, and whether it needs confirming. Entries that do not make a list with the
-// rest are invalid_price, naming the item and what is wrong.
-func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWrite, markup *int64) (PricePreview, error) {
+// previewOf is what writes, with their SKUs, do to the list a change lands on: every item it
+// moves, before and after, and whether it needs confirming. Entries that do not make a list
+// with the rest are invalid_price, naming the item and what is wrong.
+func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWrite) (PricePreview, error) {
 	config := s.routedConfig()
 	local := routing.LocalItems(config)
 	discard := slog.New(slog.DiscardHandler)
@@ -607,13 +634,9 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 	for _, row := range before.Entries {
 		current = append(current, row.Entry())
 	}
-	beforeList, err := pricing.NewList(pricing.ActiveVersion, pricing.WithLocal(current, local), before.MarkupBps, discard)
+	beforeList, err := pricing.NewList(pricing.ActiveVersion, pricing.WithLocal(current, local), discard)
 	if err != nil {
 		return PricePreview{}, err
-	}
-	afterMarkup := before.MarkupBps
-	if markup != nil {
-		afterMarkup = *markup
 	}
 	next := make([]pricing.Entry, 0, len(current)+len(writes))
 	replaced := map[string]bool{}
@@ -630,13 +653,13 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 			next = append(next, write.Entry)
 		}
 	}
-	afterList, err := pricing.NewList(pricing.ActiveVersion, pricing.WithLocal(next, local), afterMarkup, discard)
+	afterList, err := pricing.NewList(pricing.ActiveVersion, pricing.WithLocal(next, local), discard)
 	if err != nil {
 		return PricePreview{}, invalidPrice(strings.TrimPrefix(err.Error(), "pricing: "))
 	}
 
-	// The items to show: every one the change writes, every one whose markup is the list's
-	// when that moves, and every routed one that becomes unpriced.
+	// The items to show: every one the change writes, and every routed one that becomes
+	// unpriced.
 	var items []pricing.Item
 	seen := map[string]bool{}
 	add := func(entry pricing.Entry) {
@@ -647,13 +670,6 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 	}
 	for _, write := range writes {
 		add(write.Entry)
-	}
-	if afterMarkup != before.MarkupBps {
-		for _, entry := range slices.Concat(current, next) {
-			if entry.MarkupBps == nil {
-				add(entry)
-			}
-		}
 	}
 	routed := map[string]bool{}
 	for _, item := range routing.Items(config) {
@@ -669,16 +685,16 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 		}
 	}
 
-	preview := PricePreview{EffectiveAt: before.At.UTC(), MarkupBpsBefore: before.MarkupBps, MarkupBpsAfter: afterMarkup, Items: []PricePreviewItem{}}
+	preview := PricePreview{EffectiveAt: before.At.UTC(), Items: []PricePreviewItem{}}
 	for _, item := range items {
 		shown := PricePreviewItem{PriceItem: priceItemOf(item)}
 		was, wasOK := beforeList.Entry(item)
 		now, nowOK := afterList.Entry(item)
 		if wasOK {
-			shown.Before = pricedEntry(was, before.MarkupBps)
+			shown.Before = pricedEntry(was)
 		}
 		if nowOK {
-			shown.After = pricedEntry(now, afterMarkup)
+			shown.After = pricedEntry(now)
 		}
 		pricedBefore := len(beforeList.Unpriced([]pricing.Item{item})) == 0
 		pricedAfter := len(afterList.Unpriced([]pricing.Item{item})) == 0
@@ -688,13 +704,7 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 		}
 		if wasOK && nowOK {
 			var moved bool
-			shown.RateFactors, moved = rateFactors(was, now)
-			markupBefore, markupAfter := soldAt(was, before.MarkupBps), soldAt(now, afterMarkup)
-			if markupBefore > 0 && markupAfter > 0 {
-				factor := float64(markupAfter) / float64(markupBefore)
-				shown.MarkupFactor = &factor
-			}
-			if moved || movedFar(float64(markupBefore), float64(markupAfter)) {
+			if shown.PriceFactors, moved = priceFactors(was, now); moved {
 				shown.NeedsConfirmation = true
 			}
 		}
@@ -711,17 +721,17 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 	return preview, nil
 }
 
-// rateFactors is the factor each meter's vendor rate moves by from was to now, the rate a meter
+// priceFactors is the factor each meter's price moves by from was to now, the price a meter
 // falls back to counting for one with none of its own, and whether any moved far. A meter with
-// no rate on one side has no factor, and moved far when the other side has one. A tier moved far
-// when its rates did, and when it is on one side only: a long prompt is then priced at other
-// rates.
-func rateFactors(was, now pricing.Entry) (map[string]float64, bool) {
+// no price on one side has no factor, and moved far when the other side has one. A price tier
+// moved far when its prices did, and when it is on one side only: a long prompt is then
+// charged at other prices. The vendor's cost moves no factor.
+func priceFactors(was, now pricing.Entry) (map[string]float64, bool) {
 	factors := map[string]float64{}
-	moved := compareRates(was.Rates, now.Rates, factors)
+	moved := compareRates(was.Prices, now.Prices, factors)
 	tiersOf := func(entry pricing.Entry) map[int64]map[pricing.Meter]pricing.Rate {
-		tiers := make(map[int64]map[pricing.Meter]pricing.Rate, len(entry.Tiers))
-		for _, tier := range entry.Tiers {
+		tiers := make(map[int64]map[pricing.Meter]pricing.Rate, len(entry.PriceTiers))
+		for _, tier := range entry.PriceTiers {
 			tiers[tier.AboveInputTokens] = tier.Rates
 		}
 		return tiers
@@ -790,14 +800,6 @@ func movedFar(before, after float64) bool {
 	return after >= before*confirmationFactor || before >= after*confirmationFactor
 }
 
-// soldAt is the markup an entry is sold at under a list with listMarkupBps.
-func soldAt(entry pricing.Entry, listMarkupBps int64) int64 {
-	if entry.MarkupBps != nil {
-		return *entry.MarkupBps
-	}
-	return listMarkupBps
-}
-
 func isLocal(entry pricing.Entry, local []pricing.Item) bool {
 	return slices.ContainsFunc(local, func(item pricing.Item) bool {
 		return item.Modality == entry.Modality && item.Provider == entry.Provider && item.Model == entry.Model
@@ -820,19 +822,17 @@ func priceItemOfEntry(entry pricing.Entry) PriceItem {
 	return PriceItem{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model, When: entry.When}
 }
 
-func renderPriceEntry(entry pricing.Entry, listMarkupBps int64, effectiveAt time.Time) PriceEntry {
-	charged := pricing.Charged(entry, listMarkupBps)
+func renderPriceEntry(entry pricing.Entry, effectiveAt time.Time) PriceEntry {
 	rendered := PriceEntry{
-		PriceItem:        priceItemOfEntry(entry),
-		Free:             entry.Free,
-		Local:            entry.Local,
-		Rates:            priceRates(entry.Rates),
-		Tiers:            priceTiers(entry.Tiers),
-		MarkupBps:        entry.MarkupBps,
-		ChargedMarkupBps: soldAt(entry, listMarkupBps),
-		ChargedRates:     priceRates(charged.Rates),
-		ChargedTiers:     priceTiers(charged.Tiers),
-		Version:          entry.Version,
+		PriceItem:  priceItemOfEntry(entry),
+		SKU:        entry.SKU,
+		Free:       entry.Free,
+		Local:      entry.Local,
+		Rates:      priceRates(entry.Rates),
+		Tiers:      priceTiers(entry.Tiers),
+		Prices:     priceRates(entry.Prices),
+		PriceTiers: priceTiers(entry.PriceTiers),
+		Version:    entry.Version,
 	}
 	if !effectiveAt.IsZero() {
 		at := effectiveAt.UTC()
@@ -841,17 +841,16 @@ func renderPriceEntry(entry pricing.Entry, listMarkupBps int64, effectiveAt time
 	return rendered
 }
 
-func pricedEntry(entry pricing.Entry, listMarkupBps int64) *PricedEntry {
-	charged := pricing.Charged(entry, listMarkupBps)
+func pricedEntry(entry pricing.Entry) *PricedEntry {
 	return &PricedEntry{
-		Free:         entry.Free,
-		Local:        entry.Local,
-		Rates:        priceRates(entry.Rates),
-		Tiers:        priceTiers(entry.Tiers),
-		MarkupBps:    soldAt(entry, listMarkupBps),
-		ChargedRates: priceRates(charged.Rates),
-		ChargedTiers: priceTiers(charged.Tiers),
-		Version:      entry.Version,
+		SKU:        entry.SKU,
+		Free:       entry.Free,
+		Local:      entry.Local,
+		Rates:      priceRates(entry.Rates),
+		Tiers:      priceTiers(entry.Tiers),
+		Prices:     priceRates(entry.Prices),
+		PriceTiers: priceTiers(entry.PriceTiers),
+		Version:    entry.Version,
 	}
 }
 
@@ -862,7 +861,6 @@ func renderPriceChange(change store.PriceChange, rows []store.PriceEntry) PriceC
 		Reason:       change.Reason,
 		Source:       change.Source,
 		EffectiveAt:  change.EffectiveAt.UTC(),
-		MarkupBps:    change.MarkupBps,
 		CreatedBy:    change.CreatedBy,
 		CreatedAt:    change.CreatedAt.UTC(),
 		CancelledBy:  change.CancelledBy,
@@ -875,12 +873,14 @@ func renderPriceChange(change store.PriceChange, rows []store.PriceEntry) PriceC
 	for _, row := range rows {
 		entry := row.Entry()
 		rendered.Entries = append(rendered.Entries, PriceChangeEntry{
-			PriceItem: priceItemOfEntry(entry),
-			Free:      entry.Free,
-			Rates:     priceRates(entry.Rates),
-			Tiers:     priceTiers(entry.Tiers),
-			MarkupBps: entry.MarkupBps,
-			Withdrawn: row.Withdrawn,
+			PriceItem:  priceItemOfEntry(entry),
+			SKU:        entry.SKU,
+			Free:       entry.Free,
+			Rates:      priceRates(entry.Rates),
+			Tiers:      priceTiers(entry.Tiers),
+			Prices:     priceRates(entry.Prices),
+			PriceTiers: priceTiers(entry.PriceTiers),
+			Withdrawn:  row.Withdrawn,
 		})
 	}
 	return rendered
@@ -888,20 +888,28 @@ func renderPriceChange(change store.PriceChange, rows []store.PriceEntry) PriceC
 
 func pricingEntryOf(entry PriceEntryInput) pricing.Entry {
 	written := pricing.Entry{
-		Modality:  entry.Modality,
-		Provider:  entry.Provider,
-		Model:     entry.Model,
-		Free:      entry.Free,
-		Rates:     pricingRates(entry.Rates),
-		MarkupBps: entry.MarkupBps,
+		Modality:   entry.Modality,
+		Provider:   entry.Provider,
+		Model:      entry.Model,
+		SKU:        entry.SKU,
+		Free:       entry.Free,
+		Rates:      pricingRates(entry.Rates),
+		Tiers:      pricingTiers(entry.Tiers),
+		Prices:     pricingRates(entry.Prices),
+		PriceTiers: pricingTiers(entry.PriceTiers),
 	}
 	if len(entry.When) > 0 {
 		written.When = entry.When
 	}
-	for _, tier := range entry.Tiers {
-		written.Tiers = append(written.Tiers, pricing.Tier{AboveInputTokens: tier.AboveInputTokens, Rates: pricingRates(tier.Rates)})
-	}
 	return written
+}
+
+func pricingTiers(tiers []PriceTier) []pricing.Tier {
+	var converted []pricing.Tier
+	for _, tier := range tiers {
+		converted = append(converted, pricing.Tier{AboveInputTokens: tier.AboveInputTokens, Rates: pricingRates(tier.Rates)})
+	}
+	return converted
 }
 
 func priceRates(rates map[pricing.Meter]pricing.Rate) map[string]PriceRate {
@@ -951,10 +959,11 @@ func (s *Server) registerPriceLists(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/manage/price-lists/active",
 		Summary:     "Read the price list in force",
-		Description: "Every entry in force at `at` (default now): the vendor's rates, the entry's own markup " +
-			"or none, the rates customers are charged, and the change that wrote it, which is the " +
-			"`price_version` of every row it prices. `unpriced` names the routed items whose work is billable " +
-			"and that no entry prices, and `upcoming` the entries of the changes scheduled after `at`." + priceListNote,
+		Description: "Every entry in force at `at` (default now): its SKU, which every row it prices records, the " +
+			"vendor's cost (`rates`, `tiers`) kept for reference, the price customers are charged (`prices`, " +
+			"`price_tiers`), and the change that wrote it, which is the `price_version` of every row it prices. " +
+			"`unpriced` names the routed items whose work is billable and that no entry prices, and `upcoming` " +
+			"the entries of the changes scheduled after `at`." + priceListNote,
 		Tags:      []string{staffTag},
 		Security:  manageSecurity,
 		Responses: map[string]*huma.Response{"200": {Description: "The price list in force"}},
@@ -989,12 +998,14 @@ func (s *Server) registerPriceLists(api huma.API) {
 		Path:        "/v1/manage/price-lists/changes/preview",
 		Summary:     "Preview a price change",
 		Description: "What `createPriceChange` would do with the same body, writing nothing: for every item it " +
-			"moves, the vendor rates, markup and charged rates before and after, the factor each rate moves by, " +
-			"and whether it becomes unpriced. `confirmation_required` is true, naming the items, when a vendor " +
-			"rate, its `increment` or `minimum`, or the markup an item is sold at moves by a factor of 2 or more " +
-			"either way (to or from 0 included), a long-prompt tier is added or dropped, or a routed model " +
-			"that is not local would become unpriced. A body whose entries do not make a price list is a 400 " +
-			"`invalid_price`; a preview never answers 409." + priceListNote,
+			"moves, its SKU, vendor cost and price before and after, the factor each price moves by, and " +
+			"whether it becomes unpriced. `confirmation_required` is true, naming the items, when a price, its " +
+			"`increment` or `minimum`, moves by a factor of 2 or more either way (to or from 0 included), a " +
+			"long-prompt price tier is added or dropped, or a routed model that is not local would become " +
+			"unpriced; the vendor's cost moving asks for none. A body whose entries do not make a price list " +
+			"is a 400 `invalid_price`, one whose prices are not in the shape of their cost a 400 " +
+			"`price_meters_mismatch` or `price_tiers_mismatch`, and one whose SKUs are refused a 400 " +
+			"`sku_in_use` or `sku_changed`, as `createPriceChange` says; a preview never answers 409." + priceListNote,
 		Tags:      []string{staffTag},
 		Security:  manageSecurity,
 		Responses: map[string]*huma.Response{"200": {Description: "What the change would do"}},
@@ -1007,12 +1018,23 @@ func (s *Server) registerPriceLists(api huma.API) {
 		Summary:       "Change the price list",
 		DefaultStatus: http.StatusCreated,
 		Description: "Writes a change, its entries and an audit row in one transaction. Each entry replaces its " +
-			"item's entry under its `when` whole, at the vendor's rates; `markup_bps` sets the list's markup. " +
-			"Every router prices with it from `effective_at`: this one at once, the others within 30 seconds, or " +
-			"at `effective_at` when that is later. Nothing ever changes an entry once written: a correction is a " +
-			"newer change, and a scheduled one can be cancelled.\n\n" +
-			"An entry setting `local` or `version`, or entries that do not make a price list, are a 400 " +
-			"`invalid_price` naming the item. A change the preview says needs confirming is a 409 " +
+			"item's entry under its `when` whole: the vendor's cost in `rates` and `tiers`, for reference, and " +
+			"the price customers are charged in `prices` and `price_tiers`, both set outright: nothing is " +
+			"worked out from the cost, and no markup is added. Every router prices with it from " +
+			"`effective_at`: this one at once, the others within 30 seconds, or at `effective_at` when that is " +
+			"later. Nothing ever changes an entry once written: a correction is a newer change, and a " +
+			"scheduled one can be cancelled.\n\n" +
+			"Every item has one SKU, kept across its price changes, which each row it prices records. An entry " +
+			"without `sku` keeps the item's, or gives a new item one made from its modality, provider, model " +
+			"and `when`, lowercased with every run of other characters a hyphen and numbered `-2`, `-3` past " +
+			"one another item has had. A new item may take another item's SKU, as a model its vendor renamed " +
+			"keeps the old name's, when that item is withdrawn by the same change or is no longer in force; " +
+			"else, or when a change scheduled later gives it to another item, the change is a 400 " +
+			"`sku_in_use`. An item in force given another SKU is a 400 `sku_changed`.\n\n" +
+			"An entry that is neither free nor withdrawn needs `rates` and `prices` with the same meters, else " +
+			"a 400 `price_meters_mismatch`, and a price tier for each tier, at its threshold and with its " +
+			"meters, else a 400 `price_tiers_mismatch`. An entry setting `local` or `version`, or entries that " +
+			"do not make a price list, are a 400 `invalid_price` naming the item. A change the preview says needs confirming is a 409 " +
 			"`confirmation_required` without `confirm: true`. Before the router's first start has loaded its " +
 			"price files the list is not seeded, and every change is a 503 `price_list_not_seeded`. A change " +
 			"that waits more than 5 seconds for another write to the price list is a 503 `price_list_busy`, to " +

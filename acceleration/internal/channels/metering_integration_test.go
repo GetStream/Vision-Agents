@@ -53,7 +53,7 @@ func (s *TextMeteringSuite) SetupSuite() {
 }
 
 func (s *TextMeteringSuite) SetupTest() {
-	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	recorder := routing.NewRecorder(routing.Phone, s.store, nil, list, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(recorder.Close)

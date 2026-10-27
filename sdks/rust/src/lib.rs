@@ -30,7 +30,10 @@ mod tools;
 pub mod types;
 
 pub use agent::{Agent, USER_KEY, user_id_of};
-pub use backend::{ClientOptions, DEFAULT_URL, TOKEN_VALIDITY_SECONDS, URL_ENV, sign, sign_for};
+pub use backend::{
+    ClientOptions, DEFAULT_URL, REGION_ENV, TOKEN_VALIDITY_SECONDS, URL_ENV, region_url, sign,
+    sign_for,
+};
 pub use client::{Client, segment};
 pub use dispatch::{Dispatch, InboundCall, InboundMessage};
 pub use error::{Error, Result, RouterFailure};

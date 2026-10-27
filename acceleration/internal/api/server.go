@@ -1386,7 +1386,7 @@ func (s *Server) getHealth(ctx context.Context, _ *struct{}) (*healthResponse, e
 	}
 
 	// A router reading its prices from the database is not ready until it has read them, so
-	// it never serves on the price files it carries, which have no markup.
+	// it never serves on the price files it carries, which have none of the prices staff set.
 	if s.prices != nil {
 		if err := s.prices.Ready(); err != nil {
 			dependencies["prices"] = err.Error()
@@ -1979,12 +1979,11 @@ func providerBenchmark(benchmark routing.Benchmark) *ProviderBenchmark {
 	}
 }
 
-// providerPrice is the token rates a model is billed at, the markup in force included, and
-// nil for a model not billed by the token. A customer is shown what they are charged, never
-// the vendor's rates.
+// providerPrice is the token prices a model is billed at, and nil for a model not billed by
+// the token. A customer is shown what they are charged, never the vendor's rates.
 func (s *Server) providerPrice(modality Modality, config routing.ProviderConfig) *ProviderPrice {
-	entry, _ := s.pricer.Charged(routing.ItemOf(routing.Modality(modality), config, nil))
-	input, output := perMillion(entry.Rates[pricing.InputTokens]), perMillion(entry.Rates[pricing.OutputTokens])
+	entry, _ := s.pricer.Entry(routing.ItemOf(routing.Modality(modality), config, nil))
+	input, output := perMillion(entry.Prices[pricing.InputTokens]), perMillion(entry.Prices[pricing.OutputTokens])
 	if input == 0 && output == 0 {
 		return nil
 	}

@@ -89,7 +89,7 @@ func (s *PriceFileSuite) TestTheVendorFilePricesWhatRouterYamlDid() {
 		s.T().Skip("router.yaml carries no price: blocks: pass -priced-config=<a routing config with them> to check vendor.json against one")
 	}
 	discard := slog.New(slog.DiscardHandler)
-	want, err := pricing.NewList("config", declared, 0, discard)
+	want, err := pricing.NewList("config", pricing.PricedAll(declared), discard)
 	s.Require().NoError(err)
 	got, err := prices.Embedded(routing.LocalItems(routingConfig), "test", discard)
 	s.Require().NoError(err)
@@ -172,7 +172,7 @@ func (s *PriceFileSuite) TestTheVendorFileChecks() {
 
 	s.Require().NoError(runPricesCheck(nil, &out))
 
-	s.Contains(out.String(), fmt.Sprintf("vendor.json: %d entries, no markup", len(prices.Vendor().Entries)))
+	s.Equal(fmt.Sprintf("vendor.json: %d entries\n", len(prices.Vendor().Entries)), out.String())
 }
 
 func (s *PriceFileSuite) TestCheckingABadFileNamesTheFileAndTheEntry() {
@@ -194,23 +194,27 @@ func (s *PriceFileSuite) TestABadPricesFileStopsStartup() {
 	s.Require().NoError(os.WriteFile(settings.PricesFile, []byte(`{"entries": [
 		{"modality": "llm", "provider": "openai", "model": "m", "rates": {"input_tokens": {"usd": 1}}}]}`), 0o600))
 
-	_, err := loadPriceFiles(settings)
+	_, err := loadPriceFiles(settings, slog.New(slog.DiscardHandler))
 
 	s.ErrorContains(err, settings.PricesFile+": pricing: llm/openai/m rates input_tokens per 0 units")
 }
 
 // TestTheRouterPricesFromTheDeploymentsOwnFile: a model only the deployment's own file prices
-// is priced, and the file's rate wins over vendor.json's for a model both have.
+// is priced, and the file's entry wins over vendor.json's for a model both have. An entry the
+// file gives a price is charged it; one it gives none is charged its rates times the factor.
 func (s *PriceFileSuite) TestTheRouterPricesFromTheDeploymentsOwnFile() {
 	vendor := prices.Vendor().Entries[0]
 	settings := config.Defaults()
 	settings.PricesFile = filepath.Join(s.T().TempDir(), "own-prices.json")
-	s.Require().NoError(os.WriteFile(settings.PricesFile, []byte(fmt.Sprintf(`{"entries": [
+	s.Require().NoError(os.WriteFile(settings.PricesFile, []byte(fmt.Sprintf(`{"markup_bps": 2000, "entries": [
 		{"modality": "llm", "provider": "own", "model": "own-model", "rates": {"input_tokens": {"usd": 3, "per": 1000000}}},
-		{"modality": %q, "provider": %q, "model": %q, "rates": {"input_tokens": {"usd": 7, "per": 1000000}}}]}`,
+		{"modality": %q, "provider": %q, "model": %q, "sku": "own-sku", "rates": {"input_tokens": {"usd": 7, "per": 1000000}},
+		 "prices": {"input_tokens": {"usd": 7.7, "per": 1000000}}}]}`,
 		vendor.Modality, vendor.Provider, vendor.Model)), 0o600))
-	files, err := loadPriceFiles(settings)
+	var logs bytes.Buffer
+	files, err := loadPriceFiles(settings, slog.New(slog.NewTextHandler(&logs, nil)))
 	s.Require().NoError(err)
+	s.Contains(logs.String(), "markup_bps in a price file is ignored", "the file's markup is no error, and is said")
 	routingConfig, err := routing.DefaultConfig()
 	s.Require().NoError(err)
 
@@ -219,14 +223,19 @@ func (s *PriceFileSuite) TestTheRouterPricesFromTheDeploymentsOwnFile() {
 
 	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
 	own := list.Quote(pricing.Item{Modality: "llm", Provider: "own", Model: "own-model"}, used)
-	s.EqualValues(3_000_000, own.CostMicros)
+	s.EqualValues(3_600_000, own.CostMicros)
+	s.EqualValues(3_000_000, own.BaseCostMicros)
+	s.Equal("llm-own-own-model", own.SKU)
 	s.Equal("files:dev", own.Version)
-	s.EqualValues(7_000_000, list.Quote(pricing.Item{Modality: vendor.Modality, Provider: vendor.Provider, Model: vendor.Model}, used).CostMicros)
+	overridden := list.Quote(pricing.Item{Modality: vendor.Modality, Provider: vendor.Provider, Model: vendor.Model}, used)
+	s.EqualValues(7_700_000, overridden.CostMicros)
+	s.EqualValues(7_000_000, overridden.BaseCostMicros)
+	s.Equal("own-sku", overridden.SKU)
 }
 
 func (s *PriceFileSuite) TestWithNoFileOfItsOwnTheRouterPricesFromTheVendorFile() {
 	settings := config.Defaults()
-	files, err := loadPriceFiles(settings)
+	files, err := loadPriceFiles(settings, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	routingConfig, err := routing.DefaultConfig()
 	s.Require().NoError(err)
@@ -245,19 +254,19 @@ func (s *PriceFileSuite) TestAMissingPricesFileStopsStartup() {
 	settings := config.Defaults()
 	settings.PricesFile = filepath.Join(s.T().TempDir(), "missing.json")
 
-	_, err := loadPriceFiles(settings)
+	_, err := loadPriceFiles(settings, slog.New(slog.DiscardHandler))
 
 	s.ErrorContains(err, "missing.json")
 }
 
-func (s *PriceFileSuite) TestCheckingAGoodFileSaysItsMarkup() {
+func (s *PriceFileSuite) TestCheckingAGoodFileSaysItsMarkupIsIgnored() {
 	path := filepath.Join(s.T().TempDir(), "own-prices.json")
 	s.Require().NoError(os.WriteFile(path, []byte(`{"markup_bps": 1500, "entries": []}`), 0o600))
 	var out bytes.Buffer
 
 	s.Require().NoError(runPricesCheck([]string{"--file", path}, &out))
 
-	s.Equal(fmt.Sprintf("%s: 0 entries, a markup of 1500 basis points; %d entries laid over vendor.json\n",
+	s.Equal(fmt.Sprintf("%s: 0 entries; %d entries laid over vendor.json; markup_bps 1500 is ignored: each entry carries its price\n",
 		path, len(prices.Vendor().Entries)), out.String())
 }
 
@@ -272,7 +281,7 @@ func (s *PriceFileSuite) TestCheckingAFileRefusesWhatWouldStopTheStart() {
 	err := runPricesCheck([]string{"--file", path}, &bytes.Buffer{})
 
 	s.ErrorContains(err, "would match equally")
-	_, err = loadPriceFiles(config.Config{PricesFile: path})
+	_, err = loadPriceFiles(config.Config{PricesFile: path}, slog.New(slog.DiscardHandler))
 	s.ErrorContains(err, "would match equally", "the start refuses it too")
 }
 
@@ -287,7 +296,7 @@ func (s *PriceFileSuite) TestCheckingAGoodFileCountsItLaidOverTheVendorFile() {
 
 	s.Require().NoError(runPricesCheck([]string{"--file", path}, &out))
 
-	s.Equal(fmt.Sprintf("%s: 2 entries, no markup; %d entries laid over vendor.json\n", path, len(prices.Vendor().Entries)+1),
+	s.Equal(fmt.Sprintf("%s: 2 entries; %d entries laid over vendor.json\n", path, len(prices.Vendor().Entries)+1),
 		out.String(), "one new item, and one that replaces vendor.json's")
 }
 

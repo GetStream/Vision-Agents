@@ -17,7 +17,7 @@ func TestSpokenNumbersBecomeDigits(t *testing.T) {
 		"Cedar Lane":          "Cedar Lane",
 		"one of us":           "one of us",
 		"party of one":        "party of one",
-		"Okafor":              "Okafor",
+		"Vantrell":            "Vantrell",
 		"oh":                  "oh",
 		"five one two, five five five, oh one four two": "5125550142",
 		"PIN four four seven one, last four":            "PIN 4471 last four",

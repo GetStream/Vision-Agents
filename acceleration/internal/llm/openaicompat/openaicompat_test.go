@@ -350,7 +350,7 @@ func (s *OpenAICompatSuite) TestReasoningOutsideCompletionIsCounted() {
 	s.EqualValues(1_446, response.Usage.OutputTokens, "the answer and the thinking, once")
 	s.EqualValues(1_425, response.Usage.OutputTokensDetails.ReasoningTokens)
 	s.EqualValues(9_550, response.Usage.VendorCostMicros)
-	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, nil)
+	list, err := pricing.NewList("vendor", prices.Vendor().Entries, nil)
 	s.Require().NoError(err)
 	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7"}, response.Used())
 	s.EqualValues(9_550, quote.BaseCostMicros, "priced at the vendor's rates, it is what xAI charged")
@@ -498,7 +498,7 @@ func reasoningOf(events []llm.Event) string {
 }
 
 func (s *OpenAICompatSuite) TestAThoughtChannelIsNeverSpoken() {
-	// What Gemma 4 sent in Voicebench: the channel written after the filler, just before the
+	// What Gemma 4 has sent: the channel written after the filler, just before the
 	// tool call, with its markers split over several chunks.
 	s.frames = []string{
 		textFrame("Just a moment, checking. \n\n<|chan"),
@@ -527,7 +527,7 @@ func (s *OpenAICompatSuite) TestABareChannelNameOpeningAReplyIsNeverSpoken() {
 }
 
 func (s *OpenAICompatSuite) TestABareChannelNameAfterWhitespaceIsNeverSpoken() {
-	// After a tool result in Voicebench, the caller heard "Thought, you're all set": the name
+	// After a tool result, a caller heard "Thought, you're all set": the name
 	// came with whitespace around it rather than first and bare.
 	for _, frames := range [][]string{
 		{"\nthought\n", " You're all set!"},
@@ -587,7 +587,7 @@ func withTools() llm.ResponseParams {
 }
 
 func (s *OpenAICompatSuite) TestAToolCallWrittenAsTextIsMadeNotSpoken() {
-	// What Gemma 4 sent in Voicebench once the opening marker went missing, split mid-marker.
+	// What Gemma 4 has sent once the opening marker went missing, split mid-marker.
 	s.frames = []string{
 		textFrame("call:check_avail"),
 		textFrame("ability{party_size:4,patio:true,time:<|\"|"),
@@ -608,8 +608,8 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenAsTextIsMadeNotSpoken() {
 
 func (s *OpenAICompatSuite) TestAMarkedToolCallAfterFillerKeepsTheFiller() {
 	s.frames = []string{
-		textFrame("One moment, checking. <|tool_call>call:create_reservation{name:<|\"|>Alvarez<|\"|>,"),
-		textFrame("party_size:6,allergen:<|\"|>gluten<|\"|>,notes:{high_chair:false,tags:[1,<|\"|>a, b<|\"|>]}}<tool_call|>"),
+		textFrame("One moment, checking. <|tool_call>call:create_reservation{name:<|\"|>Quillon<|\"|>,"),
+		textFrame("party_size:6,allergen:<|\"|>sesame<|\"|>,notes:{high_chair:false,tags:[1,<|\"|>a, b<|\"|>]}}<tool_call|>"),
 		toolFrame(0, "call-1", "check_availability", `{"party_size":6}`),
 		usageFrame(20, 0, 30, 0, "tool_calls"),
 	}
@@ -623,13 +623,13 @@ func (s *OpenAICompatSuite) TestAMarkedToolCallAfterFillerKeepsTheFiller() {
 	s.ElementsMatch([]string{"create_reservation", "check_availability"}, names)
 	for _, call := range response.ToolCalls {
 		if call.Name == "create_reservation" {
-			s.JSONEq(`{"name":"Alvarez","party_size":6,"allergen":"gluten","notes":{"high_chair":false,"tags":[1,"a, b"]}}`, call.Arguments)
+			s.JSONEq(`{"name":"Quillon","party_size":6,"allergen":"sesame","notes":{"high_chair":false,"tags":[1,"a, b"]}}`, call.Arguments)
 		}
 	}
 }
 
 func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken() {
-	// What Gemma 4 sent in Voicebench and the caller heard read out.
+	// What Gemma 4 has sent and callers heard read out.
 	cases := map[string]struct {
 		frames    []string
 		spoken    string
@@ -637,10 +637,10 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken()
 		arguments string
 	}{
 		"call_tool prefix with double quotes": {
-			frames:    []string{"Let me open a ticket... call_tool: create_reservation{name: \"Al", "varez, party of {6}\", allergen: \"say \\\"none\\\"\"}"},
+			frames:    []string{"Let me open a ticket... call_tool: create_reservation{name: \"Qui", "llon, party of {6}\", allergen: \"say \\\"none\\\"\"}"},
 			spoken:    "Let me open a ticket... ",
 			name:      "create_reservation",
-			arguments: `{"name":"Alvarez, party of {6}","allergen":"say \"none\""}`,
+			arguments: `{"name":"Quillon, party of {6}","allergen":"say \"none\""}`,
 		},
 		"call tool prefix with no arguments": {
 			frames:    []string{"One moment. call tool", ": check_availability{}"},
@@ -679,10 +679,10 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken()
 			arguments: `{"party_size":4,"time":"7:30"}`,
 		},
 		"bare brace call with no prefix": {
-			frames:    []string{"Booking now. create_reservation{name: \"Alvarez\", party_size: 6}"},
+			frames:    []string{"Booking now. create_reservation{name: \"Quillon\", party_size: 6}"},
 			spoken:    "Booking now. ",
 			name:      "create_reservation",
-			arguments: `{"name":"Alvarez","party_size":6}`,
+			arguments: `{"name":"Quillon","party_size":6}`,
 		},
 	}
 	for name, tc := range cases {
@@ -799,7 +799,7 @@ func (s *OpenAICompatSuite) TestAnOfferedNameWithoutItsArgumentsIsSpoken() {
 }
 
 func (s *OpenAICompatSuite) TestAStrayControlTokenIsNeverSpoken() {
-	// What Gemma 4 sent in Voicebench beside a real call, and the caller heard as a turn.
+	// What Gemma 4 has sent beside a real call, and a caller heard as a turn.
 	s.frames = []string{
 		textFrame(`<|"|>`),
 		toolFrame(0, "call-1", "check_availability", `{"party_size":4}`),
@@ -815,7 +815,7 @@ func (s *OpenAICompatSuite) TestAStrayControlTokenIsNeverSpoken() {
 }
 
 func (s *OpenAICompatSuite) TestAStrayChannelMarkerIsNeverSpoken() {
-	// After a tool result in Voicebench the caller heard "<channel|> I found your appointment".
+	// After a tool result a caller heard "<channel|>" before the answer.
 	s.frames = []string{textFrame("<channel|> I found it."), usageFrame(20, 0, 8, 0, "stop")}
 	provider := s.provider(Options{ThoughtChannel: true})
 
