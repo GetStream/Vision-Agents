@@ -18,6 +18,31 @@ An agent answering a Linq (iMessage) chat is now offered the scheduling tools wh
 
 `router usage forget-user --app <app> --user <user id> --actor <who> [--dry-run] [--settle 2m]` replaces an app's end user id with `forgotten:` and 32 random hex characters wherever the usage records keep it: the requests of every shard, the usage service's events and windows (through its new `forgetUser` management operation, `POST /v1/manage/users/forget`, then again after `--settle` for a batch shipped in between), the user's spend counters, holds and quota buckets in Redis (deleted by name), and in the shared database the user's own policy and user-level limits (deleted, so the app's defaults apply) and the id on their limit resets, grants and campaigns. Usage and cost stay under the app. It prints each step's count and writes one `end_user` audit row (source `cli`) naming the replacement and the actor, never the id; `--dry-run` prints the counts and changes nothing, and `--replacement <the id a run printed>` finishes a run that stopped under the same replacement. It needs `ROUTER_USAGE_URL` and the usage service's manage key in `ROUTER_USAGE_MANAGE_KEY`. Sessions, conversation history and `agent_logs` keep their own retention (AI-1826, #1259).
 
+### Juno on Android
+
+`examples/voice_agents/android_assistant` is the Android half of swift_assistant: Juno, talked
+to from an Android app with swift_assistant's agent, `configure` and backend. Its conversations
+are the router's, in a drawer that lists, searches, opens and deletes them, and a new one has no
+session until it is first written to. The chat is Stream Chat's AI components, with the reply's
+reasoning and steps, copy, share and rating under it, photos from the picker, and the composer
+floating over the conversation. The phone answers `get_local_context`, `get_location`,
+`list_events`, `add_reminder` (a calendar event with an alert) and `send_email`, asking for each
+permission the first time a tool needs it. Voice mode starts voice on the open conversation,
+with Stream's voice glow, captions, and a camera button with a preview of what Juno sees. Each
+new conversation's session names `io.getstream.visionagents.androidassistant:/connected` as its
+`return_url`, and the app opens a connector's sign-in in an Auth Tab, though Stream's Android AI
+components have no sign-in card to start one from yet. CI builds it beside the Kotlin SDK.
+
+### Kotlin sessions name where a sign-in goes back to
+
+`SessionOptions.returnUrl` in the Kotlin SDK is sent as the session's `return_url`, as Swift's
+`returnURL` is: the app's own scheme in reverse domain form, such as
+`com.example.app:/connected`, which the router hands a connector's sign-in back to. Left null,
+nothing is sent and the sign-in goes back to the dashboard, as before.
+`AgentSession.declineLogin(toolCallId)` answers such a sign-in with Not now, as Swift's
+`declineLogin` does: the router ends the call, runs nothing and tells the agent the person did
+not connect.
+
 ### A tool on a speech-to-speech conversation can say how it is going
 
 `/v1/sts/stream` now takes `tool_update` (`tool_call_id`, `text`, `verbatim`) for a call the model is waiting on, and has the model say it the way an agent session does: once no reply is being spoken and the caller is not talking, a newer update for the call replacing one not yet said, and the call's `tool_result` dropping it. A status is said in the model's own words, `verbatim` words as written or close to them. An update for a call the model is not waiting on, or to a model that cannot be told about an open call, is dropped. `tool_hold` is answered with `tool_held` for an open call, and with `tool_cancel` for one the model cancelled or was answered for. In Python, `stream.STS` runs each function with `current_call()` set, so `update()`, `say()` and `disallow_interruptions()` work there as they do on `stream.Accelerated`; before, they did nothing.
