@@ -328,6 +328,9 @@ func (s *OpenAISuite) TestAnErrorEventOnOpenAIsSideIsTransient() {
 	err := s.failedWith(`{"type":"error","code":"rate_limit_exceeded","message":"slow down","param":null,"sequence_number":1}`)
 	s.ErrorContains(err, "slow down")
 	s.True(llm.Transient(err))
+	for _, code := range []string{"server_is_overloaded", "slow_down"} {
+		s.True(llm.Transient(s.failedWith(`{"type":"error","code":"`+code+`","message":"busy","param":null,"sequence_number":1}`)), code)
+	}
 }
 
 func (s *OpenAISuite) TestAFailureOfTheRequestItselfIsNotTransient() {
