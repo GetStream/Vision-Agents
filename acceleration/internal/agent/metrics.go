@@ -94,7 +94,7 @@ var (
 		Namespace: "router",
 		Name:      "agent_flow_decision_seconds",
 		Help:      "How long the flow controller took to rule, by whose answer was used",
-		// 50 ms to 12.8 s, past the controller's own deadlines (harness flowDeadline).
+		// 50 ms to 12.8 s, past the controller's own deadlines (harness.FlowDeadline).
 		Buckets: prometheus.ExponentialBuckets(0.05, 2, 9),
 	}, []string{"ruler"})
 	settledOverAgent = promauto.NewCounterVec(prometheus.CounterOpts{

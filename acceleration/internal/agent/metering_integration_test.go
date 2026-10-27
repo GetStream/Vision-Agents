@@ -47,7 +47,7 @@ func (s *AgentMeteringSuite) SetupSuite() {
 	s.Require().NoError(pgStore.Migrate(context.Background()))
 	s.pgStore = pgStore
 	s.T().Cleanup(func() { s.Require().NoError(pgStore.Close()) })
-	s.list, err = pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	s.list, err = pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 }
 

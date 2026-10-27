@@ -35,7 +35,8 @@ const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token"
 ```
 
 `url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
-passed for a self-hosted or local one. `customerId`, `apiKey` and `apiSecret` fall back to
+passed for a self-hosted or local one. The hosted router is us-east4's; for another region,
+pass `region: "europe-west4"` or set `STREAM_ACCELERATION_REGION` instead. `customerId`, `apiKey` and `apiSecret` fall back to
 `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`.
 
 The hosted router is reached through Stream's authenticating proxy, which wants the
@@ -142,6 +143,31 @@ with `agent.sync()`: a session runs on the stored config's.
 The model asks for a tool over the session socket, this process runs it, and the answer
 goes back the same way. A tool that throws is reported to the model, because the model is
 mid-sentence waiting for it and can only say something useful if it is told.
+
+`parameters` can also be a Zod 4 schema, or any schema that implements
+[Standard JSON Schema](https://standardschema.dev), such as ArkType's or Valibot's:
+
+```ts
+import { z } from "zod";
+
+agent.tools.register({
+  name: "book_flight",
+  description: "Book a flight for the caller",
+  parameters: z.object({
+    flight_id: z.string().regex(/^[A-Z]{2}\d{1,4}$/).describe("e.g. LH400"),
+    seats: z.number().int().min(1).max(9),
+    cabin: z.enum(["economy", "business", "first"]).default("economy"),
+  }),
+  run: async ({ flight_id, seats, cabin }) => bookings.book(flight_id, seats, cabin),
+});
+```
+
+The model is told the JSON Schema the Zod schema describes, and each call's arguments are
+parsed by it before `run`, which is handed what it parsed, typed from the schema. Arguments it
+refuses fail the call with what was wrong, such as `seats: Too big: expected number to be
+<=9`, and the model can try again. A rule JSON Schema cannot say, such as a `refine`, still
+holds; the model is just not told it. A JSON Schema written out is told to the model as it is,
+and its arguments reach `run` unchecked. The package does not depend on Zod.
 
 A tool can say how the backend treats its calls, and read the call it is running for:
 
@@ -465,7 +491,7 @@ not in CI: they talk to a deployment, and they skip rather than fail when there 
 talk to — a laptop with no router up, or a checkout with no credentials, is not a broken
 build. `test:local` wants a router on `LOCAL_ACCELERATION_URL`, default
 `http://127.0.0.1:8098`. `test:qa` wants `STREAM_API_KEY` and `STREAM_API_SECRET`, and
-reaches `STAGING_ACCELERATION_URL` and `STAGING_DOCS_SEARCH_URL`. They are the only place
+reaches `QA_ACCELERATION_URL`, which it skips without, and `QA_DOCS_SEARCH_URL`. They are the only place
 the claims above are checked against a real backend rather than against a test one, which
 is worth running before trusting any of them: three of them are `todo` there today, each
 naming what the deployment does instead.

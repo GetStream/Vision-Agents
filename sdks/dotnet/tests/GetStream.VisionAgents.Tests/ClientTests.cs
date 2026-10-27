@@ -81,7 +81,8 @@ public sealed class ClientTests
     [Fact]
     public void NamingNoRouterGoesToTheHostedOneThroughTheProxy()
     {
-        if (Environment.GetEnvironmentVariable(Backend.UrlEnv) is { Length: > 0 })
+        if (Environment.GetEnvironmentVariable(Backend.UrlEnv) is { Length: > 0 }
+            || Environment.GetEnvironmentVariable(Backend.RegionEnv) is { Length: > 0 })
         {
             return;
         }
@@ -98,6 +99,63 @@ public sealed class ClientTests
         var backend = new Backend(new VisionAgentsOptions { Url = "http://router", CustomerId = "examples" });
 
         Assert.False(backend.Authenticate);
+    }
+
+    [Fact]
+    public void ARegionIsTheHostedRouterThere()
+    {
+        var backend = new Backend(new VisionAgentsOptions { Region = "us-east4" }, Env(Credential));
+
+        Assert.Equal("https://accelerate-us-east4.gcp.stream-io-api.com", backend.Url);
+        Assert.True(backend.Authenticate);
+    }
+
+    [Fact]
+    public void ARegionInTheEnvironmentGivesWayToAUrlThere()
+    {
+        var local = new Backend(new VisionAgentsOptions(), Env(new()
+        {
+            [Backend.CustomerEnv] = "acme",
+            [Backend.RegionEnv] = "us-east4",
+            [Backend.UrlEnv] = "http://localhost:8080",
+        }));
+        var regional = new Backend(new VisionAgentsOptions(), Env(new(Credential) { [Backend.RegionEnv] = "us-east4" }));
+
+        Assert.Equal("http://localhost:8080", local.Url);
+        Assert.Equal("https://accelerate-us-east4.gcp.stream-io-api.com", regional.Url);
+        Assert.True(regional.Authenticate);
+    }
+
+    [Fact]
+    public void ARegionPassedInBeatsAUrlInTheEnvironment()
+    {
+        var backend = new Backend(new VisionAgentsOptions { Region = "europe-west4" },
+            Env(new(Credential) { [Backend.UrlEnv] = "http://localhost:8080" }));
+
+        Assert.Equal("https://accelerate-europe-west4.gcp.stream-io-api.com", backend.Url);
+    }
+
+    [Fact]
+    public void AUrlAndARegionTogetherAreRefused()
+    {
+        Assert.Throws<ConfigurationException>(() => new Backend(
+            new VisionAgentsOptions { Url = "https://acceleration.example.com", Region = "us-east4", CustomerId = "acme" },
+            Env(new())));
+    }
+
+    [Theory]
+    [InlineData("US-EAST4")]
+    [InlineData("us-east4.evil.com/x")]
+    [InlineData("us_east4")]
+    [InlineData("useast4")]
+    [InlineData("us-east")]
+    [InlineData("us-east4\n")]
+    public void AnythingButARegionNameIsRefused(string name)
+    {
+        var refused = Assert.Throws<ConfigurationException>(() =>
+            new Backend(new VisionAgentsOptions { Region = name, CustomerId = "acme" }, Env(new())));
+
+        Assert.Contains(name, refused.Message);
     }
 
     [Fact]
@@ -432,6 +490,18 @@ public sealed class ClientTests
         Assert.Equal("{}", JsonSerializer.Serialize(absent, Json.Options));
         Assert.Equal("""{"allowed_models":[],"tags":{"team":"a"}}""", JsonSerializer.Serialize(none, Json.Options));
     }
+
+    private static readonly Dictionary<string, string> Credential = new()
+    {
+        [Backend.CustomerEnv] = "acme",
+        [Backend.ApiKeyEnv] = "ntv9",
+        [Backend.ApiSecretEnv] = "shh",
+    };
+
+    // An environment holding only what it was given, read in place of the process's own so
+    // tests running side by side do not see each other's.
+    private static Func<string, string?> Env(Dictionary<string, string> pairs) =>
+        name => pairs.GetValueOrDefault(name);
 
     private static object Page(bool hasMore = false, string? next = null, params object[] items) =>
         new { items, has_more = hasMore, next_cursor = next };

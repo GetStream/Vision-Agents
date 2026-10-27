@@ -90,6 +90,7 @@ require (
 	github.com/puzpuzpuz/xsync/v4 v4.5.0 // indirect
 	github.com/redis/go-redis/v9 v9.20.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/thesyncim/skipset v0.19.0 // indirect
 	github.com/twitchtv/twirp v8.1.3+incompatible // indirect

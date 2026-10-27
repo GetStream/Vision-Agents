@@ -4,6 +4,35 @@ import type { Schemas } from "./client.js";
 /** A JSON Schema object describing what a tool takes. */
 export type ParameterSchema = Readonly<Record<string, unknown>>;
 
+/** One problem a {@link StandardToolSchema} found with a value. */
+export interface StandardIssue {
+  readonly message: string;
+  readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined;
+}
+
+type StandardResult<Output> =
+  | { readonly value: Output; readonly issues?: undefined }
+  | { readonly issues: ReadonlyArray<StandardIssue> };
+
+/**
+ * A schema that validates a value and says what it takes as JSON Schema, in the shape of
+ * Standard Schema and Standard JSON Schema (https://standardschema.dev). A Zod 4 schema is
+ * one, as are ArkType's and Valibot's.
+ */
+export interface StandardToolSchema<Input = unknown, Output = Input> {
+  readonly "~standard": {
+    readonly version: 1;
+    readonly vendor: string;
+    readonly validate: (
+      value: unknown,
+    ) => StandardResult<Output> | Promise<StandardResult<Output>>;
+    readonly jsonSchema: {
+      readonly input: (options: { readonly target: "draft-2020-12" }) => Record<string, unknown>;
+    };
+    readonly types?: { readonly input: Input; readonly output: Output } | undefined;
+  };
+}
+
 /** One of the caller's own functions, as the model is offered it and as it runs. */
 export interface Tool<In = Readonly<Record<string, unknown>>> {
   /** How the model asks for it. */
@@ -11,12 +40,16 @@ export interface Tool<In = Readonly<Record<string, unknown>>> {
   /** What the model is told it does, which is the whole of how it decides to reach for one. */
   description: string;
   /**
-   * A JSON Schema object describing the arguments.
+   * What the arguments are: a JSON Schema object, or a schema such as a Zod 4 `z.object`.
    *
-   * Written out rather than derived from the type, because a type is gone by the time this
-   * runs and a schema guessed from one would be a schema the model was told wrongly.
+   * A JSON Schema is told to the model as it is, and `run` is handed the arguments
+   * unchecked. A Zod schema is told to the model as the JSON Schema it describes, and each
+   * call's arguments are parsed by it first: `run` is handed what it parsed, typed from it,
+   * and arguments it refuses fail the call with what was wrong, for the model to correct.
+   * A rule JSON Schema cannot say, such as a `refine`, still holds; the model is just not
+   * told it.
    */
-  parameters?: ParameterSchema;
+  parameters?: ParameterSchema | StandardToolSchema<unknown, In>;
   /**
    * Who runs it, as the conversation shows it: `server`, what the router assumes, or
    * `client`, a person's device, whose call is shown with its arguments to every channel
@@ -211,7 +244,7 @@ export interface ToolApproval {
  * same way.
  */
 export class Tools {
-  private readonly registered = new Map<string, Tool<never>>();
+  private readonly registered = new Map<string, Registered>();
 
   /** Adds a function. Registering one name twice is refused rather than silently winning. */
   register<In>(tool: Tool<In>): this {
@@ -229,8 +262,9 @@ export class Tools {
     if (tool.timeoutMs !== undefined && !(Number.isFinite(tool.timeoutMs) && tool.timeoutMs >= 0)) {
       throw new ConfigurationError(`${tool.name} has a timeout that is not a duration: ${tool.timeoutMs}`);
     }
+    const parameters = parametersOf(tool.name, tool.parameters);
     if (tool.approval) {
-      const properties = (tool.parameters?.["properties"] ?? {}) as Record<string, unknown>;
+      const properties = (parameters?.["properties"] ?? {}) as Record<string, unknown>;
       for (const [, argument] of tool.approval.title.matchAll(PLACEHOLDER)) {
         if (!(argument! in properties)) {
           throw new ConfigurationError(
@@ -239,7 +273,11 @@ export class Tools {
         }
       }
     }
-    this.registered.set(tool.name, tool as Tool<never>);
+    this.registered.set(tool.name, {
+      tool: tool as unknown as Tool<never>,
+      parameters,
+      parse: isStandard(tool.parameters) ? tool.parameters["~standard"].validate : undefined,
+    });
     return this;
   }
 
@@ -250,10 +288,10 @@ export class Tools {
 
   /** The functions as the session spec declares them. */
   declared(): Schemas["SessionTool"][] {
-    return [...this.registered.values()].map((tool) => ({
+    return [...this.registered.values()].map(({ tool, parameters }) => ({
       name: tool.name,
       description: tool.description,
-      ...(tool.parameters ? { parameters: tool.parameters } : {}),
+      ...(parameters ? { parameters } : {}),
       ...(tool.executor ? { executor: tool.executor } : {}),
       ...(tool.displayTitle ? { display_title: tool.displayTitle } : {}),
       ...(tool.approval ? { approval: approvalOf(tool.approval) } : {}),
@@ -269,7 +307,7 @@ export class Tools {
 
   /** The question the function named asks before it runs, if it asks one. */
   approval(name: string): ToolApproval | undefined {
-    return this.registered.get(name)?.approval;
+    return this.registered.get(name)?.tool.approval;
   }
 
   /**
@@ -285,10 +323,11 @@ export class Tools {
     signal: AbortSignal,
     toolCallContext: ToolCall = new ToolCall(),
   ): Promise<string> {
-    const tool = this.registered.get(name);
-    if (!tool) {
+    const registered = this.registered.get(name);
+    if (!registered) {
       throw new ConfigurationError(`nothing is registered as ${name}`);
     }
+    const { tool, parse } = registered;
 
     let input: unknown = {};
     if (args.trim()) {
@@ -299,6 +338,15 @@ export class Tools {
           `${name} was asked for with arguments it cannot take: ${String(cause)}`,
         );
       }
+    }
+    if (parse) {
+      const parsed = await parse(input);
+      if (parsed.issues) {
+        throw new ConfigurationError(
+          `${name} was asked for with arguments it cannot take: ${describeIssues(parsed.issues)}`,
+        );
+      }
+      input = parsed.value;
     }
     if (!tool.timeoutMs) {
       return render(await tool.run(input as never, signal, toolCallContext));
@@ -326,6 +374,51 @@ export class Tools {
       clearTimeout(timer);
     }
   }
+}
+
+interface Registered {
+  tool: Tool<never>;
+  /** What the model is told the tool takes. */
+  parameters: ParameterSchema | undefined;
+  /** What a call's arguments are parsed by first, for a tool described by a schema library. */
+  parse: StandardToolSchema["~standard"]["validate"] | undefined;
+}
+
+function isStandard(parameters: unknown): parameters is StandardToolSchema {
+  return typeof parameters === "object" && parameters !== null && "~standard" in parameters;
+}
+
+/** The JSON Schema a tool's parameters tell the model, refusing one that is not an object. */
+function parametersOf(name: string, parameters: Tool<unknown>["parameters"]): ParameterSchema | undefined {
+  if (!isStandard(parameters)) {
+    return parameters;
+  }
+  const standard = parameters["~standard"];
+  if (typeof standard.jsonSchema?.input !== "function") {
+    throw new ConfigurationError(
+      `${name}'s parameters are a Standard Schema with no JSON Schema to tell the model, ` +
+        `such as a recent Zod 4 schema has (this one is ${standard.vendor}'s)`,
+    );
+  }
+  const { $schema: _, ...schema } = standard.jsonSchema.input({ target: "draft-2020-12" });
+  if (schema["type"] !== "object") {
+    throw new ConfigurationError(
+      `${name}'s parameters describe ${String(schema["type"] ?? "something else")}, and a tool takes an object`,
+    );
+  }
+  return schema;
+}
+
+/** What a schema found wrong with a call's arguments, in words the model can correct. */
+function describeIssues(issues: ReadonlyArray<StandardIssue>): string {
+  return issues
+    .map((issue) => {
+      const path = (issue.path ?? [])
+        .map((segment) => String(typeof segment === "object" ? segment.key : segment))
+        .join(".");
+      return path ? `${path}: ${issue.message}` : issue.message;
+    })
+    .join("; ");
 }
 
 function approvalOf(approval: ToolApproval): Schemas["SessionToolApproval"] {

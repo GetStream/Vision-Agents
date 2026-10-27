@@ -15,8 +15,6 @@ final readonly class PriceList
         public \DateTimeImmutable $at,
         /** @var list<PriceEntry> */
         public array $entries,
-        // The list's markup in basis points, added to every entry with none of its own.
-        public int $markupBps,
         // The items the routing config routes whose work is billable and that no entry prices: each records its rows...
         /** @var list<PriceItem> */
         public array $unpriced,
@@ -34,7 +32,6 @@ final readonly class PriceList
         return new self(
             at: Json::date($data, 'at'),
             entries: array_map(PriceEntry::fromArray(...), Json::objects($data, 'entries')),
-            markupBps: Json::int($data, 'markup_bps'),
             unpriced: array_map(PriceItem::fromArray(...), Json::objects($data, 'unpriced')),
             upcoming: array_map(UpcomingPriceEntry::fromArray(...), Json::objects($data, 'upcoming')),
         );
@@ -50,7 +47,6 @@ final readonly class PriceList
         $out = [];
         $out['at'] = Json::dateValue($this->at);
         $out['entries'] = array_map(static fn (PriceEntry $each): array => $each->toArray(), $this->entries);
-        $out['markup_bps'] = $this->markupBps;
         $out['unpriced'] = array_map(static fn (PriceItem $each): array => $each->toArray(), $this->unpriced);
         $out['upcoming'] = array_map(static fn (UpcomingPriceEntry $each): array => $each->toArray(), $this->upcoming);
         return $out;

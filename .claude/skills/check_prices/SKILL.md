@@ -5,7 +5,7 @@ description: Check every price the router bills with against what each vendor ch
 
 # Check prices
 
-Every unit of work the router records is priced by one price list (`acceleration/internal/pricing`). Its rates are the vendors' list prices; an operator's markup, if any, is kept beside them and is never this skill's business.
+Every unit of work the router records is priced by one price list (`acceleration/internal/pricing`). Each entry's `rates` are the vendors' list prices, kept for reference; what customers are charged is its `prices`, set by the operator, and never this skill's business.
 
 | Where | What it is | How it changes |
 | --- | --- | --- |
@@ -101,15 +101,17 @@ For each vendor announcement, one price change as JSON in `.claude/skills/check_
   "effective_at": "2026-12-01T00:00:00Z",
   "entries": [
     {"modality": "llm", "provider": "openai", "model": "gpt-x",
-     "rates": {"input_tokens": {"usd": 2.5, "per": 1000000}, "cached_input_tokens": {"usd": 0.25, "per": 1000000}}}
+     "rates": {"input_tokens": {"usd": 2.5, "per": 1000000}, "cached_input_tokens": {"usd": 0.25, "per": 1000000}},
+     "prices": {"input_tokens": {"usd": 2.4, "per": 1000000}, "cached_input_tokens": {"usd": 0.24, "per": 1000000}}}
   ]
 }
 ```
 
 - An entry replaces the item's entry whole, so it carries every rate and tier the item has, not only the one that moved.
+- It carries the item's price too (`prices`, and `price_tiers` for each of its `tiers`), with the same meters as its rates: the price in force, unchanged, as `router prices show --json` gives it. What customers are charged is the operator's decision, never this skill's; a new item takes its new rates times 1.2 and says so in `reason`.
 - `reason` says old → new with units for each model; `source` the URL and the date read; `effective_at` the vendor's date when it is in the future, else leave it out.
 - A `gone` model is withdrawn (`"withdrawn": true`, one entry for each `when` it has) only when it is also gone from `router.yaml`; otherwise report it.
-- Never a markup.
+- Never a markup, and never a price moved.
 
 ## 6. Check them
 
@@ -117,7 +119,7 @@ Each file's entries must build a list: put them in a price file and run `router 
 
 ## 7. Hand over
 
-- A draft PR updating `vendor.json` with the same vendor rates, per the `pr` skill, so new deployments start from them. Rates only: the PR never adds a markup.
+- A draft PR updating `vendor.json` with the same vendor rates, per the `pr` skill, so new deployments start from them. Rates only: the PR never adds a price or a markup.
 - The change files, for an operator to apply through each environment's management API. The skill never writes a price to a shared environment.
 
 ## 8. Report

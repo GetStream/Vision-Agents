@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 )
@@ -21,6 +22,21 @@ import (
 // several can be put in front of a model without crowding out the conversation, and large
 // enough that a passage still answers the question on its own.
 const DefaultChunk = 1200
+
+// minChunk is the smallest size Split cuts at. Every passage carries its source and its id
+// whatever its size, so tiny passages turn a document into mostly those: one-character
+// paragraphs cut one to a passage grew a document thousands of times.
+const minChunk = 500
+
+// maxHeading is how many bytes of a heading are repeated in each later passage of its
+// section and in every passage's source. A heading of any length repeated in every
+// passage is the other half of what multiplied a document. It is counted in bytes, as
+// passages are: 128 four-byte characters repeated in a 500-byte passage would leave no
+// room for anything else. With minChunk, a document's passages are at most about
+// (500 + name + 3 + 128 + 63) / (500 - 133) times its size: the passage, its source and
+// its id over what is left once the repeated heading line is in. A name is at most 256
+// characters, which is about 2.6 for 256 bytes and 4.7 for 1,024.
+const maxHeading = 128
 
 // IDSeparator divides the file a passage came from from its place in that file. Keeping
 // the path in the id is what makes ingesting the same documentation twice an update
@@ -110,9 +126,10 @@ func readFile(path, name string, size int) ([]knowledge.Document, error) {
 // Split cuts one document into the passages it will be stored as.
 //
 // The name is what a passage says it came from and what its id is keyed by, so it is the
-// path as a reader would recognise it rather than wherever the file happened to be.
+// path as a reader would recognise it rather than wherever the file happened to be. A size
+// under minChunk is raised to it.
 func Split(name, content string, size int) []knowledge.Document {
-	pieces := split(name, content, size)
+	pieces := split(name, content, max(size, minChunk))
 	documents := make([]knowledge.Document, 0, len(pieces))
 	for index, piece := range pieces {
 		documents = append(documents, knowledge.Document{
@@ -176,11 +193,16 @@ type passage struct {
 //
 // The heading is repeated at the top of every piece of a section it was cut from. Without
 // it the second half of a long section is prose with nothing saying what it is about,
-// which is exactly what full-text search needs to match on.
+// which is exactly what full-text search needs to match on. Only its first maxHeading
+// bytes are repeated; the first piece keeps the heading line as it was written, so a
+// heading is never cut away from the paragraph under it.
 func split(name, content string, size int) []passage {
 	var passages []passage
 	var heading string
 	var current strings.Builder
+	// held says current has something under its heading. A passage of only the heading
+	// would not be stored, so one that is not held is never flushed to make room.
+	held := false
 
 	flush := func() {
 		text := strings.TrimSpace(current.String())
@@ -198,18 +220,20 @@ func split(name, content string, size int) []passage {
 	for _, block := range blocks(content) {
 		if title, ok := headingOf(block); ok {
 			flush()
-			heading = title
+			heading = clip(title, maxHeading)
 			current.WriteString(block + "\n\n")
+			held = prose(block)
 			continue
 		}
 		for _, piece := range rows(block, size) {
-			if current.Len() > 0 && current.Len()+len(piece) > size {
+			if held && current.Len()+len(piece) > size {
 				flush()
 				if heading != "" {
 					current.WriteString("## " + heading + "\n\n")
 				}
 			}
 			current.WriteString(piece + "\n\n")
+			held = true
 		}
 	}
 	flush()
@@ -283,6 +307,17 @@ func prose(text string) bool {
 		}
 	}
 	return false
+}
+
+// clip is at most the first n bytes of text, cut between characters rather than inside one.
+func clip(text string, n int) string {
+	if len(text) <= n {
+		return text
+	}
+	for n > 0 && !utf8.RuneStart(text[n]) {
+		n--
+	}
+	return text[:n]
 }
 
 // headingOf reports the title a block opens with, when it opens with one.

@@ -30,6 +30,9 @@ public class VisionAgents(public val backend: Backend) : AutoCloseable {
     /** Every conversation this caller has, whichever agent holds it. */
     public val sessions: Sessions = Sessions(backend)
 
+    /** The reminders and later work agents hold for this user. */
+    public val scheduledTasks: ScheduledTasks = ScheduledTasks(backend)
+
     /** Says who this device is acting for, and how to prove it. See [Backend.setUser]. */
     public fun setUser(user: User, token: TokenProvider): Unit = backend.setUser(user, token)
 

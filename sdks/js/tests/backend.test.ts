@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { Backend, ConfigurationError, DEFAULT_URL, signToken } from "../src/index.js";
+import { Backend, ConfigurationError, DEFAULT_URL, regionUrl, signToken } from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
 describe("Backend", () => {
@@ -35,6 +35,68 @@ describe("Backend", () => {
 
   it("leaves the proxy off for a router it was pointed at", () => {
     const backend = new Backend({ url: "http://localhost:8080", customerId: "examples" });
+
+    assert.equal(backend.authenticate, false);
+  });
+
+  it("goes to the hosted router there, through the proxy, when given a region", () => {
+    const backend = new Backend({ region: "us-east4", apiKey: "vak_live_x", token: "token-for-jim" });
+
+    assert.equal(backend.url, "https://accelerate-us-east4.gcp.stream-io-api.com");
+    assert.equal(backend.authenticate, true);
+  });
+
+  it("lets a region in the environment give way to a URL there", () => {
+    process.env["STREAM_ACCELERATION_REGION"] = "us-east4";
+    process.env["STREAM_ACCELERATION_URL"] = "http://localhost:8080";
+    try {
+      assert.equal(new Backend({ customerId: "acme" }).url, "http://localhost:8080");
+
+      delete process.env["STREAM_ACCELERATION_URL"];
+      const backend = new Backend({ apiKey: "vak_live_x", token: "token-for-jim" });
+
+      assert.equal(backend.url, "https://accelerate-us-east4.gcp.stream-io-api.com");
+      assert.equal(backend.authenticate, true);
+    } finally {
+      delete process.env["STREAM_ACCELERATION_REGION"];
+      delete process.env["STREAM_ACCELERATION_URL"];
+    }
+  });
+
+  it("puts a region passed in before a URL in the environment", () => {
+    process.env["STREAM_ACCELERATION_URL"] = "http://localhost:8080";
+    try {
+      const backend = new Backend({
+        region: "europe-west4",
+        apiKey: "vak_live_x",
+        token: "token-for-jim",
+      });
+
+      assert.equal(backend.url, "https://accelerate-europe-west4.gcp.stream-io-api.com");
+    } finally {
+      delete process.env["STREAM_ACCELERATION_URL"];
+    }
+  });
+
+  it("refuses a URL and a region together", () => {
+    assert.throws(
+      () => new Backend({ url: "https://acceleration.example.com", region: "us-east4", customerId: "acme" }),
+      ConfigurationError,
+    );
+  });
+
+  it("refuses anything but a region name", () => {
+    for (const name of ["US-EAST4", "us-east4.evil.com/x", "us_east4", "useast4", "us-east", "us-east4\n"]) {
+      assert.throws(() => new Backend({ region: name, customerId: "acme" }), ConfigurationError, name);
+      assert.throws(() => regionUrl(name), /is not a region/, name);
+    }
+  });
+
+  it("does not take a lookalike of a regional URL for the hosted router", () => {
+    const backend = new Backend({
+      url: "https://accelerate-us-east4.evil.com.gcp.stream-io-api.com",
+      customerId: "acme",
+    });
 
     assert.equal(backend.authenticate, false);
   });

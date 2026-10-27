@@ -298,7 +298,7 @@ func (s *CallSuite) TestSettledWorkIsBilledOnceByItsUsageID() {
 	row := s.only(meter)
 	s.True(row.Success)
 	s.Equal(meter.UsageID, row.UsageID)
-	s.EqualValues(1_150_000, row.CostMicros)
+	s.EqualValues(1_380_000, row.CostMicros, "the vendor's 1,150,000 resold at the factor")
 	s.True(row.Billable)
 }
 
