@@ -457,9 +457,9 @@ func (s *HarnessSuite) TestTheModelIsToldWhatItMayHandOver() {
 	s.Contains(instructions, "<ask skill=", "and how to ask for it")
 }
 
-func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnKeepsTheDefault() {
+func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnDoesNot() {
 	s.build(false)
-	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}, DefaultEffort: "medium"}
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}}
 
 	s.respond("turn-1", "a table for four at 7:30")
 	s.answer(Turn{
@@ -469,47 +469,20 @@ func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnKeepsTheDefaul
 	})
 
 	s.Require().Len(s.fast.requests(), 2)
-	s.Empty(s.fast.requests()[0].Reasoning.Effort, "a model that thinks by default is left to it")
+	s.Empty(s.fast.requests()[0].Reasoning.Effort, "the caller is waiting on every word")
 	s.Equal("low", s.fast.requests()[1].Reasoning.Effort,
 		"at none the model asks to book a free table instead of booking it")
 }
 
-func (s *HarnessSuite) TestACallerTurnThinksALittleWhenTheModelWouldNotThinkAtAll() {
+func (s *HarnessSuite) TestACallerTurnKeepsTheModelsDefaultEvenWhenThatIsNoThinking() {
 	s.build(false)
 	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}, DefaultEffort: "none"}
 
-	s.respond("turn-1", "Does Michael tell the truth?")
+	s.respond("turn-1", "what time do you open tomorrow")
 
 	s.Require().Len(s.fast.requests(), 1)
-	s.Equal("low", s.fast.requests()[0].Reasoning.Effort,
-		"at none the model commits to an answer in its first word")
-}
-
-func (s *HarnessSuite) TestACallerTurnOnAModelWithoutLowEffortNamesNone() {
-	s.build(false)
-	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "high"}, DefaultEffort: "none"}
-
-	s.respond("turn-1", "hello")
-	s.fast.capabilities = llm.Capabilities{}
-	s.respond("turn-2", "hello again")
-
-	s.Require().Len(s.fast.requests(), 2)
-	s.Empty(s.fast.requests()[0].Reasoning.Effort, "no effort it does not accept")
-	s.Empty(s.fast.requests()[1].Reasoning.Effort, "and none for a model that does not reason")
-}
-
-func (s *HarnessSuite) TestWhatATurnAskedForWinsOverTheCallerTurnFloor() {
-	s.build(false)
-	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "high"}, DefaultEffort: "none"}
-
-	s.answer(Turn{
-		ID:      "turn-1",
-		History: []llm.Message{{Role: llm.User, Content: "hello"}},
-		Asked:   llmoptions.LLM{ReasoningEffort: "none"},
-	})
-
-	s.Require().Len(s.fast.requests(), 1)
-	s.Equal("none", s.fast.requests()[0].Reasoning.Effort)
+	s.Empty(s.fast.requests()[0].Reasoning.Effort,
+		"thinking before a caller's turn delays the first word the caller hears")
 }
 
 func (s *HarnessSuite) TestWhatATurnAskedForWinsOverWhatTheHarnessWouldChoose() {
