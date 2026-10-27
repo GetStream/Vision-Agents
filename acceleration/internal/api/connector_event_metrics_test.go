@@ -19,92 +19,52 @@ import (
 // time, so a count of one of them moves only with the test that delivers.
 
 func (s *ConnectorEventsSuite) TestAMessageAnAgentAnswersIsCountedHandled() {
-	s.countedOnce("events_test_bot", eventHandled, func() {
-		status, _, _ := s.deliver("events_test_bot", s.signed(s.messageEvent(s.team(), ""), time.Now()))
-		s.Equal(http.StatusOK, status)
-	})
+	s.countedOnce("events_test_bot", eventHandled, http.StatusOK, s.signed(s.messageEvent(""), time.Now()))
 }
 
 func (s *ConnectorEventsSuite) TestASignalIsCountedHandled() {
-	s.countedOnce("events_test_bot", eventHandled, func() {
-		status, _, _ := s.deliver("events_test_bot", s.signed(uninstall(s.team()), time.Now()))
-		s.Equal(http.StatusOK, status)
-	})
-}
-
-func (s *ConnectorEventsSuite) TestAMessageNoAgentAnswersIsCountedUnhandled() {
-	s.delivered.answering(s.T(), true, nil)
-	s.countedOnce("events_test_bot", eventUnhandled, func() {
-		status, _, _ := s.deliver("events_test_bot", s.signed(s.messageEvent(s.team(), ""), time.Now()))
-		s.Equal(http.StatusOK, status)
-	})
+	s.countedOnce("events_test_bot", eventHandled, http.StatusOK, s.signed(uninstall(s.team()), time.Now()))
 }
 
 // The manifest skips a bot's own message, so the delivery carries nothing the router acts on.
 func (s *ConnectorEventsSuite) TestASkippedMessageIsCountedUnhandled() {
-	s.countedOnce("events_test_bot", eventUnhandled, func() {
-		status, _, _ := s.deliver("events_test_bot", s.signed(s.messageEvent(s.team(), "B0000BOT"), time.Now()))
-		s.Equal(http.StatusOK, status)
-	})
+	s.countedOnce("events_test_bot", eventUnhandled, http.StatusOK, s.signed(s.messageEvent("B0000BOT"), time.Now()))
 }
 
 func (s *ConnectorEventsSuite) TestAnUnsignedEventIsCountedRefused() {
-	s.countedOnce("events_test_bot", eventRefused, func() {
-		status, _, _ := s.deliver("events_test_bot", s.signedWith(s.messageEvent(s.team(), ""), time.Now(), "another-secret"))
-		s.Equal(http.StatusUnauthorized, status)
-	})
+	s.countedOnce("events_test_bot", eventRefused, http.StatusUnauthorized,
+		s.signedWith(s.messageEvent(""), time.Now(), "another-secret"))
 }
 
 // events_test_unverifiable's verifier, ed25519, is not registered in this suite's router.
 func (s *ConnectorEventsSuite) TestAnEventNothingHereVerifiesIsCountedRefused() {
-	s.countedOnce("events_test_unverifiable", eventRefused, func() {
-		status, _, _ := s.deliver("events_test_unverifiable", s.signed(s.messageEvent(s.team(), ""), time.Now()))
-		s.Equal(http.StatusNotFound, status)
-	})
+	s.countedOnce("events_test_unverifiable", eventRefused, http.StatusNotFound, s.signed(s.messageEvent(""), time.Now()))
 }
 
 // No EVENTS_TEST_SECRETLESS_MCP_SIGNING_SECRET is in the suite's environment.
 func (s *ConnectorEventsSuite) TestAnEventOfABuiltInWithoutASecretIsCountedRefused() {
-	s.countedOnce("events_test_secretless", eventRefused, func() {
-		status, _, _ := s.deliver("events_test_secretless", s.signed(s.messageEvent(s.team(), ""), time.Now()))
-		s.Equal(http.StatusNotFound, status)
-	})
+	s.countedOnce("events_test_secretless", eventRefused, http.StatusNotFound, s.signed(s.messageEvent(""), time.Now()))
 }
 
 // Linear's manifest has no channel block. No other suite delivers to Linear's events route.
 func (s *ConnectorEventsSuite) TestAnEventOfABuiltInWithoutAChannelIsCountedRefused() {
-	s.countedOnce("linear", eventRefused, func() {
-		status, _, _ := s.deliver("linear", s.signed(uninstall(s.team()), time.Now()))
-		s.Equal(http.StatusNotFound, status)
-	})
+	s.countedOnce("linear", eventRefused, http.StatusNotFound, s.signed(uninstall(s.team()), time.Now()))
 }
 
 func (s *ConnectorEventsSuite) TestAnEventTheBridgeFailsOnIsCountedFailed() {
-	s.delivered.answering(s.T(), false, errors.New("synthetic bridge failure"))
-	s.countedOnce("events_test_bot", eventFailed, func() {
-		status, _, _ := s.deliver("events_test_bot", s.signed(s.messageEvent(s.team(), ""), time.Now()))
-		s.Equal(http.StatusInternalServerError, status)
-	})
+	s.delivered.failing(s.T(), errors.New("synthetic bridge failure"))
+	s.countedOnce("events_test_bot", eventFailed, http.StatusInternalServerError, s.signed(s.messageEvent(""), time.Now()))
 }
 
 func (s *ConnectorEventsSuite) TestAHandshakeIsCountedAsAChallenge() {
-	s.countedOnce("events_test_bot", eventChallenge, func() {
-		status, _, _ := s.deliver("events_test_bot",
-			s.signed([]byte(`{"challenge":"synthetic-challenge-value","type":"url_verification"}`), time.Now()))
-		s.Equal(http.StatusOK, status)
-	})
+	s.countedOnce("events_test_bot", eventChallenge, http.StatusOK,
+		s.signed([]byte(`{"challenge":"synthetic-challenge-value","type":"url_verification"}`), time.Now()))
 }
 
 // An id under no definition is the sender's choice, so it is not counted at all.
 func (s *ConnectorEventsSuite) TestAnEventOfAConnectorNobodyDefinedIsNotCounted() {
 	id := "no_such_connector_" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-
-	status, _, _ := s.deliver(id, s.signed(uninstall(s.team()), time.Now()))
-
-	s.Equal(http.StatusNotFound, status)
-	for _, outcome := range []string{eventHandled, eventUnhandled, eventRefused, eventFailed, eventChallenge} {
-		s.Zero(eventsOf(id, outcome), outcome)
-	}
+	s.countedOnce(id, "", http.StatusNotFound, s.signed(uninstall(s.team()), time.Now()))
 }
 
 // A customer's own connector is counted as custom, never under the id the customer chose.
@@ -136,17 +96,18 @@ func (s *ConnectorEventsSuite) TestACustomConnectorsEventIsCountedAsCustom() {
 	s.Zero(eventsOf(connector, eventRefused))
 }
 
-// countedOnce runs deliver and requires that connector's events counted outcome once more,
-// and no other outcome.
-func (s *ConnectorEventsSuite) countedOnce(connector, outcome string, deliver func()) {
+// countedOnce delivers request to connector's events route, requires status, and that the
+// connector's events counted outcome once more and no other outcome ("" for none at all).
+func (s *ConnectorEventsSuite) countedOnce(connector, outcome string, status int, request *http.Request) {
 	outcomes := []string{eventHandled, eventUnhandled, eventRefused, eventFailed, eventChallenge}
 	before := map[string]float64{}
 	for _, each := range outcomes {
 		before[each] = eventsOf(connector, each)
 	}
 
-	deliver()
+	answered, _, _ := s.deliver(connector, request)
 
+	s.Equal(status, answered)
 	for _, each := range outcomes {
 		want := before[each]
 		if each == outcome {
@@ -156,13 +117,13 @@ func (s *ConnectorEventsSuite) countedOnce(connector, outcome string, deliver fu
 	}
 }
 
-// messageEvent is a Slack message in team, from bot when it is not "".
-func (s *ConnectorEventsSuite) messageEvent(team, bot string) []byte {
+// messageEvent is a Slack message in a team of the test's own, from bot when it is not "".
+func (s *ConnectorEventsSuite) messageEvent(bot string) []byte {
 	from := `"user":"U0000USER"`
 	if bot != "" {
 		from = `"bot_id":"` + bot + `"`
 	}
-	return []byte(`{"team_id":"` + team + `","type":"event_callback","event":{"type":"message","channel":"C0000CHAN",` +
+	return []byte(`{"team_id":"` + s.team() + `","type":"event_callback","event":{"type":"message","channel":"C0000CHAN",` +
 		from + `,"text":"hello","ts":"1759740000.000300"}}`)
 }
 

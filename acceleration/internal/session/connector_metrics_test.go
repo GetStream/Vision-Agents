@@ -78,14 +78,8 @@ func (s *ConnectorMetricsSuite) TestACallIsTimedInSecondsFromItsStart() {
 	buckets := timed.GetBucket()
 	s.Equal(0.025, buckets[0].GetUpperBound(), "the fastest bucket is 25 ms")
 	s.Equal(51.2, buckets[len(buckets)-1].GetUpperBound(), "the slowest is past a binding's 30 s timeout")
-	for _, bucket := range buckets {
-		switch bucket.GetUpperBound() {
-		case 0.8:
-			s.Zero(bucket.GetCumulativeCount())
-		case 1.6:
-			s.Equal(uint64(1), bucket.GetCumulativeCount())
-		}
-	}
+	s.Equal([]float64{0.8, 1.6}, []float64{buckets[5].GetUpperBound(), buckets[6].GetUpperBound()})
+	s.Equal([]uint64{0, 1}, []uint64{buckets[5].GetCumulativeCount(), buckets[6].GetCumulativeCount()})
 }
 
 // recordOf records one call of connector that started at started and ended as kind.

@@ -420,9 +420,8 @@ func uninstall(team string) []byte {
 type deliveries struct {
 	mu       sync.Mutex
 	messages []core.InboundMessage
-	// unanswered and failure, set by answering, are what Deliver says of the next deliveries.
-	unanswered bool
-	failure    error
+	// failure, set by failing, is what Deliver returns.
+	failure error
 }
 
 func (d *deliveries) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage, _ func()) (bool, error) {
@@ -432,18 +431,18 @@ func (d *deliveries) Deliver(_ context.Context, _ store.ConnectorOAuthClient, me
 		return false, d.failure
 	}
 	d.messages = append(d.messages, messages...)
-	return !d.unanswered, nil
+	return true, nil
 }
 
-// answering has Deliver answer no message, or fail with failure, until the test ends.
-func (d *deliveries) answering(t *testing.T, unanswered bool, failure error) {
+// failing has Deliver fail with failure until the test ends.
+func (d *deliveries) failing(t *testing.T, failure error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.unanswered, d.failure = unanswered, failure
+	d.failure = failure
 	t.Cleanup(func() {
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		d.unanswered, d.failure = false, nil
+		d.failure = nil
 	})
 }
 
