@@ -72,6 +72,17 @@ func (s *PhoneSuite) TestEightOfElevenVendorsAreImplemented() {
 	}, implemented)
 }
 
+func (s *PhoneSuite) TestAProviderWithoutAStreamLegIsPerCall() {
+	s.Equal(StreamLegPerCall, StreamLegOf(&stub{vendor: "twilio"}))
+}
+
+func (s *PhoneSuite) TestTheCallIDRidesOnTheBridgeURIAsAQueryParameter() {
+	bridge := Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"}
+
+	s.Equal("sip:+15125551234@sip.stream-io-api.com?x-stream-call-id=a+b", bridge.WithCallID("a b").URI)
+	s.Equal(bridge, bridge.WithCallID(""))
+}
+
 func (s *PhoneSuite) TestEveryImplementedVendorButDidwwCanPlaceACall() {
 	// DIDWW sells numbers and has no call control API at all, so there is nothing to ask
 	// it to dial with. A caller can see that before buying a number from it rather than
@@ -585,6 +596,17 @@ type stub struct {
 	// was told to take back.
 	ordered  int
 	released []string
+	// stopped are the numbers this vendor was told to stop sending callers to the trunk.
+	stopped []string
+	// leg is how this vendor's leg reaches Stream: per call unless a test says otherwise.
+	leg StreamLeg
+}
+
+func (s *stub) StreamLeg() StreamLeg { return s.leg }
+
+func (s *stub) StopInbound(_ context.Context, e164 string) error {
+	s.stopped = append(s.stopped, e164)
+	return s.err
 }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {

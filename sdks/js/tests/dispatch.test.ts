@@ -501,9 +501,14 @@ describe("Dispatch", () => {
     agent.tools.register({
       name: "investigate",
       description: "Investigate",
-      run: (_input, _signal, call) => {
-        seen = { id: call.id, sessionId: call.sessionId, turnId: call.turnId, user: call.user.id };
-        call.update("reading the logs");
+      run: (_input, _signal, toolCallContext) => {
+        seen = {
+          id: toolCallContext.id,
+          sessionId: toolCallContext.sessionId,
+          turnId: toolCallContext.turnId,
+          user: toolCallContext.user.id,
+        };
+        toolCallContext.update("reading the logs");
         return "found it";
       },
     });

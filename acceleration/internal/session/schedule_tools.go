@@ -209,7 +209,9 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 		parts, _ := refusalOf(err)
 		return parts, nil
 	}
-	next, ok := parsed.Next(now)
+	// A repeat whose start has passed starts at its next occurrence, its
+	// COUNT counted from there.
+	next, ok := parsed.FromNow(now)
 	if !ok {
 		return refusal(scheduling.CodeScheduleInPast, "that schedule has no occurrence left; its last one has passed"), nil
 	}
@@ -248,6 +250,9 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 		if errors.Is(err, store.ErrTooManyScheduledTasks) {
 			return refusal(tooManyTasks, fmt.Sprintf("the user already has %d tasks running, the most this agent allows; cancel one first, or pause one until it is wanted", maxActive)), nil
 		}
+		if errors.Is(err, store.ErrNoAgentConfig) {
+			return refusal(unknownConfig, "this agent has been deleted, so it cannot schedule a task"), nil
+		}
 		return nil, err
 	}
 	r.kickScheduled()
@@ -275,7 +280,7 @@ func (r *scheduleRunner) list(ctx context.Context) ([]llm.ContentPart, error) {
 	for i := range tasks {
 		task := &tasks[i]
 		item := map[string]any{"id": task.ID, "title": task.Title, "state": task.State}
-		if schedule, err := storedSchedule(task); err == nil {
+		if schedule, err := scheduling.FromStored(*task); err == nil {
 			item["schedule"] = schedule.Describe()
 			if display == nil {
 				display = schedule.Location()
@@ -351,7 +356,7 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 	if parts != nil || err != nil {
 		return parts, err
 	}
-	schedule, err := storedSchedule(&task)
+	schedule, err := scheduling.FromStored(task)
 	if err != nil {
 		return nil, err
 	}
@@ -442,11 +447,14 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 		return refusal(scheduling.CodeInvalidSchedule, "action must be reschedule, snooze, skip_next, pause or resume"), nil
 	}
 	if err := r.db.SaveScheduledTask(ctx, &task); err != nil {
+		if errors.Is(err, store.ErrNoAgentConfig) {
+			return refusal(unknownConfig, "this agent has been deleted, so the task cannot run again"), nil
+		}
 		return nil, err
 	}
 	r.kickScheduled()
 	// Read the schedule back off the task, so what is reported is what now stands.
-	if fresh, err := storedSchedule(&task); err == nil {
+	if fresh, err := scheduling.FromStored(task); err == nil {
 		schedule = fresh
 	}
 	out := r.taskResult(&task, schedule, now)
@@ -645,15 +653,6 @@ func (r *scheduleRunner) taskResult(task *store.ScheduledTask, schedule *schedul
 		out["state"] = task.State
 	}
 	return out
-}
-
-// storedSchedule rebuilds the schedule a stored task describes.
-func storedSchedule(task *store.ScheduledTask) (*scheduling.Schedule, error) {
-	var until time.Time
-	if task.UntilDate != nil {
-		until = *task.UntilDate
-	}
-	return scheduling.FromStored(task.StartLocal, task.Timezone, task.RRule, until)
 }
 
 // checkText refuses a task without a title or instructions, or with more of

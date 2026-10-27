@@ -53,13 +53,13 @@ type Spec struct {
 	// the Router sets once it found the channel's channel_threads row (api.threadSession,
 	// api.threadConversation). No request sets it.
 	Thread bool
-	// ThreadPerson is the person a thread on a line of one person answers (SMS, WhatsApp): the
+	// ThreadPerson is the person a thread of one person answers (SMS, WhatsApp, a 1:1 iMessage chat): the
 	// Stream user the channel bridge writes their messages as. The scheduling tools are offered
 	// for them, and ThreadChannel is the thread channel their tasks keep.
-	// Only the Router sets them (api.threadSession); a Slack or Linq thread has neither.
+	// Only the Router sets them (api.threadSession); a Slack thread or a Linq group chat has neither.
 	ThreadPerson  string
 	ThreadChannel string
-	// ThreadDelivery is the channel the thread reaches its person on, sms or whatsapp: where
+	// ThreadDelivery is the channel the thread reaches its person on, sms, whatsapp or imessage: where
 	// the tasks they schedule there are delivered (api.personalThreads).
 	ThreadDelivery   string
 	ContextTruncated bool
@@ -233,6 +233,14 @@ type Spec struct {
 	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
 	// answers the first call to each with its full description instead of running it.
 	ProgressiveTools bool
+	// ToolOutputRetention is how long the turns this session records keep what its tools
+	// were given and gave back: options.RetentionNone for not at all, a duration, or empty
+	// for as long as the session. From the agent's config, and the manager shortens it to
+	// the app's and the organization's policies when the session is created.
+	ToolOutputRetention options.Retention
+	// ResumeHistory is how a conversation the session carries on is handed back to the
+	// model: the session request's, else the agent config's. Zero is the router's default.
+	ResumeHistory store.ResumeHistory
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
 	Scheduling store.AgentScheduling
@@ -378,8 +386,11 @@ func FromConfig(config store.AgentConfig) Spec {
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
 		ProgressiveTools:   config.ProgressiveTools,
+		ResumeHistory:      config.ResumeHistory,
 		Scheduling:         config.Scheduling,
 		Tags:               routing.Tags(config.Tags),
+		// The config's alone until Manager.Create holds it to the policies.
+		ToolOutputRetention: config.ToolOutputRetention,
 	}
 }
 

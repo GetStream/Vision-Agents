@@ -7,12 +7,9 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -184,19 +181,23 @@ const didNotWork = "That did not work: "
 // arguments, already answered since the caller last spoke. After a result Gemma often asks
 // for the same call again, and run twice a dispatch or a booking is made twice. A call that
 // failed may be tried again, since what failed may not fail twice, and so may one whose result
-// says nothing was done (undoneResult).
+// says nothing was done (undoneResult), and code whose result tells the model to run it again
+// now that the user connected what it needed (harness.RunAgain, connected being the bindings
+// the user has connected): answered from that result, the repeat after the user connected got
+// the 401 from before.
 //
 // A call that changes something is matched across the whole call: Nemotron booked a table,
-// heard "Yes, please go ahead" and booked it again, and a forced chase made Qwen book the same
-// table again after the caller thanked it; each second booking failed against the first.
-func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool) {
+// heard "Yes, please go ahead" and booked it again, and the second booking failed against the
+// first.
+func answeredSinceCaller(history []llm.Message, call llm.ToolCall, connected []string) (string, bool) {
 	same := func(other llm.ToolCall) bool {
 		return other.Name == call.Name && fillsIn(other.Arguments, call.Arguments)
 	}
 	changes := !readsOnly(call.Name)
 	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
-			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) {
+			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) ||
+			call.Name == sandbox.ToolName && harness.RunAgain(history[i].Content, connected) {
 			continue
 		}
 		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
@@ -341,145 +342,6 @@ func blankRequired(tool harness.Tool, arguments string) []string {
 	return blank
 }
 
-// runFirst is what a call made before the step its tool needs is answered with.
-const runFirst = "%s" + notRun + "error, %s has not succeeded yet in this call. Call %s first, " +
-	"with what the caller has already given."
-
-// needsIdentity is how a tool's description says it may run only for a verified caller.
-var needsIdentity = regexp.MustCompile(`(?i)identity required|after identity|verified (patient|caller|customer|account)`)
-
-// runsBefore is how a tool's description names the tool it must run before.
-var runsBefore = regexp.MustCompile(`(?i)must run before (\w+)`)
-
-// unmetPrerequisite names the tool that has to succeed in this call before tool may run,
-// read from the tools' descriptions, or "" when nothing is missing. Qwen opened a ticket
-// for "123 Main St" before verifying the caller, and the bench counts the order however
-// the call recovers.
-func unmetPrerequisite(tool harness.Tool, tools []harness.Tool, history []llm.Message) string {
-	if strings.HasPrefix(tool.Name, "verify") {
-		return ""
-	}
-	for _, other := range tools {
-		if other.Name == tool.Name {
-			continue
-		}
-		identity := strings.HasPrefix(other.Name, "verify") && needsIdentity.MatchString(tool.Description)
-		before := false
-		if match := runsBefore.FindStringSubmatch(other.Description); match != nil {
-			before = match[1] == tool.Name
-		}
-		if identity && !succeeded(history, other.Name, true) || before && !succeeded(history, other.Name, false) {
-			return other.Name
-		}
-	}
-	return ""
-}
-
-// succeeded reports whether a call to the named tool has come back, and if passed is set,
-// come back without an error and without "ok": false. walk_reboot coming back "ok": false
-// is the failed reboot dispatch_tech needs.
-func succeeded(history []llm.Message, name string, passed bool) bool {
-	for i, message := range history {
-		if message.Role != llm.ToolResult {
-			continue
-		}
-		content := strings.ReplaceAll(message.Content, " ", "")
-		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) || undoneResult(message.Content) ||
-			passed && (strings.Contains(content, `"error"`) || strings.Contains(content, `"ok":false`)) {
-			continue
-		}
-		for j := i - 1; j >= 0; j-- {
-			if slices.ContainsFunc(history[j].ToolCalls, func(call llm.ToolCall) bool {
-				return call.ID == message.ToolCallID && call.Name == name
-			}) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// digitWords are the digits as a caller reads them out, in order.
-var digitWords = []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}
-
-// digitWordRun is two or more digits read out as words, as in "four four seven one".
-var digitWordRun = regexp.MustCompile(`(?i)\b(?:zero|one|two|three|four|five|six|seven|eight|nine)(?:[ -]+(?:zero|one|two|three|four|five|six|seven|eight|nine))+\b`)
-
-// spokenNumbers are the numbers from ten to ninety read out as one word, as the house
-// number in "fourteen Cedar Lane" that failed verify_account.
-var spokenNumbers = map[string]string{
-	"ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
-	"fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19",
-	"twenty": "20", "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60",
-	"seventy": "70", "eighty": "80", "ninety": "90",
-}
-
-// spokenNumber is a number from ten to ninety-nine read out in words.
-var spokenNumber = regexp.MustCompile(`(?i)\b(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[ -](one|two|three|four|five|six|seven|eight|nine))?\b`)
-
-// spelledAfterName is a word followed by its letters, as in "Patel P A T E L".
-var spelledAfterName = regexp.MustCompile(`\b([A-Za-z]{2,})((?:[ ,.-]+[A-Za-z]\b){2,})`)
-
-// unspelled drops the letters a caller spelled a name out with from a call's string
-// arguments, which a model copies in after the name, and writes digits read out as words
-// as digits: verify_account went out with the address "one four Cedar Lane" and failed.
-func unspelled(arguments string) string {
-	var values map[string]any
-	if json.Unmarshal([]byte(arguments), &values) != nil {
-		return arguments
-	}
-	changed := false
-	for key, value := range values {
-		text, ok := value.(string)
-		if !ok {
-			continue
-		}
-		cleaned := digitWordRun.ReplaceAllStringFunc(text, func(match string) string {
-			var digits strings.Builder
-			for word := range strings.FieldsFuncSeq(strings.ToLower(match), func(r rune) bool { return r == ' ' || r == '-' }) {
-				digits.WriteByte(byte('0' + slices.Index(digitWords, word)))
-			}
-			return digits.String()
-		})
-		cleaned = spokenNumber.ReplaceAllStringFunc(cleaned, func(match string) string {
-			parts := spokenNumber.FindStringSubmatch(strings.ToLower(match))
-			number := spokenNumbers[parts[1]]
-			if parts[2] != "" && strings.HasSuffix(number, "0") {
-				return number[:1] + strconv.Itoa(slices.Index(digitWords, parts[2]))
-			}
-			if parts[2] != "" {
-				return number + " " + parts[2]
-			}
-			return number
-		})
-		cleaned = spelledAfterName.ReplaceAllStringFunc(cleaned, func(match string) string {
-			parts := spelledAfterName.FindStringSubmatch(match)
-			letters := strings.Map(func(r rune) rune {
-				if unicode.IsLetter(r) {
-					return r
-				}
-				return -1
-			}, parts[2])
-			if !strings.EqualFold(letters, parts[1]) {
-				return match
-			}
-			return parts[1]
-		})
-		if cleaned != text {
-			values[key] = cleaned
-			changed = true
-		}
-	}
-	if !changed {
-		return arguments
-	}
-	rendered, err := json.Marshal(values)
-	if err != nil {
-		return arguments
-	}
-	return string(rendered)
-}
-
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
 	cancels := telephonyTool(requested.Call.Name) ||
@@ -535,7 +397,6 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		a.mu.Unlock()
 	}()
 	began := time.Now()
-	requested.Call.Arguments = unspelled(requested.Call.Arguments)
 	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, Arguments: requested.Call.Arguments, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
 	started.PreSpeech = a.preSpeech([]llm.ToolCall{requested.Call})
@@ -559,12 +420,10 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
-	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
+	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call, a.connected()); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
-	} else if first := unmetPrerequisite(tool, a.availableTools().Tools, record); first != "" {
-		parts = llm.TextParts(fmt.Sprintf(runFirst, requested.Call.Name, first, first))
 	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools())); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
 	} else if key, known, missing := missingID(record, requested.Call, a.availableTools()); missing {
@@ -573,8 +432,6 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
 	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
 		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
-	} else if key, value, misshapen := misshapenLastFour(requested.Call); misshapen {
-		parts = llm.TextParts(misshapenResult(key, value, record))
 	} else if key, value, heard, unheard := unheardNumber(record, requested.Call); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
 	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
@@ -595,12 +452,13 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
 	delete(a.toolUpdates, requested.Call.ID)
+	charged := a.chargedLocked(ctx)
 	a.mu.Unlock()
 	// Visual tool results go to the vision worker in both native and cascade calls. The
 	// call is still open in the history it is handed, which a provider refuses to replay.
 	// With no worker, as in a chat, a model that sees images is shown them itself.
 	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) && !a.looksItself() {
-		_, err = a.harness.Delegate(visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, withOpenCallsAnswered(a.History()))
+		_, err = a.harness.Delegate(charged, visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, withOpenCallsAnswered(a.History()))
 		if err == nil {
 			parts = llm.TextParts(llm.TextOf(parts) + "\nVisual analysis requested; wait for the vision findings before interpreting the images.")
 		}
@@ -869,6 +727,16 @@ func (a *Agent) runsCode() bool {
 	}
 	_, declared := a.options.Tools.Lookup(sandbox.ToolName)
 	return !declared
+}
+
+// connected are the sandbox's late grants' bindings the user has connected by now
+// (sandbox.Connecting).
+func (a *Agent) connected() []string {
+	box, ok := a.options.Sandbox.(sandbox.Connecting)
+	if !ok {
+		return nil
+	}
+	return box.Connected()
 }
 
 // runCode runs what the model wrote in the sandbox, with the scripts of every skill it has

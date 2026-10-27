@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.greeting import Greeting
     from ..models.history_message import HistoryMessage
     from ..models.model_overwrites import ModelOverwrites
+    from ..models.resume_history import ResumeHistory
     from ..models.session_call import SessionCall
     from ..models.session_connector_binding import SessionConnectorBinding
     from ..models.session_memory import SessionMemory
@@ -99,6 +100,8 @@ class CreateSessionRequest:
         phone (SessionPhone | Unset): The number the session acts from, which is what turns transferring on.
         project_id (str | Unset): What the conversation belongs to. Also recorded as the "project" cost tag, so spend
             breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+        resume_history (ResumeHistory | Unset): How a conversation is handed back to the model when a session carries it
+            on.
         return_url (str | Unset): The app's own page a login or step-up the chat asks for goes back to, as
             createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the
             browser comes back to it with connection_id and status added to its query. The same rules as
@@ -161,6 +164,7 @@ class CreateSessionRequest:
     navigating: bool | Unset = False
     phone: SessionPhone | Unset = UNSET
     project_id: str | Unset = UNSET
+    resume_history: ResumeHistory | Unset = UNSET
     return_url: str | Unset = UNSET
     search: str | Unset = UNSET
     start_voice: bool | Unset = False
@@ -253,6 +257,10 @@ class CreateSessionRequest:
 
         project_id = self.project_id
 
+        resume_history: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.resume_history, Unset):
+            resume_history = self.resume_history.to_dict()
+
         return_url = self.return_url
 
         search = self.search
@@ -343,6 +351,8 @@ class CreateSessionRequest:
             field_dict["phone"] = phone
         if project_id is not UNSET:
             field_dict["project_id"] = project_id
+        if resume_history is not UNSET:
+            field_dict["resume_history"] = resume_history
         if return_url is not UNSET:
             field_dict["return_url"] = return_url
         if search is not UNSET:
@@ -383,6 +393,7 @@ class CreateSessionRequest:
         from ..models.greeting import Greeting
         from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
+        from ..models.resume_history import ResumeHistory
         from ..models.session_call import SessionCall
         from ..models.session_connector_binding import SessionConnectorBinding
         from ..models.session_memory import SessionMemory
@@ -485,6 +496,13 @@ class CreateSessionRequest:
 
         project_id = d.pop("project_id", UNSET)
 
+        _resume_history = d.pop("resume_history", UNSET)
+        resume_history: ResumeHistory | Unset
+        if isinstance(_resume_history, Unset):
+            resume_history = UNSET
+        else:
+            resume_history = ResumeHistory.from_dict(_resume_history)
+
         return_url = d.pop("return_url", UNSET)
 
         search = d.pop("search", UNSET)
@@ -557,6 +575,7 @@ class CreateSessionRequest:
             navigating=navigating,
             phone=phone,
             project_id=project_id,
+            resume_history=resume_history,
             return_url=return_url,
             search=search,
             start_voice=start_voice,

@@ -42,6 +42,36 @@ func (s *BridgeSuite) TestAnAuthorUserIDKeepsToLettersDigitsUnderscoreAndHyphen(
 	s.Regexp(regexp.MustCompile(`^[A-Za-z0-9_-]+$`), AuthorUserID("acme", "linq", "+12025550100", "+12025550199"))
 }
 
+// A Linq chat is one person's when its event says is_group false, as the 2026-02-03 payload
+// writes it.
+func (s *BridgeSuite) TestALinqChatIsOnePersonsWhenItsEventSaysItIsNoGroup() {
+	s.True(linqOneToOne([]byte(`{"event_type":"message.received","data":{"chat":{"id":"c1","is_group":false,"owner_handle":{"handle":"+12025550100"}}}}`)))
+}
+
+// Anything but an explicit false is a group's chat, whose tasks would reach everyone in it.
+func (s *BridgeSuite) TestALinqChatIsAGroupsUnlessItsEventSaysOtherwise() {
+	for name, raw := range map[string]string{
+		"a group":                 `{"data":{"chat":{"id":"c1","is_group":true}}}`,
+		"no is_group":             `{"data":{"chat":{"id":"c1"}}}`,
+		"is_group null":           `{"data":{"chat":{"id":"c1","is_group":null}}}`,
+		"is_group a string":       `{"data":{"chat":{"id":"c1","is_group":"false"}}}`,
+		"is_group a number":       `{"data":{"chat":{"id":"c1","is_group":0}}}`,
+		"a chat that is a string": `{"data":{"chat":"c1"}}`,
+		"no chat":                 `{"data":{}}`,
+		"data null":               `{"data":null}`,
+		"an empty object":         `{}`,
+		"an array":                `[{"data":{"chat":{"is_group":false}}}]`,
+		"null":                    `null`,
+		"empty":                   ``,
+		"not JSON":                `is_group=false`,
+		"is_group one level up":   `{"data":{"is_group":false,"chat":{"id":"c1"}}}`,
+		// A decode that fails after it read is_group false says two things at once.
+		"a second chat after it": `{"data":{"chat":{"id":"c1","is_group":false},"chat":"c2"}}`,
+	} {
+		s.False(linqOneToOne([]byte(raw)), name)
+	}
+}
+
 func (s *BridgeSuite) TestABridgeNeedsAStoreStreamTransportsAndAResolver() {
 	_, err := New(Options{})
 	s.ErrorContains(err, "a store, Stream clients, transports and a resolver are required")

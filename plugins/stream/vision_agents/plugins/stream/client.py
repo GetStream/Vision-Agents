@@ -258,10 +258,10 @@ class Agent:
             @agent.register(needs_approval="Book flight {flight_id}?")
             async def book_flight(flight_id: str) -> str:
                 "Book a flight for the caller"
-                call = current_call()
-                await call.update("checking seats")
-                await call.disallow_interruptions()
-                return await bookings.book(flight_id, key=call.id)
+                tool_call_context = current_call()
+                await tool_call_context.update("checking seats")
+                await tool_call_context.disallow_interruptions()
+                return await bookings.book(flight_id, key=tool_call_context.id)
 
         Args:
             interruptible: Let the caller talking over the agent cancel a call in flight.

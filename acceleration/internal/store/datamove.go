@@ -477,6 +477,11 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	if err != nil {
 		return err
 	}
+	if table == "scheduled_tasks" {
+		if row, err = pauseImportedTask(row); err != nil {
+			return err
+		}
+	}
 	if table == "phone_numbers" {
 		if err := importableNumber(ctx, db, customerID, row); err != nil {
 			return err
@@ -546,6 +551,25 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 		return fmt.Errorf("store: import %s: %w", table, err)
 	}
 	return nil
+}
+
+// pauseImportedTask makes an imported scheduled task one this deployment cannot deliver yet.
+// The deployment it came from goes on delivering until the move is cut over, so an active
+// task would be delivered twice. It arrives paused, with the claim of a worker there cleared,
+// and is resumed once the move is over. Every change the move carries is imported the same
+// way, so a task still active there stays paused here until then; a paused, completed or
+// failed task keeps its state.
+func pauseImportedTask(row json.RawMessage) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(row, &fields); err != nil {
+		return nil, fmt.Errorf("store: read an imported scheduled task: %w", err)
+	}
+	if string(fields["state"]) == `"`+ScheduledTaskActive+`"` {
+		fields["state"] = json.RawMessage(`"` + ScheduledTaskPaused + `"`)
+	}
+	fields["claim_id"] = json.RawMessage(`""`)
+	fields["lease_until"] = json.RawMessage("null")
+	return json.Marshal(fields)
 }
 
 // digitsKey is a number as most vendors read the one they are given, as SQL over a text
@@ -641,7 +665,7 @@ func (t dataTable) identity() string {
 	if t.name == "phone_numbers" {
 		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL," +
 			" 'stream_trunk_id', NULL, 'stream_route_id', NULL, 'stream_call_id', NULL," +
-			" 'stream_call_type', NULL, 'bridge_uri', NULL, 'bridge_username', NULL)"
+			" 'stream_call_type', NULL, 'bridge_uri', NULL, 'bridge_username', NULL, 'attached_at', NULL)"
 	}
 	// A request was billed by the deployment that recorded it, so this one never ships it, and
 	// what that one's usage service answered for it is not this one's: a reship of the rows

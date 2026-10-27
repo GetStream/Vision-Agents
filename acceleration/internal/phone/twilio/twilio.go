@@ -343,6 +343,19 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 	return p.do(ctx, http.MethodPost, p.baseURL, path, nil, form, nil)
 }
 
+// StopInbound clears the number's voice webhook, so a caller no longer reaches the trunk.
+func (p *Provider) StopInbound(ctx context.Context, e164 string) error {
+	sid, err := p.sidFor(ctx, e164)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers/%s.json", p.accountSID, sid)
+	return p.post(ctx, path, url.Values{"VoiceUrl": {""}}, nil)
+}
+
+// StreamLeg is the number's own line, with the call id on the leg.
+func (p *Provider) StreamLeg() phone.StreamLeg { return phone.StreamLegShared }
+
 // Dial places a call and bridges the answered leg into the Stream trunk. Stream's SIP is
 // inbound only, so the vendor originates and the agent is already waiting on the trunk.
 //
@@ -355,7 +368,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("twilio: %w", err))
 	}
 
-	instructions, err := dialBridge(outbound.Bridge)
+	instructions, err := dialBridge(outbound.Bridge.WithCallID(outbound.CallID))
 	if err != nil {
 		return phone.Dialed{}, err
 	}

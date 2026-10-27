@@ -197,13 +197,16 @@ func (s *Service) Link(ctx context.Context, customerID, configID, userID string)
 }
 
 // Notice is a message sent to one end user on a channel, first, rather than
-// as an answer: who it is for, on which agent's line, and what it says.
+// as an answer: who it is for, on which agent's line, and what it says and
+// carries.
 type Notice struct {
 	CustomerID string
 	ConfigID   string
 	Kind       Kind
 	UserID     string
 	Text       string
+	// Files are what the agent's code made, sent by URL as a reply's files are.
+	Files []sandbox.Attachment
 }
 
 // whatsappWindow is how long after somebody last wrote WhatsApp lets a line
@@ -211,7 +214,11 @@ type Notice struct {
 // router does not send, so the write is refused and the caller falls back.
 const whatsappWindow = 24 * time.Hour
 
-// Notify sends text to one end user on a channel they already talk to the
+// ErrUnreachable is a notice the channel would refuse its user now: they never wrote on it, opted
+// out or are outside its window, or the agent has no line there. Any other error is the router's own.
+var ErrUnreachable = errors.New("channels: the user cannot be reached on this channel")
+
+// Notify sends text and files to one end user on a channel they already talk to the
 // agent on, over the line that agent answers on there.
 //
 // Everything that keeps an answer from going out keeps a first message from
@@ -221,7 +228,8 @@ const whatsappWindow = 24 * time.Hour
 // it Meta wants a template this router does not send. A refusal is an error
 // like any other, which is what a caller with another channel falls back on.
 func (s *Service) Notify(ctx context.Context, notice Notice) error {
-	if notice.Text == "" {
+	reply := Reply{Text: notice.Text, Files: filesOf(notice.Files)}
+	if reply.Empty() {
 		return stack.Wrap(errors.New("channels: there is nothing to send"))
 	}
 	line, thread, address, provider, err := s.reach(ctx, notice)
@@ -236,7 +244,14 @@ func (s *Service) Notify(ctx context.Context, notice Notice) error {
 		attribution.APIKey = OriginNotice
 	}
 	owner := routing.Owner{CustomerID: notice.CustomerID, Attribution: attribution}
-	if err := s.deliver(ctx, line, provider, to, thread, Reply{Text: notice.Text}, owner); err != nil {
+	err = s.deliver(ctx, line, provider, to, thread, reply, owner)
+	// A notice partly sent, such as words whose file was refused, is sent: a caller trying
+	// again would send its words twice.
+	var partly partlySent
+	if errors.As(err, &partly) {
+		s.logger.Warn("a notice went out without all of its files", "channel", line.Kind,
+			"number", line.E164, "error", err)
+	} else if err != nil {
 		return stack.Wrap(err)
 	}
 	s.gate.Sent(ctx, notice.CustomerID, string(notice.Kind), address)
@@ -259,7 +274,7 @@ func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, st
 	identity, err := s.store.ChannelIdentityByUser(ctx, notice.CustomerID, notice.ConfigID,
 		string(notice.Kind), notice.UserID)
 	if errors.Is(err, store.ErrUnknownChannelIdentity) {
-		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on %s", notice.UserID, notice.Kind))
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: %s has never written on %s", ErrUnreachable, notice.UserID, notice.Kind))
 	}
 	if err != nil {
 		return Account{}, "", "", nil, stack.Wrap(err)
@@ -270,17 +285,23 @@ func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, st
 	}
 	number := config.Channels.Lines()[string(notice.Kind)]
 	if number == "" {
-		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: the agent answers on no %s line", notice.Kind))
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: the agent answers on no %s line", ErrUnreachable, notice.Kind))
 	}
 	account, err := s.store.ChannelAccount(ctx, notice.CustomerID, string(notice.Kind), number)
+	if errors.Is(err, store.ErrUnknownChannelAccount) {
+		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: the %s line %s is not connected", ErrUnreachable, notice.Kind, number))
+	}
 	if err != nil {
-		return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: the %s line %s is not connected: %w", notice.Kind, number, err))
+		return Account{}, "", "", nil, stack.Wrap(err)
 	}
 	line, err := Open(s.secrets, account)
 	if err != nil {
 		return Account{}, "", "", nil, stack.Wrap(err)
 	}
 	if err := s.gate.Allow(ctx, notice.CustomerID, string(notice.Kind), identity.Address); err != nil {
+		if errors.Is(err, dlc.ErrRefused) {
+			err = fmt.Errorf("%w: %w", ErrUnreachable, err)
+		}
 		return Account{}, "", "", nil, err
 	}
 	if notice.Kind == WhatsApp {
@@ -290,18 +311,18 @@ func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, st
 		}
 		switch {
 		case last.IsZero():
-			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on WhatsApp, "+
-				"so there is no window to write first in", identity.Address))
+			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: %s has never written on WhatsApp, "+
+				"so there is no window to write first in", ErrUnreachable, identity.Address))
 		case time.Since(last) > whatsappWindow:
-			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: %s last wrote over a day ago, "+
-				"outside WhatsApp's window for writing first", identity.Address))
+			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: %s last wrote over a day ago, "+
+				"outside WhatsApp's window for writing first", ErrUnreachable, identity.Address))
 		}
 	}
 	thread := identity.Address
 	if notice.Kind == IMessage {
 		thread = identity.Thread
 		if thread == "" {
-			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("channels: there is no iMessage chat with %s to write to", identity.Address))
+			return Account{}, "", "", nil, stack.Wrap(fmt.Errorf("%w: there is no iMessage chat with %s to write to", ErrUnreachable, identity.Address))
 		}
 	}
 	provider, ok := For(notice.Kind, s.transport)
@@ -550,6 +571,9 @@ func replyOf(event session.Event) Reply {
 		return Reply{Text: happened.Text}
 	case agent.TaskSettled:
 		return Reply{Text: happened.Text, Files: filesOf(happened.Files)}
+	case agent.ToolRan:
+		// The files the agent's code handed back, sent as the reply's files.
+		return Reply{Files: filesOf(happened.Files)}
 	}
 	return Reply{}
 }
@@ -572,10 +596,18 @@ func answering(customerID, userID string) routing.Owner {
 		APIKey: routing.OriginPhoneInbound, UserID: userID, CallerKind: routing.CallerUser}}
 }
 
-// say writes reply back to whoever sent message, and reports whether the provider took it; a
-// failure is logged.
+// say writes reply back to whoever sent message, and reports whether the provider took it, in
+// part at least; a failure is logged.
 func (s *Service) say(ctx context.Context, line Account, provider Provider, message Message, reply Reply, owner routing.Owner) bool {
-	if err := s.deliver(ctx, line, provider, message.From, message.Thread, reply, owner); err != nil {
+	err := s.deliver(ctx, line, provider, message.From, message.Thread, reply, owner)
+	// A reply partly sent, such as words whose file was refused, went out: it counts as sent.
+	var partly partlySent
+	if errors.As(err, &partly) {
+		s.logger.Warn("a reply went out without all of its files", "channel", line.Kind,
+			"number", line.E164, "error", err)
+		return true
+	}
+	if err != nil {
 		s.logger.Error("could not write back on a channel", "channel", line.Kind,
 			"number", line.E164, "error", err)
 		return false

@@ -143,14 +143,9 @@ type Turn struct {
 	// Answers says the reply is offered no tools and must answer from what it has: the
 	// chain of tools before it has gone on as long as the caller can be kept waiting.
 	Answers bool
-	// MustCall has the model call one of its tools rather than answer in words.
-	MustCall bool
 	// NoTools offers the reply no tools without telling it to hurry: nobody has spoken
 	// yet, so there is nothing to act on.
 	NoTools bool
-	// OnlyTool narrows a turn that must call to the one tool it names. Made to call after
-	// dispatch_tech failed for want of a reboot, Qwen called dispatch_tech again.
-	OnlyTool string
 	// Asked is what the caller asked to change about this reply, written over the
 	// session's own overwrites.
 	Asked llmoptions.LLM
@@ -158,9 +153,6 @@ type Turn struct {
 	// (llm.ResponseParams.Attributes). Nil adds none.
 	Attributes func() map[string]string
 }
-
-// mustCallTokens bounds a reply that must call a tool.
-const mustCallTokens = 256
 
 // answerNow is the note a reply that Answers is given.
 const answerNow = "There is no time for another tool: answer the caller now from what the " +
@@ -200,6 +192,9 @@ type Harness struct {
 	// history is the conversation as of the last turn, so a request for help carries the
 	// context it was asked in rather than only the sentence that prompted it.
 	history []llm.Message
+	// charged marks whether a scheduled task fired the last turn (chargedAs), so the work
+	// it hands to the subagent is counted as the turn is.
+	charged context.Context
 	// stored is what the provider has already read of this conversation, when it keeps
 	// what it generates.
 	stored stored
@@ -240,6 +235,7 @@ func New(options Options) (*Harness, error) {
 		options: options,
 		logger:  options.Logger,
 		emitter: NewEmitter(eventBuffer),
+		charged: context.Background(),
 	}
 
 	if options.Subagent != nil || options.OpenSubagent != nil {
@@ -368,6 +364,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		return nil, errors.New("harness: no text conversation model")
 	}
 	h.history = append([]llm.Message(nil), turn.History...)
+	h.charged = chargedAs(context.Background(), ctx)
 	instructions := h.instructions(turn, working)
 	// A colleague asks only for what the caller alone can say, so a reply carrying its
 	// question has nothing to look up. Left holding a tool the model reaches for one and
@@ -383,39 +380,27 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	// A reply to a tool result is given a little thinking. The caller was told to wait
 	// while the tool ran, so it costs them nothing they notice, and at no effort Luna
 	// answers a free table with "may I book it?" instead of booking it.
+	//
+	// A reply to the caller gets the same floor when the model would otherwise not think
+	// at all: at none GPT-6 Sol can commit to an answer in its first word and reason its
+	// way to the opposite after it, or ask the caller to confirm what it could have done.
+	// The thinking delays the first word, so a session or turn that names an effort,
+	// none included, still wins.
 	var reasoning llm.ReasoningParams
-	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
+	if slices.Contains(model.ReasoningEfforts, toolReplyEffort) && (turn.AfterTool || model.DefaultEffort == "none") {
 		reasoning.Effort = toolReplyEffort
-	}
-
-	toolChoice := ""
-	maxTokens := h.options.MaxTokens
-	if turn.MustCall && turn.OnlyTool != "" {
-		if only := slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool { return tool.Name != turn.OnlyTool }); len(only) > 0 {
-			tools = only
-		}
-	}
-	if turn.MustCall && len(tools) > 0 {
-		toolChoice = "required"
-		// Constrained to a call, Gemma on vLLM once wrote nothing for 37 seconds while the
-		// caller waited; a call fits well inside this.
-		maxTokens = mustCallTokens
-		if h.options.MaxTokens > 0 {
-			maxTokens = min(h.options.MaxTokens, mustCallTokens)
-		}
 	}
 
 	return session.Create(ctx, llm.ResponseParams{
 		ID:                 turn.ID,
 		Purpose:            "reply",
-		ToolChoice:         toolChoice,
 		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,
 		Attributes:         turn.Attributes,
 		Instructions:       instructions,
 		Input:              input,
-		MaxOutputTokens:    maxTokens,
+		MaxOutputTokens:    h.options.MaxTokens,
 		Tools:              tools,
 		Store:              model.Store,
 		PreviousResponseID: previous,
@@ -705,6 +690,7 @@ func (h *Harness) act(turnID string, found directive) {
 
 	h.mu.Lock()
 	history := append([]llm.Message(nil), h.history...)
+	charged := h.charged
 	complete := !h.options.Text && identifiersAlreadyComplete(history)
 	if complete && !skill.CaptureVideo {
 		h.correct("Those values are already complete. " +
@@ -746,7 +732,7 @@ func (h *Harness) act(turnID string, found directive) {
 		}
 	}
 	startedAt := time.Now().UTC()
-	taskID, err := h.tasks.Create(skill, found.body, history, turnID, false)
+	taskID, err := h.tasks.Create(charged, skill, found.body, history, turnID, false)
 	if err != nil {
 		h.reject(skill.Name, err)
 		return
@@ -1090,8 +1076,9 @@ func identifiersAlreadyComplete(history []llm.Message) bool {
 	return false
 }
 
-// Delegate submits work independently of the conversation provider's transport.
-func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
+// Delegate submits work independently of the conversation provider's transport. Work a
+// scheduled turn hands over, ctx marked so, is counted as that turn is.
+func (h *Harness) Delegate(ctx context.Context, skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
 	skill, ok := h.options.Skills.Lookup(skillName)
 	if !ok || h.tasks == nil {
 		return "", stack.Wrap(fmt.Errorf("harness: skill %q is not available", skillName))
@@ -1110,7 +1097,7 @@ func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.Content
 		history = append(history, llm.Message{Role: llm.User, Parts: parts})
 		skill.CaptureVideo = false
 	}
-	id, err := h.tasks.Create(skill, prompt, history, turnID, false)
+	id, err := h.tasks.Create(ctx, skill, prompt, history, turnID, false)
 	if err == nil {
 		h.emitter.Send(Delegated{StartedAt: time.Now().UTC(), TaskID: id, Skill: skill.Name, Prompt: prompt, TurnID: turnID})
 	}

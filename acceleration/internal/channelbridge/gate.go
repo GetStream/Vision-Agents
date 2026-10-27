@@ -87,8 +87,9 @@ func (b *Bridge) allowed(ctx context.Context, customerID, connectorID, to string
 }
 
 // refusesReply is why a reply may not go to the person a thread's replies reach, or nil when
-// it may: ErrOptedOut when they opted out of the connector's opt-out channel (keywords.go),
-// ErrHeldBack when the gate refuses it, such as past a sandbox's daily limit.
+// it may: ErrOptedOut when they opted out of the connector's opt-out channel (keywords.go), or,
+// in a chat, when anyone it reaches did (silenced); ErrHeldBack when the gate refuses it, such
+// as past a sandbox's daily limit.
 func (b *Bridge) refusesReply(ctx context.Context, thread store.ChannelThread) error {
 	source := episodeSources[thread.ConnectorID]
 	if source.optOuts == "" {
@@ -102,6 +103,12 @@ func (b *Bridge) refusesReply(ctx context.Context, thread store.ChannelThread) e
 	if err != nil {
 		return err
 	}
+	if !optedOut {
+		optedOut, err = b.silenced(ctx, thread)
+		if err != nil {
+			return err
+		}
+	}
 	if optedOut {
 		return stack.Wrap(ErrOptedOut)
 	}
@@ -113,6 +120,19 @@ func (b *Bridge) refusesReply(ctx context.Context, thread store.ChannelThread) e
 		return stack.Wrap(ErrHeldBack)
 	}
 	return nil
+}
+
+// silenced is whether a chat thread reaches a person, one of the authors seen in it
+// (store.AddChannelThreadMember), with a live opt-out of the connector's channel (AI-2015). A
+// reply to an iMessage group reaches everyone in it, and after STOP a person gets one
+// confirmation, then nothing (CTIA 5.1.3; Linq: «The block applies to that recipient across
+// every chat and every line», https://docs.linqapp.com/error/codes/2xxx/2024/).
+func (b *Bridge) silenced(ctx context.Context, thread store.ChannelThread) (bool, error) {
+	source := episodeSources[thread.ConnectorID]
+	if !source.chats || source.optOuts == "" {
+		return false, nil
+	}
+	return b.store.ChannelThreadMemberOptedOut(ctx, thread.CustomerID, thread.ChannelID, source.optOuts)
 }
 
 // replyTo is the person a thread's replies reach, as its opt-outs and the gate name them. On

@@ -28,6 +28,99 @@ namespace GetStream.VisionAgents.Models
 
     
 
+    /// <summary>
+    /// The calling organization's account: its balance, its credit and spend, its status and tier, the threshold it is warned at, and what Stream allows it. Why an organization is suspended is Stream's, and is not here.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class Account
+    {
+
+        /// <summary>
+        /// What the organization has to spend now, in millionths of a dollar: its credit less what it spent and what work in flight holds, the figure every answer's X-Stream-Balance-Micros says.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("balance_micros")]
+        public long BalanceMicros { get; set; } = default!;
+
+        /// <summary>
+        /// Where balance_micros stands: exhausted at or below 0, low at or below the threshold.
+        /// <br/>
+        /// <br/>One of `ok`, `low`, `exhausted`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("balance_state")]
+        public string BalanceState { get; set; } = default!;
+
+        /// <summary>
+        /// The balance at or below which the organization is warned: X-Stream-Balance-Warning says low, and its stream event destinations get account.balance_low. 0 when nothing sets one.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("balance_warning_micros")]
+        public long BalanceWarningMicros { get; set; } = default!;
+
+        /// <summary>
+        /// Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
+        /// <br/>
+        /// <br/>One of `tier`, `account`, `organization_policy`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("balance_warning_source")]
+        public string BalanceWarningSource { get; set; } = default!;
+
+        /// <summary>
+        /// Every credit entry summed: top-ups, grants, refunds and adjustments.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("granted_micros")]
+        public long GrantedMicros { get; set; } = default!;
+
+        /// <summary>
+        /// What Stream allows the organization: its tier's settings, with those Stream set for this organization laid over them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("limits")]
+        public Limits Limits { get; set; } = new Limits();
+
+        [System.Text.Json.Serialization.JsonPropertyName("organization_id")]
+        public string OrganizationId { get; set; } = default!;
+
+        /// <summary>
+        /// The settings in limits Stream set for this organization rather than leaving its tier's, as dotted paths such as channels.voice.concurrent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("own_limits")]
+        public System.Collections.Generic.List<string>? OwnLimits { get; set; } = default!;
+
+        /// <summary>
+        /// The most the organization may spend in the UTC day and the calendar month, whatever its credit and its own limits, with what it spent and what is left. Absent when Stream sets none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("spend_hard_limit")]
+        public SpendHardLimitUsage? SpendHardLimit { get; set; } = default!;
+
+        /// <summary>
+        /// Every billable unit of work recorded, summed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("spent_micros")]
+        public long SpentMicros { get; set; } = default!;
+
+        /// <summary>
+        /// suspended: Stream refuses every request of the organization, free work included, until it restores it.
+        /// <br/>
+        /// <br/>One of `active`, `suspended`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = default!;
+
+        /// <summary>
+        /// The tier the organization is billed on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tier")]
+        public string Tier { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ActivityBucket
     {
@@ -254,6 +347,9 @@ namespace GetStream.VisionAgents.Models
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
         /// <summary>
         /// Absent when calls are reviewed by Stream's default guide.
         /// </summary>
@@ -406,6 +502,9 @@ namespace GetStream.VisionAgents.Models
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("review")]
         public AgentReview? Review { get; set; } = default!;
 
@@ -551,6 +650,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
+
+        /// <summary>
+        /// How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
 
         /// <summary>
         /// How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay.
@@ -939,7 +1044,7 @@ namespace GetStream.VisionAgents.Models
         public int Ordinal { get; set; } = default!;
 
         /// <summary>
-        /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+        /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("payload")]
         public System.Collections.Generic.Dictionary<string, object>? Payload { get; set; } = default!;
@@ -1121,11 +1226,17 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// How an agent is offered its plugin, MCP server and connector tools.
+    /// How an agent is offered its tools, and how long what they were given and gave back is kept.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentTools
     {
+
+        /// <summary>
+        /// How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("output_retention")]
+        public string? OutputRetention { get; set; } = default!;
 
         /// <summary>
         /// Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
@@ -2491,6 +2602,36 @@ namespace GetStream.VisionAgents.Models
             get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
             set { _additionalProperties = value; }
         }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ChannelLimits
+    {
+
+        /// <summary>
+        /// How many at once, for a calling channel.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("concurrent")]
+        public long? Concurrent { get; set; } = default!;
+
+        /// <summary>
+        /// The destination countries allowed, as ISO 3166-1 alpha-2 codes. Absent or empty allows any; in overrides, a non-empty list replaces the tier's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("countries")]
+        public System.Collections.Generic.List<string>? Countries { get; set; } = default!;
+
+        /// <summary>
+        /// How many a UTC day: messages, or minutes for a calling channel.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("per_day")]
+        public long? PerDay { get; set; } = default!;
+
+        /// <summary>
+        /// How many distinct recipients a UTC day.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("recipients_per_day")]
+        public long? RecipientsPerDay { get; set; } = default!;
 
     }
 
@@ -4885,6 +5026,12 @@ namespace GetStream.VisionAgents.Models
         public string? ProjectId { get; set; } = default!;
 
         /// <summary>
+        /// How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
+        /// <summary>
         /// The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("return_url")]
@@ -5027,6 +5174,69 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("username")]
         public string? Username { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CreditEntry
+    {
+
+        /// <summary>
+        /// Signed: what the entry added to the credit, in millionths of a dollar.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("amount_micros")]
+        public long AmountMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public long Id { get; set; } = default!;
+
+        /// <summary>
+        /// One of `top_up`, `grant`, `refund`, `dispute`, `dispute_reversal`, `adjustment`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("kind")]
+        public string Kind { get; set; } = default!;
+
+        /// <summary>
+        /// The payment's own reference, such as a top-up's payment id. Absent on entries Stream's staff wrote.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reference")]
+        public string? Reference { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CreditPage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<CreditEntry> Items { get; set; } = new System.Collections.Generic.List<CreditEntry>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -5649,7 +5859,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string Code { get; set; } = default!;
@@ -7202,6 +7412,36 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class Limits
+    {
+
+        /// <summary>
+        /// Limits on each messaging and calling channel, by channel name (sms, whatsapp, rcs, imessage, voice, ...).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("channels")]
+        public System.Collections.Generic.Dictionary<string, ChannelLimits>? Channels { get; set; } = default!;
+
+        /// <summary>
+        /// The balance, in micros, under which the organization is warned.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("low_balance_micros")]
+        public long? LowBalanceMicros { get; set; } = default!;
+
+        /// <summary>
+        /// Bounds of the organization's sandboxes.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sandbox")]
+        public SandboxLimits? Sandbox { get; set; } = default!;
+
+        /// <summary>
+        /// The most the organization may spend, whatever its credit and its own limits.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("spend_hard_limit")]
+        public SpendHardLimit? SpendHardLimit { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class LinkChannelRequest
     {
 
@@ -8139,7 +8379,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
+        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("custom")]
         public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;
@@ -8619,10 +8859,22 @@ namespace GetStream.VisionAgents.Models
         public bool? RequireOwnStreamApp { get; set; } = default!;
 
         /// <summary>
+        /// How the scope's sessions are handed back a conversation they carry on. The most specific level wins, field by field: a server-side session request, then its agent config, then the app's policy, then the organization's, then the router's default (text only, 100 turns, 60000 characters).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
+        /// <summary>
         /// Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        /// <summary>
+        /// How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool_output_retention")]
+        public string? ToolOutputRetention { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -8707,6 +8959,90 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("vendor")]
         public string Vendor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class Price
+    {
+
+        /// <summary>
+        /// The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("change")]
+        public string? Change { get; set; } = default!;
+
+        /// <summary>
+        /// In upcoming: why the change is made.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("description")]
+        public string? Description { get; set; } = default!;
+
+        /// <summary>
+        /// When it took effect, or takes effect. Absent when no change set it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
+        public System.DateTimeOffset? EffectiveAt { get; set; } = default!;
+
+        /// <summary>
+        /// The work costs nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("free")]
+        public bool Free { get; set; } = default!;
+
+        /// <summary>
+        /// The deployment runs the model itself; with no rates it costs nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("local")]
+        public bool Local { get; set; } = default!;
+
+        /// <summary>
+        /// Such as llm, stt, tts, sms or phone.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("modality")]
+        public string Modality { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// What a customer is charged, by meter.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("rates")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        /// <summary>
+        /// What a customer is charged for long prompts.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tiers")]
+        public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
+
+        /// <summary>
+        /// The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public System.Collections.Generic.Dictionary<string, string>? When { get; set; } = default!;
+
+        /// <summary>
+        /// In upcoming: the item stops being priced at effective_at.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("withdrawn")]
+        public bool? Withdrawn { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -9353,6 +9689,39 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class Prices
+    {
+
+        /// <summary>
+        /// The moment the list is read at.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("at")]
+        public System.DateTimeOffset At { get; set; } = default!;
+
+        /// <summary>
+        /// Every item priced now, by modality, provider and model.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("entries")]
+        public System.Collections.Generic.List<Price> Entries { get; set; } = new System.Collections.Generic.List<Price>();
+
+        /// <summary>
+        /// What the changes scheduled after at will set, soonest first.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("upcoming")]
+        public System.Collections.Generic.List<Price> Upcoming { get; set; } = new System.Collections.Generic.List<Price>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Provider
     {
 
@@ -9700,6 +10069,42 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// How a conversation is handed back to the model when a session carries it on.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ResumeHistory
+    {
+
+        /// <summary>
+        /// Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("include_tools")]
+        public bool? IncludeTools { get; set; } = default!;
+
+        /// <summary>
+        /// How many characters are handed back, tool calls and results included: about four to a token. The whole of it is sent, and billed, with the first reply after the conversation is resumed, and is cached from then on by models that cache, so keep it well inside the model's context window. Omitted is 60000.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_characters")]
+        public long? MaxCharacters { get; set; } = default!;
+
+        /// <summary>
+        /// How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_messages")]
+        public long? MaxMessages { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -10075,6 +10480,44 @@ namespace GetStream.VisionAgents.Models
             get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
             set { _additionalProperties = value; }
         }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SandboxLimits
+    {
+
+        /// <summary>
+        /// How many sandboxes at once.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_concurrent")]
+        public long? MaxConcurrent { get; set; } = default!;
+
+        /// <summary>
+        /// The most vCPUs of one sandbox.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_cpu")]
+        public long? MaxCpu { get; set; } = default!;
+
+        /// <summary>
+        /// The most disk of one sandbox, in GiB.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_disk_gb")]
+        public long? MaxDiskGb { get; set; } = default!;
+
+        /// <summary>
+        /// The most memory of one sandbox, in GiB.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_memory_gb")]
+        public long? MaxMemoryGb { get; set; } = default!;
+
+        /// <summary>
+        /// What a sandbox may reach: nothing, an allow list, or anything.
+        /// <br/>
+        /// <br/>One of `none`, `allow_list`, `any`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("network")]
+        public string? Network { get; set; } = default!;
 
     }
 
@@ -12154,6 +12597,24 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SpendHardLimit
+    {
+
+        /// <summary>
+        /// The most spent in one UTC day, in micros; 0 or absent is no limit.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("daily_micros")]
+        public long? DailyMicros { get; set; } = default!;
+
+        /// <summary>
+        /// The most spent in one calendar month (UTC), in micros; 0 or absent is no limit.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("monthly_micros")]
+        public long? MonthlyMicros { get; set; } = default!;
+
+    }
+
     /// <summary>
     /// The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
     /// </summary>
@@ -12185,9 +12646,15 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("limit_micros")]
         public long LimitMicros { get; set; } = default!;
 
+        /// <summary>
+        /// What it may still spend in the window: the limit less what it spent and what work in flight holds.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("room_micros")]
         public long RoomMicros { get; set; } = default!;
 
+        /// <summary>
+        /// What the organization spent in the window, as the usage records count it.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("spent_micros")]
         public long SpentMicros { get; set; } = default!;
 
@@ -12870,6 +13337,12 @@ namespace GetStream.VisionAgents.Models
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
+        /// <summary>
+        /// How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
+        public ResumeHistory? ResumeHistory { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("role")]
         public string? Role { get; set; } = default!;
 
@@ -13097,6 +13570,45 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("value")]
         public string Value { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// One of the organization's teams: one a spend limit names, or one this month's work carried. A team has no members: each user's token names its team.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class Team
+    {
+
+        /// <summary>
+        /// The apps whose work carried the team this calendar month (UTC), by id.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("apps")]
+        public System.Collections.Generic.List<string> Apps { get; set; } = new System.Collections.Generic.List<string>();
+
+        /// <summary>
+        /// The team's spend limits, across the organization and within each app, by id.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("limits")]
+        public System.Collections.Generic.List<Limit> Limits { get; set; } = new System.Collections.Generic.List<Limit>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// What the team spent in the current daily, weekly, biweekly and monthly windows.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("spent")]
+        public System.Collections.Generic.List<WindowSpend> Spent { get; set; } = new System.Collections.Generic.List<WindowSpend>();
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -14171,6 +14683,180 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// One unit of work recorded for the organization: who it was for, what it was, how much of it there was and what it cost. What Stream pays for it is Stream's, and is not here.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class UsageEvent
+    {
+
+        /// <summary>
+        /// The agent the work was done for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_id")]
+        public string? AgentId { get; set; } = default!;
+
+        /// <summary>
+        /// The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:&lt;name&gt;.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The app the work was for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string AppId { get; set; } = default!;
+
+        /// <summary>
+        /// What chose the price or explains the work, such as country or direction.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("attributes")]
+        public System.Collections.Generic.Dictionary<string, string>? Attributes { get; set; } = default!;
+
+        /// <summary>
+        /// Whether cost_micros counts against the organization's credit and limits.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("billable")]
+        public bool Billable { get; set; } = default!;
+
+        /// <summary>
+        /// The call the work was done in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call_id")]
+        public string? CallId { get; set; } = default!;
+
+        /// <summary>
+        /// What the organization is charged for the work, in millionths of a dollar.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long CostMicros { get; set; } = default!;
+
+        /// <summary>
+        /// Why it failed, when it did.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error_code")]
+        public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("meter")]
+        public string Meter { get; set; } = default!;
+
+        /// <summary>
+        /// The model that did it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
+
+        /// <summary>
+        /// When the work happened.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("occurred_at")]
+        public System.DateTimeOffset OccurredAt { get; set; } = default!;
+
+        /// <summary>
+        /// Who did the work, such as openai.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string? Provider { get; set; } = default!;
+
+        /// <summary>
+        /// What within the request the work was for, such as subagent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("purpose")]
+        public string? Purpose { get; set; } = default!;
+
+        /// <summary>
+        /// How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and the like.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("quantities")]
+        public System.Collections.Generic.Dictionary<string, long> Quantities { get; set; } = new System.Collections.Generic.Dictionary<string, long>();
+
+        /// <summary>
+        /// The session the work was done in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("session_id")]
+        public string? SessionId { get; set; } = default!;
+
+        /// <summary>
+        /// Whether the work succeeded.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("success")]
+        public bool Success { get; set; } = default!;
+
+        /// <summary>
+        /// The cost labels the request carried.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        /// <summary>
+        /// The team the user's token named, the name of the team:&lt;name&gt; category among usage_categories. Absent with none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
+        /// The usage categories the token named, its team among them as team:&lt;name&gt;.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("usage_categories")]
+        public System.Collections.Generic.List<string> UsageCategories { get; set; } = new System.Collections.Generic.List<string>();
+
+        /// <summary>
+        /// The event's id: the unit of work is recorded once under it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("usage_id")]
+        public System.Guid UsageId { get; set; } = default!;
+
+        /// <summary>
+        /// The end user the work was for, by the id the app's tokens name them with; only unique within the app. Absent when there was none, or the caller was anonymous.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string? UserId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// One page of the organization's usage events, newest first: by occurred_at, then by usage_id.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class UsageEventPage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<UsageEvent> Items { get; set; } = new System.Collections.Generic.List<UsageEvent>();
+
+        /// <summary>
+        /// Where the next page starts, for cursor; absent on the last page.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -15109,6 +15795,33 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("verification_method")]
         public string? VerificationMethod { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class WindowSpend
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("interval")]
+        public string Interval { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("spent_micros")]
+        public long SpentMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("window_end")]
+        public System.DateTimeOffset WindowEnd { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("window_start")]
+        public System.DateTimeOffset WindowStart { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

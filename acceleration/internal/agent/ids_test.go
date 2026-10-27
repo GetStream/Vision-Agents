@@ -55,26 +55,6 @@ func TestAnIDNothingGaveTheModelIsNotPassedOn(t *testing.T) {
 	assert.True(t, failedResult(unfoundIDResult("ticket_id", "840", nil)))
 }
 
-func TestALastFourThatIsNotFourDigitsIsNotSent(t *testing.T) {
-	for arguments, misshapen := range map[string]bool{
-		`{"pin":"4471","last4":"9821","address":"14 Cedar Lane"}`: false,
-		`{"pin":"4471","last4":"98214"}`:                          true,
-		`{"last4":"98t1"}`:                                        true,
-		`{"last_four":"129821"}`:                                  true,
-		`{"pin":"4471"}`:                                          false,
-		`{"last4":""}`:                                            false,
-		`{"last4":"9821","address":"98214 Cedar Lane"}`:           true,
-		`{"last4":"9821","address":"1400 Cedar Lane"}`:            false,
-	} {
-		_, _, got := misshapenLastFour(llm.ToolCall{Name: "verify_account", Arguments: arguments})
-		assert.Equal(t, misshapen, got, arguments)
-	}
-	assert.True(t, failedResult(misshapenResult("last4", "98214", nil)))
-
-	heard := []llm.Message{{Role: llm.User, Content: "PIN 4471. Last four. 553017 Oak Road. Is there an outage?"}}
-	assert.Contains(t, misshapenResult("last4", "55317", heard), "the last four 5530 followed by the address 17 Oak Road")
-}
-
 func TestAHandedOutIDLeftOutIsAskedFor(t *testing.T) {
 	tools := harness.Tools{Tools: []harness.Tool{
 		{Name: "create_ticket"},
@@ -121,7 +101,7 @@ func TestANumberNobodyGaveIsNotSent(t *testing.T) {
 	}
 	refused := append(history,
 		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "verify_account"}}},
-		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: misshapenResult("last4", "19821", nil)})
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: didNotWork + `"19821" is not four digits.`})
 	_, _, _, got := unheardNumber(refused, llm.ToolCall{Name: "verify_account", Arguments: `{"last4":"1982"}`})
 	assert.True(t, got, "a refusal quoting 19821 does not make 1982 heard")
 
@@ -190,9 +170,6 @@ func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 		`{"name":"Maria de la Cruz"}`:      false,
 		`{"party_size":3}`:                 false,
 		`{"name":"Carry on with the caller from what is in your instructions."}`: true,
-		`{"name":"Let Alvarez"}`:  true,
-		`{"name":"Wing Wait"}`:    true,
-		`{"name":"Will Alvarez"}`: false,
 	} {
 		_, got := placeholderName(nil, llm.ToolCall{Name: "create_reservation", Arguments: arguments})
 		assert.Equal(t, stand, got, arguments)
@@ -224,6 +201,39 @@ func TestAnIDATextResultGaveIsPassedOn(t *testing.T) {
 	}
 	_, _, _, unfound = unfoundID(quoted, call(`{"user_id":"noah_ito_3850"}`), tools)
 	assert.True(t, unfound, "a refusal quoting the ID does not make it returned")
+}
+
+func TestAnIDListedUnderAPluralKeyIsPassedOn(t *testing.T) {
+	// τ-bench: get_user_details lists a user's orders and reservations as bare IDs under
+	// "orders" and "reservations", with no order_id or reservation_id key beside them.
+	tools := []string{"get_user_details", "get_order_details", "get_reservation_details"}
+	history := []llm.Message{
+		{Role: llm.User, Content: "I'd like to check on my order."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_user_details"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"user_id":"mia_garcia_4516",` +
+			`"orders":["#W5272531","#W2890441"],"reservations":["MFRB94"],` +
+			`"payment_methods":{"gift_card_6829926":{"id":"gift_card_6829926"}}}`},
+	}
+	call := func(name, arguments string) llm.ToolCall {
+		return llm.ToolCall{Name: name, Arguments: arguments}
+	}
+
+	_, _, _, unfound := unfoundID(history, call("get_order_details", `{"order_id":"#W5272531"}`), tools)
+	assert.False(t, unfound)
+	_, _, _, unfound = unfoundID(history, call("get_reservation_details", `{"reservation_id":"MFRB94"}`), tools)
+	assert.False(t, unfound)
+	_, _, _, unfound = unfoundID(history, call("get_order_details", `{"order_id":"#W0000000"}`), tools)
+	assert.True(t, unfound, "an order the list does not hold is still one nothing gave")
+	_, _, _, unfound = unfoundID(history, call("get_order_details", `{"order_id":"MFRB94"}`), tools)
+	assert.True(t, unfound, "a reservation is not an order")
+}
+
+func TestAListUnderAPluralKeyHoldsThatKeysIDs(t *testing.T) {
+	assert.Equal(t, "order_id", listedID("orders"))
+	assert.Equal(t, "order_id", listedID("order_ids"))
+	assert.Equal(t, "reservation_id", listedID("reservations"))
+	assert.Equal(t, "", listedID("address"))
+	assert.Equal(t, "", listedID("s"))
 }
 
 func TestAnIDTheCallerReadOutIsPassedOn(t *testing.T) {

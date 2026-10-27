@@ -12,7 +12,9 @@ final readonly class SpendHardLimitWindow
 {
     public function __construct(
         public int $limitMicros,
+        // What it may still spend in the window: the limit less what it spent and what work in flight holds.
         public int $roomMicros,
+        // What the organization spent in the window, as the usage records count it.
         public int $spentMicros,
         public \DateTimeImmutable $windowEnd,
     ) {

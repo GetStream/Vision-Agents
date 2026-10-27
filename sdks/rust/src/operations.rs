@@ -32,6 +32,32 @@ impl Client {
         )
         .await
     }
+    /// Read the organization's account
+    ///
+    /// `GET /v1/account` (`getAccount`).
+    pub async fn get_account(&self) -> Result<types::Account> {
+        self.send(
+            Method::GET,
+            "/v1/account",
+            None::<&()>,
+            None::<&()>,
+            "getAccount",
+        )
+        .await
+    }
+    /// List the organization's credit entries
+    ///
+    /// `GET /v1/account/credits` (`listCredits`).
+    pub async fn list_credits(&self, query: &ListCreditsQuery) -> Result<types::CreditPage> {
+        self.send(
+            Method::GET,
+            "/v1/account/credits",
+            Some(query),
+            None::<&()>,
+            "listCredits",
+        )
+        .await
+    }
     /// The calls the calling customer has run
     ///
     /// `GET /v1/agents/calls` (`listCalls`).
@@ -2647,13 +2673,13 @@ impl Client {
         )
         .await
     }
-    /// Read what a subject spent against its limits
+    /// Read what subjects spent against their limits
     ///
     /// `GET /v1/manage/spend/limits/usage` (`manageGetLimitUsage`).
     pub async fn manage_get_limit_usage(
         &self,
         query: &ManageGetLimitUsageQuery,
-    ) -> Result<types::SubjectUsage> {
+    ) -> Result<Vec<types::SubjectUsage>> {
         self.send(
             Method::GET,
             "/v1/manage/spend/limits/usage",
@@ -2741,6 +2767,22 @@ impl Client {
             None::<&()>,
             None::<&()>,
             "getManageStatus",
+        )
+        .await
+    }
+    /// List the organization's teams
+    ///
+    /// `GET /v1/manage/teams` (`manageListTeams`).
+    pub async fn manage_list_teams(
+        &self,
+        query: &ManageListTeamsQuery,
+    ) -> Result<Vec<types::Team>> {
+        self.send(
+            Method::GET,
+            "/v1/manage/teams",
+            Some(query),
+            None::<&()>,
+            "manageListTeams",
         )
         .await
     }
@@ -3052,6 +3094,19 @@ impl Client {
             None::<&()>,
             body,
             "attachPhoneNumber",
+        )
+        .await
+    }
+    /// Stop a number taking calls, keeping it
+    ///
+    /// `DELETE /v1/phone/numbers/{e164}/attach` (`detachPhoneNumber`).
+    pub async fn detach_phone_number(&self, e164: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/phone/numbers/{e164}/attach", e164 = segment(e164)),
+            None::<&()>,
+            None::<&()>,
+            "detachPhoneNumber",
         )
         .await
     }
@@ -3441,6 +3496,19 @@ impl Client {
         )
         .await
     }
+    /// Read the price list
+    ///
+    /// `GET /v1/prices` (`getPrices`).
+    pub async fn get_prices(&self, query: &GetPricesQuery) -> Result<types::Prices> {
+        self.send(
+            Method::GET,
+            "/v1/prices",
+            Some(query),
+            None::<&()>,
+            "getPrices",
+        )
+        .await
+    }
     /// The router configs the calling customer holds
     ///
     /// `GET /v1/router/configs` (`listRouterConfigs`).
@@ -3617,10 +3685,13 @@ impl Client {
         )
         .await
     }
-    /// Read what a subject spent against its limits
+    /// Read what subjects spent against their limits
     ///
     /// `GET /v1/spend/limits/usage` (`getLimitUsage`).
-    pub async fn get_limit_usage(&self, query: &GetLimitUsageQuery) -> Result<types::SubjectUsage> {
+    pub async fn get_limit_usage(
+        &self,
+        query: &GetLimitUsageQuery,
+    ) -> Result<Vec<types::SubjectUsage>> {
         self.send(
             Method::GET,
             "/v1/spend/limits/usage",
@@ -3786,6 +3857,19 @@ impl Client {
         )
         .await
     }
+    /// List the organization's teams
+    ///
+    /// `GET /v1/teams` (`listTeams`).
+    pub async fn list_teams(&self, query: &ListTeamsQuery) -> Result<Vec<types::Team>> {
+        self.send(
+            Method::GET,
+            "/v1/teams",
+            Some(query),
+            None::<&()>,
+            "listTeams",
+        )
+        .await
+    }
     /// Speak a whole text into one audio file, off the live path
     ///
     /// `POST /v1/tts/recordings` (`recordSpeech`).
@@ -3825,6 +3909,22 @@ impl Client {
             Some(query),
             None::<&()>,
             "getTurnStats",
+        )
+        .await
+    }
+    /// List the usage events
+    ///
+    /// `GET /v1/usage/events` (`listUsageEvents`).
+    pub async fn list_usage_events(
+        &self,
+        query: &ListUsageEventsQuery,
+    ) -> Result<types::UsageEventPage> {
+        self.send(
+            Method::GET,
+            "/v1/usage/events",
+            Some(query),
+            None::<&()>,
+            "listUsageEvents",
         )
         .await
     }
@@ -3910,6 +4010,16 @@ impl Client {
         )
         .await
     }
+}
+/// The query string `listCredits` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListCreditsQuery {
+    /// Up to 100. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 /// The query string `listCalls` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -4287,16 +4397,30 @@ pub struct ManageListLimitGrantsQuery {
 pub struct ManageGetLimitUsageQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// The app of each subject, for every subject but organization, category and team. One goes with every subject.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
+    /// The key of each subject, for subject api_key.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// The end user of each subject, for subject user.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
+    /// The team of each subject, for subject team or app_team.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
+    /// The usage category of each subject, for subject category or app_category.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<String>,
+}
+/// The query string `manageListTeams` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ManageListTeamsQuery {
+    /// Only what happened within this app: each team's spend and limits there, and only the teams it saw.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization_id: Option<String>,
 }
@@ -4391,6 +4515,13 @@ pub struct ListUserPoliciesQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }
+/// The query string `getPrices` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct GetPricesQuery {
+    /// Only this modality's items, such as llm, stt, tts, sms or phone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modality: Option<String>,
+}
 /// The query string `listLimits` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListLimitsQuery {
@@ -4448,14 +4579,19 @@ pub struct ListLimitGrantsQuery {
 pub struct GetLimitUsageQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// The app of each subject, for every subject but organization, category and team. One goes with every subject.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
+    /// The key of each subject, for subject api_key.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// The end user of each subject, for subject user.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
+    /// The team of each subject, for subject team or app_team.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
+    /// The usage category of each subject, for subject category or app_category.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
 }
@@ -4484,12 +4620,15 @@ pub struct GetAgentStatsQuery {
 /// The query string `getSpend` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct GetSpendQuery {
-    /// "modality", or the cost label to group by.
+    /// "modality", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_by: Option<String>,
     /// How many values keep a series of their own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Whose spend: app, the default, or organization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub granularity: Option<String>,
     /// Start of the window, inclusive.
@@ -4527,6 +4666,13 @@ pub struct GetTagKeysQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
 }
+/// The query string `listTeams` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListTeamsQuery {
+    /// Only what happened within this app: each team's spend and limits there, and only the teams it saw.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+}
 /// The query string `getTurnStats` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct GetTurnStatsQuery {
@@ -4541,6 +4687,43 @@ pub struct GetTurnStatsQuery {
     /// End of the window, exclusive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+}
+/// The query string `listUsageEvents` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListUsageEventsQuery {
+    /// Whose events: app, the default, or organization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    /// Only events that happened at or after this, inclusive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// Only events that happened before this, exclusive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// Only this kind of work, such as llm or runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meter: Option<String>,
+    /// Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    /// Only work for this team: its users' tokens name it in their team claim. Not with category.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    /// Only work carrying this usage category, as the tokens name it. Not with team.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// The most events one page holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same filters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 /// The query string `resolveTarget` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

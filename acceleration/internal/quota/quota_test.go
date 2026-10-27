@@ -448,6 +448,21 @@ func (s *QuotaSuite) TestTodayIsWhatTheCustomersQuotaCounted() {
 	s.Equal(nextMidnight(time.Now()), reset)
 }
 
+func (s *QuotaSuite) TestUserKeysAreEveryBucketAUserIsCountedIn() {
+	limiter := s.limiterWith(Limits{MessagesPerDay: 1}, s.appQuota(Limits{MessagesPerDay: 1}))
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+	s.Require().ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted)
+
+	for _, key := range UserKeys(s.customer, s.caller.UserID, time.Now()) {
+		s.Require().NoError(s.redis.Do(s.ctx, s.redis.B().Del().Key(key).Build()).Error())
+	}
+
+	elsewhere := s.caller
+	elsewhere.IP = "198.51.100.7"
+	s.NoError(s.allow(limiter, s.customer, elsewhere), "nothing counts against them but the address they used")
+	s.ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted, "which still answers for itself")
+}
+
 func (s *QuotaSuite) TestTheEffectiveQuotaIsTheSources() {
 	limiter := s.limiterWith(Limits{MessagesPerDay: 7}, s.appQuota(Limits{TokensPerDay: 9}))
 

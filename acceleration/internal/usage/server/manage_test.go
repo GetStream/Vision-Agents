@@ -812,6 +812,120 @@ func (s *ServerSuite) TestOneStateChangeSentAtOnceIsMadeOnce() {
 	s.Equal(usage.AccountSuspended, s.account(s.organization).Status)
 }
 
+// userWindows are the stored windows of one end user of an app, by interval.
+func (s *ServerSuite) userWindows(app, user string) map[usage.Interval]ledger.UsageWindow {
+	var rows []ledger.UsageWindow
+	s.Require().NoError(s.service.Ledger.DB().NewSelect().Model(&rows).
+		Where("subject = ?", usage.SubjectUser).Where("app_id = ?", app).Where("user_id = ?", user).Scan(s.ctx))
+	windows := map[usage.Interval]ledger.UsageWindow{}
+	for _, row := range rows {
+		windows[row.Interval] = row
+	}
+	return windows
+}
+
+// usersOf is the user id of each stored event, by usage id.
+func (s *ServerSuite) usersOf() map[uuid.UUID]string {
+	users := map[uuid.UUID]string{}
+	for _, row := range s.stored() {
+		users[row.UsageID] = row.UserID
+	}
+	return users
+}
+
+func (s *ServerSuite) TestForgetRewritesEventsAndWindows() {
+	const person = "ada@example.com"
+	as := func(app, user string, cost int64) usage.Event {
+		return usagetest.Event(s.organization, func(e *usage.Event) { e.AppID, e.UserID, e.CostMicros = app, user, cost })
+	}
+	first, second := as("a1", person, 300), as("a1", person, 700)
+	someoneElse, otherApp := as("a1", "grace", 50), as("a2", person, 90)
+	s.ship(first, second, someoneElse, otherApp)
+	replacement := usage.NewReplacement()
+	forget := usage.ForgetUser{AppID: "a1", UserID: person, Replacement: replacement}
+	dryRun := forget
+	dryRun.DryRun = true
+
+	var counted, forgotten usage.ForgottenUser
+	s.ok(http.StatusOK, &counted, http.MethodPost, usage.PathForgetUser, dryRun)
+	s.Equal(person, s.usersOf()[first.UsageID], "a dry run changes nothing")
+	s.ok(http.StatusOK, &forgotten, http.MethodPost, usage.PathForgetUser, forget)
+
+	want := usage.ForgottenUser{Events: 2, Windows: int64(len(usage.Intervals)), Organizations: []string{s.organization}}
+	s.Equal(want, counted)
+	s.Equal(want, forgotten)
+	s.Equal(map[uuid.UUID]string{
+		first.UsageID: replacement, second.UsageID: replacement, someoneElse.UsageID: "grace", otherApp.UsageID: person,
+	}, s.usersOf())
+	s.Empty(s.userWindows("a1", person))
+	for _, interval := range usage.Intervals {
+		window := s.userWindows("a1", replacement)[interval]
+		s.Equal([]int64{1000, 2}, []int64{window.SpentMicros, window.Events}, interval)
+		s.Equal(int64(90), s.userWindows("a2", person)[interval].SpentMicros, "the same id in another app is another user")
+	}
+	audits := s.audits()
+	s.Require().Len(audits, 1)
+	s.Equal(ledger.ActionForgetUser, audits[0].Action)
+	s.Equal(s.organization, audits[0].OrganizationID)
+	s.Contains(string(audits[0].After), replacement)
+	s.NotContains(string(audits[0].After), person)
+
+	late := as("a1", person, 5)
+	s.ship(late)
+	var again usage.ForgottenUser
+	s.ok(http.StatusOK, &again, http.MethodPost, usage.PathForgetUser, forget)
+
+	s.Equal(usage.ForgottenUser{Events: 1, Windows: int64(len(usage.Intervals)), Organizations: []string{s.organization}}, again)
+	s.Equal(replacement, s.usersOf()[late.UsageID])
+	s.Empty(s.userWindows("a1", person))
+	for _, interval := range usage.Intervals {
+		window := s.userWindows("a1", replacement)[interval]
+		s.Equal([]int64{1005, 3}, []int64{window.SpentMicros, window.Events}, "a late event's window is merged into the replacement's: %s", interval)
+	}
+	standing := s.standing(s.organization, "")
+	s.Equal(int64(1145), standing.SpentMicros, "usage and cost stay where they were")
+}
+
+func (s *ServerSuite) TestForgetNeedsTheManageKey() {
+	const person = "ada@example.com"
+	event := usagetest.Event(s.organization, func(e *usage.Event) { e.AppID, e.UserID = "a1", person })
+	s.ship(event)
+	forget := usage.ForgetUser{AppID: "a1", UserID: person, Replacement: usage.NewReplacement()}
+
+	for _, headers := range [][]string{
+		{"X-Manage-Key", ""},
+		{"X-Manage-Key", "wrong"},
+		{"X-Manage-Key", s.service.Token},
+		{"X-Manage-Key", "", "Authorization", "Bearer " + s.service.Token},
+	} {
+		answered := s.refused(http.StatusUnauthorized, http.MethodPost, usage.PathForgetUser, forget, headers...)
+		s.Equal("unauthenticated", answered.Code, "%v", headers)
+	}
+	s.refused(http.StatusBadRequest, http.MethodPost, usage.PathForgetUser, forget, "X-Stream-Actor-Id", "")
+	ingestOnly, err := usage.NewClient(usage.ClientOptions{URL: s.service.URL, Token: s.service.Token})
+	s.Require().NoError(err)
+	_, err = ingestOnly.ForgetUser(s.ctx, "staff-1", forget)
+	s.ErrorContains(err, "manage key")
+
+	s.Equal(map[uuid.UUID]string{event.UsageID: person}, s.usersOf())
+	s.Empty(s.audits())
+}
+
+func (s *ServerSuite) TestForgetTakesOnlyARandomReplacement() {
+	event := usagetest.Event(s.organization, func(e *usage.Event) { e.AppID, e.UserID = "a1", "ada" })
+	s.ship(event)
+
+	for _, replacement := range []string{"", "grace", "forgotten:ada", usage.ForgottenPrefix + strings.Repeat("A", 32), "ada"} {
+		answered := s.refused(http.StatusBadRequest, http.MethodPost, usage.PathForgetUser,
+			usage.ForgetUser{AppID: "a1", UserID: "ada", Replacement: replacement})
+		s.Equal("invalid_request", answered.Code, replacement)
+	}
+	s.refused(http.StatusBadRequest, http.MethodPost, usage.PathForgetUser,
+		usage.ForgetUser{AppID: "a|1", UserID: "ada", Replacement: usage.NewReplacement()})
+
+	s.Equal(map[uuid.UUID]string{event.UsageID: "ada"}, s.usersOf())
+}
+
 func (s *ServerSuite) TestACursorThatIsNotAPositionIsRefused() {
 	for _, cursor := range []string{"bnVsbA", "WzFd", "e30x"} { // null, [1], {}1
 		s.refused(http.StatusBadRequest, http.MethodGet, "/v1/manage/accounts/"+s.organization+"/credits?cursor="+cursor, nil)

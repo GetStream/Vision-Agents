@@ -48,7 +48,12 @@ type ChannelThread struct {
 	ThreadParts map[string]string `bun:"thread_parts,type:jsonb,notnull"`
 	// StreamAppPK is the Stream app the thread channel is in; zero, stored as NULL, is the
 	// deployment's own.
-	StreamAppPK   int64     `bun:"stream_app_pk,nullzero"`
+	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
+	// ChatPerson is the author id of the one person a chat thread is with, while its latest
+	// message says the chat is no group; empty for any other thread. It is not a column of
+	// channel_threads: ChannelThread reads it from channel_thread_people and
+	// SetChannelThreadChatPerson writes it (20261116100000_channel_thread_people.sql).
+	ChatPerson    string    `bun:"chat_person,scanonly"`
 	LastInboundAt time.Time `bun:"last_inbound_at,notnull"`
 	CreatedAt     time.Time `bun:"created_at,notnull"`
 	// TurnHolder and TurnUntil are the lease on the thread's running turn
@@ -129,6 +134,58 @@ func (s *Store) LinkChannelThread(ctx context.Context, thread *ChannelThread) (c
 	return thread.ChannelID == proposed, nil
 }
 
+// SetChannelThreadChatPerson records person as the one person a thread channel's chat is with,
+// as the chat's latest message names them; empty forgets the one recorded, so the chat is no
+// one person's.
+func (s *Store) SetChannelThreadChatPerson(ctx context.Context, channelID, person string) error {
+	if channelID == "" {
+		return stack.Wrap(errors.New("store: a channel id is required"))
+	}
+	var err error
+	if person == "" {
+		_, err = s.db.NewRaw("DELETE FROM channel_thread_people WHERE channel_id = ?", channelID).Exec(ctx)
+	} else {
+		_, err = s.db.NewRaw("INSERT INTO channel_thread_people (channel_id, chat_person) VALUES (?, ?) "+
+			"ON CONFLICT (channel_id) DO UPDATE SET chat_person = EXCLUDED.chat_person", channelID, person).Exec(ctx)
+	}
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set channel thread chat person: %w", err))
+	}
+	return nil
+}
+
+// AddChannelThreadMember records member as a person a thread channel's chat reaches, by the
+// recipient their opt-outs name (20261117110000_channel_thread_members.sql). One already
+// recorded is left as it is.
+func (s *Store) AddChannelThreadMember(ctx context.Context, channelID, member string) error {
+	if channelID == "" || member == "" {
+		return stack.Wrap(errors.New("store: a channel id and a member are required"))
+	}
+	_, err := s.db.NewRaw("INSERT INTO channel_thread_members (channel_id, member) VALUES (?, ?) ON CONFLICT DO NOTHING",
+		channelID, member).Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: add channel thread member: %w", err))
+	}
+	return nil
+}
+
+// ChannelThreadMemberOptedOut is whether a person recorded in a thread channel's chat
+// (AddChannelThreadMember) has a live opt-out of the customer's channel, or of all of them, as
+// OptedOut reads one.
+func (s *Store) ChannelThreadMemberOptedOut(ctx context.Context, customerID, channelID, channel string) (bool, error) {
+	found, err := s.db.NewSelect().Model((*OptOut)(nil)).
+		Join("JOIN channel_thread_members AS ctm ON ctm.member = oo.recipient").
+		Where("ctm.channel_id = ?", channelID).
+		Where("oo.customer_id = ?", customerID).
+		Where("oo.channel IN (?)", bun.In([]string{channel, OptOutAll})).
+		Where("oo.revoked_at IS NULL").
+		Exists(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: channel thread member opted out: %w", err))
+	}
+	return found, nil
+}
+
 // ChannelThreadLinked is whether an external thread of a customer's provider unit is linked to
 // a thread channel already.
 func (s *Store) ChannelThreadLinked(ctx context.Context, customerID, connectorID, providerUnitID, threadKey string) (bool, error) {
@@ -148,7 +205,12 @@ func (s *Store) ChannelThread(ctx context.Context, channelID string) (ChannelThr
 		return ChannelThread{}, stack.Wrap(errors.New("store: a channel id is required"))
 	}
 	var thread ChannelThread
-	err := s.db.NewSelect().Model(&thread).Where("channel_id = ?", channelID).Scan(ctx)
+	err := s.db.NewSelect().Model(&thread).
+		ColumnExpr("ct.*").
+		ColumnExpr("ctp.chat_person").
+		Join("LEFT JOIN channel_thread_people AS ctp ON ctp.channel_id = ct.channel_id").
+		Where("ct.channel_id = ?", channelID).
+		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ChannelThread{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoChannelThread, channelID))
 	}

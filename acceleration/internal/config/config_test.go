@@ -413,19 +413,24 @@ func (s *ConfigSuite) TestTheHTTPSSchemeIsRefusedInAnyCase() {
 	s.ErrorContains(err, "an https URL that is not https://<public IPv4 address>:port")
 }
 
-// TestTheRefusalOfAnHTTPSProxyURLNamesNoCredential: the URL's user is a credential.
+// TestTheRefusalOfAnHTTPSProxyURLNamesNoCredential: the URL's user is a credential, also when
+// the URL does not parse (a port that is no number), where the error names no host at all.
 func (s *ConfigSuite) TestTheRefusalOfAnHTTPSProxyURLNamesNoCredential() {
-	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
-	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
-	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
-	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
-	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "https://sbx:canary-tok@proxy.example:8091")
+	for address, host := range map[string]string{"https://sbx:canary-tok@proxy.example:8091": "proxy.example:8091",
+		"https://sbx:canary-tok@proxy.example:abc": "unparseable"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
 
-	_, _, err := Load("")
+		_, _, err := Load("")
 
-	s.Require().ErrorContains(err, "proxy.example:8091")
-	s.NotContains(err.Error(), "canary-tok")
-	s.NotContains(err.Error(), "sbx")
+		s.Require().ErrorContains(err, `has host "`+host+`"`, address)
+		s.NotContains(err.Error(), "canary-tok", address)
+		s.NotContains(err.Error(), "sbx", address)
+		s.NotContains(err.Error(), "proxy.example:abc", address)
+	}
 }
 
 // TestTheProxysCACertificateHoldsNoKey: every sandbox is given it.
@@ -601,6 +606,18 @@ func (s *ConfigSuite) TestTheUsageServiceIsReadAndExported() {
 	s.Require().NoError(err)
 	s.Equal(Usage{URL: "http://usage:8070", Token: "from-the-environment"}, config.Usage)
 	s.Equal("http://usage:8070", os.Getenv("ROUTER_USAGE_URL"), "what a file sets reaches the environment")
+}
+
+func (s *ConfigSuite) TestTheUsageManageKeyIsReadAndExported() {
+	s.T().Setenv("ROUTER_USAGE_URL", "http://usage:8070")
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "token")
+	s.T().Setenv("ROUTER_USAGE_MANAGE_KEY", "the-manage-key")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal("the-manage-key", config.Usage.ManageKey)
+	s.Equal("the-manage-key", os.Getenv("ROUTER_USAGE_MANAGE_KEY"))
 }
 
 func (s *ConfigSuite) TestNoUsageServiceIsTheDefault() {

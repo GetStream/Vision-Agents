@@ -36,6 +36,10 @@ func (a *answers) Active(context.Context, time.Time) ([]Entry, int64, time.Time,
 
 func (a *answers) Upcoming(context.Context, time.Time) ([]UpcomingEntry, error) { return nil, nil }
 
+func (a *answers) UpcomingMarkups(context.Context, time.Time) ([]UpcomingMarkup, error) {
+	return nil, nil
+}
+
 // scheduled is a Source written for the test with one change scheduled at at: before it the
 // list is before, from it after.
 type scheduled struct {
@@ -48,6 +52,10 @@ func (s scheduled) Active(_ context.Context, at time.Time) ([]Entry, int64, time
 		return s.before, 0, s.at, nil
 	}
 	return s.after, 0, time.Time{}, nil
+}
+
+func (s scheduled) UpcomingMarkups(context.Context, time.Time) ([]UpcomingMarkup, error) {
+	return nil, nil
 }
 
 func (s scheduled) Upcoming(_ context.Context, after time.Time) ([]UpcomingEntry, error) {
@@ -287,6 +295,10 @@ func (t *timeline) Active(_ context.Context, at time.Time) ([]Entry, int64, time
 }
 
 func (t *timeline) Upcoming(context.Context, time.Time) ([]UpcomingEntry, error) { return nil, nil }
+
+func (t *timeline) UpcomingMarkups(context.Context, time.Time) ([]UpcomingMarkup, error) {
+	return nil, nil
+}
 
 func (t *timeline) readCount() int {
 	t.mu.Lock()

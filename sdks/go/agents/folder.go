@@ -12,6 +12,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -200,11 +201,15 @@ type Settings struct {
 	App map[string]any `yaml:"app"`
 }
 
-// ToolSettings is how MCP server and connector tools are offered.
+// ToolSettings is how MCP server and connector tools are offered, and how long what any tool
+// was given and gave back is kept.
 type ToolSettings struct {
 	// Progressive offers each tool by a summary, the first call to it returning its full
 	// description instead of running it. Nil when the declaration says nothing about it.
 	Progressive *bool `yaml:"progressive"`
+	// OutputRetention is how long the agent's sessions keep a tool's arguments and output:
+	// none, or a duration such as 12h or 30d. Nil when the declaration says nothing about it.
+	OutputRetention *string `yaml:"output_retention"`
 }
 
 // ConnectorSettings is one connector the agent binds. agent.yaml gives it as the alias
@@ -231,20 +236,33 @@ type ConnectorSettings struct {
 	RequireApproval *[]string `yaml:"require_approval"`
 }
 
+// connectorKeys are the keys a connector entry may hold: the yaml tags of ConnectorSettings.
+var connectorKeys = func() []string {
+	settings := reflect.TypeFor[ConnectorSettings]()
+	keys := make([]string, settings.NumField())
+	for i := range keys {
+		keys[i] = settings.Field(i).Tag.Get("yaml")
+	}
+	return keys
+}()
+
 func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		*c = ConnectorSettings{Name: node.Value}
 	} else {
-		// A node decodes without its decoder's KnownFields, so the mapping is read again by
-		// one that refuses a key it does not know.
-		raw, err := yaml.Marshal(node)
-		if err != nil {
-			return err
+		// A node decodes without its decoder's KnownFields, so a key it does not know is
+		// refused here. The node keeps its lines in the file, which its errors name.
+		if node.Kind == yaml.MappingNode {
+			for index := 0; index < len(node.Content); index += 2 {
+				key := node.Content[index]
+				if !slices.Contains(connectorKeys, key.Value) {
+					return fmt.Errorf("line %d: %q is not something a connector says; %s are", key.Line, key.Value,
+						strings.Join(connectorKeys, ", "))
+				}
+			}
 		}
 		type plain ConnectorSettings
-		decoder := yaml.NewDecoder(bytes.NewReader(raw))
-		decoder.KnownFields(true)
-		if err := decoder.Decode((*plain)(c)); err != nil {
+		if err := node.Decode((*plain)(c)); err != nil {
 			return err
 		}
 	}

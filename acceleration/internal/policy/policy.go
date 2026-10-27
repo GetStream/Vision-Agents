@@ -220,6 +220,10 @@ type decision struct {
 	screen bool
 	// ownApp is a customer that must act in a Stream app of its own.
 	ownApp bool
+	// toolOutput is the longest a session keeps what its tools were given and gave back.
+	toolOutput options.Retention
+	// resumeHistory is how the app's sessions are handed back a conversation they carry on.
+	resumeHistory store.ResumeHistory
 	// organization is the one the app is in, empty while it is not known.
 	organization string
 	// balanceWarning is the balance its organization's policy warns at, over its tier's; nil
@@ -527,6 +531,39 @@ func (e *Enforcer) RequiresOwnStreamApp(ctx context.Context, customerID string) 
 	return decided.ownApp, nil
 }
 
+// ToolOutputRetention is the longest a customer's sessions may keep what their tools were
+// given and gave back: the shorter of the app's and the organization's, empty when neither
+// says. It fails closed, as RequiresOwnStreamApp does: a policy that could not be read keeps
+// nothing, since the other answer stores what a customer may have said must not be.
+func (e *Enforcer) ToolOutputRetention(ctx context.Context, customerID string) (options.Retention, error) {
+	if e == nil || customerID == "" {
+		return "", nil
+	}
+	decided := e.decide(ctx, customerID)
+	if decided.unread != nil {
+		return options.RetentionNone, decided.unread
+	}
+	return decided.toolOutput, nil
+}
+
+// ResumeHistory is how a customer's sessions are handed back a conversation they carry on,
+// as its app's and organization's policies set it; an agent config and a session may say
+// otherwise. A policy that could not be read is the router's default: this changes what a
+// model is sent, never what is kept or who may see it, so failing open withholds nothing.
+func (e *Enforcer) ResumeHistory(ctx context.Context, customerID string) store.ResumeHistory {
+	if e == nil || customerID == "" {
+		return store.ResumeHistory{}
+	}
+	return e.decide(ctx, customerID).resumeHistory
+}
+
+func resumeHistoryOf(document store.PolicyDocument) store.ResumeHistory {
+	if document.ResumeHistory == nil {
+		return store.ResumeHistory{}
+	}
+	return *document.ResumeHistory
+}
+
 // Save replaces a scope's policy and drops the decisions it may have changed, so the next
 // request of this process reads them again.
 func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string, document store.PolicyDocument) error {
@@ -693,8 +730,10 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
 		ownApp:         enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
+		resumeHistory:  resumeHistoryOf(app).Over(resumeHistoryOf(organization)),
 		organization:   organizationID,
 		balanceWarning: organization.BalanceWarningMicros,
+		toolOutput:     organization.ToolOutputRetention.Shorter(app.ToolOutputRetention),
 	}
 	decided.appQuota, decided.organizationQuota = app.Quota, organization.Quota
 	// An app whose users cannot be told apart is taken to have some with a policy, so each is

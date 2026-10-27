@@ -98,6 +98,9 @@ var errDeviceHistory = forbidden("history is sent server-side: an assistant mess
 var errDeviceInstructions = forbidden("instructions are sent server-side: what the agent is " +
 	"told decides who it is, which a device may not")
 
+var errDeviceResumeHistory = forbidden("resume_history is sent server-side: how much of a " +
+	"conversation the model is sent is billed to the app, which a device may not decide")
+
 // refuseSessionRequest reports the failure a new session's request is refused with before
 // anything is made for it. createSession and the session socket both call it, so a request one
 // of them refuses the other refuses too, with the same error.
@@ -200,6 +203,9 @@ func refuseServerSideFields(ctx context.Context, request CreateSessionRequest) (
 	}
 	if request.Call != nil && !ServerSideFrom(ctx) {
 		return errDeviceCall, true
+	}
+	if request.ResumeHistory != nil && !ServerSideFrom(ctx) {
+		return errDeviceResumeHistory, true
 	}
 	return APIError{}, false
 }

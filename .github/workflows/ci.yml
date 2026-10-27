@@ -57,6 +57,18 @@ jobs:
 
   go:
     runs-on: ubuntu-latest
+    # Every backend test that needs Redis skips without ROUTER_REDIS_ADDR: the service gives
+    # them one. The health check holds the steps until it answers PING.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -84,6 +96,8 @@ jobs:
       - name: Test the backend
         run: go test ./...
         working-directory: acceleration
+        env:
+          ROUTER_REDIS_ADDR: localhost:6379
 
       - name: Vet phonecheck
         run: go vet ./...

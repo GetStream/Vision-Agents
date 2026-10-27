@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.policy_budget import PolicyBudget
     from ..models.policy_tags import PolicyTags
     from ..models.quota import Quota
+    from ..models.resume_history import ResumeHistory
 
 
 T = TypeVar("T", bound="Policy")
@@ -54,9 +55,19 @@ class Policy:
                 written there for want of a registered Stream app of its own, and what it wrote there before can only be read.
                 True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the
                 router's operator and read here; sending it back unchanged is fine, and changing it is refused.
+            resume_history (ResumeHistory | Unset): How a conversation is handed back to the model when a session carries it
+                on.
             tags (PolicyTags | Unset): Labels recorded on every row of usage, over whatever the request labelled it with, so
                 spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags. Example:
                 {'application': 'support'}.
+            tool_output_retention (str | Unset): How long a session keeps what its tools were given and gave back on the
+                turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none
+                records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call
+                and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it
+                failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it
+                is kept as long as the session. The shortest of the organization's, the app's and the agent config's
+                tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls
+                recorded after it is set. Deleting a session deletes all of it at once. Example: 30d.
     """
 
     allowed_models: list[str] | Unset = UNSET
@@ -66,7 +77,9 @@ class Policy:
     prompt_injection: bool | Unset = UNSET
     quota: Quota | Unset = UNSET
     require_own_stream_app: bool | Unset = UNSET
+    resume_history: ResumeHistory | Unset = UNSET
     tags: PolicyTags | Unset = UNSET
+    tool_output_retention: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,9 +105,15 @@ class Policy:
 
         require_own_stream_app = self.require_own_stream_app
 
+        resume_history: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.resume_history, Unset):
+            resume_history = self.resume_history.to_dict()
+
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
+
+        tool_output_retention = self.tool_output_retention
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -113,8 +132,12 @@ class Policy:
             field_dict["quota"] = quota
         if require_own_stream_app is not UNSET:
             field_dict["require_own_stream_app"] = require_own_stream_app
+        if resume_history is not UNSET:
+            field_dict["resume_history"] = resume_history
         if tags is not UNSET:
             field_dict["tags"] = tags
+        if tool_output_retention is not UNSET:
+            field_dict["tool_output_retention"] = tool_output_retention
 
         return field_dict
 
@@ -124,6 +147,7 @@ class Policy:
         from ..models.policy_budget import PolicyBudget
         from ..models.policy_tags import PolicyTags
         from ..models.quota import Quota
+        from ..models.resume_history import ResumeHistory
 
         d = dict(src_dict)
         allowed_models = cast(list[str], d.pop("allowed_models", UNSET))
@@ -155,12 +179,21 @@ class Policy:
 
         require_own_stream_app = d.pop("require_own_stream_app", UNSET)
 
+        _resume_history = d.pop("resume_history", UNSET)
+        resume_history: ResumeHistory | Unset
+        if isinstance(_resume_history, Unset):
+            resume_history = UNSET
+        else:
+            resume_history = ResumeHistory.from_dict(_resume_history)
+
         _tags = d.pop("tags", UNSET)
         tags: PolicyTags | Unset
         if isinstance(_tags, Unset):
             tags = UNSET
         else:
             tags = PolicyTags.from_dict(_tags)
+
+        tool_output_retention = d.pop("tool_output_retention", UNSET)
 
         policy = cls(
             allowed_models=allowed_models,
@@ -170,7 +203,9 @@ class Policy:
             prompt_injection=prompt_injection,
             quota=quota,
             require_own_stream_app=require_own_stream_app,
+            resume_history=resume_history,
             tags=tags,
+            tool_output_retention=tool_output_retention,
         )
 
         policy.additional_properties = d

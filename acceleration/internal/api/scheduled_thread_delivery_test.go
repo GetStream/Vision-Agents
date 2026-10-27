@@ -12,6 +12,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -43,6 +45,35 @@ func (s *RouterSuite) deliverTask(task store.ScheduledTask) (store.ScheduledTask
 func (s *RouterSuite) deliverRun(task store.ScheduledTask, run store.ScheduledTaskRun) (string, error) {
 	deliveredTo, _, err := s.router.DeliverScheduledTask(context.Background(), store.ClaimedScheduledTask{Task: task, Run: run})
 	return deliveredTo, err
+}
+
+// cutOff has the router on deliver run while the task's turn is held, has cut end that turn
+// once it started, as the user interrupting it or the router stopping does, and returns what
+// the attempt answered.
+func (s *RouterSuite) cutOff(on *Server, task store.ScheduledTask, run store.ScheduledTaskRun, cut func()) (string, error) {
+	release := s.schedulingScript.holdScheduled()
+	defer release()
+	turns := s.scheduledTurns()
+	type answer struct {
+		deliveredTo string
+		err         error
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		deliveredTo, _, err := on.DeliverScheduledTask(context.Background(), store.ClaimedScheduledTask{Task: task, Run: run})
+		answered <- answer{deliveredTo, err}
+	}()
+	s.Require().Eventually(func() bool { return s.scheduledTurns() > turns },
+		settleFor, 20*time.Millisecond, "the task's turn never started")
+	cut()
+	release()
+	select {
+	case got := <-answered:
+		return got.deliveredTo, got.err
+	case <-time.After(time.Minute):
+		s.FailNow("the attempt never answered")
+		return "", nil
+	}
 }
 
 // scheduledTurnTools is every tool a due task's turn was offered.
@@ -148,6 +179,62 @@ func (s *TelnyxChannelSuite) TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread()
 	s.Eventually(func() bool { return !s.threadOpen(channel) }, settleFor, 10*time.Millisecond, "the session was left open")
 }
 
+// A task made in a 1:1 Linq chat is sent back into the chat by the worker, and the run says it
+// went by iMessage.
+func (s *LinqChannelSuite) TestATaskMadeInALinqChatIsSentBackIntoTheChat() {
+	s.schedulingOn(&s.config)
+	s.planTool("schedule_task", stretchInTwoHours)
+	chat := s.utils.uuid()
+	channel := s.linqTurn(chat, "+13125550001", false, "remind me to stretch in two hours")
+	task := s.customersTasks(1)[0]
+	sent, replies := len(s.linq.sent()), s.repliesIn(channel)
+
+	run := s.deliveredByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunDelivered, run.State, "error %v", run.Error)
+	s.Equal("imessage", run.DeliveredTo)
+	texted := s.took(sent + 1)[sent]
+	s.Equal(chat, texted.chat)
+	s.Equal("Done.", texted.text)
+	s.Equal(1, s.scheduledTurns())
+	s.Equal(replies+1, s.repliesIn(channel), "the reply is kept in the thread")
+}
+
+// codeHandsBackAReport has every code run on the suite's Daytona write report.csv, and queues
+// the next turn's runs of code that hand it back, one by default. It returns where the report
+// is published.
+func (s *RouterSuite) codeHandsBackAReport(runs ...llm.ToolCall) string {
+	s.daytona.Writes("report.csv", []byte("day,steps\nmon,9000\n"))
+	if len(runs) == 0 {
+		runs = []llm.ToolCall{reportRun()}
+	}
+	s.schedulingScript.plan(runs...)
+	return "https://cdn.fake/file/report.csv"
+}
+
+// reportRun is a run of code that hands back report.csv.
+func reportRun() llm.ToolCall {
+	return llm.ToolCall{ID: store.NewID(), Name: sandbox.ToolName,
+		Arguments: `{"code": "open('report.csv', 'w').write('day,steps')", "files": ["report.csv"]}`}
+}
+
+// A reply that is only the file the task's code made, with no words, is texted as the file's
+// link.
+func (s *TelnyxChannelSuite) TestATaskWhoseReplyIsOnlyAFileTextsTheFile() {
+	person := "+13125550001"
+	s.config.Sandbox = string(Daytona)
+	task, _ := s.scheduledInThread(person)
+	report := s.codeHandsBackAReport()
+	s.schedulingScript.saySilently()
+	sent := len(s.telnyx.sent())
+
+	run := s.deliveredByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunDelivered, run.State, "error %v", run.Error)
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal(telnyxMessage{from: s.line, to: person, text: report}, s.took(sent + 1)[sent].withoutAuthorization())
+}
+
 // A turn another router is taking in the thread is waited for, and the thread's turn is let go
 // of after the task's.
 func (s *TelnyxChannelSuite) TestATaskWaitsForTheThreadsTurnAndLetsGoOfIt() {
@@ -235,6 +322,47 @@ func (s *TelnyxChannelSuite) TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry()
 	s.Equal(1, s.scheduledTurns())
 }
 
+// reportReply is the text of a turn that ran code handing back the report at link: the words of
+// its two rounds (the run of code, then the answer to its result), each "Done." in the scheduling
+// model, then the file's link.
+func reportReply(link string) string {
+	return "Done.\n\nDone.\n\n" + link
+}
+
+// The file the task's code made is texted with the reply's words, as its link after them.
+func (s *TelnyxChannelSuite) TestATaskTextsTheFileItsCodeMadeWithItsWords() {
+	person := "+13125550001"
+	s.config.Sandbox = string(Daytona)
+	task, _ := s.scheduledInThread(person)
+	report := s.codeHandsBackAReport()
+	sent := len(s.telnyx.sent())
+
+	run := s.deliveredByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunDelivered, run.State, "error %v", run.Error)
+	s.Equal(telnyxMessage{from: s.line, to: person, text: reportReply(report)}, s.took(sent + 1)[sent].withoutAuthorization())
+}
+
+// A retry after the line refused the reply texts the file the first attempt's turn made, read
+// back from the thread's conversation, without running the task again.
+func (s *TelnyxChannelSuite) TestATaskWhoseReplyTheLineRefusesTextsItsFileOnTheRetry() {
+	person := "+13125550001"
+	s.config.Sandbox = string(Daytona)
+	task, _ := s.scheduledInThread(person)
+	report := s.codeHandsBackAReport()
+	sent := len(s.telnyx.sent())
+	s.telnyx.refuse(http.StatusUnprocessableEntity, nil)
+	run, _, err := s.deliverTask(task)
+	s.Require().Error(err)
+
+	deliveredTo, err := s.deliverRun(task, run)
+
+	s.Require().NoError(err)
+	s.Equal("sms", deliveredTo)
+	s.Equal(telnyxMessage{from: s.line, to: person, text: reportReply(report)}, s.took(sent + 1)[sent].withoutAuthorization())
+	s.Equal(1, s.scheduledTurns(), "the retry ran no second turn")
+}
+
 // A person who texts STOP while the reply is being sent is texted nothing, and the run is
 // final: the line answers the first send 503, the STOP lands, and the bridge sends no more.
 func (s *TelnyxChannelSuite) TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotTextedAndTheTaskIsNotRetried() {
@@ -264,6 +392,28 @@ func (s *TelnyxChannelSuite) TestATaskWhoseTurnFailsTextsNothing() {
 
 	s.failedAs(err, scheduling.ReasonReplyFailed, false)
 	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+}
+
+// A turn cancelled before its reply was written texts nothing, and the retry runs it again and
+// texts its reply.
+func (s *TelnyxChannelSuite) TestATaskWhoseTurnWasCancelledRunsAgainOnTheRetry() {
+	task, channel := s.scheduledInThread("+13125550001")
+	sent := len(s.telnyx.sent())
+	run := s.manualRun(task)
+
+	_, err := s.cutOff(s.router, task, run, func() {
+		found, running := s.router.sessions.ByConversationWhere("agent:"+channel, nil)
+		s.Require().True(running)
+		found.Interrupt()
+	})
+	s.failedAs(err, scheduling.ReasonReplyFailed, false)
+	deliveredTo, err := s.deliverRun(task, run)
+
+	s.Require().NoError(err)
+	s.Equal("sms", deliveredTo)
+	s.Equal("Done.", s.took(sent + 1)[sent].text)
+	s.Equal(2, s.scheduledTurns(), "the retry ran the cancelled turn again")
+	s.Never(func() bool { return len(s.telnyx.sent()) > sent+1 }, dropped, 20*time.Millisecond)
 }
 
 // A delivery that failed no longer holds its command's reply: one that arrives afterwards, as

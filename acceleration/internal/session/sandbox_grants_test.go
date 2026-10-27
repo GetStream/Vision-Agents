@@ -74,6 +74,54 @@ sandbox:
 	s.revision = definition.Revision
 }
 
+// readsRevision stores revision 3 of the test's connector, revision 2's sandbox block with reads,
+// and returns them. Connections keep pinning revision 2.
+func (s *SandboxGrantsSuite) readsRevision() []core.SandboxRead {
+	manifest, err := core.ParseManifest([]byte(s.crmManifest(s.connectorID, 3) + `
+sandbox:
+  env: CRM_TOKEN
+  hosts: [api.crm.example, "*.crm.example"]
+  reads:
+    - {host: api.crm.example, method: POST, path: /search}
+`))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(s.ctx, s.customerID, manifest)
+	s.Require().NoError(err)
+	return manifest.Sandbox.Reads
+}
+
+// TestAGrantTakesItsReadsFromTheLatestRevision: a connection pinned to revision 2 keeps its env
+// var and hosts, and gets revision 3's reads without a reconnect.
+func (s *SandboxGrantsSuite) TestAGrantTakesItsReadsFromTheLatestRevision() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	reads := s.readsRevision()
+
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+
+	grants := box.(sandbox.Granted).Grants()
+	s.Require().Len(grants, 1)
+	s.Equal(reads, grants[0].Reads)
+	s.Equal("CRM_TOKEN", grants[0].Env)
+	s.Equal([]string{"api.crm.example", "*.crm.example"}, grants[0].Hosts)
+}
+
+// TestALateGrantTakesTheLatestRevisionsReads: a grant waiting for its user's login reads the
+// latest revision's block, its reads included.
+func (s *SandboxGrantsSuite) TestALateGrantTakesTheLatestRevisionsReads() {
+	s.daytonaAPI()
+	s.sandboxRevision()
+	reads := s.readsRevision()
+	s.connection("bob", "primary")
+
+	box, _ := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), Consent{})
+
+	grants := box.(sandbox.Granted).Grants()
+	s.Require().Len(grants, 1)
+	s.True(grants[0].Late)
+	s.Equal(reads, grants[0].Reads)
+}
+
 func sandboxed(binding store.ConnectorBinding) store.ConnectorBinding {
 	binding.Sandbox = true
 	return binding
@@ -115,6 +163,37 @@ func (s *SandboxGrantsSuite) TestTheBrokerIsHandedTheConnectionsBearerToken() {
 	s.Equal(tokenOf("primary"), token.Value)
 	s.Positive(token.Revision)
 	s.NotContains(s.logs.String(), tokenOf("primary"))
+}
+
+// TestTheBrokerIsHandedTheTokenForTheGrantsFirstHost: Hosts[0] is the host the scheme wraps a
+// request for, with a leading *. taken off, whatever the hosts after it are.
+func (s *SandboxGrantsSuite) TestTheBrokerIsHandedTheTokenForTheGrantsFirstHost() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	schemes := map[string]core.Scheme{"crm": hostBearer{Scheme: bearer.New()}}
+
+	for hosts, asked := range map[string]string{"api.crm.example,*.crm.example": "api.crm.example",
+		"*.crm.example,api.crm.example": "crm.example"} {
+		grant := box.(sandbox.Granted).Grants()[0]
+		grant.Hosts = strings.Split(hosts, ",")
+
+		token, err := s.manager.sandboxTokens(schemes)(s.ctx, grant)
+
+		s.Require().NoError(err, hosts)
+		s.Equal(asked, token.Value, hosts)
+	}
+}
+
+// hostBearer is a scheme that sends the host a request is for as its bearer token.
+type hostBearer struct{ core.Scheme }
+
+func (hostBearer) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return roundTripper(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.Header.Set("Authorization", "Bearer "+r.URL.Host)
+		return base.RoundTrip(r)
+	})
 }
 
 // TestAConnectionThatNeedsAReconnectGivesNoCredential: the broker withdraws its secret.
@@ -713,9 +792,11 @@ func (s *SandboxGrantsSuite) TestALoginFinishedInTheChatBindsTheGrantBeforeTheNe
 	unbound, err := box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
 	s.Require().NotEqual(tokenOf("primary"), api.value("CRM_TOKEN"))
+	connectedBefore := box.(sandbox.Connecting).Connected()
 
 	s.connect(mine, "primary")
 	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	connected := box.(sandbox.Connecting).Connected()
 	_, err = box.Run(s.ctx, " ", nil)
 	s.Require().Error(err, "a run that never ran says nothing, and leaves the line to the next")
 	bound, err := box.Run(s.ctx, "print(1)", nil)
@@ -726,6 +807,8 @@ func (s *SandboxGrantsSuite) TestALoginFinishedInTheChatBindsTheGrantBeforeTheNe
 	s.True(finished)
 	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
 	s.Equal([]string{"crm"}, bindings(unbound.Unconnected))
+	s.Empty(connectedBefore)
+	s.Equal([]string{"crm"}, connected, "the agent runs the code that got the 401 again")
 	s.Equal(sandbox.Result{Connected: []string{"crm"}}, bound, "a Daytona secret's token is still on its way")
 	s.Equal(sandbox.Result{}, later, "and said once")
 	s.NotContains(s.logs.String(), tokenOf("primary"))

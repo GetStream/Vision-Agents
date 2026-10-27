@@ -1036,6 +1036,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// billed by jobs of their own (router usage numbers, router usage dlc).
 		go telephony.RunLegSweep(ctx, phone.LegSweepEvery)
 		go checkCallHook(ctx, settings, logger)
+		startPhoneSweeper(ctx, telephony, logger)
 	}
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
@@ -1055,12 +1056,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if directory != nil {
 		defer directory.Close()
 	}
-	sweeper, err := secretSweeper(settings.CodeSandbox, liveClient, directory, logger)
-	if err != nil {
+	if err := startSecretSweeper(ctx, settings.CodeSandbox, liveClient, directory, logger); err != nil {
 		return err
-	}
-	if sweeper != nil {
-		go sweeper.Run(ctx)
 	}
 
 	pluginAuth := &plugins.Auth{
@@ -1190,6 +1187,15 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// has to finish in, and then they are somebody's storage bill for nothing.
 	if pgStore != nil {
 		go pruneDataChanges(ctx, pgStore, settings.DataMove.Retention, logger)
+	}
+	// A scheduled task's finished runs, and the tasks that completed or failed, are kept for
+	// store.ScheduledTasksKept.
+	if pgStore != nil {
+		go pruneScheduledTasks(ctx, pgStore, logger)
+	}
+	// A tool item's output is taken out once the retention its session was held to runs out.
+	if pgStore != nil {
+		go redactToolOutput(ctx, pgStore, logger)
 	}
 
 	// A session lives in one process's memory, so a deployment running more than one
@@ -1483,8 +1489,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go serve(peerServer, peers)
 	}
 
-	stopSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, settings.CodeSandbox.ProxyPublicURL,
-		serve, logger)
+	stopSandboxProxy, handOverSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, settings.CodeSandbox.ProxyPublicURL,
+		settings.ListenFD != 0, serve, logger)
 	if err != nil {
 		return err
 	}
@@ -1508,6 +1514,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			held:            func() int { return running(sessions, scheduler) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
+			handOverProxy:   handOverSandboxProxy,
 			drain:           settings.Shutdown.Drain,
 			logger:          logger,
 		})
@@ -1543,7 +1550,11 @@ type stopping struct {
 	// over on the same address is the one scraped. Without a drain the caller stops it at
 	// exit.
 	handOverMetrics func()
-	drain           time.Duration
+	// handOverProxy stops the sandbox egress proxy taking connections when a drain starts,
+	// so the router taking over on the same address serves the sandboxes; the tunnels already
+	// open stay until the process ends. Without a drain the caller stops it at exit. It does nothing outside an overlap deploy.
+	handOverProxy func()
+	drain         time.Duration
 	// grace is how long the requests still open on a closing listener get to finish; zero
 	// means shutdownGrace.
 	grace  time.Duration
@@ -1556,10 +1567,11 @@ const drainPoll = 250 * time.Millisecond
 // stopServing stops taking work, then lets what is running finish.
 //
 // Without a drain it hangs up the calls through customers' own SIP trunks, then drains HTTP,
-// both inside the grace: the drain gets whatever the hangup left of it, and metrics are
-// served until the process exits. With one, the metrics and public listeners close first
-// and the sessions this process holds, phone calls included, keep going until they end or
-// the drain runs out, still answering their peers' requests. A second signal stops
+// both inside the grace: the drain gets whatever the hangup left of it, and metrics and the
+// sandbox egress proxy are served until the process exits. With one, the metrics, sandbox
+// egress proxy and public listeners close first and the sessions this process holds, phone
+// calls included, keep going until they end or the drain runs out, still answering their
+// peers' requests. A second signal stops
 // waiting. The sessions left are ended by the caller's sessions.Shutdown either way.
 func stopServing(s stopping) error {
 	s.drainWork()
@@ -1580,6 +1592,9 @@ func stopServing(s stopping) error {
 
 	if s.handOverMetrics != nil {
 		s.handOverMetrics()
+	}
+	if s.handOverProxy != nil {
+		s.handOverProxy()
 	}
 	httpCtx, cancel := context.WithTimeout(context.Background(), grace)
 	if err := s.public.Shutdown(httpCtx); err != nil {
@@ -1676,6 +1691,65 @@ func pruneDataChanges(ctx context.Context, pgStore *store.Store, retention time.
 			logger.Error("could not prune the uses of ended grants", "error", err)
 		} else if removed > 0 {
 			logger.Debug("pruned the uses of ended grants", "rows", removed)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// pruneScheduledTasks deletes the runs and tasks of scheduled tasks that are past
+// store.ScheduledTasksKept, daily until the process stops.
+func pruneScheduledTasks(ctx context.Context, pgStore *store.Store, logger *slog.Logger) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		runs, tasks, err := pgStore.PruneScheduledTasks(ctx)
+		if err != nil {
+			logger.Error("could not prune scheduled tasks", "error", err)
+		} else if runs > 0 || tasks > 0 {
+			logger.Info("pruned scheduled tasks", "runs", runs, "tasks", tasks)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// How often and how much tool output redaction does. A run stops at a ceiling, so one
+// shard's backlog after a long outage is worked off over several runs instead of in one
+// burst of writes; 100 batches of 1,000 every ten minutes keeps up with 600,000 tool items
+// an hour falling due on a shard.
+const (
+	redactInterval = 10 * time.Minute
+	redactBatch    = 1000
+	redactBatches  = 100
+)
+
+// redactToolOutput takes the arguments and output out of the tool items in this router's
+// shard whose retention has run out, every redactInterval until the process stops.
+func redactToolOutput(ctx context.Context, pgStore *store.Store, logger *slog.Logger) {
+	ticker := time.NewTicker(redactInterval)
+	defer ticker.Stop()
+	for {
+		var redacted int64
+		for range redactBatches {
+			rows, err := pgStore.RedactToolOutput(ctx, time.Now().UTC(), redactBatch)
+			if err != nil {
+				logger.Error("could not redact tool output", "error", err)
+				break
+			}
+			redacted += rows
+			if rows < redactBatch {
+				break
+			}
+		}
+		if redacted > 0 {
+			logger.Info("redacted tool output", "rows", redacted, "ceiling", redactBatch*redactBatches)
 		}
 		select {
 		case <-ctx.Done():
@@ -1816,6 +1890,7 @@ func buildSessions(
 		UnifiedReplies:     settings.Agent.UnifiedReplies,
 		Stream:             stream,
 		Store:              pgStore,
+		Policies:           policies,
 		Live:               liveClient,
 		Writer:             usageWriter,
 		Logger:             logger,
@@ -1833,6 +1908,7 @@ func buildSessions(
 	}
 	options.Sandboxes = newSandboxes(settings, usageWriter, prices, logger)
 	options.SandboxLimits = policies
+	options.ResumeHistories = policies
 	return session.NewManager(options)
 }
 

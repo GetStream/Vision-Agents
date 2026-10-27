@@ -338,6 +338,27 @@ func (s *TwilioSuite) TestConfiguringInboundPointsTheNumberAtTheBridge() {
 	s.Contains(instructions, `password="hunter2"`)
 }
 
+func (s *TwilioSuite) TestStoppingInboundClearsTheVoiceURL() {
+	s.answer(`{"incoming_phone_numbers":[{"sid":"PN9","phone_number":"+15125551234"}],
+		"sid":"PN9","phone_number":"+15125551234"}`)
+
+	s.Require().NoError(s.provider.StopInbound(s.ctx, "+15125551234"))
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json", s.seen.path)
+	s.Equal([]string{""}, s.seen.form["VoiceUrl"])
+	s.NotContains(s.seen.form, "VoiceMethod")
+}
+
+func (s *TwilioSuite) TestStoppingInboundOfAnUnknownNumberFails() {
+	s.answer(`{"incoming_phone_numbers":[]}`)
+
+	err := s.provider.StopInbound(s.ctx, "+15125551234")
+
+	s.ErrorContains(err, "is not one of this account's numbers")
+	s.Equal(http.MethodGet, s.seen.method, "no number was changed")
+}
+
 func (s *TwilioSuite) TestInboundIsRefusedWithoutASipBridge() {
 	err := s.provider.ConfigureInbound(s.ctx, phone.Inbound{
 		E164:   "+15125551234",
@@ -363,6 +384,37 @@ func (s *TwilioSuite) TestDiallingOutBridgesTheAnsweredCallIntoTheTrunk() {
 	s.Contains(s.seen.form.Get("Twiml"), "<Sip>sip:trunk-7@sip.stream-io-api.com</Sip>")
 	s.Equal("CA1", placed.VendorCallID)
 	s.Equal("queued", placed.Status)
+}
+
+func (s *TwilioSuite) TestCallsShareTheirNumbersTrunk() {
+	s.Equal(phone.StreamLegShared, phone.StreamLegOf(s.provider))
+}
+
+func (s *TwilioSuite) TestTheTrunkLegCarriesTheCallID() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"},
+		CallID: "abc",
+	})
+	s.Require().NoError(err)
+
+	s.Contains(s.seen.form.Get("Twiml"), "<Sip>sip:+15125551234@sip.stream-io-api.com?x-stream-call-id=abc</Sip>")
+}
+
+func (s *TwilioSuite) TestAnOutboundWithoutACallIDDialsThePlainURI() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.NotContains(s.seen.form.Get("Twiml"), "x-stream-call-id")
 }
 
 func (s *TwilioSuite) TestTheRingTimeoutAndInitialDigitsRideOnTheCallRatherThanTheTwiml() {

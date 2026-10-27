@@ -181,7 +181,7 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 		}
 		placeholder := "va_ph_" + rand.Text()
 		entry := Grant{Connection: grant.Connection, Binding: grant.Binding, Config: grant.Config, Connector: grant.Connector,
-			Selection: grant.Selection, Scheme: grant.Scheme, Placeholder: placeholder, Hosts: grant.Hosts}
+			Selection: grant.Selection, Scheme: grant.Scheme, Placeholder: placeholder, Hosts: grant.Hosts, Reads: grant.Reads}
 		if grant.Late {
 			// Whatever connection the caller gave it: the proxy gives no token until a bind.
 			entry.Connection, entry.Scheme = core.ConnectionRef{}, ""

@@ -37,6 +37,10 @@ const occurrenceBudget = 20 * time.Minute
 // was paused, edited or deleted, or another worker holds it now.
 var errClaimLost = errors.New("the task changed under its run")
 
+// errDraining ends a delivery's retries when the worker's context ends: the
+// run is left to its lease, as when Close cuts it short.
+var errDraining = errors.New("the router is draining")
+
 // errOutOfTime cuts a delivery short that used up occurrenceBudget.
 var errOutOfTime = errors.New("the occurrence ran out of time")
 
@@ -212,7 +216,8 @@ func NewScheduler(db *store.Store, deliver DeliverFunc, logger *slog.Logger) *Sc
 // wakes it, at the next task due, and at least once a lease. Once ctx ends it
 // claims nothing more, and the deliveries in flight run on until they finish
 // or Close cuts them short: a draining router leaves new occurrences to the
-// others and finishes its own.
+// others and finishes its own attempt. A delivery waiting to retry stops
+// waiting and is left to its lease: another router takes it up.
 func (s *Scheduler) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(s.ctx, cancel)
@@ -288,7 +293,7 @@ func (s *Scheduler) runDue(ctx context.Context) (time.Duration, bool) {
 					<-s.slots
 					s.Kick()
 				}()
-				s.run(claim)
+				s.run(ctx, claim)
 			}()
 		}
 		if len(claimed) < free {
@@ -310,9 +315,9 @@ func (s *Scheduler) runDue(ctx context.Context) (time.Duration, bool) {
 
 // run delivers (or settles) one claimed occurrence and records what came of
 // it under the claim, so an update or pause that landed meanwhile wins.
-func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
+func (s *Scheduler) run(draining context.Context, claim store.ClaimedScheduledTask) {
 	task := claim.Task
-	schedule, err := storedSchedule(task)
+	schedule, err := FromStored(task)
 	if err != nil {
 		// A stored schedule that no longer reads can never run; say so on this
 		// occurrence and pause the task instead of retrying it forever.
@@ -347,7 +352,7 @@ func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
 	ctx, cancel := context.WithTimeoutCause(owned, s.budget, errOutOfTime)
 	defer cancel()
 	stopRenewing := s.renewing(owned, lose, claim)
-	deliveredTo, sessionID, failure := s.deliverWithRetries(ctx, claim)
+	deliveredTo, sessionID, failure := s.deliverWithRetries(ctx, draining, claim)
 	stopRenewing()
 	var held *Postponed
 	var late *Missed
@@ -364,6 +369,12 @@ func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
 			RunState: store.ScheduledTaskRunDelivered, DeliveredTo: deliveredTo,
 			SessionID: sessionID, NextRunAt: next, State: state, ConsecutiveFailures: 0,
 		})
+	case errors.Is(failure, errDraining):
+		// The router is draining and the delivery was waiting to retry: leave
+		// the run to its lease, for another router to take up.
+		s.logger.Info("a scheduled task's retry was left to its lease: the router is draining",
+			"task", task.ID, "run", claim.Run.ID, "customer", task.CustomerID, "error", failure)
+		return
 	case owned.Err() != nil:
 		// Close cut the delivery short, or the claim was lost to a change
 		// that decides instead: leave the run to its lease.
@@ -428,8 +439,9 @@ func (s *Scheduler) missedOutcome(claim store.ClaimedScheduledTask, schedule *Sc
 // attempt lands or the waits run out. A held delivery is not retried: the
 // hold says when it is worth trying again, and that is longer than any wait
 // here. Nor is a missed or final one: trying again would only ring the user
-// again, or late.
-func (s *Scheduler) deliverWithRetries(ctx context.Context, claim store.ClaimedScheduledTask) (string, string, error) {
+// again, or late. Once draining ends, no wait is begun or finished: the
+// failure is errDraining and the run is left to its lease.
+func (s *Scheduler) deliverWithRetries(ctx, draining context.Context, claim store.ClaimedScheduledTask) (string, string, error) {
 	deliveredTo, sessionID, err := s.deliver(ctx, claim)
 	for _, wait := range s.retries {
 		var held *Postponed
@@ -438,6 +450,9 @@ func (s *Scheduler) deliverWithRetries(ctx context.Context, claim store.ClaimedS
 		}
 		timer := time.NewTimer(wait)
 		select {
+		case <-draining.Done():
+			timer.Stop()
+			return deliveredTo, sessionID, fmt.Errorf("%w: %w", errDraining, err)
 		case <-ctx.Done():
 			timer.Stop()
 			return deliveredTo, sessionID, err
@@ -571,13 +586,4 @@ func (s *Scheduler) finish(claim store.ClaimedScheduledTask, outcome store.Sched
 	case !applied:
 		log.Info("a scheduled task changed under its run; the schedule was left alone")
 	}
-}
-
-// storedSchedule rebuilds the schedule a stored task describes.
-func storedSchedule(task store.ScheduledTask) (*Schedule, error) {
-	var until time.Time
-	if task.UntilDate != nil {
-		until = *task.UntilDate
-	}
-	return FromStored(task.StartLocal, task.Timezone, task.RRule, until)
 }

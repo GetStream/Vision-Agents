@@ -345,11 +345,7 @@ func (c *Conversation) run(ctx context.Context) {
 			return
 
 		case text := <-c.turns:
-			if _, err := c.session.Responses.Create(ctx, text); err != nil {
-				c.logger.Error("a question never reached the model", "error", err)
-				return
-			}
-			if !c.await(ctx, events) {
+			if !c.ask(ctx, events, text) {
 				return
 			}
 
@@ -373,9 +369,35 @@ func (c *Conversation) seen(event stream.Event) {
 	}
 }
 
+// ask puts one question to the agent and reads until it is answered, reporting whether the
+// conversation can take another. A question the router stopped on its way down is never
+// answered, so it is asked once more.
+func (c *Conversation) ask(ctx context.Context, events <-chan stream.Event, text string) bool {
+	for retried := false; ; retried = true {
+		if _, err := c.session.Responses.Create(ctx, text); err != nil {
+			c.logger.Error("a question never reached the model", "error", err)
+			return false
+		}
+		more, interrupted := c.await(ctx, events)
+		if !interrupted || retried {
+			return more
+		}
+		c.logger.Info("the router stopped while answering, asking again")
+	}
+}
+
+// settled says whether a command's state is one it ends in.
+func settled(state string) bool {
+	switch state {
+	case "completed", "failed", "cancelled", "interrupted":
+		return true
+	}
+	return false
+}
+
 // await reads until the turn is finished, reporting whether the conversation can take
-// another.
-func (c *Conversation) await(ctx context.Context, events <-chan stream.Event) bool {
+// another and whether the router stopped the turn before it was answered.
+func (c *Conversation) await(ctx context.Context, events <-chan stream.Event) (bool, bool) {
 	timeout := c.timeout
 	if timeout <= 0 {
 		timeout = defaultTurnTimeout
@@ -386,15 +408,15 @@ func (c *Conversation) await(ctx context.Context, events <-chan stream.Event) bo
 	for {
 		select {
 		case <-ctx.Done():
-			return false
+			return false, false
 
 		case <-abandon.C:
 			c.logger.Error("an answer never finished", "after", timeout)
-			return true
+			return true, false
 
 		case event, open := <-events:
 			if !open {
-				return false
+				return false, false
 			}
 			c.seen(event)
 			switch event.Kind {
@@ -402,11 +424,17 @@ func (c *Conversation) await(ctx context.Context, events <-chan stream.Event) bo
 				// Work the model left running means the turn is not over: more of the
 				// answer follows once it settles.
 				if !event.PendingWork {
-					return true
+					return true, false
+				}
+			case "resumed":
+				// What the socket missed is gone, and the turn's ending may have been in it:
+				// the receipt says whether the turn is over and how.
+				if command := event.Resumed.Command; !event.Resumed.Complete && (command == nil || settled(command.State)) {
+					return true, command != nil && command.State == "interrupted"
 				}
 			case "error":
 				c.logger.Error("the conversation reported a failure", "error", event.Error)
-				return true
+				return true, false
 			}
 		}
 	}

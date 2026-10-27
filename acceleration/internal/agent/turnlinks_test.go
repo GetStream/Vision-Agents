@@ -22,7 +22,6 @@ const (
 	tookSpeech  = "the voice took an utterance"
 	spokeSpeech = "finished speaking"
 	choseLine   = "saying a line the agent chose"
-	chased      = "the reply owed a call and made none, asking for it"
 )
 
 // waitsOnATool has the caller ask for an order, the model reach for a tool without a word, a
@@ -270,29 +269,6 @@ func (s *AgentSuite) TestAHoldLineIsLoggedWithoutItsWords() {
 	s.Equal("INFO", chose["level"])
 	s.Equal(kindHold, chose["kind"])
 	s.NotContains(chose, "line", "what the agent says is the caller's conversation")
-}
-
-func (s *AgentSuite) TestAChaseIsLoggedWithTheTurnItChases() {
-	s.logs = &logLines{}
-	s.ownsTools("order 12 ships tomorrow")
-	s.join(false)
-	s.model.reply = []string{"Order twelve, one moment, checking..."}
-	s.model.then = []string{}
-	s.model.callsOn = 2
-	s.asksFor("lookup_order", `{"order":"12"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-
-	s.says(participant, "where is order twelve")
-
-	chase := s.loggedOnce(chased)
-	s.Equal("INFO", chase["level"])
-	s.Equal(s.callerTurn(), chase["chases"])
-	s.NotContains(chase, "note")
-	s.eventually(func() bool { return len(byKind(s.logs.records(turnTiming), kindChase)) == 1 }, "the chase was never measured")
-	timing := byKind(s.logs.records(turnTiming), kindChase)[0]
-	s.Equal(chase["turn"], timing["turn"])
-	s.Equal(s.callerTurn(), timing["parent"])
 }
 
 func (s *AgentSuite) TestTwoUtterancesPublishedAtOnceAreCountedOpenTogether() {

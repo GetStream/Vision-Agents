@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,8 +25,9 @@ const attachWait = 2 * time.Second
 
 // remoteFrames is how many frames a relayed socket may fall behind by. It matches the
 // buffer a local watcher gets, for the same reason: a control channel whose reader has
-// stopped reading costs that reader some detail and nobody on the call anything.
-const remoteFrames = 256
+// stopped reading costs that reader some detail and nobody on the call anything. The other
+// half is room for what a resumable watcher is replayed when it attaches.
+const remoteFrames = 512
 
 // remoteCommands is how many commands one relayed socket may have waiting. A watcher
 // sends them one at a time and waits for what they do, so a queue this deep is already
@@ -62,6 +64,8 @@ type remoteSocket struct {
 	frames   chan json.RawMessage
 	closed   chan struct{}
 	once     sync.Once
+	// halted is set before closed when the holder's router stopped the session.
+	halted atomic.Bool
 }
 
 func (r *remoteSocket) close() { r.once.Do(func() { close(r.closed) }) }
@@ -117,6 +121,7 @@ func (s *Server) newRelayed(ctx context.Context, bus *relay.Bus) (*relayed, erro
 func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id string, owner session.Owner) bool {
 	state := s.relayed
 	seat := seatOf(r, owner)
+	asked := resumingOf(r)
 	watcher := uuid.NewString()
 	socket := &remoteSocket{
 		attached: make(chan string, 1),
@@ -147,6 +152,9 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 		ReplayPendingTools: seat.ReplayPendingVoiceTools,
 		Tools:              seat.Tools,
 		DeclaresTools:      seat.Declares,
+		Resumable:          asked.resumable,
+		Cursor:             asked.cursor,
+		RequestID:          asked.requestID,
 	}); err != nil {
 		s.logger.Error("could not ask for a session held elsewhere", "session", id, "error", err)
 		writeError(w, unavailable("the session could not be reached"))
@@ -179,7 +187,7 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 	go func() {
 		gone <- s.readRelayedCommands(connection, state, watcher, id)
 	}()
-	s.writeRelayedEvents(connection, state, socket, watcher, id, watching(r), gone)
+	s.writeRelayedEvents(connection, state, socket, watcher, id, watching(r), gone, endingOf(asked, socket.halted.Load))
 	return true
 }
 
@@ -196,6 +204,7 @@ func (s *Server) writeRelayedEvents(
 	watcher, id string,
 	asked wanted,
 	gone <-chan error,
+	ended ending,
 ) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
@@ -209,7 +218,8 @@ func (s *Server) writeRelayedEvents(
 			return
 
 		case <-socket.closed:
-			closeBeforeReader(connection, websocket.CloseNormalClosure, "the session ended", gone)
+			code, reason := ended()
+			closeBeforeReader(connection, code, reason, gone)
 			return
 
 		case payload := <-socket.frames:
@@ -334,7 +344,16 @@ func (s *Server) attachProxy(ctx context.Context, state *relayed, request relay.
 		Owner: owner, Tools: request.Tools, Declares: request.DeclaresTools,
 		ReplayPendingVoiceTools: request.ReplayPendingTools,
 	}
-	events, detach := found.WatchAs(seat)
+	var events <-chan session.Event
+	var detach func()
+	if request.Resumable {
+		var err error
+		if events, detach, err = found.WatchFrom(seat, request.Cursor, request.RequestID); err != nil {
+			return
+		}
+	} else {
+		events, detach = found.WatchAs(seat)
+	}
 
 	proxy := &proxyWatcher{
 		detach:   detach,
@@ -364,7 +383,7 @@ func (s *Server) attachProxy(ctx context.Context, state *relayed, request relay.
 	}
 
 	go s.runRelayedCommands(found, proxy)
-	go s.publishSessionEvents(ctx, state, events, request.Watcher, request.Session, key)
+	go s.publishSessionEvents(ctx, state, events, request.Watcher, request.Session, key, found.Halted)
 }
 
 // publishSessionEvents puts one session's events on the bus for the socket watching it
@@ -374,6 +393,7 @@ func (s *Server) publishSessionEvents(
 	state *relayed,
 	events <-chan session.Event,
 	watcher, id, key string,
+	halted func() bool,
 ) {
 	// The events channel closing is either the session ending or the watcher being
 	// detached, and both end the watcher: dropping it here is what closes its command
@@ -406,6 +426,7 @@ func (s *Server) publishSessionEvents(
 		Node:    state.bus.Node(),
 		Owner:   key,
 		Watcher: watcher,
+		Halted:  halted(),
 	}); err != nil {
 		s.logger.Debug("could not relay the end of a session", "session", id, "error", err)
 	}
@@ -476,6 +497,9 @@ func (r *relayed) deliver(payload []byte) {
 	}
 
 	if response.Type == relay.Closed {
+		if response.Halted {
+			socket.halted.Store(true)
+		}
 		socket.close()
 		return
 	}

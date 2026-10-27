@@ -60,7 +60,8 @@ const generated =
       "--default-non-nullable",
       "false",
     ],
-    { cwd: pkg, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+    // The types outgrew execFileSync's 1 MiB default buffer.
+    { cwd: pkg, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 * 1024 * 1024 },
   );
 
 const shown = relative(join(pkg, "..", ".."), output);

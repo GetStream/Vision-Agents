@@ -210,6 +210,8 @@ type Session struct {
 	// disturbing the others.
 	watchers    map[uint64]*watcher
 	nextWatcher uint64
+	// replay numbers and keeps events for resumable watchers, nil until one attaches.
+	replay *replay
 	// detachedGrace is how long a persistent text session outlives its last watcher, and
 	// unwatched is the timer counting it down, nil while somebody is watching.
 	detachedGrace time.Duration
@@ -286,6 +288,9 @@ type Session struct {
 	closers   []func()
 	closeOnce sync.Once
 	running   sync.WaitGroup
+	// halted is set by a router shutting down, whose ending leaves the reply being written
+	// interrupted rather than cancelled.
+	halted atomic.Bool
 }
 
 // recordedTurn is one turn being written down as it happens.
@@ -435,6 +440,8 @@ type watcher struct {
 	events chan Event
 	once   sync.Once
 	seat   Seat
+	// sequenced is a resumable watcher, sent each event as a Sequenced.
+	sequenced bool
 }
 
 func (w *watcher) close() { w.once.Do(func() { close(w.events) }) }
@@ -469,6 +476,12 @@ func (s *Session) WatchPendingVoiceTools() (<-chan Event, func()) {
 // WatchAs is Watch for a watcher that says who it is and which tools it runs, which is
 // what its tool calls are addressed by.
 func (s *Session) WatchAs(seat Seat) (<-chan Event, func()) {
+	return s.watch(seat, "", nil)
+}
+
+// watch attaches a watcher in seat. A non-nil resumed makes it a resumable one
+// (WatchFrom), sent resumed and then what it missed after cursor.
+func (s *Session) watch(seat Seat, cursor string, resumed *Resumed) (<-chan Event, func()) {
 	attached := &watcher{events: make(chan Event, watcherBuffer), seat: seat}
 
 	s.mu.Lock()
@@ -476,6 +489,32 @@ func (s *Session) WatchAs(seat Seat) (<-chan Event, func()) {
 		s.mu.Unlock()
 		attached.close()
 		return attached.events, func() {}
+	}
+	var resent map[string]bool
+	if resumed != nil {
+		resent = map[string]bool{}
+		if s.replay == nil {
+			s.replay = newReplay()
+		}
+		missed, complete := s.replay.after(cursor)
+		resumed.Cursor, resumed.Complete = s.replay.cursor(s.replay.last), complete
+		attached.sequenced = true
+		attached.events = make(chan Event, watcherBuffer+len(missed)+1)
+		attached.send(*resumed)
+		for _, event := range missed {
+			// A tool call is sent again only while it still waits for its answer: one
+			// answered or timed out since would be run a second time for nothing.
+			if call, ok := event.Event.(ToolCall); ok && !call.Cancel {
+				if s.tools == nil || !s.tools.Waiting(call.ID) {
+					continue
+				}
+				resent[call.ID] = true
+				// Addressed to this watcher's seat, as a live call is.
+				call.Run = s.seatRuns(seat, call.Name)
+				event.Event = call
+			}
+			attached.send(event)
+		}
 	}
 	id := s.nextWatcher
 	s.nextWatcher++
@@ -489,6 +528,9 @@ func (s *Session) WatchAs(seat Seat) (<-chan Event, func()) {
 	}
 	if seat.ReplayPendingVoiceTools && !s.spec.Text && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
+			if resent[pending.ID] {
+				continue
+			}
 			replayed := s.placed(pending)
 			replayed.Run = s.seatRuns(seat, replayed.Name)
 			attached.send(replayed)
@@ -1380,6 +1422,18 @@ func (s *Session) Close() error {
 	return err
 }
 
+// Halted reports whether the session was ended by the router going away rather than by
+// anybody's choice.
+func (s *Session) Halted() bool { return s.halted.Load() }
+
+// halt closes the session for a router that is going away. Nobody chose to stop the reply
+// being written, so its command is left interrupted: never run again, and told apart from
+// one the caller cancelled by a client that reconnects.
+func (s *Session) halt() error {
+	s.halted.Store(true)
+	return s.Close()
+}
+
 func (s *Session) close() error {
 	// The last slice is written before anything else closes, however long the rest takes.
 	s.runtime.Stop()
@@ -1400,6 +1454,9 @@ func (s *Session) close() error {
 		s.logger.Debug("the agent was still talking when the session ended", "error", err)
 	}
 	cancel()
+	if s.halted.Load() && s.persisted != nil {
+		s.persisted.Interrupt()
+	}
 
 	err := s.current().Close()
 
@@ -1539,7 +1596,9 @@ func (s *Session) write(event Event) {
 		if s.turnBlocked(typed.TurnID) {
 			kind = store.ItemBlocked
 		}
-		s.item(typed.TurnID, kind, typed.Text, "", nil)
+		// The turn id is what the reply's transcript message is written under, which is how
+		// a resumed conversation finds the tool calls behind it.
+		s.item(typed.TurnID, kind, typed.Text, "", map[string]any{"turn_id": typed.TurnID})
 		if !typed.PendingWork {
 			s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 		}
@@ -1629,10 +1688,20 @@ func (s *Session) item(turnID, kind, text, tool string, payload map[string]any) 
 	responseID := turn.id
 	s.turnsMu.Unlock()
 
-	s.records.Item(store.AgentResponseItem{
+	item := store.AgentResponseItem{
 		ResponseID: responseID, Ordinal: ordinal, SessionID: s.id,
 		Kind: kind, Text: text, ToolName: tool, Payload: payload, At: time.Now().UTC(),
-	})
+	}
+	if kind == store.ItemToolCall || kind == store.ItemToolResult {
+		switch window, kept := s.spec.ToolOutputRetention.Window(); {
+		case kept && window == 0:
+			item.Redact()
+		case kept:
+			redactAt := item.At.Add(window)
+			item.RedactAt = &redactAt
+		}
+	}
+	s.records.Item(item)
 }
 
 // blockTurn marks a turn the guardrail refused.
@@ -1755,8 +1824,9 @@ func (s *Session) broadcast(event Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	cursor, numbered := s.sequence(event)
 	for id, attached := range s.watchers {
-		if !attached.send(event) {
+		if !attached.send(attached.form(event, cursor, numbered)) {
 			s.logger.Debug("dropped an event for a watcher that is behind",
 				"session", s.id, "watcher", id)
 		}
@@ -1806,10 +1876,11 @@ func (s *Session) askTool(call ToolCall) error {
 		return fmt.Errorf("session: nobody connected runs %s", call.Name)
 	}
 	delivered := false
+	cursor, numbered := s.sequence(call)
 	for _, attached := range s.watchers {
 		addressed := call
 		addressed.Run = s.seatRuns(attached.seat, call.Name)
-		if attached.send(addressed) {
+		if attached.send(attached.form(addressed, cursor, numbered)) {
 			delivered = true
 		}
 	}

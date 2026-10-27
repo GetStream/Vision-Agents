@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/ed25519header"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -73,6 +74,7 @@ func TestTelnyxChannelSuite(t *testing.T) {
 // which claims every task due in its database, whoever made it.
 func (s *TelnyxChannelSuite) SetupSuite() {
 	s.database = "telnyx_channel"
+	s.daytona = daytonatest.Start(s.T())
 	s.telnyxLine.SetupSuite()
 }
 
@@ -137,6 +139,10 @@ func (s *TelnyxChannelSuite) TestAnSMSIsAnsweredFromTheCustomersNumber() {
 	sent := s.took(1)[0]
 	s.Equal(telnyxMessage{from: s.line, to: person, text: "Noted."}, sent.withoutAuthorization())
 	s.True(sent.authorization == "Bearer "+s.apiKey, "sent with the number's API key")
+	var members int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_members WHERE channel_id = ?", channel).Scan(&members))
+	s.Zero(members, "an SMS thread's key is its person, so it records no members (AI-2015)")
 }
 
 // A person's number is one thread, so their texts are one thread channel and one episode card,

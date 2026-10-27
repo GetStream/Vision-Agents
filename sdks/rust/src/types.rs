@@ -2,6 +2,196 @@
 //! Every schema in the spec, as a Rust type.
 #![allow(clippy::all, missing_docs)]
 
+///The calling organization's account: its balance, its credit and spend, its status and tier, the threshold it is warned at, and what Stream allows it. Why an organization is suspended is Stream's, and is not here.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct Account {
+    ///What the organization has to spend now, in millionths of a dollar: its credit less what it spent and what work in flight holds, the figure every answer's X-Stream-Balance-Micros says.
+    pub balance_micros: i64,
+    ///Where balance_micros stands: exhausted at or below 0, low at or below the threshold.
+    pub balance_state: AccountBalanceState,
+    ///The balance at or below which the organization is warned: X-Stream-Balance-Warning says low, and its stream event destinations get account.balance_low. 0 when nothing sets one.
+    pub balance_warning_micros: i64,
+    ///Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
+    pub balance_warning_source: AccountBalanceWarningSource,
+    ///Every credit entry summed: top-ups, grants, refunds and adjustments.
+    pub granted_micros: i64,
+    ///What Stream allows the organization: its tier's settings, with those Stream set for this organization laid over them.
+    pub limits: Limits,
+    pub organization_id: ::std::string::String,
+    ///The settings in limits Stream set for this organization rather than leaving its tier's, as dotted paths such as channels.voice.concurrent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub own_limits: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///The most the organization may spend in the UTC day and the calendar month, whatever its credit and its own limits, with what it spent and what is left. Absent when Stream sets none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub spend_hard_limit: ::std::option::Option<SpendHardLimitUsage>,
+    ///Every billable unit of work recorded, summed.
+    pub spent_micros: i64,
+    ///suspended: Stream refuses every request of the organization, free work included, until it restores it.
+    pub status: AccountStatus,
+    ///The tier the organization is billed on.
+    pub tier: ::std::string::String,
+}
+///Where balance_micros stands: exhausted at or below 0, low at or below the threshold.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AccountBalanceState {
+    #[serde(rename = "ok")]
+    Ok,
+    #[serde(rename = "low")]
+    Low,
+    #[serde(rename = "exhausted")]
+    Exhausted,
+}
+impl ::std::fmt::Display for AccountBalanceState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Ok => f.write_str("ok"),
+            Self::Low => f.write_str("low"),
+            Self::Exhausted => f.write_str("exhausted"),
+        }
+    }
+}
+impl ::std::str::FromStr for AccountBalanceState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "ok" => Ok(Self::Ok),
+            "low" => Ok(Self::Low),
+            "exhausted" => Ok(Self::Exhausted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AccountBalanceState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AccountBalanceState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AccountBalanceWarningSource {
+    #[serde(rename = "tier")]
+    Tier,
+    #[serde(rename = "account")]
+    Account,
+    #[serde(rename = "organization_policy")]
+    OrganizationPolicy,
+}
+impl ::std::fmt::Display for AccountBalanceWarningSource {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Tier => f.write_str("tier"),
+            Self::Account => f.write_str("account"),
+            Self::OrganizationPolicy => f.write_str("organization_policy"),
+        }
+    }
+}
+impl ::std::str::FromStr for AccountBalanceWarningSource {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "tier" => Ok(Self::Tier),
+            "account" => Ok(Self::Account),
+            "organization_policy" => Ok(Self::OrganizationPolicy),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AccountBalanceWarningSource {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AccountBalanceWarningSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///suspended: Stream refuses every request of the organization, free work included, until it restores it.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AccountStatus {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "suspended")]
+    Suspended,
+}
+impl ::std::fmt::Display for AccountStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Active => f.write_str("active"),
+            Self::Suspended => f.write_str("suspended"),
+        }
+    }
+}
+impl ::std::str::FromStr for AccountStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "active" => Ok(Self::Active),
+            "suspended" => Ok(Self::Suspended),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AccountStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AccountStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`ActivityBucket`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ActivityBucket {
@@ -151,6 +341,8 @@ pub struct AgentConfig {
     ///Deprecated: use connectors, a binding to a connector.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     ///Absent when calls are reviewed by Stream's default guide.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub review: ::std::option::Option<AgentReview>,
@@ -237,6 +429,8 @@ pub struct AgentConfigPatch {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub review: ::std::option::Option<AgentReview>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub role: ::std::option::Option<AgentRole>,
@@ -320,6 +514,9 @@ pub struct AgentConfigRequest {
     ///Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    ///How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     ///How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub review: ::std::option::Option<AgentReview>,
@@ -687,7 +884,7 @@ pub struct AgentResponseItem {
     pub kind: AgentResponseItemKind,
     ///The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
     pub ordinal: i64,
-    ///Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+    ///Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording.
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub payload: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     pub response_id: ::std::string::String,
@@ -926,9 +1123,12 @@ pub struct AgentStats {
     ///One row per tool, most called first.
     pub tools: ::std::vec::Vec<ToolStats>,
 }
-///How an agent is offered its plugin, MCP server and connector tools.
+///How an agent is offered its tools, and how long what they were given and gave back is kept.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct AgentTools {
+    ///How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub output_retention: ::std::option::Option<::std::string::String>,
     ///Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub progressive: ::std::option::Option<bool>,
@@ -2191,6 +2391,23 @@ impl ::std::convert::TryFrom<::std::string::String> for ChannelKind {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///`ChannelLimits`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelLimits {
+    ///How many at once, for a calling channel.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub concurrent: ::std::option::Option<i64>,
+    ///The destination countries allowed, as ISO 3166-1 alpha-2 codes. Absent or empty allows any; in overrides, a non-empty list replaces the tier's.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub countries: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///How many a UTC day: messages, or minutes for a calling channel.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub per_day: ::std::option::Option<i64>,
+    ///How many distinct recipients a UTC day.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub recipients_per_day: ::std::option::Option<i64>,
 }
 ///`ChannelLineRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -3946,6 +4163,9 @@ pub struct CreateSessionRequest {
     ///What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub project_id: ::std::option::Option<::std::string::String>,
+    ///How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     ///The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub return_url: ::std::option::Option<::std::string::String>,
@@ -4019,6 +4239,93 @@ pub struct CreateSipTrunkRequest {
     ///Required.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub username: ::std::option::Option<::std::string::String>,
+}
+///`CreditEntry`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CreditEntry {
+    ///Signed: what the entry added to the credit, in millionths of a dollar.
+    pub amount_micros: i64,
+    pub created_at: ::std::string::String,
+    pub id: i64,
+    pub kind: CreditEntryKind,
+    ///The payment's own reference, such as a top-up's payment id. Absent on entries Stream's staff wrote.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub reference: ::std::option::Option<::std::string::String>,
+}
+///`CreditEntryKind`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CreditEntryKind {
+    #[serde(rename = "top_up")]
+    TopUp,
+    #[serde(rename = "grant")]
+    Grant,
+    #[serde(rename = "refund")]
+    Refund,
+    #[serde(rename = "dispute")]
+    Dispute,
+    #[serde(rename = "dispute_reversal")]
+    DisputeReversal,
+    #[serde(rename = "adjustment")]
+    Adjustment,
+}
+impl ::std::fmt::Display for CreditEntryKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::TopUp => f.write_str("top_up"),
+            Self::Grant => f.write_str("grant"),
+            Self::Refund => f.write_str("refund"),
+            Self::Dispute => f.write_str("dispute"),
+            Self::DisputeReversal => f.write_str("dispute_reversal"),
+            Self::Adjustment => f.write_str("adjustment"),
+        }
+    }
+}
+impl ::std::str::FromStr for CreditEntryKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "top_up" => Ok(Self::TopUp),
+            "grant" => Ok(Self::Grant),
+            "refund" => Ok(Self::Refund),
+            "dispute" => Ok(Self::Dispute),
+            "dispute_reversal" => Ok(Self::DisputeReversal),
+            "adjustment" => Ok(Self::Adjustment),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CreditEntryKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CreditEntryKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`CreditPage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CreditPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<CreditEntry>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
 }
 ///A custom MCP server for the app's agents to connect to. An unknown field is refused rather than ignored.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -4671,7 +4978,7 @@ pub enum Equals {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -6365,6 +6672,26 @@ pub struct LimitWindow {
     pub window_end: ::std::string::String,
     pub window_start: ::std::string::String,
 }
+///`Limits`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    ///Limits on each messaging and calling channel, by channel name (sms, whatsapp, rcs, imessage, voice, ...).
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub channels: ::std::collections::BTreeMap<::std::string::String, ChannelLimits>,
+    ///The balance, in micros, under which the organization is warned.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub low_balance_micros: ::std::option::Option<i64>,
+    ///Bounds of the organization's sandboxes.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub sandbox: ::std::option::Option<SandboxLimits>,
+    ///The most the organization may spend, whatever its credit and its own limits.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub spend_hard_limit: ::std::option::Option<SpendHardLimit>,
+}
 ///`LinkChannelRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct LinkChannelRequest {
@@ -7365,7 +7692,7 @@ pub struct PhoneVendor {
 ///`PlaceCallRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PlaceCallRequest {
-    ///Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
+    ///Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set.
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
@@ -7622,12 +7949,18 @@ pub struct Policy {
     ///Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub require_own_stream_app: ::std::option::Option<bool>,
+    ///How the scope's sessions are handed back a conversation they carry on. The most specific level wins, field by field: a server-side session request, then its agent config, then the app's policy, then the organization's, then the router's default (text only, 100 turns, 60000 characters).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     ///Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tool_output_retention: ::std::option::Option<::std::string::String>,
 }
 ///Whose policy: an organization's, an app's, or one end user's.
 #[derive(
@@ -7714,6 +8047,45 @@ pub struct PressDigitsRequest {
     pub digits: ::std::string::String,
     ///Who is carrying the call, e.g. "telnyx".
     pub vendor: ::std::string::String,
+}
+///What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Price {
+    ///The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub change: ::std::option::Option<::std::string::String>,
+    ///In upcoming: why the change is made.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub description: ::std::option::Option<::std::string::String>,
+    ///When it took effect, or takes effect. Absent when no change set it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub effective_at: ::std::option::Option<::std::string::String>,
+    ///The work costs nothing.
+    pub free: bool,
+    ///The deployment runs the model itself; with no rates it costs nothing.
+    pub local: bool,
+    ///Such as llm, stt, tts, sms or phone.
+    pub modality: ::std::string::String,
+    pub model: ::std::string::String,
+    pub provider: ::std::string::String,
+    ///What a customer is charged, by meter.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub rates: ::std::collections::BTreeMap<::std::string::String, PriceRate>,
+    ///What a customer is charged for long prompts.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tiers: ::std::option::Option<::std::vec::Vec<PriceTier>>,
+    ///The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub when: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///In upcoming: the item stops being priced at effective_at.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub withdrawn: ::std::option::Option<bool>,
 }
 ///`PriceChange`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -8076,6 +8448,16 @@ pub struct PricedEntry {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub version: ::std::option::Option<::std::string::String>,
 }
+///`Prices`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Prices {
+    ///The moment the list is read at.
+    pub at: ::std::string::String,
+    ///Every item priced now, by modality, provider and model.
+    pub entries: ::std::vec::Vec<Price>,
+    ///What the changes scheduled after at will set, soonest first.
+    pub upcoming: ::std::vec::Vec<Price>,
+}
 ///`Provider`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Provider {
@@ -8341,6 +8723,19 @@ pub struct RespondRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
     pub text: ::std::string::String,
+}
+///How a conversation is handed back to the model when a session carries it on.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct ResumeHistory {
+    ///Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub include_tools: ::std::option::Option<bool>,
+    ///How many characters are handed back, tool calls and results included: about four to a token. The whole of it is sent, and billed, with the first reply after the conversation is resumed, and is cached from then on by models that cache, so keep it well inside the model's context window. Omitted is 60000.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_characters: ::std::option::Option<i64>,
+    ///How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_messages: ::std::option::Option<i64>,
 }
 ///Who moved a use case: the app, Stream staff or the vendor.
 #[derive(
@@ -8617,6 +9012,81 @@ impl ::std::convert::TryFrom<&str> for Sandbox {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for Sandbox {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`SandboxLimits`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxLimits {
+    ///How many sandboxes at once.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_concurrent: ::std::option::Option<i64>,
+    ///The most vCPUs of one sandbox.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_cpu: ::std::option::Option<i64>,
+    ///The most disk of one sandbox, in GiB.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_disk_gb: ::std::option::Option<i64>,
+    ///The most memory of one sandbox, in GiB.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_memory_gb: ::std::option::Option<i64>,
+    ///What a sandbox may reach: nothing, an allow list, or anything.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub network: ::std::option::Option<SandboxLimitsNetwork>,
+}
+///What a sandbox may reach: nothing, an allow list, or anything.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SandboxLimitsNetwork {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "allow_list")]
+    AllowList,
+    #[serde(rename = "any")]
+    Any,
+}
+impl ::std::fmt::Display for SandboxLimitsNetwork {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::None => f.write_str("none"),
+            Self::AllowList => f.write_str("allow_list"),
+            Self::Any => f.write_str("any"),
+        }
+    }
+}
+impl ::std::str::FromStr for SandboxLimitsNetwork {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "none" => Ok(Self::None),
+            "allow_list" => Ok(Self::AllowList),
+            "any" => Ok(Self::Any),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SandboxLimitsNetwork {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SandboxLimitsNetwork {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -10721,6 +11191,17 @@ pub struct SpendBucket {
     ///The modality or label value this row is for. "other" is everything outside the biggest few, and the empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see which part.
     pub value: ::std::string::String,
 }
+///`SpendHardLimit`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SpendHardLimit {
+    ///The most spent in one UTC day, in micros; 0 or absent is no limit.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub daily_micros: ::std::option::Option<i64>,
+    ///The most spent in one calendar month (UTC), in micros; 0 or absent is no limit.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub monthly_micros: ::std::option::Option<i64>,
+}
 ///The most this organization may spend in the UTC day and in the calendar month, whatever its credit and its own limits. Set by the operator, never by the customer. A missing interval has no limit.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct SpendHardLimitUsage {
@@ -10733,9 +11214,62 @@ pub struct SpendHardLimitUsage {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SpendHardLimitWindow {
     pub limit_micros: i64,
+    ///What it may still spend in the window: the limit less what it spent and what work in flight holds.
     pub room_micros: i64,
+    ///What the organization spent in the window, as the usage records count it.
     pub spent_micros: i64,
     pub window_end: ::std::string::String,
+}
+///Whose spend is counted, or whose usage events are listed: the calling app's, or every app's of its organization. organization is server-side only.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SpendScope {
+    #[serde(rename = "app")]
+    App,
+    #[serde(rename = "organization")]
+    Organization,
+}
+impl ::std::fmt::Display for SpendScope {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::App => f.write_str("app"),
+            Self::Organization => f.write_str("organization"),
+        }
+    }
+}
+impl ::std::str::FromStr for SpendScope {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "app" => Ok(Self::App),
+            "organization" => Ok(Self::Organization),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SpendScope {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SpendScope {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`StartSessionVoiceRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -11241,6 +11775,9 @@ pub struct SyncAgentRequest {
     ///Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    ///How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resume_history: ::std::option::Option<ResumeHistory>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub role: ::std::option::Option<AgentRole>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -11335,6 +11872,17 @@ pub struct TagValueSummary {
     ///This value's share of what the key covers, from 0 to 1.
     pub share: f64,
     pub value: ::std::string::String,
+}
+///One of the organization's teams: one a spend limit names, or one this month's work carried. A team has no members: each user's token names its team.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Team {
+    ///The apps whose work carried the team this calendar month (UTC), by id.
+    pub apps: ::std::vec::Vec<::std::string::String>,
+    ///The team's spend limits, across the organization and within each app, by id.
+    pub limits: ::std::vec::Vec<Limit>,
+    pub name: ::std::string::String,
+    ///What the team spent in the current daily, weekly, biweekly and monthly windows.
+    pub spent: ::std::vec::Vec<WindowSpend>,
 }
 ///`TelephonySuspension`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -12291,6 +12839,78 @@ pub struct UpdateSipTrunkRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub username: ::std::option::Option<::std::string::String>,
 }
+///One unit of work recorded for the organization: who it was for, what it was, how much of it there was and what it cost. What Stream pays for it is Stream's, and is not here.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct UsageEvent {
+    ///The agent the work was done for.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent_id: ::std::option::Option<::std::string::String>,
+    ///The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
+    pub api_key: ::std::string::String,
+    ///The app the work was for.
+    pub app_id: ::std::string::String,
+    ///What chose the price or explains the work, such as country or direction.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub attributes: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Whether cost_micros counts against the organization's credit and limits.
+    pub billable: bool,
+    ///The call the work was done in.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call_id: ::std::option::Option<::std::string::String>,
+    ///What the organization is charged for the work, in millionths of a dollar.
+    pub cost_micros: i64,
+    ///Why it failed, when it did.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_code: ::std::option::Option<::std::string::String>,
+    ///The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added.
+    pub meter: ::std::string::String,
+    ///The model that did it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
+    ///When the work happened.
+    pub occurred_at: ::std::string::String,
+    ///Who did the work, such as openai.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider: ::std::option::Option<::std::string::String>,
+    ///What within the request the work was for, such as subagent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub purpose: ::std::option::Option<::std::string::String>,
+    ///How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and the like.
+    pub quantities: ::std::collections::BTreeMap<::std::string::String, i64>,
+    ///The session the work was done in.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub session_id: ::std::option::Option<::std::string::String>,
+    ///Whether the work succeeded.
+    pub success: bool,
+    ///The cost labels the request carried.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///The team the user's token named, the name of the team:<name> category among usage_categories. Absent with none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub team: ::std::option::Option<::std::string::String>,
+    ///The usage categories the token named, its team among them as team:<name>.
+    pub usage_categories: ::std::vec::Vec<::std::string::String>,
+    ///The event's id: the unit of work is recorded once under it.
+    pub usage_id: ::std::string::String,
+    ///The end user the work was for, by the id the app's tokens name them with; only unique within the app. Absent when there was none, or the caller was anonymous.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub user_id: ::std::option::Option<::std::string::String>,
+}
+///One page of the organization's usage events, newest first: by occurred_at, then by usage_id.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct UsageEventPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<UsageEvent>,
+    ///Where the next page starts, for cursor; absent on the last page.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
+}
 ///A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct UseCase {
@@ -12810,6 +13430,14 @@ pub struct WhatsAppProfile {
     ///sms or voice.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub verification_method: ::std::option::Option<::std::string::String>,
+}
+///`WindowSpend`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct WindowSpend {
+    pub interval: LimitInterval,
+    pub spent_micros: i64,
+    pub window_end: ::std::string::String,
+    pub window_start: ::std::string::String,
 }
 /// Error types.
 pub mod error {

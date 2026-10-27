@@ -860,8 +860,68 @@ func (s *Store) CustomerTagStats(
 }
 
 // spendGroupByModality is the group_by that means "where the money went" rather than
-// "what it was spent on", and the only one that is not a cost label key.
+// "what it was spent on".
 const spendGroupByModality = "modality"
+
+// The group_by values that are who asked rather than a cost label key, from the columns every
+// row carries. A label key never holds a ':', so none of them shadows a label of the same name.
+const (
+	SpendGroupByApp      = "who:app"
+	SpendGroupByAPIKey   = "who:api_key"
+	SpendGroupByUser     = "who:user"
+	SpendGroupByTeam     = "who:team"
+	SpendGroupByCategory = "who:category"
+)
+
+// spendGroups is the value each group_by that is not a cost label groups by, and the join it
+// needs. A user is only unique within its app, so across apps it is <app>/<user>; a team is
+// the name in a row's team: category; a category leaves the team out, and a row counts in each
+// of its others.
+func spendGroups(groupBy string, acrossApps bool) (value, join string, ok bool) {
+	switch groupBy {
+	case spendGroupByModality:
+		return "modality", "", true
+	case SpendGroupByApp:
+		return "customer_id", "", true
+	case SpendGroupByAPIKey:
+		return "api_key", "", true
+	case SpendGroupByUser:
+		if acrossApps {
+			return "CASE WHEN user_id = '' THEN '' ELSE customer_id || '/' || user_id END", "", true
+		}
+		return "user_id", "", true
+	case SpendGroupByTeam:
+		return "COALESCE((SELECT substr(c, 6) FROM unnest(usage_categories) AS c WHERE c ILIKE 'team:%' LIMIT 1), '')", "", true
+	case SpendGroupByCategory:
+		return "COALESCE(spend_category.name, '')",
+			"\nLEFT JOIN LATERAL unnest(usage_categories) AS spend_category(name) ON spend_category.name NOT ILIKE 'team:%'", true
+	}
+	return "", "", false
+}
+
+// OrganizationApps is every app of an organization: those requests last named it for, those
+// registered under it that no request named another for, and the app whose id is the
+// organization's, for an app that is its own.
+func (s *Store) OrganizationApps(ctx context.Context, organizationID string) ([]string, error) {
+	// One statement, so an app a request records under the organization meanwhile is in one
+	// half or the other.
+	var members []string
+	err := s.db.NewRaw(`SELECT app_id FROM app_organizations WHERE organization_id = ?
+UNION
+SELECT id FROM apps AS ap WHERE organization_id = ?
+  AND NOT EXISTS (SELECT 1 FROM app_organizations AS ao WHERE ao.app_id = ap.id AND ao.organization_id <> ?)
+ORDER BY 1`, organizationID, organizationID, organizationID).Scan(ctx, &members)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: organization apps: %w", err))
+	}
+	apps := []string{organizationID}
+	for _, app := range members {
+		if app != organizationID {
+			apps = append(apps, app)
+		}
+	}
+	return apps, nil
+}
 
 // spendOther is the value every group outside the biggest few is summed into.
 const spendOther = "other"
@@ -870,11 +930,12 @@ const spendOther = "other"
 // It is the whole bill rather than one modality's share of it, which is what a spend trend
 // is read as.
 //
-// groupBy is either "modality" or a cost label key. Only the limit biggest values over the
-// whole window keep a group of their own: a label such as customer_id has as many values as
-// the customer has customers, and a chart of all of them says nothing. The rest are summed
-// into "other", and requests carrying no such label into the empty value, so the rows still
-// add up to the total.
+// groupBy is "modality", who asked (SpendGroupByApp and the rest), or a cost label key. Only
+// the limit biggest values over the whole window keep a group of their own: a label such as
+// customer_id has as many values as the customer has customers, and a chart of all of them
+// says nothing. The rest are summed into "other", and requests carrying no such label into
+// the empty value, so the rows still add up to the total; grouped by category, a row counts
+// once in each of its categories.
 //
 // Reads the request rows rather than the rollups, so today's spend is there before a
 // rollup has run.
@@ -904,13 +965,21 @@ func (s *Store) CustomerSpend(
 		return nil, stack.Wrap(fmt.Errorf("store: customer spend: encode tag filter: %w", err))
 	}
 
-	valueExpr := "modality"
+	acrossApps := who.OrganizationID != ""
+	valueExpr, join, known := spendGroups(groupBy, acrossApps)
 	args := []any{}
-	if groupBy != spendGroupByModality {
+	if !known {
 		valueExpr = "COALESCE(tags->>?, '')"
 		args = append(args, groupBy)
 	}
-	args = append(args, customerID, from, to, string(filter))
+	scope := "customer_id = ?"
+	args = append(args, customerID)
+	if acrossApps {
+		scope = "customer_id IN (?) AND organization_id = ?"
+		args[len(args)-1] = bun.In(append([]string{customerID}, who.Apps...))
+		args = append(args, who.OrganizationID)
+	}
+	args = append(args, from, to, string(filter))
 	narrowed, narrowing := who.where()
 	args = append(args, narrowing...)
 
@@ -922,11 +991,11 @@ SELECT
     %s AS value,
     COALESCE(SUM(cost_micros), 0) AS cost_micros_total,
     %s AS request_count
-FROM requests
-WHERE customer_id = ?
+FROM requests%s
+WHERE %s
   AND started_at >= ? AND started_at < ?
   AND tags @> ?::jsonb%s
-GROUP BY 1, 2`, granularity.truncateUnit(), valueExpr, requestCount, narrowed)
+GROUP BY 1, 2`, granularity.truncateUnit(), valueExpr, requestCount, join, scope, narrowed)
 
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]spendRow, error) {
 		var rows []spendRow
@@ -942,10 +1011,15 @@ GROUP BY 1, 2`, granularity.truncateUnit(), valueExpr, requestCount, narrowed)
 // UsageFilter narrows usage to who asked for it: the key or origin it was started with, the end
 // user it was for, and categories every row carries, a team among them as team:<name>. The zero
 // filter narrows nothing.
+//
+// OrganizationID widens it instead, from the customer's own app to the rows of every app in
+// Apps that bill that organization; empty keeps it to the customer.
 type UsageFilter struct {
-	APIKey     string
-	UserID     string
-	Categories []string
+	APIKey         string
+	UserID         string
+	Categories     []string
+	OrganizationID string
+	Apps           []string
 }
 
 // where is the filter as conditions on requests, each opening with AND, and their arguments.
@@ -1540,12 +1614,18 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 	if customerID == "" || e164 == "" {
 		return stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
+	return releaseNumber(ctx, s.db, customerID, e164, at)
+}
+
+// releaseNumber marks a number as given back, in db.
+func releaseNumber(ctx context.Context, db bun.IDB, customerID, e164 string, at time.Time) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 
-	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
+	result, err := db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("released_at = ?", at).
+		Set("attached_at = NULL").
 		Set("sip_trunk_id = NULL").
 		Set("bridge_uri = NULL").
 		Set("bridge_username = NULL").
@@ -1591,6 +1671,7 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attac
 		Set("bridge_username = ?", nullable(attached.BridgeUsername)).
 		Set("bridge_password_sealed = ?", nullableBytes(attached.BridgePasswordSealed)).
 		Set("bridge_password_kek_version = ?", nullableVersion(attached.BridgePasswordKEKVersion)).
+		Set("attached_at = now()").
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
@@ -1652,7 +1733,7 @@ func (s *Store) AttachedBridge(ctx context.Context, vendor, e164 string) (Attach
 		Where("vendor = ?", vendor).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
-		Where("stream_trunk_id IS NOT NULL").
+		Where("attached_at IS NOT NULL").
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1722,14 +1803,18 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 	if customerID == "" || e164 == "" {
 		return PhoneNumber{}, stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
+	return heldNumber(ctx, s.db.NewSelect(), customerID, e164)
+}
+
+// heldNumber is one number a customer holds, read by query.
+func heldNumber(ctx context.Context, query *bun.SelectQuery, customerID, e164 string) (PhoneNumber, error) {
 	// Nobody holds a number written another way, and the vendor may read it as one somebody
 	// else holds.
 	if !IsE164(e164) {
 		return PhoneNumber{}, stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not a number %s holds", e164, customerID)})
 	}
-
 	var number PhoneNumber
-	err := s.db.NewSelect().Model(&number).
+	err := query.Model(&number).
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").

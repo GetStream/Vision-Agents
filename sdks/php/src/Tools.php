@@ -121,7 +121,7 @@ final class Tools
      * @throws ConfigurationException when there is no tool by that name or the arguments are not JSON
      * @throws RuntimeException when the call takes longer than the tool's timeout, which stops it
      */
-    public function call(string $name, string $arguments, ?ToolCall $call = null): string
+    public function call(string $name, string $arguments, ?ToolCall $toolCallContext = null): string
     {
         $tool = $this->tools[$name] ?? null;
         if ($tool === null) {
@@ -132,10 +132,10 @@ final class Tools
         } catch (JsonException) {
             throw new ConfigurationException("the arguments to {$name} are not JSON");
         }
-        $call ??= new ToolCall();
+        $toolCallContext ??= new ToolCall();
         $run = $tool['run'];
         $running = $tool['takesCall']
-            ? static fn (): mixed => $run(Json::asObject($decoded), $call)
+            ? static fn (): mixed => $run(Json::asObject($decoded), $toolCallContext)
             : static fn (): mixed => $run(Json::asObject($decoded));
         if ($tool['timeout'] === null) {
             $output = $running();
@@ -146,7 +146,7 @@ final class Tools
             try {
                 $output = $future->await(new TimeoutCancellation($tool['timeout']));
             } catch (CancelledException) {
-                $call->stop();
+                $toolCallContext->stop();
                 throw new RuntimeException(sprintf('%s took longer than %ss', $name, $tool['timeout']));
             }
         }

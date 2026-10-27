@@ -144,11 +144,11 @@ func (s *HostedCallSuite) TestAHostedFunctionSaysHowItIsGoingAndHoldsItsWrite() 
 	})
 	functions := tools.NewRegistry()
 	s.Require().NoError(tools.Register(functions, "rebook_flight", "Move a booking", func(ctx context.Context, _ struct{}) (any, error) {
-		call := tools.CallFrom(ctx)
-		if err := call.Update(ctx, "Checking seats"); err != nil {
+		toolCallContext := tools.CallFrom(ctx)
+		if err := toolCallContext.Update(ctx, "Checking seats"); err != nil {
 			return nil, err
 		}
-		writing := call.DisallowInterruptions(ctx)
+		writing := toolCallContext.DisallowInterruptions(ctx)
 		if writing.Err() != nil {
 			return nil, writing.Err()
 		}

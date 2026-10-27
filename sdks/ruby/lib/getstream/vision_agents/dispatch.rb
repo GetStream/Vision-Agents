@@ -157,7 +157,7 @@ module GetStream
         when "call" then handle("call", frame["work_id"].to_s, InboundCall.from(frame))
         when "message" then handle("message", frame["work_id"].to_s, InboundMessage.from(frame))
         when "tool_call" then run_hosted(frame)
-        when "tool_held" then @lock.synchronize { @hosted_calls.values.find { |call| call.id == frame["id"].to_s }&.held! }
+        when "tool_held" then @lock.synchronize { @hosted_calls.values.find { |tool_call_context| tool_call_context.id == frame["id"].to_s }&.held! }
         when "tool_cancel"
           # A Ruby thread cannot be stopped safely from outside, so the tool is left to finish
           # and its answer is dropped, unless it asked to be held.
@@ -187,18 +187,18 @@ module GetStream
         return tell(type: "tool_result", tool_call_id: id, id: id, error: "this worker does not run #{name}") unless tools
 
         key = hosted_key(frame)
-        call = ToolCall.from(frame, send: ->(sent) { tell(sent) })
+        tool_call_context = ToolCall.from(frame, send: ->(sent) { tell(sent) })
         # Held before the thread starts, so a tool quicker than this line is still found.
-        @lock.synchronize { @hosted_calls[key] = call }
+        @lock.synchronize { @hosted_calls[key] = tool_call_context }
         thread = Thread.new do
           result = begin
-            { output: tools.call(name, frame["arguments"], call) }
+            { output: tools.call(name, frame["arguments"], tool_call_context) }
           rescue StandardError => e
             { error: e.message }
           end
           # A call the router cancelled has no answer to give, since the router gave up on it;
           # one out of time still says so.
-          tell({ type: "tool_result", tool_call_id: id, id: id }.merge(result)) unless call.cancelled? && result[:output]
+          tell({ type: "tool_result", tool_call_id: id, id: id }.merge(result)) unless tool_call_context.cancelled? && result[:output]
         ensure
           @lock.synchronize do
             @threads.delete(Thread.current)

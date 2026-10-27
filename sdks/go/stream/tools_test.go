@@ -233,13 +233,13 @@ func (s *ToolCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 	s.join(pipeline)
 
 	select {
-	case call := <-seen:
-		s.Equal("call-3", call.ID)
-		s.Equal("session-1", call.SessionID)
-		s.Equal("turn-2", call.TurnID)
-		s.Equal(tools.User{ID: "jean", Name: "Jean"}, call.User)
-		s.Equal(tools.Conversation{CID: "messaging:support-1", Custom: map[string]any{"plan": "gold"}}, call.Conversation)
-		s.True(call.Approved)
+	case toolCallContext := <-seen:
+		s.Equal("call-3", toolCallContext.ID)
+		s.Equal("session-1", toolCallContext.SessionID)
+		s.Equal("turn-2", toolCallContext.TurnID)
+		s.Equal(tools.User{ID: "jean", Name: "Jean"}, toolCallContext.User)
+		s.Equal(tools.Conversation{CID: "messaging:support-1", Custom: map[string]any{"plan": "gold"}}, toolCallContext.Conversation)
+		s.True(toolCallContext.Approved)
 	case <-time.After(3 * time.Second):
 		s.Fail("the function never ran")
 	}

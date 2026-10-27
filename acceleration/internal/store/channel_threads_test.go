@@ -209,7 +209,9 @@ func (s *StoreSuite) TestTwoRoutersAskingAtOnceGetOneTurn() {
 func (s *StoreSuite) TestATurnWhoseLeaseRanOutCanBeTaken() {
 	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
 	s.Require().NoError(err)
-	_, err = s.store.TakeChannelThreadTurn(s.ctx, "thread-one", "router-a", time.Now().Add(-time.Second))
+	_, err = s.store.TakeChannelThreadTurn(s.ctx, "thread-one", "router-a", time.Now().Add(time.Minute))
+	s.Require().NoError(err)
+	_, err = s.store.DB().ExecContext(s.ctx, "UPDATE channel_threads SET turn_until = now() - interval '1 second' WHERE channel_id = 'thread-one'")
 	s.Require().NoError(err)
 
 	taken, err := s.store.TakeChannelThreadTurn(s.ctx, "thread-one", "router-b", time.Now().Add(time.Minute))
@@ -405,4 +407,96 @@ func (s *StoreSuite) TestAReplyPastItsKeepIsNotTakenAndIsDropped() {
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
 		"SELECT count(*) FROM channel_thread_waiting WHERE customer_id = 'acme-app'").Scan(&rows))
 	s.Equal(1, rows, "only the reply kept now")
+}
+
+// A chat thread's person is read with the thread, replaced by the next one recorded, and
+// forgotten by an empty one.
+func (s *StoreSuite) TestAChatThreadsPersonIsReadWithItUntilItIsForgotten() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "chat-1"))
+	s.Require().NoError(err)
+	s.Empty(s.chatPerson("thread-one"), "a thread nobody recorded a person for")
+
+	s.Require().NoError(s.store.SetChannelThreadChatPerson(s.ctx, "thread-one", "+12025550199"))
+	s.Equal("+12025550199", s.chatPerson("thread-one"))
+	s.Require().NoError(s.store.SetChannelThreadChatPerson(s.ctx, "thread-one", "+12025550188"))
+	s.Equal("+12025550188", s.chatPerson("thread-one"))
+
+	s.Require().NoError(s.store.SetChannelThreadChatPerson(s.ctx, "thread-one", ""))
+	s.Empty(s.chatPerson("thread-one"))
+}
+
+// A thread linked again keeps its person: only the bridge, for a fresh message, says who it is.
+func (s *StoreSuite) TestAThreadLinkedAgainKeepsItsChatPerson() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "chat-1"))
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SetChannelThreadChatPerson(s.ctx, "thread-one", "+12025550199"))
+
+	_, err = s.store.LinkChannelThread(s.ctx, thread("thread-two", "chat-1"))
+
+	s.Require().NoError(err)
+	s.Equal("+12025550199", s.chatPerson("thread-one"))
+}
+
+// A router built before channel_thread_people reads channel_threads rows back whole
+// (LinkChannelThread, RETURNING *) and fails on a column it does not know, so the table keeps
+// the columns it had then: a rollback keeps every thread channel working.
+func (s *StoreSuite) TestChannelThreadsKeepsTheColumnsARouterBeforeChatPeopleReads() {
+	rows, err := s.store.DB().QueryContext(s.ctx,
+		"SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'channel_threads' ORDER BY ordinal_position")
+	s.Require().NoError(err)
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var column string
+		s.Require().NoError(rows.Scan(&column))
+		columns = append(columns, column)
+	}
+	s.Require().NoError(rows.Err())
+
+	s.Equal([]string{"channel_id", "customer_id", "connector_id", "provider_unit_id", "thread_key", "connection_id",
+		"thread_parts", "stream_app_pk", "last_inbound_at", "turn_holder", "turn_until", "created_at"}, columns)
+}
+
+// chatPerson is the person store.ChannelThread reads for a thread channel.
+func (s *StoreSuite) chatPerson(channelID string) string {
+	found, err := s.store.ChannelThread(s.ctx, channelID)
+	s.Require().NoError(err)
+	return found.ChatPerson
+}
+
+// A chat thread is silenced by a live opt-out of a person recorded in it, on its channel or on
+// all of them; not by one of another channel, another customer, a person not in it, or one
+// revoked (AI-2015).
+func (s *StoreSuite) TestAThreadMemberWithALiveOptOutIsFound() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-group", "chat-group"))
+	s.Require().NoError(err)
+	_, err = s.store.LinkChannelThread(s.ctx, thread("thread-other", "chat-other"))
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.AddChannelThreadMember(s.ctx, "thread-group", "+12025550198"))
+	s.Require().NoError(s.store.AddChannelThreadMember(s.ctx, "thread-group", "+12025550199"))
+	s.Require().NoError(s.store.AddChannelThreadMember(s.ctx, "thread-group", "+12025550199"), "a member recorded again")
+	optedOut := func(channelID string) bool {
+		found, err := s.store.ChannelThreadMemberOptedOut(s.ctx, "acme-app", channelID, "imessage")
+		s.Require().NoError(err)
+		return found
+	}
+	optOut := func(customerID, recipient, channel string) {
+		s.Require().NoError(s.store.OptOut(s.ctx, &OptOut{CustomerID: customerID, Recipient: recipient, Channel: channel, Source: "keyword"}))
+	}
+	s.False(optedOut("thread-group"), "nobody opted out")
+
+	optOut("acme-app", "+12025550198", "sms")
+	optOut("other-app", "+12025550198", "imessage")
+	optOut("acme-app", "+12025550100", "imessage")
+	s.False(optedOut("thread-group"), "another channel, another customer, a person not in the chat")
+
+	optOut("acme-app", "+12025550198", OptOutAll)
+	s.True(optedOut("thread-group"), "an opt-out of every channel")
+	s.False(optedOut("thread-other"), "a chat the person is not in")
+	s.Require().NoError(s.store.RevokeOptOuts(s.ctx, "acme-app", "+12025550198", "imessage"))
+	s.False(optedOut("thread-group"), "revoked")
+
+	optOut("acme-app", "+12025550199", "imessage")
+	s.True(optedOut("thread-group"))
+	s.Error(s.store.AddChannelThreadMember(s.ctx, "thread-group", ""), "no member")
 }

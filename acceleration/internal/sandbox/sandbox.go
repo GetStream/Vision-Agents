@@ -155,6 +155,13 @@ type Granted interface {
 	Grants() []Grant
 }
 
+// Connecting is a granted sandbox some of whose grants the user may connect while it is open
+// (Grant.Late).
+type Connecting interface {
+	// Connected are the late grants' bindings the user has connected by now.
+	Connected() []string
+}
+
 // gitHost is the host git clones and pushes to for a GitHub grant
 // (https://docs.github.com/en/get-started/git-basics/about-remote-repositories).
 const gitHost = "github.com"

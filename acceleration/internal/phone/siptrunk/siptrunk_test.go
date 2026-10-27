@@ -168,6 +168,23 @@ func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheTrunkAndTheStreamLeg() {
 	s.Equal(want, got)
 }
 
+func (s *SIPTrunkSuite) TestCallsShareTheirNumbersTrunk() {
+	s.Equal(phone.StreamLegShared, phone.StreamLegOf(s.provider))
+}
+
+func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheCallID() {
+	placing := outbound()
+	placing.CallID = "abc"
+
+	_, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	s.waitForDial()
+
+	s.dialer.mu.Lock()
+	defer s.dialer.mu.Unlock()
+	s.Equal("abc", s.dialer.config.Call.CallID)
+}
+
 func (s *SIPTrunkSuite) TestAConnectedCallSaysWhereEachSidesAudioComesFrom() {
 	s.dialer.call.media = sipbridge.MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"}
 	told := make(chan sipbridge.MediaAddrs, 1)

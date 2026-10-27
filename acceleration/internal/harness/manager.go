@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -161,12 +162,14 @@ func newManager(
 	return m
 }
 
-// Create delegates a piece of work and returns its task id.
+// Create delegates a piece of work and returns its task id. Work a scheduled turn asked
+// for, ctx marked so, is counted as that turn is (chargedAs); the work outlives it.
 //
 // A newer request for a skill supersedes the one it already had: the caller has said
 // something since, so the older question was asked about a conversation that no longer
 // exists.
 func (m *manager) Create(
+	ctx context.Context,
 	skill Skill,
 	prompt string,
 	history []llm.Message,
@@ -189,7 +192,7 @@ func (m *manager) Create(
 	}
 
 	messages := append(append([]llm.Message(nil), history...), llm.Message{Role: llm.User, Content: prompt})
-	ctx, cancel := context.WithCancel(m.ctx)
+	ctx, cancel := context.WithCancel(chargedAs(m.ctx, ctx))
 	created := &task{
 		ctx: ctx, cancel: cancel, capture: skill.CaptureVideo,
 		id:           fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), m.sequence.Add(1)),
@@ -224,6 +227,16 @@ func (m *manager) Create(
 
 	go m.start(created)
 	return created.id, nil
+}
+
+// chargedAs returns ctx marked as scheduled when a scheduled task fired the turn asked
+// (llmrouter Session.charged). Nothing else of asked is kept, its cancellation least of
+// all: delegated work outlives the turn that asked for it.
+func chargedAs(ctx, asked context.Context) context.Context {
+	if routing.ScheduledTurn(asked) {
+		ctx = routing.WithScheduledTurn(ctx)
+	}
+	return ctx
 }
 
 // Attached reports whether a skill is already looking at images the caller sent with this
@@ -879,12 +892,31 @@ func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Res
 		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
 	}
 	for _, grant := range result.Unconnected {
-		said += fmt.Sprintf("\n\nIf this code needed %s (a 401 from %s), the user has not connected it: call %s__list_tools "+
+		said += fmt.Sprintf("\n\n"+unconnectedLine+"%s), the user has not connected it: call %s__list_tools "+
 			"so they can, then run the code again; if you cannot call it, tell the user they must connect %s.",
 			grant.Binding, strings.Join(grant.Hosts, ", "), grant.Binding, grant.Binding)
 	}
 	for _, binding := range result.Connected {
-		said += fmt.Sprintf("\n\n%s was just connected: if this run got 401, wait 20 seconds and run the code again.", binding)
+		said += "\n\n" + binding + justConnected
 	}
 	return said, published
+}
+
+// unconnectedLine and justConnected begin and end the lines HandBack adds for a late grant,
+// each of which tells the model to run the same code again once the user has connected
+// it (RunAgain).
+const (
+	unconnectedLine = "If this code needed %s (a 401 from "
+	justConnected   = " was just connected: if this run got 401, wait 20 seconds and run the code again."
+)
+
+// RunAgain reports whether a run of code's result (HandBack) tells the model to run the same
+// code again now: it said a binding was just connected, or named one as not connected that is
+// among connected, the bindings the user has connected since (sandbox.Connecting). Run again
+// while the user has not connected it, the same code would only get the same 401, as often as
+// the model asks.
+func RunAgain(result string, connected []string) bool {
+	return strings.Contains(result, justConnected) || slices.ContainsFunc(connected, func(binding string) bool {
+		return strings.Contains(result, fmt.Sprintf(unconnectedLine, binding))
+	})
 }

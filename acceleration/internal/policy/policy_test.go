@@ -934,3 +934,47 @@ func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	s.NoError(err)
 	s.NoError(admitted.Spend, "limits never read admit")
 }
+
+func (s *PolicySuite) TestToolOutputIsKeptAsLongAsTheSessionWithoutAPolicy() {
+	kept, err := s.enforcer.ToolOutputRetention(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Empty(kept)
+}
+
+func (s *PolicySuite) TestAnAppCanShortenItsOrganizationsToolOutputRetentionButNotLengthenIt() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{ToolOutputRetention: "7d"})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{ToolOutputRetention: "30d"})
+
+	kept, err := s.enforcer.ToolOutputRetention(s.ctx, s.app)
+	s.Require().NoError(err)
+	s.Equal(options.Retention("7d"), kept, "the organization's is the longest any of its apps keeps")
+
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{ToolOutputRetention: options.RetentionNone})
+	kept, err = s.enforcer.ToolOutputRetention(s.ctx, s.app)
+	s.Require().NoError(err)
+	s.Equal(options.RetentionNone, kept)
+}
+
+func (s *PolicySuite) TestAnOrganizationsToolOutputRetentionAppliesToAnAppWithoutOne() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{ToolOutputRetention: "24h"})
+
+	kept, err := s.enforcer.ToolOutputRetention(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Equal(options.Retention("24h"), kept)
+}
+
+func (s *PolicySuite) TestAPolicyReadErrorKeepsNoToolOutput() {
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	configs, err := appconfig.New(appconfig.Options{Store: closed})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
+
+	kept, err := enforcer.ToolOutputRetention(s.ctx, s.app)
+
+	s.Error(err)
+	s.Equal(options.RetentionNone, kept)
+}

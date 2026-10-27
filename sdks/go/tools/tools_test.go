@@ -316,15 +316,15 @@ func TestWordsAloneStayAString(t *testing.T) {
 
 func TestOutsideACallItsProgressGoesNowhere(t *testing.T) {
 	ctx := context.Background()
-	call := CallFrom(ctx)
+	toolCallContext := CallFrom(ctx)
 
-	if err := call.Update(ctx, "working"); err != nil {
-		t.Errorf("an update outside a call failed: %v", err)
+	if err := toolCallContext.Update(ctx, "working"); err != nil {
+		t.Errorf("an update outside a toolCallContext failed: %v", err)
 	}
-	if err := call.Say(ctx, "one moment"); err != nil {
-		t.Errorf("words outside a call failed: %v", err)
+	if err := toolCallContext.Say(ctx, "one moment"); err != nil {
+		t.Errorf("words outside a toolCallContext failed: %v", err)
 	}
-	if held := call.DisallowInterruptions(ctx); held != ctx {
+	if held := toolCallContext.DisallowInterruptions(ctx); held != ctx {
 		t.Error("holding a call that is not one changed its context")
 	}
 }

@@ -386,7 +386,7 @@ func (s *StoreSuite) TestARunTakesOneCallUntilItIsGivenBack() {
 	}
 	s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, &run))
 	take := func(customer, call string) bool {
-		took, err := s.store.TakeScheduledTaskRunCall(s.ctx, customer, run.ID, call)
+		took, _, err := s.store.TakeScheduledTaskRunCall(s.ctx, customer, run.ID, call)
 		s.Require().NoError(err)
 		return took
 	}
@@ -404,13 +404,53 @@ func (s *StoreSuite) TestARunTakesOneCallUntilItIsGivenBack() {
 
 	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "call-3", "not_answered"))
 	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3"))
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "acme", run.ID, "call-3", "delivery_failed"))
 	runs, err := s.store.ScheduledTaskRuns(s.ctx, "acme", "one", 25, nil)
 	s.Require().NoError(err)
 	s.Require().Len(runs, 1)
 	s.Equal("call-3", runs[0].SessionID, "a finished run keeps the call it made")
+	s.Equal("not_answered", *runs[0].Error, "and its outcome: a call ending late writes no reason over it")
 
 	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "", "delivery_failed"))
 	s.False(take("acme", "call-4"), "a finished run places no call")
+}
+
+func (s *StoreSuite) TestARunsCallKeepsTheReasonItEndedUnderForTheWorkerTakingItOver() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	run := claimed[0].Run
+	took, _, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-1")
+	s.Require().NoError(err)
+	s.Require().True(took)
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "acme", run.ID, "call-1", "not_answered"))
+	// Only the call the run took, on the customer's own run, records how it ended.
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "acme", run.ID, "call-2", "delivery_failed"))
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(s.ctx, "globex", run.ID, "call-1", "delivery_failed"))
+	took, reason, err := s.store.TakeScheduledTaskRunCall(s.ctx, "globex", run.ID, "call-3")
+	s.Require().NoError(err)
+	s.False(took)
+	s.Empty(reason, "another customer's run tells nothing")
+
+	// The worker dies: its run ages past the stale window and its lease lapses.
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("started_at = ?", s.base.Add(-time.Hour)).
+		Where("id = ?", run.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = ?", s.base.Add(-time.Minute)).
+		Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+	reclaimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(reclaimed, 1)
+
+	took, reason, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-4")
+	s.Require().NoError(err)
+	s.False(took, "the run rang already")
+	s.Equal("not_answered", reason, "the taking over keeps how the call went")
 }
 
 // held claims the due task id and holds its occurrence until until, as quiet
@@ -639,6 +679,64 @@ func (s *StoreSuite) TestAnEditedOneShotWhoseWorkerLeaseLapsedComesDueAgain() {
 	s.Equal("Remind Sam to drink water.", again[0].Run.Prompt)
 }
 
+func (s *StoreSuite) TestAnEditedOneShotWhoseLostWorkerPlacedACallIsCompletedNotRungAgain() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	took, _, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", claimed[0].Run.ID, "call-1")
+	s.Require().NoError(err)
+	s.Require().True(took)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = now() - interval '1 second'").
+		Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	task.Instructions = "Remind Sam to drink water."
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+
+	s.Equal(ScheduledTaskCompleted, task.State, "the caller reads back what was saved")
+	stored, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskCompleted, stored.State)
+	s.Nil(stored.NextRunAt)
+	s.Equal(ScheduledTaskRunMissed, s.run(claimed[0].Run.ID).State)
+	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Empty(again, "the user is not rung a second time")
+}
+
+func (s *StoreSuite) TestAOneShotMovedOffAnOccurrenceWhoseLostWorkerPlacedACallStaysAtItsNewTime() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	took, _, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", claimed[0].Run.ID, "call-1")
+	s.Require().NoError(err)
+	s.Require().True(took)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = now() - interval '1 second'").
+		Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	later := s.base.Add(time.Hour)
+	task.NextRunAt = &later
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+
+	stored, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskActive, stored.State, "the call was for the occurrence the task moved off")
+	s.Require().NotNil(stored.NextRunAt)
+	s.True(later.Equal(*stored.NextRunAt), "%v", stored.NextRunAt)
+	s.Equal(ScheduledTaskRunMissed, s.run(claimed[0].Run.ID).State)
+}
+
 func (s *StoreSuite) TestAOneShotMovedWhileBeingDeliveredLetsThatDeliveryGo() {
 	due := s.base.Add(-time.Minute)
 	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
@@ -726,7 +824,7 @@ func (s *StoreSuite) TestALeaseLapsingAfterAHoldWasTakenUpIsParkedLikeAnyOther()
 	// The worker that took it up stops renewing a moment later: it may only be
 	// slow, so the run waits out the stale window like any other.
 	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
-		Set("lease_until = ?", time.Now().Add(-time.Second)).Where("id = ?", "one").Exec(s.ctx)
+		Set("lease_until = now() - interval '1 second'").Where("id = ?", "one").Exec(s.ctx)
 	s.Require().NoError(err)
 	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
 	s.Require().NoError(err)
@@ -753,7 +851,7 @@ func (s *StoreSuite) TestALastAttemptWhoseLeaseLapsesAMomentIsParkedNotFailed() 
 		Where("id = ?", runID).Exec(s.ctx)
 	s.Require().NoError(err)
 	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
-		Set("lease_until = ?", time.Now().Add(-time.Second)).Where("id = ?", "one").Exec(s.ctx)
+		Set("lease_until = now() - interval '1 second'").Where("id = ?", "one").Exec(s.ctx)
 	s.Require().NoError(err)
 
 	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
@@ -860,7 +958,11 @@ func (s *StoreSuite) TestTheLastRunOfEveryTaskIsReadAtOnce() {
 }
 
 func (s *StoreSuite) TestDeletingAConfigPausesOnlyItsActiveTasks() {
-	created := s.task("one", nil)
+	// Its last change a day ago, read back as Postgres keeps it: the pause stamps updated_at with
+	// Postgres's clock, which need not agree with this process's to the microsecond.
+	s.aged("one", "acme", ScheduledTaskActive, day)
+	created, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
 	s.task("done", func(task *ScheduledTask) { task.State = ScheduledTaskCompleted })
 	s.task("other-config", func(task *ScheduledTask) { task.ConfigID = "config-2" })
 	s.task("no-config", func(task *ScheduledTask) { task.ConfigID = "" })
@@ -887,6 +989,99 @@ func (s *StoreSuite) TestDeletingAConfigPausesOnlyItsActiveTasks() {
 	s.Equal(ScheduledTaskActive, other.State, "another customer's config of the same id is not this one")
 }
 
+func (s *StoreSuite) TestDeletingAConfigWritesItsTasksHeldOccurrenceMissed() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	s.task("elsewhere", func(task *ScheduledTask) { task.ConfigID, task.NextRunAt = "config-2", nil })
+	s.task("one", func(task *ScheduledTask) { task.CustomerID, task.NextRunAt = "globex", nil })
+	claim := s.held("one", time.Now().Add(8*time.Hour))
+	// What the pause must leave alone: an earlier occurrence already delivered,
+	// a run made by hand, the running run of a task on another config, and that
+	// of another customer's task under the same id and config.
+	delivered := &ScheduledTaskRun{TaskID: "one", CustomerID: "acme", ScheduledFor: due.Add(-24 * time.Hour), State: ScheduledTaskRunDelivered}
+	manual := &ScheduledTaskRun{TaskID: "one", CustomerID: "acme", ScheduledFor: due, Trigger: ScheduledTaskTriggerManual}
+	elsewhere := &ScheduledTaskRun{TaskID: "elsewhere", CustomerID: "acme", ScheduledFor: due}
+	theirs := &ScheduledTaskRun{TaskID: "one", CustomerID: "globex", ScheduledFor: due}
+	for _, run := range []*ScheduledTaskRun{delivered, manual, elsewhere, theirs} {
+		s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, run))
+	}
+
+	s.Require().NoError(s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1"))
+
+	missed := s.run(claim.Run.ID)
+	s.Equal(ScheduledTaskRunMissed, missed.State, "no worker claims a paused task, so the held occurrence is settled now")
+	s.NotNil(missed.FinishedAt)
+	s.Equal(ScheduledTaskRunDelivered, s.run(delivered.ID).State)
+	s.Equal(ScheduledTaskRunRunning, s.run(manual.ID).State, "a run by hand records its own outcome")
+	s.Equal(ScheduledTaskRunRunning, s.run(elsewhere.ID).State)
+	s.Equal(ScheduledTaskRunRunning, s.run(theirs.ID).State)
+	s.Require().NoError(s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1"),
+		"a config with no active task left pauses nothing")
+}
+
+func (s *StoreSuite) TestATaskOnADeletedConfigIsRefused() {
+	deleted := s.boundConfig("acme")
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, "acme", deleted.ID))
+
+	err := s.store.CreateScheduledTask(s.ctx, &ScheduledTask{
+		CustomerID: "acme", ConfigID: deleted.ID, UserID: "sam", CallerKind: "authenticated",
+		Title: "Stretch", Instructions: "Remind Sam to stretch.", StartLocal: s.base, Timezone: "UTC",
+	}, 25)
+	s.ErrorIs(err, ErrNoAgentConfig)
+	tasks, err := s.store.ScheduledTasks(s.ctx, "acme", ScheduledTaskFilter{}, 25, nil)
+	s.Require().NoError(err)
+	s.Empty(tasks)
+
+	live := s.boundConfig("acme")
+	s.task("live", func(task *ScheduledTask) { task.ConfigID = live.ID })
+	s.task("theirs", func(task *ScheduledTask) { task.CustomerID, task.ConfigID = "globex", deleted.ID })
+}
+
+func (s *StoreSuite) TestACreateWaitsForAConfigDeleteUnderWayAndIsRefused() {
+	config := s.boundConfig("acme")
+	deleting, err := s.store.db.BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = deleting.Rollback() }()
+	_, err = deleting.ExecContext(s.ctx, "UPDATE agent_configs SET deleted_at = now() WHERE id = ?", config.ID)
+	s.Require().NoError(err)
+
+	created := make(chan error, 1)
+	go func() {
+		created <- s.store.CreateScheduledTask(s.ctx, &ScheduledTask{
+			CustomerID: "acme", ConfigID: config.ID, UserID: "sam", CallerKind: "authenticated",
+			Title: "Stretch", Instructions: "Remind Sam to stretch.", StartLocal: s.base, Timezone: "UTC",
+		}, 25)
+	}()
+	// The suite's database is its own, so a backend waiting on a lock in it is the create.
+	s.Require().Eventually(func() bool {
+		var waiting int
+		s.Require().NoError(s.store.db.QueryRowContext(s.ctx, "SELECT count(*) FROM pg_stat_activity"+
+			" WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting))
+		return waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the create read the config without waiting for the delete under way")
+	s.Require().NoError(deleting.Commit())
+
+	s.ErrorIs(<-created, ErrNoAgentConfig)
+}
+
+func (s *StoreSuite) TestATaskOfADeletedConfigIsNotMadeActiveAgain() {
+	config := s.boundConfig("acme")
+	s.task("one", func(task *ScheduledTask) { task.ConfigID, task.State = config.ID, ScheduledTaskPaused })
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, "acme", config.ID))
+	stored, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+
+	stored.Title = "Renamed"
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &stored), "a paused task's edit stands")
+	stored.State = ScheduledTaskActive
+	s.ErrorIs(s.store.SaveScheduledTask(s.ctx, &stored), ErrNoAgentConfig)
+
+	after, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskPaused, after.State)
+	s.Equal("Renamed", after.Title)
+}
+
 func (s *StoreSuite) TestAClaimInFlightCannotResumeADeletedConfigsTask() {
 	due := s.base.Add(-time.Minute)
 	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
@@ -906,6 +1101,68 @@ func (s *StoreSuite) TestAClaimInFlightCannotResumeADeletedConfigsTask() {
 	after, err := s.store.ScheduledTask(s.ctx, "acme", "one")
 	s.Require().NoError(err)
 	s.Equal(ScheduledTaskPaused, after.State)
+}
+
+// holdRun claims the due task one and locks its run's row in a transaction
+// left open, so a write of that run waits until release is called.
+func (s *StoreSuite) holdRun() (ClaimedScheduledTask, func()) {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	holder, err := s.store.db.BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	_, err = holder.ExecContext(s.ctx, "SELECT id FROM scheduled_task_runs WHERE id = ? FOR UPDATE", claimed[0].Run.ID)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = holder.Rollback() })
+	return claimed[0], func() { s.Require().NoError(holder.Rollback()) }
+}
+
+func (s *StoreSuite) TestAConfigDeleteWhileAWorkerFinishesTheRunStillPausesTheTask() {
+	claim, release := s.holdRun()
+	finished := make(chan error, 1)
+	go func() {
+		next := s.base.Add(24 * time.Hour)
+		_, err := s.store.FinishScheduledTaskRun(s.ctx, "acme", claim.Run.ID, claim.ClaimID, ScheduledTaskOutcome{
+			RunState: ScheduledTaskRunDelivered, DeliveredTo: ScheduledTaskDeliveredConversation,
+			NextRunAt: &next, State: ScheduledTaskActive,
+		})
+		finished <- err
+	}()
+	s.waitForLockWaiters(1, "the write of the held run waits")
+	paused := make(chan error, 1)
+	go func() { paused <- s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1") }()
+	s.waitForLockWaiters(2, "the pause waits too")
+	release()
+
+	s.Require().NoError(<-finished)
+	s.Require().NoError(<-paused, "the pause is not aborted as a deadlock with the finish")
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskPaused, task.State, "the deleted config's task is not left active")
+	s.Equal(ScheduledTaskRunDelivered, s.run(claim.Run.ID).State, "the finish recorded the delivery")
+}
+
+func (s *StoreSuite) TestAConfigDeleteWhileATaskIsPausedByHandStillPausesTheTask() {
+	claim, release := s.holdRun()
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	task.State = ScheduledTaskPaused
+	saved := make(chan error, 1)
+	go func() { saved <- s.store.SaveScheduledTask(s.ctx, &task) }()
+	s.waitForLockWaiters(1, "the write of the held run waits")
+	paused := make(chan error, 1)
+	go func() { paused <- s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1") }()
+	s.waitForLockWaiters(2, "the pause waits too")
+	release()
+
+	s.Require().NoError(<-saved)
+	s.Require().NoError(<-paused, "the pause is not aborted as a deadlock with the save")
+	after, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskPaused, after.State)
+	s.Equal(ScheduledTaskRunMissed, s.run(claim.Run.ID).State, "the pause by hand settled the occurrence")
 }
 
 func (s *StoreSuite) TestAnUnchangedUserTimezoneIsNotWrittenAgain() {
