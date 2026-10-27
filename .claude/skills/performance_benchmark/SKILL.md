@@ -26,7 +26,7 @@ every session fails with an unknown model. Check before a run, not after:
 curl -sS "$ROUTER/api/v1/models?capability=stt" | grep -c mock/mock-stt
 ```
 
-Staging carries `router.mockProviders: true` in `shards/us-east1-acceleration/accelerate-staging.yaml`
+The benchmark release carries `router.mockProviders: true` in `shards/us-east1-acceleration/accelerate-benchmark.yaml`
 in the private infra repo. Locally, `ROUTER_MOCK_PROVIDERS=true` in the root `.env`.
 
 **Native audio.** The callers speak Opus over WebRTC: `brew install pkg-config opus opusfile libsoxr`,
@@ -38,12 +38,12 @@ it the run still works and the report just has no pod column.
 
 ## 2. Run one
 
-From `performance_benchmark/`. Staging is the default target and the one to use: say so to the
-user first, since a run saturates it for its duration.
+From `performance_benchmark/`. The benchmark release is the default target and the one to use:
+nobody else's traffic is on it, and a run saturates it for its duration.
 
 ```bash
 CGO_ENABLED=1 go run -tags webrtc ./cmd/perfbench run \
-  -target staging -label before -start 1 -factor 2 -max 64 -hold 90s -out out/before
+  -target benchmark -label before -start 1 -factor 2 -max 64 -hold 90s -out out/before
 ```
 
 The ramp doubles the agents each step, holds each step for `-hold` of real conversation, and

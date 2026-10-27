@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace GetStream.VisionAgents;
 
@@ -14,10 +15,17 @@ namespace GetStream.VisionAgents;
 public sealed record VisionAgentsOptions
 {
     /// <summary>
-    /// The router's base URL. Falls back to <c>STREAM_ACCELERATION_URL</c>, then Stream's hosted
-    /// router, so only a self-hosted or local router needs it.
+    /// The router's base URL. Falls back to <see cref="Region"/>, then
+    /// <c>STREAM_ACCELERATION_URL</c>, then <c>STREAM_ACCELERATION_REGION</c>, then Stream's
+    /// hosted router, so only a self-hosted or local router needs it.
     /// </summary>
     public string? Url { get; init; }
+
+    /// <summary>
+    /// Holds this client to Stream's hosted router in one region, such as <c>us-east4</c>. It
+    /// cannot be set together with <see cref="Url"/>.
+    /// </summary>
+    public string? Region { get; init; }
 
     /// <summary>
     /// Who the work is billed to, taken at face value, for a router with nothing in front of
@@ -47,8 +55,8 @@ public sealed record VisionAgentsOptions
 
     /// <summary>
     /// Whether the router is reached through Stream's authenticating proxy, which every
-    /// hosted deployment sits behind. On for the hosted router; anywhere else it falls back to
-    /// <c>STREAM_ACCELERATION_AUTHENTICATE</c>.
+    /// hosted deployment sits behind. On for the hosted router, in any region; anywhere else it
+    /// falls back to <c>STREAM_ACCELERATION_AUTHENTICATE</c>.
     /// </summary>
     /// <remarks>
     /// Away from the hosted router it is opt-in rather than inferred from holding a credential, because a Stream key and
@@ -64,8 +72,10 @@ public sealed record VisionAgentsOptions
 internal sealed class Backend
 {
     /// <summary>Stream's hosted router, which is where a client goes when nothing says otherwise.</summary>
-    public const string DefaultUrl = "https://accelerate.gcp.stream-io-api.com";
+    public const string DefaultUrl = "https://accelerate-us-east4.gcp.stream-io-api.com";
     public const string UrlEnv = "STREAM_ACCELERATION_URL";
+    /// <summary>Holds this SDK to the hosted router in one region, such as <c>us-east4</c>.</summary>
+    public const string RegionEnv = "STREAM_ACCELERATION_REGION";
     public const string CustomerEnv = "STREAM_ACCELERATION_CUSTOMER_ID";
     public const string ApiKeyEnv = "STREAM_API_KEY";
     public const string ApiSecretEnv = "STREAM_API_SECRET";
@@ -75,19 +85,46 @@ internal sealed class Backend
     // sooner than the credential behind it.
     private static readonly TimeSpan TokenValidity = TimeSpan.FromHours(1);
 
-    public Backend(VisionAgentsOptions options)
+    // The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
+    // which regions are served is the hosted router's to say, so offering another needs no
+    // release of this SDK. \z rather than $, which would let a trailing newline through.
+    private static readonly Regex RegionName = new(@"^[a-z]+-[a-z]+[0-9]+\z", RegexOptions.CultureInvariant);
+
+    public Backend(VisionAgentsOptions options) : this(options, Env)
     {
-        Url = (options.Url ?? Env(UrlEnv) ?? DefaultUrl).TrimEnd('/');
-        CustomerId = options.CustomerId ?? Env(CustomerEnv) ?? "";
+    }
+
+    /// <summary>
+    /// Reads the environment through <paramref name="env"/>, so a test can say what is in it
+    /// without changing the process's own.
+    /// </summary>
+    internal Backend(VisionAgentsOptions options, Func<string, string?> env)
+    {
+        if (options.Url is not null && options.Region is not null)
+        {
+            throw new ConfigurationException("set a Url or a Region, not both");
+        }
+        var url = options.Url ?? (options.Region is { } region ? RegionUrl(region) : null);
+        if (url is null && env(UrlEnv) is { } fromEnv)
+        {
+            url = fromEnv;
+        }
+        if (url is null && env(RegionEnv) is { } regionFromEnv)
+        {
+            url = RegionUrl(regionFromEnv);
+        }
+        Url = (url ?? DefaultUrl).TrimEnd('/');
+        CustomerId = options.CustomerId ?? env(CustomerEnv) ?? "";
         // Naming a customer is choosing the way a router with nothing in front of it is
         // reached, and a key that happens to be in the environment does not overrule that.
-        ApiKey = options.ApiKey ?? (options.CustomerId is null ? Env(ApiKeyEnv) ?? "" : "");
+        ApiKey = options.ApiKey ?? (options.CustomerId is null ? env(ApiKeyEnv) ?? "" : "");
         // A token handed in is the caller's answer to who they are, so an ambient secret
         // does not turn it into a backend.
-        ApiSecret = options.ApiSecret ?? (options.Token is null && ApiKey != "" ? Env(ApiSecretEnv) ?? "" : "");
+        ApiSecret = options.ApiSecret ?? (options.Token is null && ApiKey != "" ? env(ApiSecretEnv) ?? "" : "");
         Token = options.Token ?? "";
         UserId = options.UserId ?? "";
-        Authenticate = options.Authenticate ?? (Flag(Env(AuthenticateEnv)) || Url == DefaultUrl);
+        // The hosted router, in any region, is always behind the proxy.
+        Authenticate = options.Authenticate ?? (Flag(env(AuthenticateEnv)) || Hosted(Url));
 
         if (ApiKey == "" && CustomerId == "")
         {
@@ -239,6 +276,29 @@ internal sealed class Backend
             + Base64Url(JsonSerializer.SerializeToUtf8Bytes(payload));
         var mac = HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(signing));
         return $"{signing}.{Base64Url(mac)}";
+    }
+
+    /// <summary>
+    /// The hosted router held to one region: requests to it are served there and nowhere else,
+    /// even when that region is full or down.
+    /// </summary>
+    public static string RegionUrl(string name)
+    {
+        if (!RegionName.IsMatch(name))
+        {
+            throw new ConfigurationException($"\"{name}\" is not a region, such as us-east4");
+        }
+        return $"https://accelerate-{name}.gcp.stream-io-api.com";
+    }
+
+    // Whether url is the hosted router in some region, which is always behind the proxy.
+    private static bool Hosted(string url)
+    {
+        const string prefix = "https://accelerate-", suffix = ".gcp.stream-io-api.com";
+        return url.StartsWith(prefix, StringComparison.Ordinal)
+            && url.EndsWith(suffix, StringComparison.Ordinal)
+            && url.Length > prefix.Length + suffix.Length
+            && RegionName.IsMatch(url[prefix.Length..^suffix.Length]);
     }
 
     internal static string? Env(string name) =>

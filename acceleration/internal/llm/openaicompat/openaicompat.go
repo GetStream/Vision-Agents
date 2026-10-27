@@ -106,7 +106,7 @@ type Options struct {
 	// spoken.
 	ToolCallText bool
 	// ReplayReasoning sends each earlier assistant turn's thinking back with it, for a model
-	// trained on conversations that kept it, such as PhoneLLM Max.
+	// trained on conversations that kept it.
 	ReplayReasoning bool
 	// ResultsFollowCalls is set for a server that refuses a conversation in which anything
 	// comes between a tool call and its results, as MiniMax's does with a 400: what the
@@ -233,6 +233,41 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 			channel: l.channelSplitter(), toolText: l.toolCallSplitter(params),
 		},
 	), nil
+}
+
+// named keeps what a provider said about a failure it sent inside a stream, as an `error`
+// object in an event. Providers on this API fill it in differently, so only two readings are
+// trusted: an HTTP status given as its code, and the names OpenAI's own API gives its side's
+// failures. A number outside the status range is the provider's own code, which TransientStatus
+// does not count.
+func named(err error) error {
+	sent, ok := errors.AsType[*ssestream.StreamError](err)
+	if !ok {
+		return err
+	}
+	var event struct {
+		Error struct {
+			Code json.RawMessage `json:"code"`
+			Type string          `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(sent.Event.Data, &event) != nil {
+		return err
+	}
+	var number int
+	var code string
+	if json.Unmarshal(event.Error.Code, &number) != nil {
+		_ = json.Unmarshal(event.Error.Code, &code)
+	}
+	switch {
+	case number != 0:
+		return &llm.ProviderFailure{Err: err, Transient: llm.TransientStatus(number)}
+	case code == "server_error" || code == "rate_limit_exceeded" || event.Error.Type == "server_error":
+		return &llm.ProviderFailure{Err: err, Transient: true}
+	case code != "" || event.Error.Type != "":
+		return &llm.ProviderFailure{Err: err}
+	}
+	return err
 }
 
 // withBody adds the provider's own words to an API error the client could not read them
@@ -488,7 +523,7 @@ func (p *puller) finish(w *llm.ResponseWriter) {
 		w.TimedOut()
 		p.err = err
 	default:
-		p.err = err
+		p.err = named(err)
 	}
 
 	p.upstream.Close()
@@ -804,7 +839,7 @@ func costTicksMicros(extra map[string]respjson.Field) int64 {
 func reasoning(extra map[string]respjson.Field) string {
 	field, ok := extra[reasoningField]
 	if !ok {
-		// vLLM 0.31 streams it as "reasoning", PhoneLLM Max's one-sentence thought included.
+		// vLLM 0.31 streams it as "reasoning", a thought only a sentence long included.
 		field, ok = extra[replayedReasoningField]
 	}
 	if !ok {

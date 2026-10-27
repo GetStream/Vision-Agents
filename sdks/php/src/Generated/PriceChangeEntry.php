@@ -15,12 +15,19 @@ final readonly class PriceChangeEntry
         public string $modality,
         public string $model,
         public string $provider,
+        // The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing.
+        public string $sku,
         public ?bool $free = null,
-        // The entry's own markup in basis points. Absent takes the list's.
-        public ?int $markupBps = null,
-        // The vendor's rates, by meter.
+        // What customers are charged for long prompts.
+        /** @var list<PriceTier>|null */
+        public ?array $priceTiers = null,
+        // What customers are charged, by meter.
+        /** @var array<string, mixed>|null */
+        public ?array $prices = null,
+        // The vendor's cost, by meter, for reference.
         /** @var array<string, mixed>|null */
         public ?array $rates = null,
+        // The vendor's cost for long prompts, for reference.
         /** @var list<PriceTier>|null */
         public ?array $tiers = null,
         // The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default en...
@@ -40,8 +47,10 @@ final readonly class PriceChangeEntry
             modality: Json::string($data, 'modality'),
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
+            sku: Json::string($data, 'sku'),
             free: array_key_exists('free', $data) && $data['free'] !== null ? Json::bool($data, 'free') : null,
-            markupBps: array_key_exists('markup_bps', $data) && $data['markup_bps'] !== null ? Json::int($data, 'markup_bps') : null,
+            priceTiers: array_key_exists('price_tiers', $data) && $data['price_tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'price_tiers')) : null,
+            prices: array_key_exists('prices', $data) && $data['prices'] !== null ? Json::object($data, 'prices') : null,
             rates: array_key_exists('rates', $data) && $data['rates'] !== null ? Json::object($data, 'rates') : null,
             tiers: array_key_exists('tiers', $data) && $data['tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'tiers')) : null,
             when: array_key_exists('when', $data) && $data['when'] !== null ? Json::stringMap($data, 'when') : null,
@@ -60,11 +69,15 @@ final readonly class PriceChangeEntry
         $out['modality'] = $this->modality;
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
+        $out['sku'] = $this->sku;
         if ($this->free !== null) {
             $out['free'] = $this->free;
         }
-        if ($this->markupBps !== null) {
-            $out['markup_bps'] = $this->markupBps;
+        if ($this->priceTiers !== null) {
+            $out['price_tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->priceTiers);
+        }
+        if ($this->prices !== null) {
+            $out['prices'] = Json::objectValue($this->prices);
         }
         if ($this->rates !== null) {
             $out['rates'] = Json::objectValue($this->rates);

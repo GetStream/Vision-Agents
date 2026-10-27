@@ -276,6 +276,48 @@ class TestBackend < Minitest::Test
     refute VA::Backend.new(url: "http://router", customer_id: "acme").authenticate?
   end
 
+  def test_a_region_is_the_hosted_router_there
+    with_env(VA::Backend::URL_ENV => nil, VA::Backend::REGION_ENV => nil) do
+      backend = VA::Backend.new(region: "us-east4", customer_id: "acme", api_key: "key", api_secret: "secret")
+
+      assert_equal "https://accelerate-us-east4.gcp.stream-io-api.com", backend.url
+      assert backend.authenticate?
+    end
+  end
+
+  def test_a_region_in_the_environment_gives_way_to_a_url_there
+    with_env(VA::Backend::URL_ENV => "http://localhost:8080", VA::Backend::REGION_ENV => "us-east4") do
+      assert_equal "http://localhost:8080", VA::Backend.new(customer_id: "acme").url
+    end
+    with_env(VA::Backend::URL_ENV => nil, VA::Backend::REGION_ENV => "us-east4") do
+      backend = VA::Backend.new(customer_id: "acme", api_key: "key", api_secret: "secret")
+
+      assert_equal "https://accelerate-us-east4.gcp.stream-io-api.com", backend.url
+      assert backend.authenticate?
+    end
+  end
+
+  def test_a_region_passed_in_beats_a_url_in_the_environment
+    with_env(VA::Backend::URL_ENV => "http://localhost:8080") do
+      backend = VA::Backend.new(region: "europe-west4", customer_id: "acme", api_key: "key", api_secret: "secret")
+
+      assert_equal "https://accelerate-europe-west4.gcp.stream-io-api.com", backend.url
+    end
+  end
+
+  def test_a_url_and_a_region_together_are_refused
+    assert_raises(VA::ConfigurationError) do
+      VA::Backend.new(url: "https://acceleration.example.com", region: "us-east4", customer_id: "acme")
+    end
+  end
+
+  def test_anything_but_a_region_name_is_refused
+    ["US-EAST4", "us-east4.evil.com/x", "us_east4", "useast4", "us-east", "us-east4\n"].each do |name|
+      error = assert_raises(VA::ConfigurationError, name) { VA::Backend.new(region: name, customer_id: "acme") }
+      assert_includes error.message, name.inspect
+    end
+  end
+
   def test_a_key_without_a_secret_or_token_is_refused
     assert_raises(VA::ConfigurationError) { VA::Backend.new(url: "http://router", api_key: "key", api_secret: "") }
   end
@@ -285,5 +327,16 @@ class TestBackend < Minitest::Test
 
     assert_equal "wss://router.example/v1/dispatch", backend.socket_url("/v1/dispatch")
     assert backend.server_side?
+  end
+
+  private
+
+  # Sets each variable for the block, nil unsetting it, and puts back what was there before.
+  def with_env(values)
+    saved = values.keys.to_h { |name| [name, ENV.fetch(name, nil)] }
+    values.each { |name, value| ENV[name] = value }
+    yield
+  ensure
+    saved.each { |name, value| ENV[name] = value }
   end
 end

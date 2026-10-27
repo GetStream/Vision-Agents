@@ -1963,14 +1963,14 @@ func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
 }
 
 func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
-	// τ³ telecom: get_customer_by_phone returned C1001, a compaction summarised the result
-	// away, and refuel_data with C1001 was refused as an ID no tool had given.
-	tools := []string{"get_customer_by_phone", "get_details_by_id", "refuel_data"}
+	// A lookup returned an account ID, a compaction summarised the result away, and a later
+	// call with that ID was refused as an ID no tool had given.
+	tools := []string{"find_account_by_phone", "get_account", "add_data"}
 	looked := []llm.Message{
-		{Role: llm.User, Content: "It's five five five dash one two three dash two zero zero two."},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_customer_by_phone"}}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"customer_id": "C1001", "full_name": "John Smith"}`},
-		{Role: llm.Assistant, Content: "I found your account, John."},
+		{Role: llm.User, Content: "It's five five five dash zero one nine dash four four one six."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "find_account_by_phone"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"account_id": "AC7310", "full_name": "Robin Hale"}`},
+		{Role: llm.Assistant, Content: "I found your account, Robin."},
 	}
 	recent := []llm.Message{
 		{Role: llm.User, Content: "Can you add two gigabytes to my line?"},
@@ -1981,8 +1981,8 @@ func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 		emitter: emitter,
 		history: append(append([]llm.Message(nil), looked...), recent...),
 	}
-	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "John Smith asked for more data."})
-	refuel := llm.ToolCall{Name: "refuel_data", Arguments: `{"customer_id":"C1001","line_id":"L1002","gb_amount":2}`}
+	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "Robin Hale asked for more data."})
+	refuel := llm.ToolCall{Name: "add_data", Arguments: `{"account_id":"AC7310","line_id":"LN4","gb_amount":2}`}
 
 	_, _, _, unfound := unfoundID(agent.History(), refuel, tools)
 	s.True(unfound, "the model's history no longer holds the result")
@@ -1990,7 +1990,7 @@ func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 	s.False(unfound, "the call's record still does")
 
 	summary := agent.History()[0]
-	agent.applyCompaction(harness.Compacted{Prefix: agent.History()[:2], Summary: "Still John Smith."})
+	agent.applyCompaction(harness.Compacted{Prefix: agent.History()[:2], Summary: "Still Robin Hale."})
 	s.Equal(append(append(append(append([]llm.Message(nil), looked...), summary), recent...), agent.History()...), agent.record(),
 		"what each compaction took is kept once, in the order it happened, ahead of the history")
 }
@@ -2447,6 +2447,24 @@ func (s *AgentSuite) TestAPictureAScheduledTaskSendsIsLookedAtAsScheduled() {
 	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the picture is the customer's spend")
 }
 
+// A picture sent with no text, or only blanks, is still looked at: the vision skill is asked about it.
+func (s *AgentSuite) TestAPictureSentAloneIsLookedAtByTheVisionSkill() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+	picture := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	for asked, text := range []string{"", " "} {
+		_, err := s.agent.RespondTo(s.ctx, text, picture, options.LLM{})
+		s.Require().NoError(err, "text %q", text)
+
+		s.eventually(func() bool { return len(s.subagent.requests()) == asked+1 }, "the vision task was never asked")
+		s.True(llm.HasImage(s.subagent.requests()[asked].Input), "the skill is shown the picture")
+	}
+}
+
 func (s *AgentSuite) TestAPhotoIsStillSeenByTheReplyAfterATool() {
 	s.sees = true
 	s.ownsTools("order 1042 is a pair of running shoes")
@@ -2484,6 +2502,32 @@ func (s *AgentSuite) TestAPhotoIsNotShownAgainToALaterTurnsTool() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the reply after the second turn's tool was never asked")
 	s.False(llm.HasImage(s.model.requests()[2].Input), "a photo is seen with the turn it came with alone")
+}
+
+func (s *AgentSuite) TestAnAgentWithAVisionSkillSeesImages() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+
+	s.True(s.agent.SeesImages())
+}
+
+func (s *AgentSuite) TestAnAgentWhoseModelAcceptsImagesSeesThem() {
+	s.sees = true
+	s.joinText()
+
+	s.True(s.agent.SeesImages())
+}
+
+// SeesImages says no exactly where RespondTo refuses a turn's images.
+func (s *AgentSuite) TestAnAgentWithNeitherSeesNoImages() {
+	s.joinText()
+
+	s.False(s.agent.SeesImages())
+	_, err := s.agent.RespondTo(s.ctx, "what is this?", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
+	s.ErrorIs(err, ErrCannotSeeImages)
 }
 
 // lastFromCaller is the caller's latest message in a request's input.
@@ -3987,17 +4031,17 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 }
 
 func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
-	booking := llm.ToolCall{ID: "c1", Name: "create_reservation", Arguments: `{"name":"Alvarez","time":"7:30"}`}
+	booking := llm.ToolCall{ID: "c1", Name: "create_reservation", Arguments: `{"name":"Quillon","time":"7:30"}`}
 	history := []llm.Message{
-		{Role: llm.User, Content: "book it for Alvarez at 7:30"},
+		{Role: llm.User, Content: "book it for Quillon at 7:30"},
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{booking}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"name":"Alvarez","time":"7:30"}`},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"name":"Quillon","time":"7:30"}`},
 		{Role: llm.User, Content: "yes, please go ahead"},
 	}
-	again := llm.ToolCall{ID: "c2", Name: "create_reservation", Arguments: `{"time": "7:30", "name": "Alvarez"}`}
+	again := llm.ToolCall{ID: "c2", Name: "create_reservation", Arguments: `{"time": "7:30", "name": "Quillon"}`}
 	earlier, repeated := answeredSinceCaller(history, again, nil)
 	s.True(repeated)
-	s.Contains(earlier, "Alvarez")
+	s.Contains(earlier, "Quillon")
 
 	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "check_availability", Arguments: booking.Arguments}, nil)
 	s.False(repeated, "a lookup is free to run again once the caller has spoken")
@@ -5021,9 +5065,9 @@ func (s *AgentSuite) TestOnlyAResultThatSaysItFailedIsAFailure() {
 }
 
 func (s *AgentSuite) TestACallThatOnlyFillsInABlankIsTheSameCall() {
-	s.True(fillsIn(`{"name": "Alvarez", "phone": ""}`, `{"name": "Alvarez", "phone": "512-550-1422"}`))
+	s.True(fillsIn(`{"name": "Quillon", "phone": ""}`, `{"name": "Quillon", "phone": "512-550-1422"}`))
 	s.False(fillsIn(`{"party_size": 4, "phone": ""}`, `{"party_size": 6, "phone": ""}`))
-	s.True(fillsIn(`{"name": "Alvarez"}`, `{"name": "Alvarez", "phone": "512-550-1422"}`), "a text argument the first call left out")
+	s.True(fillsIn(`{"name": "Quillon"}`, `{"name": "Quillon", "phone": "512-550-1422"}`), "a text argument the first call left out")
 	s.False(fillsIn(`{"party_size": 6}`, `{"party_size": 6, "patio": true}`), "a choice the first call never made")
 	s.True(fillsIn(`{"party_size": 2}`, `{"party_size": 2, "high_chair": false}`), "a choice left at its default")
 }

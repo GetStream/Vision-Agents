@@ -322,6 +322,9 @@ components:
           type: object
         session_id:
           type: string
+        sku:
+          description: 'The priced item''s SKU, as getPrices lists it: the same across its price changes. Absent for work no entry priced, and for events recorded before SKUs were.'
+          type: string
         success:
           type: boolean
         tags:
@@ -460,6 +463,8 @@ components:
             type: integer
           type: object
         session_id:
+          type: string
+        sku:
           type: string
         source:
           type: string

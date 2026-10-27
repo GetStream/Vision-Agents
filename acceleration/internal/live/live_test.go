@@ -118,6 +118,58 @@ func (s *LiveSuite) TestProviderBecomesUnavailableWhenErrorsDominate() {
 	s.False(health.Available, "a 75% error rate is over the default 50% threshold")
 }
 
+func (s *LiveSuite) TestOneFailureOnFreshHistoryIsNotEnoughToJudgeAProvider() {
+	s.Require().NoError(s.client.RecordRequest(s.ctx, s.usage(100, 1000, false)))
+
+	health, err := s.client.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.InDelta(1.0, health.ErrorRate(), 0.001)
+	s.True(health.Available, "one request is not a rate")
+}
+
+func (s *LiveSuite) TestFailuresTakeAProviderOutOnceThereAreEnoughToJudge() {
+	for range DefaultMinRequests - 1 {
+		s.Require().NoError(s.client.RecordRequest(s.ctx, s.usage(100, 1000, false)))
+	}
+	health, err := s.client.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.True(health.Available, "still too few to judge")
+
+	s.Require().NoError(s.client.RecordRequest(s.ctx, s.usage(100, 1000, false)))
+	health, err = s.client.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.False(health.Available)
+}
+
+func (s *LiveSuite) TestTheMinimumIsConfigurable() {
+	patient, err := New(Options{Address: os.Getenv(AddressEnvVar), MinRequests: 5})
+	s.Require().NoError(err)
+	defer patient.Close()
+
+	for range 4 {
+		s.Require().NoError(patient.RecordRequest(s.ctx, s.usage(100, 1000, false)))
+	}
+	health, err := patient.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.True(health.Available)
+
+	s.Require().NoError(patient.RecordRequest(s.ctx, s.usage(100, 1000, false)))
+	health, err = patient.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.False(health.Available)
+}
+
+func (s *LiveSuite) TestAFatalFailureOnFreshHistoryTakesAProviderOutAtOnce() {
+	fatal := s.usage(100, 0, false)
+	fatal.Fatal = true
+	s.Require().NoError(s.client.RecordRequest(s.ctx, fatal))
+
+	health, err := s.client.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.EqualValues(1, health.Requests)
+	s.False(health.Available, "a refusal every caller would get needs no second request to prove it")
+}
+
 func (s *LiveSuite) TestOneFatalFailureOutweighsEverythingServedBeforeIt() {
 	for range 3 {
 		s.Require().NoError(s.client.RecordRequest(s.ctx, s.usage(100, 1000, true)))

@@ -431,9 +431,8 @@ func (s *AgentSuite) TestFinalWordsOverAReplyNobodyHeardDropIt() {
 }
 
 func (s *AgentSuite) TestTheTurnAfterADroppedReplyIsAskedToAnswerWhatItWasFor() {
-	// Voicebench restaurant.interrupt on #1100: the reply to a correction made over a tool's
-	// answer was dropped when the caller went on, and their next turn was answered alone, so
-	// the gluten-free guest was never booked.
+	// The reply to a correction made over a tool's answer was dropped when the caller went on,
+	// and their next turn was answered alone, so the correction was never booked.
 	s.ownsTools("a table for four at seven is free")
 	s.join(true)
 	s.model.reply = []string{"Let me check."}
@@ -446,20 +445,20 @@ func (s *AgentSuite) TestTheTurnAfterADroppedReplyIsAskedToAnswerWhatItWasFor() 
 	s.model.writes(booked, "A table for four at seven is free.")
 	s.heardSomeOf(booked)
 
-	correction := "Wait. Make it six, and one of us is gluten free instead."
+	correction := "Wait. Make it five, and we would rather sit inside instead."
 	s.says(nash, correction)
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the correction was never answered")
 	corrected := s.model.requests()[2].ID
 	s.mutters(nash, "Nine Name is")
 	s.eventually(func() bool { return s.model.abandoned(corrected) }, "the reply to the correction kept going")
-	s.says(nash, "Nine Name is Alvarez.")
+	s.says(nash, "Nine Name is Quillon.")
 	s.eventually(func() bool { return len(s.model.requests()) == 4 }, "the newer words were never answered")
 
 	newer := s.model.requests()[3]
 	s.Contains(newer.Instructions, missedNote(correction), "the correction is owed with the newer words")
 	s.NotContains(s.model.requests()[2].Instructions, "not yet answered", "nothing was dropped before the correction")
 
-	s.model.writes(newer.ID, "Six at seven, gluten free noted. Under Alvarez?")
+	s.model.writes(newer.ID, "Five at seven, inside noted. Under Quillon?")
 	s.heardSomeOf(newer.ID)
 	s.model.finishes(newer.ID)
 	s.says(nash, "Can we sit outside?")
@@ -593,19 +592,19 @@ func (s *AgentSuite) queuesBehindAReply(first, over string) string {
 }
 
 func (s *AgentSuite) TestAQueuedTurnTheCallerCorrectedSinceIsAnsweredWithTheCorrection() {
-	// Voicebench restaurant.interrupt on v0.6.115: "peanut allergy" was queued over the reply,
-	// the caller corrected it once the reply was cut, and after answering the correction the
-	// agent answered the queued words on their own and asked about the allergy again.
+	// "A window seat too." was queued over the reply, the caller corrected their booking once
+	// the reply was cut, and after answering the correction the agent answered the queued
+	// words on their own and asked about the seat again.
 	s.logs = &logLines{}
 	s.join(true)
 	dropped := testutil.ToFloat64(staleQueuedTurns)
 	newer := s.correctsAQueuedTurn()
 	s.Equal(queuedCorrection, newer.Input[len(newer.Input)-1].Content)
-	s.Contains(newer.Instructions, missedNote("Peanut allergy too."), "the queued words are owed with the correction")
+	s.Contains(newer.Instructions, missedNote("A window seat too."), "the queued words are owed with the correction")
 	for _, message := range newer.Input {
-		s.NotEqual("Peanut allergy too.", message.Content, "the queued words reach the model in the note, not the history")
+		s.NotEqual("A window seat too.", message.Content, "the queued words reach the model in the note, not the history")
 	}
-	s.model.writes(newer.ID, "Six at seven, gluten free and a peanut allergy noted.")
+	s.model.writes(newer.ID, "Five at seven, inside and by a window noted.")
 	s.model.finishes(newer.ID)
 
 	model := s.model
@@ -619,13 +618,13 @@ func (s *AgentSuite) TestAQueuedTurnTheCallerCorrectedSinceIsAnsweredWithTheCorr
 	s.Positive(logged[0]["age_ms"], "the queued turn waited behind the reply")
 }
 
-// queuedCorrection is what the caller of Voicebench restaurant.interrupt said once the reply was cut.
-const queuedCorrection = "Wait. Make it six, and one of us is gluten free instead."
+// queuedCorrection is what the caller says once the reply was cut.
+const queuedCorrection = "Wait. Make it five, and we would rather sit inside instead."
 
-// correctsAQueuedTurn has the caller's "Peanut allergy too." queued behind a reply, then
+// correctsAQueuedTurn has the caller's "A window seat too." queued behind a reply, then
 // their correction answered once the reply ends, and returns the correction's request.
 func (s *AgentSuite) correctsAQueuedTurn() llm.ResponseParams {
-	reply := s.queuesBehindAReply("A table for four at seven please.", "Peanut allergy too.")
+	reply := s.queuesBehindAReply("A table for four at seven please.", "A window seat too.")
 	s.mutters(nash, "Wait.")
 	s.eventually(func() bool { return countOf[Hearing](s.reported()) >= 3 }, "the caller was never heard going on")
 	s.model.writes(reply, "Seven works.")
@@ -647,28 +646,28 @@ func (s *AgentSuite) TestQueuedWordsTakenInByADroppedReplyAreOwedToTheNextTurn()
 	// was for, the queued words with it, is owed to the caller's next turn.
 	s.join(true)
 	newer := s.correctsAQueuedTurn()
-	s.Require().Contains(newer.Instructions, missedNote("Peanut allergy too."))
+	s.Require().Contains(newer.Instructions, missedNote("A window seat too."))
 	s.mutters(nash, "Under the name")
 	s.eventually(func() bool { return s.model.abandoned(newer.ID) }, "the reply to the correction kept going")
 
-	s.says(nash, "Under the name Alvarez.")
+	s.says(nash, "Under the name Quillon.")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the newer words were never answered")
-	s.Contains(s.model.requests()[2].Instructions, missedNote("Peanut allergy too. "+queuedCorrection))
+	s.Contains(s.model.requests()[2].Instructions, missedNote("A window seat too. "+queuedCorrection))
 }
 
 func (s *AgentSuite) TestAQueuedTurnNobodySaidMoreAfterIsAskedAsBefore() {
 	// Every expected value is what base 4588e625 did with the same turns.
 	s.join(true)
 	dropped := testutil.ToFloat64(staleQueuedTurns)
-	reply := s.queuesBehindAReply("A table for four at seven please.", "Peanut allergy too.")
+	reply := s.queuesBehindAReply("A table for four at seven please.", "A window seat too.")
 
 	s.model.writes(reply, "Seven works.")
 	s.model.finishes(reply)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the queued turn was never answered")
 	queued := s.model.requests()[1]
-	s.Equal([]string{"A table for four at seven please.", "Seven works.", "Peanut allergy too."},
+	s.Equal([]string{"A table for four at seven please.", "Seven works.", "A window seat too."},
 		contents(queued.Input))
 	s.Equal(s.model.requests()[0].Instructions, queued.Instructions)
 	s.NotContains(queued.Instructions, "not yet answered")

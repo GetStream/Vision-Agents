@@ -255,7 +255,7 @@ func (p *puller) Close() error {
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
 	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		p.err = err
+		p.err = named(err)
 	} else if err != nil {
 		// A cancelled stream is barge-in or shutdown, not a provider failure.
 		w.Cancelled()
@@ -263,6 +263,23 @@ func (p *puller) finish(w *llm.ResponseWriter) {
 	p.upstream.Close()
 	p.cancel()
 	p.llm.forget(p.id)
+}
+
+// named keeps the error type Anthropic gave a failure inside a stream. The types that name its
+// own side are transient: overloaded, rate limited, timed out or failed on its side. Every
+// other type (an invalid request, credentials, permission, billing) is the request's own.
+func named(err error) error {
+	refused, ok := errors.AsType[*anthropic.Error](err)
+	if !ok || refused.Type() == "" {
+		return err
+	}
+	transient := false
+	switch refused.Type() {
+	case anthropic.ErrorTypeOverloadedError, anthropic.ErrorTypeRateLimitError,
+		anthropic.ErrorTypeTimeoutError, anthropic.ErrorTypeAPIError:
+		transient = true
+	}
+	return &llm.ProviderFailure{Err: err, Transient: transient}
 }
 
 // incomplete translates a stop reason into why a response stopped early, returning empty

@@ -35,7 +35,6 @@ class PriceChange:
         cancelled_at (datetime.datetime | Unset):
         cancelled_by (str | Unset):
         entries (list[PriceChangeEntry] | None | Unset): The entries it wrote. Absent from a list of changes.
-        markup_bps (int | Unset): The list's markup from effective_at on. Absent left it as it was.
     """
 
     created_at: datetime.datetime
@@ -49,7 +48,6 @@ class PriceChange:
     cancelled_at: datetime.datetime | Unset = UNSET
     cancelled_by: str | Unset = UNSET
     entries: list[PriceChangeEntry] | None | Unset = UNSET
-    markup_bps: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -87,8 +85,6 @@ class PriceChange:
         else:
             entries = self.entries
 
-        markup_bps = self.markup_bps
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -110,8 +106,6 @@ class PriceChange:
             field_dict["cancelled_by"] = cancelled_by
         if entries is not UNSET:
             field_dict["entries"] = entries
-        if markup_bps is not UNSET:
-            field_dict["markup_bps"] = markup_bps
 
         return field_dict
 
@@ -169,8 +163,6 @@ class PriceChange:
 
         entries = _parse_entries(d.pop("entries", UNSET))
 
-        markup_bps = d.pop("markup_bps", UNSET)
-
         price_change = cls(
             created_at=created_at,
             created_by=created_by,
@@ -183,7 +175,6 @@ class PriceChange:
             cancelled_at=cancelled_at,
             cancelled_by=cancelled_by,
             entries=entries,
-            markup_bps=markup_bps,
         )
 
         price_change.additional_properties = d

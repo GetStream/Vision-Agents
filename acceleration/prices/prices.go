@@ -20,8 +20,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
-// vendorJSON is the vendors' published list prices and nothing else: no markup and no
-// negotiated figure, since this repository is public.
+// vendorJSON is the vendors' published list prices and nothing else: no price of the
+// operator's and no negotiated figure, since this repository is public.
 //
 //go:embed vendor.json
 var vendorJSON []byte
@@ -31,11 +31,12 @@ const VendorFile = "vendor.json"
 
 // File is a price list as JSON: vendor.json, or a deployment's own file.
 type File struct {
-	// MarkupBps is the operator's markup on every entry, in basis points (1500 is 15%).
-	// Only the first load of a database reads it; after that a markup changes in the
-	// database.
+	// MarkupBps is read and ignored: a price is written per entry, and an older file that
+	// still has a markup is loaded as though it had none. The router warns when it is set.
 	MarkupBps *int64 `json:"markup_bps,omitempty"`
-	// Entries are vendor rates, one per item and When.
+	// Entries are one per item and When: the vendor's rates and, when the file sets them, the
+	// price and the SKU. An entry the file gives no price is priced at its rates times
+	// pricing.PriceFactorBps when the file is read, which is what a load writes for it.
 	Entries []pricing.Entry `json:"entries"`
 }
 
@@ -74,13 +75,14 @@ func Parse(name string, data []byte) (File, error) {
 	if err := file.check(); err != nil {
 		return File{}, fmt.Errorf("prices: %s: %w", name, err)
 	}
+	file.Entries = pricing.PricedAll(file.Entries)
+	if _, err := pricing.NewList("check", file.Entries, slog.New(slog.DiscardHandler)); err != nil {
+		return File{}, fmt.Errorf("prices: %s: %w", name, err)
+	}
 	return file, nil
 }
 
 func (f File) check() error {
-	if f.MarkupBps != nil && !pricing.ValidMarkup(*f.MarkupBps) {
-		return fmt.Errorf("a markup of %d basis points, outside 0 to %d", *f.MarkupBps, pricing.MaxMarkupBps)
-	}
 	for _, entry := range f.Entries {
 		// A database keeps neither: local says how a deployment runs a model, which is its
 		// routing config's to say, and a version is the change that wrote the entry.
@@ -91,12 +93,17 @@ func (f File) check() error {
 			return fmt.Errorf("%s sets a version, which only the price list's changes have", Name(entry))
 		}
 	}
-	var markup int64
-	if f.MarkupBps != nil {
-		markup = *f.MarkupBps
+	return nil
+}
+
+// IgnoredMarkup warns that a file's markup_bps is not read, naming the file, so a deployment
+// still passing one sees that its prices come from the entries.
+func IgnoredMarkup(logger *slog.Logger, name string, file File) {
+	if file.MarkupBps != nil {
+		logger.Warn("markup_bps in a price file is ignored: each entry carries its price, and an entry without one "+
+			"is priced at its vendor rates times the default factor when it is first loaded",
+			"file", name, "markup_bps", *file.MarkupBps, "factor_bps", pricing.PriceFactorBps)
 	}
-	_, err := pricing.NewList("check", f.Entries, markup, slog.New(slog.DiscardHandler))
-	return err
 }
 
 // Name is the item an entry prices, as logs and errors write it: modality/provider/model,
@@ -149,8 +156,8 @@ func EmbeddedVersion(release string) string {
 	return "embedded:" + release
 }
 
-// Embedded is the price list of the vendor list embedded in the binary, at the vendors'
-// rates with no markup, with the items the deployment runs itself marked local.
+// Embedded is the price list of the vendor list embedded in the binary, priced as a first load
+// prices it, with the items the deployment runs itself marked local.
 func Embedded(local []pricing.Item, release string, logger *slog.Logger) (*pricing.List, error) {
-	return pricing.NewList(EmbeddedVersion(release), WithLocal(Vendor().Entries, local), 0, logger)
+	return pricing.NewList(EmbeddedVersion(release), WithLocal(Vendor().Entries, local), logger)
 }
