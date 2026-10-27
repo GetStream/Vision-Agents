@@ -175,6 +175,7 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 
 // statusOf is how a call ended, from what dialling it returned: nil once an answered call
 // has ended, or why it never connected.
+// context.Canceled is the node stopping, or Stream hanging up while the customer rang.
 func statusOf(err error) phone.CallStatus {
 	if err == nil {
 		return phone.CallStatus{Result: phone.CallCompleted, Word: "bye"}

@@ -1066,7 +1066,9 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		}
 		// Call refuses to run without a store, so report always has its keeper.
 		outbound.Ended = func(status CallStatus) {
-			if _, err := s.report(context.WithoutCancel(ctx), token, status); err != nil {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), trunkReportTimeout)
+			defer cancel()
+			if _, err := s.report(ctx, token, status); err != nil {
 				s.logger.Error("could not keep how a call through a customer's sip trunk ended",
 					"call", callID, "result", status.Result, "error", err)
 			}
@@ -1199,6 +1201,10 @@ func (s *Service) recordPlaced(
 		s.logger.Warn("could not record a placed call", "session_id", sessionID, "error", err)
 	}
 }
+
+// trunkReportTimeout bounds keeping how a call through a customer's own trunk ended. The
+// bridge waits for it, and the node waits for the bridge when it stops.
+const trunkReportTimeout = 5 * time.Second
 
 // agentLogTimeout bounds writing a call_placed or bridge_media row. The node waits for the
 // bridge_media row when it stops.

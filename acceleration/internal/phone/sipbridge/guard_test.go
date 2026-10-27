@@ -273,3 +273,19 @@ func TestACustomerThatOnlyRingsIsUnansweredAtTheRingTimeout(t *testing.T) {
 
 	require.Equal(t, 0, u.Code)
 }
+
+func TestACustomerRingingWhenTheCallIsCancelledIsNotUnanswered(t *testing.T) {
+	customer := guardedLeg(t, startSIPServer(t, "", sip.StatusRinging))
+	stream := &fakeLeg{}
+	cfg := flowConfig()
+	cfg.Call.RingTimeout = 5 * time.Second
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	_, err := flowA(ctx, cfg, customer, stream)
+
+	_, isUnanswered := errors.AsType[*Unanswered](err)
+	require.False(t, isUnanswered, "%v", err)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, stream.calls())
+}
