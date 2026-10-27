@@ -119,7 +119,9 @@ async fn the_proxy_is_given_the_credential_its_own_way() {
 
 #[test]
 fn a_client_that_names_no_router_goes_to_the_hosted_one() {
-    if std::env::var(vision_agents::URL_ENV).is_ok() {
+    if std::env::var(vision_agents::URL_ENV).is_ok()
+        || std::env::var(vision_agents::REGION_ENV).is_ok()
+    {
         return;
     }
     let api = Client::new(ClientOptions {

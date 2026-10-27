@@ -45,7 +45,8 @@ voice.join()
 agents.disconnect()
 ```
 
-`VisionAgents(apiKey = ...)` reaches Stream's hosted router; pass `url` for another. A router
+`VisionAgents(apiKey = ...)` reaches Stream's hosted router in us-east4; pass `url` for another router. For another
+region, pass `url = Backend.regionUrl("europe-west4")`. A router
 running locally with nothing in front of it is reached by customer id instead:
 `VisionAgents(url = "http://localhost:8080", customerId = "acme")`. Pass `apiKey` beside it and
 the key is Stream's alone, so chat and video connect on a local router too.
@@ -81,6 +82,32 @@ remembered; `delete()` (or `agents.sessions.delete(id)`) deletes it, turns and m
 included. The channel from `chat(context)` is what Stream Chat's AI components show: the reply
 streaming in, its reasoning and tool calls, and the approvals waiting on the person. On a call,
 `voice.call` is the Stream `Call` that Stream Video's Compose views render.
+
+`say(text)` has the agent speak words as written, without the model; `say(text, interrupt = true)`
+stops what it is saying first rather than waiting for it to finish.
+
+### Remembering the user
+
+`memory` has the agent remember the user `setUser` named: what it learned about them before is
+recalled in this session, and what it learns here is kept for their next one. It is always that
+user's; a device recalls nobody else's, and an `incognito` session remembers nothing.
+
+```kotlin
+val chat = agents.agent("docs").chat(
+    SessionOptions(memory = SessionOptions.Memory(filter = mapOf("topic" to "billing"))),
+)
+```
+
+`filter` narrows what is recalled with your own labels and never widens it past the user;
+`appId` keeps two of your apps sharing one memory account apart. Left null, nothing is
+remembered.
+
+`timezone` names the user's zone, which the phone knows and the router does not, so the agent
+reads "at six" in it and remembers it for the scheduled tasks that follow:
+
+```kotlin
+SessionOptions(memory = SessionOptions.Memory(), timezone = TimeZone.getDefault().id)
+```
 
 ### A tool that runs on the phone
 
@@ -144,7 +171,19 @@ val live = SessionQuery(state = Session.State.Live, limit = 20)
 val first = sessions.query(live)
 val next = first.nextCursor?.let { sessions.query(live.copy(cursor = it)) }
 val found = sessions.search("billing")
+
+val lastWeek = sessions.query(
+    SessionQuery(
+        custom = mapOf("ticket" to "4721"),   // the labels SessionOptions.custom opened it with
+        createdSince = Clock.System.now() - 7.days,
+        sort = SessionQuery.Sort.UpdatedAt,
+    ),
+)
 ```
+
+`createdSince` is inclusive and `createdBefore` is not. Every order is descending: most
+recently active first, or best match first for a search, which is also what leaving `sort` out
+means.
 
 `update` renames a conversation or relabels it, `chat.update(title = "Billing")` on an open one
 and `sessions.update(id, title = "Billing")` on one that ended. A device may change `title`,
@@ -179,6 +218,25 @@ cannot be rewound, since its transcript would bring the turns back: the router a
 fork it at the response instead. An open `AgentSession` keeps the transcript it already showed, so reload it from
 `responses` after a rewind.
 
+### Reminders
+
+An agent with `scheduling.enabled` in its config can schedule tasks for the user it talks to.
+The app lists them and does what a person does with a reminder; making one, and what the agent
+is told when it comes due, is your backend's:
+
+```kotlin
+val tasks = agents.scheduledTasks
+val page = tasks.list(ScheduledTaskQuery(state = ScheduledTask.State.Active))
+tasks.update(page.items[0].id, next = ScheduledTask.Next.After("PT15M"))   // snooze
+tasks.pause(page.items[0].id)
+val runs = tasks.runs(page.items[0].id)
+```
+
+`update` also replaces the schedule, the title, where an occurrence is delivered (`deliverTo`,
+empty for the conversation alone) and the quiet hours (both ends empty clears them); `resume`
+starts a paused or failed task again and `delete` cancels it. A task runs on the user's clock,
+so a schedule's `at` is a local time in the task's zone.
+
 ### Guests, and who this device is
 
 ```kotlin
@@ -195,7 +253,7 @@ when one is needed and again after a 401, never on every request.
 ## What is deliberately not here
 
 The router is server-side only by default: a handful of operations are marked
-`x-client-accessible` in the spec and everything else answers a device 403. This SDK uses thirteen
+`x-client-accessible` in the spec and everything else answers a device 403. This SDK uses twenty-two
 of them plus the event socket, and `generate.py` fails if the list names anything the spec does
 not open.
 
@@ -206,6 +264,7 @@ not open.
 | Moving a guest's history onto the account they signed up with | Nothing: the backend that authenticated them does it |
 | Changing a session's models or voice | Your backend, which has the Go or Node SDK's `update` |
 | Interrupting over HTTP | Nothing: `interrupt()` goes over the socket |
+| Making a scheduled task, changing its instructions, or running one by hand | Your backend, acting for the user |
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which is what declares this
 caller a device. Credentials go in handshake headers, never in the socket's query string.

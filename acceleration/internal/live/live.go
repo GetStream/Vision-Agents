@@ -31,8 +31,9 @@ type Health struct {
 	Errors   int64
 	// LatencyMsAvg is the mean latency over the current window.
 	LatencyMsAvg float64
-	// Available is false once the error rate crosses the configured threshold, and for one
-	// window after a fatal failure.
+	// Available is false once the window holds enough requests to judge (Options.MinRequests)
+	// and their error rate crosses the configured threshold, and for one window after a fatal
+	// failure however few requests it holds.
 	Available bool
 }
 
@@ -66,9 +67,21 @@ type Options struct {
 	// Window is how long health observations stay relevant.
 	Window time.Duration
 	// MaxErrorRate is the error rate at or above which a provider is treated as
-	// unavailable.
+	// unavailable, once the window holds MinRequests requests.
 	MaxErrorRate float64
+	// MinRequests is how many requests the window must hold before its error rate can make a
+	// provider unavailable. Zero is DefaultMinRequests.
+	MinRequests int64
 }
+
+// DefaultMinRequests is the fewest requests in a window whose error rate is trusted to take a
+// provider out.
+//
+// Health is kept per shard and the outcome lasts a whole window, so a rate read off one or two
+// requests would let a single failure take a provider out for every caller on the shard. Three
+// is the fewest at which one failure alone stays under the default 50% threshold while two
+// still cross it. A fatal failure is not a rate and is not held to this.
+const DefaultMinRequests = 3
 
 // Shard is where a shard's own Redis is.
 type Shard struct {
@@ -97,6 +110,9 @@ func New(options Options) (*Client, error) {
 	}
 	if options.MaxErrorRate == 0 {
 		options.MaxErrorRate = 0.5
+	}
+	if options.MinRequests == 0 {
+		options.MinRequests = DefaultMinRequests
 	}
 
 	client, err := connect(options.Address, options.Username, options.Password)
@@ -270,7 +286,9 @@ func (c *Client) Health(ctx context.Context, modality, provider, model string) (
 	if health.Requests > 0 {
 		health.LatencyMsAvg = parseFloat(entries["latency_ms_total"]) / float64(health.Requests)
 	}
-	health.Available = health.ErrorRate() < c.options.MaxErrorRate
+	// Too few requests are not a rate: until there are enough, an unseen provider and one that
+	// failed once look alike.
+	health.Available = health.Requests < c.options.MinRequests || health.ErrorRate() < c.options.MaxErrorRate
 	// A fatal failure is one every caller would get, so no number of successes outweighs it.
 	if fatalAt := parseInt(entries["fatal_at_ms"]); fatalAt > 0 &&
 		time.Since(time.UnixMilli(fatalAt)) < c.options.Window {

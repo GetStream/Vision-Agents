@@ -13,7 +13,6 @@ import (
 // answer is one read of a Source.
 type answer struct {
 	entries []Entry
-	markup  int64
 	next    time.Time
 	err     error
 }
@@ -26,19 +25,15 @@ type answers struct {
 	reads  int
 }
 
-func (a *answers) Active(context.Context, time.Time) ([]Entry, int64, time.Time, error) {
+func (a *answers) Active(context.Context, time.Time) ([]Entry, time.Time, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	got := a.queued[min(a.reads, len(a.queued)-1)]
 	a.reads++
-	return got.entries, got.markup, got.next, got.err
+	return got.entries, got.next, got.err
 }
 
 func (a *answers) Upcoming(context.Context, time.Time) ([]UpcomingEntry, error) { return nil, nil }
-
-func (a *answers) UpcomingMarkups(context.Context, time.Time) ([]UpcomingMarkup, error) {
-	return nil, nil
-}
 
 // scheduled is a Source written for the test with one change scheduled at at: before it the
 // list is before, from it after.
@@ -47,15 +42,11 @@ type scheduled struct {
 	before, after []Entry
 }
 
-func (s scheduled) Active(_ context.Context, at time.Time) ([]Entry, int64, time.Time, error) {
+func (s scheduled) Active(_ context.Context, at time.Time) ([]Entry, time.Time, error) {
 	if at.Before(s.at) {
-		return s.before, 0, s.at, nil
+		return s.before, s.at, nil
 	}
-	return s.after, 0, time.Time{}, nil
-}
-
-func (s scheduled) UpcomingMarkups(context.Context, time.Time) ([]UpcomingMarkup, error) {
-	return nil, nil
+	return s.after, time.Time{}, nil
 }
 
 func (s scheduled) Upcoming(_ context.Context, after time.Time) ([]UpcomingEntry, error) {
@@ -71,7 +62,7 @@ func (s scheduled) Upcoming(_ context.Context, after time.Time) ([]UpcomingEntry
 
 // versioned is the entry for model m at $1 per million input tokens, written by change.
 func versioned(change string) Entry {
-	entry := llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1)})
+	entry := atCost(llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1)}))[0]
 	entry.Version = change
 	return entry
 }
@@ -80,7 +71,7 @@ func versioned(change string) Entry {
 func (s *PricingSuite) active(source Source, interval time.Duration, requireEntries bool) *Active {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.T().Cleanup(cancel)
-	fallback, err := NewList("embedded:test", []Entry{llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1)})}, 0, nil)
+	fallback, err := NewList("embedded:test", atCost(llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1)})), nil)
 	s.Require().NoError(err)
 	return NewActive(ctx, ActiveOptions{
 		Source: source, Fallback: fallback, Interval: interval, RequireEntries: requireEntries,
@@ -161,76 +152,40 @@ func (s *PricingSuite) TestAListNeverReadIsNotReady() {
 	s.Equal("embedded:test", prices.Quote(llmItem("m", nil), Quantities{InputTokens: 1}).Version)
 }
 
-func (s *PricingSuite) TestTheListsMarkupIsReadWithIt() {
-	prices := s.active(&answers{queued: []answer{{entries: []Entry{versioned("a")}, markup: 2500}}}, time.Hour, false)
+func (s *PricingSuite) TestTheListReadChargesItsPrices() {
+	entry := versioned("a")
+	entry.Prices = map[Meter]Rate{InputTokens: perMillion(1.25)}
+	prices := s.active(&answers{queued: []answer{{entries: []Entry{entry}}}}, time.Hour, false)
 
 	quote := prices.Quote(llmItem("m", nil), Quantities{InputTokens: 1_000_000})
 
 	s.Equal(int64(1_000_000), quote.BaseCostMicros)
 	s.Equal(int64(1_250_000), quote.CostMicros)
-	charged, ok := prices.Charged(llmItem("m", nil))
+	read, ok := prices.Entry(llmItem("m", nil))
 	s.Require().True(ok)
-	s.Equal(1.25, charged.Rates[InputTokens].USD)
+	s.Equal(1.25, read.Prices[InputTokens].USD)
+	s.Equal(1.0, read.Rates[InputTokens].USD)
 }
 
-func (s *PricingSuite) TestTheMarkupIsAddedOnceBeforeRounding() {
-	list, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{
-		InputTokens: perMillion(4), CachedInputTokens: perMillion(0.40), OutputTokens: perMillion(20),
-	})}, 2500, nil)
+// TestThePriceIsSummedOnceBeforeRounding: each meter's fraction of a micro adds up before the
+// row is rounded, for the price and the vendor cost alike.
+func (s *PricingSuite) TestThePriceIsSummedOnceBeforeRounding() {
+	entry := llmEntry("m", map[Meter]Rate{InputTokens: perMillion(0.25), OutputTokens: perMillion(0.25)})
+	entry.Prices = map[Meter]Rate{InputTokens: perMillion(0.3), OutputTokens: perMillion(0.3)}
+	list, err := NewList("test", []Entry{entry}, nil)
 	s.Require().NoError(err)
 
-	quote := list.Quote(llmItem("m", nil), Quantities{InputTokens: 10_000, CachedInputTokens: 2_000, OutputTokens: 800})
+	quote := list.Quote(llmItem("m", nil), Quantities{InputTokens: 5, OutputTokens: 5})
 
-	s.Equal(int64(56_800), quote.BaseCostMicros)
-	s.Equal(int64(71_000), quote.CostMicros)
-	s.Equal(int64(20_000), quote.OutputCostMicros)
-	s.Equal(int64(2500), quote.MarkupBps)
-}
-
-func (s *PricingSuite) TestTheMarkupMultipliesTheUnroundedCost() {
-	list, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{InputTokens: perMillion(0.25)})}, 2500, nil)
-	s.Require().NoError(err)
-
-	quote := list.Quote(llmItem("m", nil), Quantities{InputTokens: 5})
-
-	s.Equal(int64(1), quote.BaseCostMicros, "1.25 µ$ rounds to 1")
-	s.Equal(int64(2), quote.CostMicros, "1.5625 µ$ rounds to 2, where the rounded base marked up (1.25) would be 1")
-}
-
-func (s *PricingSuite) TestAnEntrysMarkupReplacesTheLists() {
-	own := int64(500)
-	entry := llmEntry("own", map[Meter]Rate{InputTokens: perMillion(1)})
-	entry.MarkupBps = &own
-	list, err := NewList("test", []Entry{entry, llmEntry("list", map[Meter]Rate{InputTokens: perMillion(1)})}, 2500, nil)
-	s.Require().NoError(err)
-	used := Quantities{InputTokens: 1_000_000}
-
-	s.Equal(int64(1_050_000), list.Quote(llmItem("own", nil), used).CostMicros)
-	s.Equal(int64(500), list.Quote(llmItem("own", nil), used).MarkupBps)
-	s.Equal(int64(1_250_000), list.Quote(llmItem("list", nil), used).CostMicros)
-}
-
-func (s *PricingSuite) TestAZeroMarkupSellsAtTheVendorsRate() {
-	zero := int64(0)
-	entry := llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1)})
-	entry.MarkupBps = &zero
-	withOwn, err := NewList("test", []Entry{entry}, 2500, nil)
-	s.Require().NoError(err)
-	without, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1)})}, 0, nil)
-	s.Require().NoError(err)
-	used := Quantities{InputTokens: 1_000_000}
-
-	for _, list := range []*List{withOwn, without} {
-		quote := list.Quote(llmItem("m", nil), used)
-		s.Equal(int64(1_000_000), quote.CostMicros)
-		s.Equal(quote.BaseCostMicros, quote.CostMicros)
-	}
+	s.Equal(int64(3), quote.BaseCostMicros, "2.5 µ$ rounds to 3")
+	s.Equal(int64(3), quote.CostMicros, "1.5 + 1.5 µ$, not 2 + 2")
+	s.Equal(int64(2), quote.OutputCostMicros)
 }
 
 func (s *PricingSuite) TestFreeAndLocalStayFree() {
 	free := Entry{Modality: "phone", Provider: "telnyx", Model: "call", Free: true}
 	local := Entry{Modality: "llm", Provider: "gemma", Model: "gemma", Local: true}
-	list, err := NewList("test", []Entry{free, local}, 2500, nil)
+	list, err := NewList("test", []Entry{free, local}, nil)
 	s.Require().NoError(err)
 
 	for _, item := range []Item{{Modality: "phone", Provider: "telnyx", Model: "call"}, {Modality: "llm", Provider: "gemma", Model: "gemma"}} {
@@ -241,21 +196,17 @@ func (s *PricingSuite) TestFreeAndLocalStayFree() {
 	}
 }
 
-func (s *PricingSuite) TestChargedRatesReadAsWritten() {
-	list, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{CachedInputTokens: perMillion(1.10)})}, 2500, nil)
-	s.Require().NoError(err)
+func (s *PricingSuite) TestAPriceWorkedOutFromARateReadsAsWritten() {
 	vendorRate := 1.10
-	s.NotEqual(1.375, vendorRate*12_500/10_000, "multiplied as floats, the charged rate has noise to drop")
+	s.NotEqual(1.32, vendorRate*12_000/10_000, "multiplied as floats, the price has noise to drop")
 
-	charged, ok := list.Charged(llmItem("m", nil))
-	s.Require().True(ok)
-	encoded, err := json.Marshal(charged.Rates[CachedInputTokens])
+	priced := Priced(llmEntry("m", map[Meter]Rate{CachedInputTokens: perMillion(1.10)}))
+	encoded, err := json.Marshal(priced.Prices[CachedInputTokens])
 
 	s.Require().NoError(err)
-	s.JSONEq(`{"usd": 1.375, "per": 1000000}`, string(encoded))
-	s.Contains(string(encoded), `"usd":1.375,`)
-	vendor, _ := list.Entry(llmItem("m", nil))
-	s.Equal(1.10, vendor.Rates[CachedInputTokens].USD, "the vendor's rate is kept as it is")
+	s.JSONEq(`{"usd": 1.32, "per": 1000000}`, string(encoded))
+	s.Contains(string(encoded), `"usd":1.32,`)
+	s.Equal(1.10, priced.Rates[CachedInputTokens].USD, "the vendor's rate is kept as it is")
 }
 
 // change is one scheduled change of a timeline: the version m is priced at from at on.
@@ -279,7 +230,7 @@ func (t *timeline) set(changes ...change) {
 	t.changes = changes
 }
 
-func (t *timeline) Active(_ context.Context, at time.Time) ([]Entry, int64, time.Time, error) {
+func (t *timeline) Active(_ context.Context, at time.Time) ([]Entry, time.Time, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.reads++
@@ -291,14 +242,10 @@ func (t *timeline) Active(_ context.Context, at time.Time) ([]Entry, int64, time
 			next = scheduled.at
 		}
 	}
-	return []Entry{versioned(version)}, 0, next, nil
+	return []Entry{versioned(version)}, next, nil
 }
 
 func (t *timeline) Upcoming(context.Context, time.Time) ([]UpcomingEntry, error) { return nil, nil }
-
-func (t *timeline) UpcomingMarkups(context.Context, time.Time) ([]UpcomingMarkup, error) {
-	return nil, nil
-}
 
 func (t *timeline) readCount() int {
 	t.mu.Lock()
@@ -367,23 +314,4 @@ func (s *PricingSuite) TestATimerThatFiresWhileTheClockIsBehindWaitsOutTheRest()
 	s.True(prices.timerAt.Equal(due))
 	s.Require().NotNil(prices.timer, "armed again for the rest of the wait")
 	s.True(prices.timer.Stop(), "the wait is still running")
-}
-
-func (s *PricingSuite) TestAQuotedAmountIsResoldWithTheMarkup() {
-	list, err := NewList("test", []Entry{{Modality: "phone", Provider: "telnyx", Model: "number", Free: true}}, 2500, nil)
-	s.Require().NoError(err)
-
-	quote := list.Quoted(Item{Modality: "phone", Provider: "telnyx", Model: "number"}, 1_000_000)
-
-	s.Equal(int64(1_250_000), quote.CostMicros)
-	s.Equal(int64(1_000_000), quote.BaseCostMicros)
-	s.Equal(QuotedVersion, quote.Version)
-	s.True(quote.Billable)
-}
-
-func (s *PricingSuite) TestAListMarkupOutsideItsRangeIsRefused() {
-	_, err := NewList("test", nil, MaxMarkupBps+1, nil)
-	s.Error(err)
-	_, err = NewList("test", nil, -1, nil)
-	s.Error(err)
 }

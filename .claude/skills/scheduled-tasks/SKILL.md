@@ -140,7 +140,7 @@ its tasks cannot be delivered into a conversation.
 
 ## Schedule one on staging
 
-Staging is `https://accelerate.gcp.stream-io-api.com`, behind Stream's proxy. The proxy
+Staging is `https://accelerate-staging.gcp.stream-io-api.com`, behind Stream's proxy. The proxy
 wants `api_key` and `stream-auth-type: jwt` for any token, and a server token is HS256
 `{"server": true}` signed with the app's secret (`sdks/js/src/backend.ts:318`,
 `signToken` at `:486`). Never print the secret or the token.
@@ -155,7 +155,7 @@ const now = Math.floor(Date.now() / 1000);
 const input = b({ alg: "HS256", typ: "JWT" }) + "." + b({ server: true, iat: now, exp: now + 3600 });
 process.stdout.write(input + "." + c.createHmac("sha256", process.env.STREAM_API_SECRET).update(input).digest("base64url"));
 ')
-R=https://accelerate.gcp.stream-io-api.com
+R=https://accelerate-staging.gcp.stream-io-api.com
 A=(-H "Authorization: Bearer $TOKEN" -H 'stream-auth-type: jwt' -H 'Content-Type: application/json' -H 'X-Stream-User-Id: alice')
 curl -s "$R/v1/agents/scheduled-tasks?api_key=$STREAM_API_KEY" "${A[@]}" | jq '.items | length'
 ```

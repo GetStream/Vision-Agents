@@ -139,8 +139,12 @@ public class AgentSession internal constructor(
         }
     }
 
-    /** Speaks this without going through the model. */
-    public suspend fun say(text: String) {
+    /**
+     * Speaks this without going through the model. [interrupt] stops what the agent is saying
+     * first, rather than waiting for it to finish.
+     */
+    public suspend fun say(text: String, interrupt: Boolean = false) {
+        if (interrupt) socket.send(Command.Interrupt())
         socket.send(Command.Say(text))
     }
 

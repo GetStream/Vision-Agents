@@ -13,13 +13,19 @@ module GetStream
     # anything acting on one person's behalf.
     class Backend
       URL_ENV = "STREAM_ACCELERATION_URL"
+      # Holds this SDK to the hosted router in one region, such as us-east4.
+      REGION_ENV = "STREAM_ACCELERATION_REGION"
       CUSTOMER_ENV = "STREAM_ACCELERATION_CUSTOMER_ID"
       API_KEY_ENV = "STREAM_API_KEY"
       API_SECRET_ENV = "STREAM_API_SECRET"
       AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
       # Stream's hosted router, which is where a client goes when nothing says otherwise.
-      DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com"
+      DEFAULT_URL = "https://accelerate-us-east4.gcp.stream-io-api.com"
       CUSTOMER_HEADER = "X-Customer-Id"
+      # The shape of a region name, such as us-east4 or europe-west4. Only the shape is
+      # checked: which regions are served is the hosted router's to say, so offering another
+      # needs no release of this SDK.
+      REGION = /\A[a-z]+-[a-z]+[0-9]+\z/
 
       # How long a token minted here lasts. Short, because it is minted per request and a
       # stolen one should stop working sooner than the credential behind it.
@@ -30,21 +36,23 @@ module GetStream
       # Every argument falls back to the environment, so a process deployed next to a router
       # needs none of them.
       #
-      # @param url [String] the router's base URL, then STREAM_ACCELERATION_URL, then Stream's
-      #   hosted router, so only a self-hosted or local router needs it.
+      # @param url [String] the router's base URL, then region, then STREAM_ACCELERATION_URL,
+      #   then STREAM_ACCELERATION_REGION, then Stream's hosted router, so only a self-hosted or
+      #   local router needs it.
+      # @param region [String] holds this to the hosted router in one region, such as
+      #   us-east4. It cannot be passed together with url.
       # @param customer_id [String] who the work is billed to, for a router that trusts the header.
       # @param api_key [String] the public half of a Stream credential.
       # @param api_secret [String] its secret, which is what makes this a backend.
       # @param token [String] a token minted for user_id to hold, in place of the secret.
       # @param user_id [String] the end user this acts for, if any.
       # @param authenticate [Boolean] whether the router sits behind Stream's proxy. On for the
-      #   hosted router; anywhere else STREAM_ACCELERATION_AUTHENTICATE.
+      #   hosted router, in any region; anywhere else STREAM_ACCELERATION_AUTHENTICATE.
       # @param acting_for [String] the end user a server-side credential speaks for. Unlike
       #   user_id it keeps this backend's own credential; see #acting_for.
       def initialize(url: nil, customer_id: nil, api_key: nil, api_secret: nil, token: nil,
-                     user_id: nil, authenticate: nil, user: nil, acting_for: nil)
-        @url = present(url) || present(ENV.fetch(URL_ENV, nil)) || DEFAULT_URL
-        @url = @url.chomp("/")
+                     user_id: nil, authenticate: nil, user: nil, acting_for: nil, region: nil)
+        @url = locate(present(url), present(region)).chomp("/")
         @customer_id = customer_id || ENV.fetch(CUSTOMER_ENV, "")
         # Naming a customer is choosing how a router with nothing in front of it is reached,
         # and a key that happens to be in the environment does not overrule the choice.
@@ -54,7 +62,7 @@ module GetStream
         # not turn a client built for a user into a backend.
         @api_secret = api_secret || (@token.empty? ? ENV.fetch(API_SECRET_ENV, "") : "")
         @authenticate = if authenticate.nil?
-                          flag(ENV.fetch(AUTHENTICATE_ENV, nil)) || @url == DEFAULT_URL
+                          flag(ENV.fetch(AUTHENTICATE_ENV, nil)) || hosted?(@url)
                         else
                           authenticate
                         end
@@ -129,7 +137,39 @@ module GetStream
         [raw].pack("m0").tr("+/", "-_").delete("=")
       end
 
+      # The hosted router held to one region: requests to it are served there and nowhere
+      # else, even when that region is full or down.
+      def self.region_url(name)
+        raise ConfigurationError, "#{name.inspect} is not a region, such as us-east4" unless REGION.match?(name.to_s)
+
+        "https://accelerate-#{name}.gcp.stream-io-api.com"
+      end
+
       private
+
+      # A URL or a region passed in beats either in the environment, and a URL beats a region
+      # wherever both are found, except passed in together, where neither can be said to win.
+      def locate(url, region)
+        raise ConfigurationError, "pass a url or a region, not both" if url && region
+        return url if url
+        return Backend.region_url(region) if region
+
+        from_env = present(ENV.fetch(URL_ENV, nil))
+        return from_env if from_env
+
+        region = present(ENV.fetch(REGION_ENV, nil))
+        region ? Backend.region_url(region) : DEFAULT_URL
+      end
+
+      # Whether url is the hosted router in some region, which is always behind the
+      # proxy.
+      def hosted?(url)
+        name = url.delete_prefix("https://accelerate-")
+        return false if name == url
+
+        trimmed = name.delete_suffix(".gcp.stream-io-api.com")
+        trimmed != name && REGION.match?(trimmed)
+      end
 
       def credentials
         return { CUSTOMER_HEADER => @customer_id } if @api_key.empty?

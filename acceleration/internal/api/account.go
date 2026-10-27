@@ -93,6 +93,7 @@ type UsageEvent struct {
 	Purpose         string            `json:"purpose,omitempty" doc:"What within the request the work was for, such as subagent."`
 	Quantities      map[string]int64  `json:"quantities" doc:"How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and the like."`
 	Attributes      map[string]string `json:"attributes,omitempty" doc:"What chose the price or explains the work, such as country or direction."`
+	Sku             string            `json:"sku,omitempty" doc:"The SKU of the item the work was priced as, as getPrices lists it: the same across its price changes. Absent for work no entry priced, and for work recorded before SKUs were."`
 	CostMicros      int64             `json:"cost_micros" doc:"What the organization is charged for the work, in millionths of a dollar."`
 	Billable        bool              `json:"billable" doc:"Whether cost_micros counts against the organization's credit and limits."`
 	Success         bool              `json:"success" doc:"Whether the work succeeded."`
@@ -382,7 +383,7 @@ func usageEventOf(event usage.CustomerUsageEvent) UsageEvent {
 		UsageId: event.UsageID.String(), OccurredAt: event.OccurredAt, AppId: event.AppID, ApiKey: event.APIKey,
 		UserId: event.UserID, UsageCategories: event.UsageCategories, AgentId: event.AgentID, CallId: event.CallID,
 		SessionId: event.SessionID, Meter: event.Meter, Provider: event.Provider, Model: event.Model,
-		Purpose: event.Purpose, Quantities: event.Quantities, Attributes: event.Attributes,
+		Purpose: event.Purpose, Quantities: event.Quantities, Attributes: event.Attributes, Sku: event.SKU,
 		CostMicros: event.CostMicros, Billable: event.Billable, Success: event.Success, ErrorCode: event.ErrorCode,
 		Tags: event.Tags,
 	}

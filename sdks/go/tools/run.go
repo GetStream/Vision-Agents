@@ -173,6 +173,11 @@ func (r *Registry) execute(ctx context.Context, function *Function, call *Call, 
 			return Output{}, fmt.Errorf("tools: %s waited for a place to run and gave up: %w", function.Name, ctx.Err())
 		}
 	}
+	if function.schema != nil {
+		if err := check(function.schema, []byte(arguments)); err != nil {
+			return Output{}, fmt.Errorf("tools: %s was asked for with arguments it cannot take: %w", function.Name, err)
+		}
+	}
 	return function.run(WithToolCallContext(ctx, call), []byte(arguments))
 }
 

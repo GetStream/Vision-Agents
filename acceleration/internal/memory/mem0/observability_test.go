@@ -21,6 +21,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 )
@@ -311,4 +312,76 @@ func attributes(span sdktrace.ReadOnlySpan) map[attribute.Key]attribute.Value {
 		byKey[pair.Key] = pair.Value
 	}
 	return byKey
+}
+
+// refusedAlert is the mem0_refused condition, fresh, after a first check that takes in what
+// earlier tests counted, so what it holds next is only what the test did. That check is a limit
+// before start: an item it sent would otherwise be held back from the test's own checks.
+func (s *CallRecordingSuite) refusedAlert(start time.Time) alerts.ItemCheck {
+	conditions := Alerts(time.Hour)
+	s.Require().Len(conditions, 1)
+	s.Equal("mem0_refused", conditions[0].Name)
+	s.Equal(alerts.Warn, conditions[0].Level, "a refusal does not page")
+	conditions[0].Items(start.Add(-time.Hour))
+	return conditions[0].Items
+}
+
+func (s *CallRecordingSuite) recall() {
+	_, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "anything"})
+	s.Error(err)
+}
+
+func (s *CallRecordingSuite) TestARefusalAlertsOncePerOperationAndStatusUntilTheLimitPasses() {
+	start := time.Now()
+	refused := s.refusedAlert(start)
+	s.platform.status = http.StatusTooManyRequests
+
+	s.recall()
+	held := refused(start.Add(time.Second))
+	s.Require().Contains(held, "search/429")
+	s.GreaterOrEqual(held["search/429"]["increase"], 1.0)
+
+	s.recall()
+	s.NotContains(refused(start.Add(time.Hour)), "search/429", "held back by the limit")
+
+	s.recall()
+	s.Contains(refused(start.Add(time.Hour+2*time.Second)), "search/429", "sent again once the limit passed")
+}
+
+func (s *CallRecordingSuite) TestEveryHTTPErrorAlertsUnderItsStatusAndNothingElseDoes() {
+	for _, tc := range []struct {
+		name   string
+		status int
+		answer string
+		closed bool
+		item   string
+		alerts bool
+	}{
+		{name: "spent quota", status: http.StatusTooManyRequests, answer: `{"error":"quota"}`, item: "search/429", alerts: true},
+		{name: "revoked key", status: http.StatusUnauthorized, answer: `{"detail":"Invalid API key"}`, item: "search/401", alerts: true},
+		{name: "bad request", status: http.StatusBadRequest, answer: `{"error":"bad"}`, item: "search/400", alerts: true},
+		{name: "server error", status: http.StatusInternalServerError, answer: `{"error":"down"}`, item: "search/500", alerts: true},
+		{name: "answered", status: http.StatusOK, answer: `{"results":[]}`, item: "search/200"},
+		{name: "undecodable answer", status: http.StatusOK, answer: `not json`, item: "search/200"},
+		{name: "never answered", closed: true, item: "search/none"},
+	} {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			start := time.Now()
+			refused := s.refusedAlert(start)
+			s.platform.status, s.platform.respond = tc.status, tc.answer
+			if tc.closed {
+				s.platform.server.Close()
+			}
+
+			_, _ = s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "anything"})
+
+			held := refused(start.Add(time.Second))
+			if tc.alerts {
+				s.Contains(held, tc.item)
+			} else {
+				s.NotContains(held, tc.item)
+			}
+		})
+	}
 }
