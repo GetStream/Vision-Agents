@@ -169,4 +169,10 @@ func (s *Store) forget(ctx context.Context, names ...string) {
 				"key", name, "error", err)
 		}
 	}
+	// Redis sends this node the invalidation of its own local copy after the DEL's reply, so
+	// a read made as soon as the DEL returns can still be answered by the old copy. The
+	// client reads everything over one connection, in order, so once a PING after the DEL
+	// is answered the invalidation has been applied. A PING that fails needs nothing more:
+	// a broken connection drops every local copy it held.
+	s.cache.Client().Do(ctx, s.cache.Client().B().Ping().Build())
 }

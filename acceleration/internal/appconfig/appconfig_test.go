@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -161,6 +163,81 @@ func (s *AppConfigSuite) TestPolicy() {
 			under, err := s.other.OrganizationOf(s.ctx, appID)
 			return err == nil && under == "org-second"
 		}, settleFor, 10*time.Millisecond, "the other node still has the old organization")
+	})
+
+	s.Run("a policy saved on a node is what that node reads next", func() {
+		// No Eventually here: the node that saved answers its own next request with the new
+		// policy at once. The old copy is in its local cache before every save, and the race
+		// with its invalidation is lost rarely, so many saves run, side by side as a busy
+		// node's are.
+		limit := int64(7)
+		var stale atomic.Int64
+		var saves sync.WaitGroup
+		for writer := range 8 {
+			saves.Go(func() {
+				for attempt := range 250 {
+					scopeID := fmt.Sprintf("app-%d-%d-%d", time.Now().UnixNano(), writer, attempt)
+					for range 2 {
+						if _, err := s.first.Policy(s.ctx, store.ScopeApp, scopeID); err != nil {
+							stale.Add(1)
+						}
+					}
+					if err := s.first.SavePolicy(s.ctx, store.ScopeApp, scopeID,
+						store.PolicyDocument{Quota: &store.Quota{MessagesPerUserPerDay: &limit}}); err != nil {
+						stale.Add(1)
+					}
+					if now, err := s.first.Policy(s.ctx, store.ScopeApp, scopeID); err != nil || now.Quota == nil {
+						stale.Add(1)
+					}
+				}
+			})
+		}
+		saves.Wait()
+		s.Zero(stale.Load(), "reads that failed or answered with the policy from before the save")
+	})
+
+	s.Run("a read that loaded before a save never puts what it loaded back after it", func() {
+		// One node is reading a value from Postgres while a save deletes it, and a second
+		// read of the same value on that node is waiting. Neither may leave the old value in
+		// Redis, where every node would read it until it expires.
+		name := key("policy", "app", fmt.Sprintf("app-%d", time.Now().UnixNano()))
+		loading, release, older := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(older)
+			_, _ = read(context.Background(), s.first, name, func(context.Context) (string, error) {
+				close(loading)
+				<-release
+				return "before the save", nil
+			})
+		}()
+		<-loading
+		s.first.forget(s.ctx, name)
+
+		newer, second := make(chan struct{}), make(chan string, 1)
+		go func() {
+			got, _ := read(context.Background(), s.first, name, func(context.Context) (string, error) {
+				close(newer)
+				<-older
+				return "after the save", nil
+			})
+			second <- got
+		}()
+		// The second read may wait for the first rather than load at all, so this waits on
+		// it only for as long as it takes to start loading when it does.
+		select {
+		case <-newer:
+		case <-time.After(200 * time.Millisecond):
+		}
+		close(release)
+		s.Equal("after the save", <-second)
+
+		for _, node := range []*Store{s.first, s.other} {
+			now, err := read(s.ctx, node, name, func(context.Context) (string, error) {
+				return "after the save", nil
+			})
+			s.Require().NoError(err)
+			s.Equal("after the save", now)
+		}
 	})
 }
 
