@@ -107,7 +107,7 @@ the other commands that read them there.
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for a model, and loads both into its database. Only the first load reads its `markup_bps`, and nothing applies a markup yet. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
+| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for a model, and loads both into its database. An entry may set its `prices`, `price_tiers` and `sku`; one without a price is priced at its rates times 1.2 when it is first loaded. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
@@ -730,8 +730,9 @@ the conversation carries on without. Both name the model this deployment wants r
 leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.1-sol` — and
 only reach the rest of their tier when that model is unavailable or fails to start.
 
-Which models those shortcuts reach for LLM, and what each is billed at per million tokens
-(the vendor rates in `prices/vendor.json`):
+Which models those shortcuts reach for LLM, and what each costs per million tokens (the
+vendor rates in `prices/vendor.json`; customers are charged each entry's price, see
+[Prices](#prices)):
 
 | Model                            | Tier         | In     | Cached  | Out     |
 | -------------------------------- | ------------ | ------ | ------- | ------- |
@@ -1487,7 +1488,8 @@ read, and so does adding the page again.
 go run ./cmd/knowledge -customer examples -namespace docs ../docs ../README.md
 ```
 
-A namespace belongs to a customer: turbopuffer stores it as `<customer>__<namespace>`, so two
+A namespace belongs to a customer: turbopuffer stores it as `<customer>__<slug>-<hash>`, a
+readable slug of the namespace and a hash of it as given (`examples__docs-<16 hex>`), so two
 apps that both say `default` never read each other's. `-customer` is the app id the agent
 runs under.
 
@@ -1830,37 +1832,65 @@ refusal.
 
 ## Prices
 
+Every priced item (a modality, provider and model, and the `when` attributes that choose
+between its entries, such as a service tier or a country) has an entry with two prices:
+`rates` and `tiers`, the vendor's cost, kept for reference, and `prices` and `price_tiers`,
+what customers are charged, with the same meters and the same `above_input_tokens`
+thresholds. A quote charges the price alone (`cost_micros`), and works out the cost at the
+vendor's rates beside it (`base_cost_micros`), so the margin on every row can be read back.
+Nothing adds a markup when a row is priced. A free entry has no price, and a local model with
+none costs nothing, as before.
+
+Every item has a SKU, kept across all its price changes, which each row it prices records
+(`requests.sku`, and `sku` on the usage event). A new item is given its modality, provider,
+model and `when` attributes, lowercased with every run of other characters one hyphen
+(`llm-openai-gpt-5-6-luna-service-tier-flex`), numbered `-2`, `-3` past a SKU another item
+has had. A change may give a new item an existing SKU, as a model its vendor renamed keeps
+the old name's, only when that SKU's item is withdrawn by the same change or is no longer in
+force.
+
 `prices/vendor.json` holds the vendors' published list prices, one entry per model (and per
-service tier where a vendor charges one), embedded in the binary. It has no markup and no
-negotiated figure. A deployment may lay a price file of its own over it with
-`ROUTER_PRICES_FILE`: for one model and `when`, the first file with an entry wins, and its
-`markup_bps` is the operator's markup.
+service tier where a vendor charges one), embedded in the binary: rates only, no price of the
+operator's and no negotiated figure. A deployment may lay a price file of its own over it with
+`ROUTER_PRICES_FILE`: for one model and `when`, the first file with an entry wins. An entry
+of either file may set `prices`, `price_tiers` and `sku`; one with no price is priced at its
+rates times `pricing.PriceFactorBps` (12000, so 1.2), each rate kept to 12 significant digits.
+A file's top-level `markup_bps`, which older files have, is ignored with a warning.
 
 At start, right after migrating, a router loads them into the shared database's
-`price_changes` and `price_entries`: everything into an empty database, as one `seed` change
-with the file's markup, and otherwise only the models the database has never priced, as one
-`release` change. A model the database has priced keeps its rates, and the markup stays as
-it is, whatever the files say now. Each load is audited (`price_list`, source `cli`). A load
-that fails is retried every 30 seconds while the router serves; a file that does not parse
-stops the router at start. Rows are only ever added: a trigger refuses to change or delete
-an entry, and a change can only be cancelled before it takes effect. The one exception is
-`router prices reload`, for a development database only, below.
+`price_changes` and `price_entries`: everything into an empty database, as one `seed` change,
+and otherwise only the models the database has never priced, as one `release` change. Those
+are the only entries priced at the factor; a model the database has priced keeps its price,
+whatever the files say now, and staff set every later price outright through the management
+API. Each load is audited (`price_list`, source `cli`). A load that fails is retried every 30
+seconds while the router serves; a file that does not parse stops the router at start. Rows
+are only ever added: a trigger refuses to change or delete an entry, its price and SKU
+included, and a change can only be cancelled before it takes effect. The one exception is
+`router prices reload`, for a development database only, below. An amount a vendor quotes
+outright, such as a number's monthly rental, is charged at that amount times the same factor,
+which no entry stores; its `base_cost_micros` is the vendor's amount.
+
+Migration `20261118120000_price_entry_prices` stored every existing entry's price as what it
+was charged: its rates times its own markup, else the list's in force when it is (or was), and
+gave every item its SKU. Migration `20261130120000_drop_price_markup` then drops the
+`markup_bps` those markups were kept in, on `price_changes` and `price_entries`, which nothing
+had read since.
 
 | Command | What it does |
 | --- | --- |
-| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's vendor rates, its markup and what it charges; `--unpriced` lists the routed models no entry prices |
+| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's SKU, its vendor rates and its price; `--unpriced` lists the routed models no entry prices |
 | `router prices sync --dry-run` | What the next start would load, writing nothing |
 | `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database |
 | `router prices drift [--since 168h] [--json]` | Per model, over every shard, how far each row's cost at the vendor's rates is from what the vendor said it charged (`attributes.vendor_cost_micros`) |
 | `router prices export [--from <routing config>] [--phone] [--out <path>] [--strip]` | Writes a routing config's old `price:` blocks as a price file, and with `--strip` takes them out of it |
 | `router prices reload --development [--dry-run]` | Development only: empties the price list and seeds it again from the price files, as a fresh database's first start does. See below |
 
-A start never changes a rate the database already has, so on a laptop an edit to
+A start never changes a price the database already has, so on a laptop an edit to
 `vendor.json` (a rate fixed, say) does not reach a database seeded before it.
 `router prices reload --development` puts the files' list back: in one transaction, under the
 lock a load takes, it empties `price_changes` and `price_entries` (every change goes, those
-scheduled, cancelled or setting a markup included), then writes the `seed` a fresh database
-gets from `ROUTER_PRICES_FILE` over `vendor.json`, with that file's markup. It first prints
+scheduled and cancelled included), then writes the `seed` a fresh database gets from
+`ROUTER_PRICES_FILE` over `vendor.json`. It first prints
 the database it is pointed at, the address it connects to and the address the server answers
 as (never the password), then what it removed, what it seeded, and the items whose price
 moved; `--dry-run` prints the same and writes nothing. The audit log keeps its rows and gains
@@ -1888,15 +1918,21 @@ docker compose up -d --build router && docker compose exec router router prices 
 ```
 
 Customers read the list with `GET /v1/prices` (`getPrices`, any credential, a device's
-included): every entry in force from the router's memory, at the rates they are charged
-(each vendor rate with its markup, which no field names), with the change that wrote it, and
-`upcoming`, what the scheduled changes will set, soonest first, with their reason; a change of
-the markup alone shows as every entry it moves. The vendor rates, the markup, the unpriced
+included): every entry in force from the router's memory, its `sku` and its price in `rates`
+and `tiers` (what they are charged), with the change that wrote it, and `upcoming`, what the
+scheduled changes will set, soonest first, with their reason. The vendor's cost, the unpriced
 items and each change's source and author stay on the staff operations.
 
+Staff change the list with `createPriceChange` (`/v1/manage/price-lists/changes`): each entry
+sets the vendor's cost (`rates`, `tiers`) and the price (`prices`, `price_tiers`) outright,
+the same meters in both (else 400 `price_meters_mismatch`) and a price tier for each tier
+(else 400 `price_tiers_mismatch`), and may name its `sku` (a SKU another item has in force is
+400 `sku_in_use`; another SKU for an item in force is 400 `sku_changed`). The preview's
+`confirmation_required` is worked out on the prices: one moving by a factor of 2 or more.
+
 Until the router prices from the database, it prices every row from its price files:
-`ROUTER_PRICES_FILE` over the embedded `vendor.json`, at the rates they give and with no
-markup. A `price:` block in a routing config is ignored, with a warning at start;
+`ROUTER_PRICES_FILE` over the embedded `vendor.json`, priced as a first load prices them. A
+`price:` block in a routing config is ignored, with a warning at start;
 `router prices export --from <your config> --out own-prices.json` moves one into a file for
 `ROUTER_PRICES_FILE`, which keeps those models priced. The `check_prices` skill checks the list
 against what each vendor charges.

@@ -16,7 +16,7 @@ T = TypeVar("T", bound="PriceEntryRates")
 
 @_attrs_define
 class PriceEntryRates:
-    """The vendor's rates, by meter."""
+    """The vendor's cost, by meter, for reference: nothing is charged from it."""
 
     additional_properties: dict[str, PriceRate] = _attrs_field(init=False, factory=dict)
 

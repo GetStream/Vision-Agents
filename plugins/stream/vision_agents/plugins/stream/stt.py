@@ -55,6 +55,7 @@ class STT(stt.STT):
         options: Optional[dict[str, Any]] = None,
         backend: Optional[Backend] = None,
         keyterms: Optional[list[str]] = None,
+        region: Optional[str] = None,
     ):
         """Route transcription to `target`.
 
@@ -64,6 +65,8 @@ class STT(stt.STT):
             language: A language hint, which narrows the candidates.
             tags: Cost labels carried onto every request.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+            region: The hosted router in one region, such as `us-east4`, instead of
+                a URL. Defaults to `STREAM_ACCELERATION_REGION`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
             config_id: A stored router config to take the options from, by name or by id.
@@ -83,7 +86,9 @@ class STT(stt.STT):
         self.options = options or {}
         if keyterms:
             self.options = {**self.options, "keyterms": keyterms}
-        self.backend = backend or Backend(url=url, customer_id=customer_id)
+        self.backend = backend or Backend(
+            url=url, customer_id=customer_id, region=region
+        )
 
         # _unclaimed is the socket opened by start, until somebody speaks into it.
         self._unclaimed: Optional[Socket] = None

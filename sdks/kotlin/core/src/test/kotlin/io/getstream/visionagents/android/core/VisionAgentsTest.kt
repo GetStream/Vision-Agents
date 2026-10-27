@@ -52,7 +52,21 @@ class VisionAgentsTest {
     fun `naming no router reaches the hosted one`() {
         VisionAgents(apiKey = "key").use { hosted ->
             assertEquals(Backend.DEFAULT_URL, hosted.backend.url)
-            assertEquals("https://accelerate.gcp.stream-io-api.com", hosted.backend.url)
+            assertEquals("https://accelerate-us-east4.gcp.stream-io-api.com", hosted.backend.url)
+        }
+    }
+
+    @Test
+    fun `a region is the hosted router there`() {
+        assertEquals("https://accelerate-us-east4.gcp.stream-io-api.com", Backend.regionUrl("us-east4"))
+        assertEquals("https://accelerate-europe-west4.gcp.stream-io-api.com", Backend.regionUrl("europe-west4"))
+    }
+
+    @Test
+    fun `anything but a region name is refused`() {
+        for (name in listOf("", "US-EAST4", "us-east4.evil.com/x", "us-east4\n", "us_east4", "useast4", "us-east")) {
+            val refused = assertFailsWith<IllegalArgumentException>(name) { Backend.regionUrl(name) }
+            assertTrue(name in refused.message.orEmpty(), refused.message)
         }
     }
 

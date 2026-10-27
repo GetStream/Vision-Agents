@@ -7,12 +7,12 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-T = TypeVar("T", bound="PricePreviewItemRateFactors")
+T = TypeVar("T", bound="PricePreviewItemPriceFactors")
 
 
 @_attrs_define
-class PricePreviewItemRateFactors:
-    """By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after."""
+class PricePreviewItemPriceFactors:
+    """By meter, the factor its price moves by. Absent for a meter with no price before or after."""
 
     additional_properties: dict[str, float] = _attrs_field(init=False, factory=dict)
 
@@ -26,10 +26,10 @@ class PricePreviewItemRateFactors:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        price_preview_item_rate_factors = cls()
+        price_preview_item_price_factors = cls()
 
-        price_preview_item_rate_factors.additional_properties = d
-        return price_preview_item_rate_factors
+        price_preview_item_price_factors.additional_properties = d
+        return price_preview_item_price_factors
 
     @property
     def additional_keys(self) -> list[str]:

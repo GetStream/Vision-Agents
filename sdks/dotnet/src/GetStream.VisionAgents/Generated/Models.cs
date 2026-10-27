@@ -7900,7 +7900,7 @@ namespace GetStream.VisionAgents.Models
         public double? DurationMs { get; set; } = default!;
 
         /// <summary>
-        /// Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure.
+        /// Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider's health.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error_code")]
         public string? ErrorCode { get; set; } = default!;
@@ -9042,6 +9042,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
 
         /// <summary>
+        /// The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sku")]
+        public string? Sku { get; set; } = default!;
+
+        /// <summary>
         /// What a customer is charged for long prompts.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tiers")]
@@ -9105,12 +9111,6 @@ namespace GetStream.VisionAgents.Models
         public string Kind { get; set; } = default!;
 
         /// <summary>
-        /// The list's markup from effective_at on. Absent left it as it was.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
-        public long? MarkupBps { get; set; } = default!;
-
-        /// <summary>
         /// &lt;UTC yyyymmddhhmmss&gt;_&lt;the name it was given&gt;: the price_version of every row its entries price.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("name")]
@@ -9141,12 +9141,6 @@ namespace GetStream.VisionAgents.Models
         public bool? Free { get; set; } = default!;
 
         /// <summary>
-        /// The entry's own markup in basis points. Absent takes the list's.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
-        public long? MarkupBps { get; set; } = default!;
-
-        /// <summary>
         /// Such as llm, stt, tts, sms or phone.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("modality")]
@@ -9155,15 +9149,36 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("model")]
         public string Model { get; set; } = default!;
 
+        /// <summary>
+        /// What customers are charged for long prompts.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("price_tiers")]
+        public System.Collections.Generic.List<PriceTier>? PriceTiers { get; set; } = default!;
+
+        /// <summary>
+        /// What customers are charged, by meter.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("prices")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Prices { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("provider")]
         public string Provider { get; set; } = default!;
 
         /// <summary>
-        /// The vendor's rates, by meter.
+        /// The vendor's cost, by meter, for reference.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("rates")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
 
+        /// <summary>
+        /// The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sku")]
+        public string Sku { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's cost for long prompts, for reference.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tiers")]
         public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
 
@@ -9207,16 +9222,10 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset? EffectiveAt { get; set; } = default!;
 
         /// <summary>
-        /// Each replaces its item's entry under its when whole: every rate, tier and markup it has.
+        /// Each replaces its item's entry under its when whole: its cost, its price and every tier of both.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("entries")]
         public System.Collections.Generic.List<PriceEntryInput>? Entries { get; set; } = default!;
-
-        /// <summary>
-        /// The list's markup in basis points from effective_at on. Absent leaves it.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
-        public long? MarkupBps { get; set; } = default!;
 
         /// <summary>
         /// 1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it.
@@ -9270,24 +9279,6 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// The markup the entry is sold at: its own, else the list's.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("charged_markup_bps")]
-        public long ChargedMarkupBps { get; set; } = default!;
-
-        /// <summary>
-        /// What customers are charged: each rate with the markup added, to 12 significant digits.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("charged_rates")]
-        public System.Collections.Generic.Dictionary<string, PriceRate>? ChargedRates { get; set; } = default!;
-
-        /// <summary>
-        /// What customers are charged for long prompts.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("charged_tiers")]
-        public System.Collections.Generic.List<PriceTier>? ChargedTiers { get; set; } = default!;
-
-        /// <summary>
         /// When the entry took effect, or takes effect.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
@@ -9300,16 +9291,10 @@ namespace GetStream.VisionAgents.Models
         public bool? Free { get; set; } = default!;
 
         /// <summary>
-        /// The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+        /// The deployment runs the model itself, as its routing config says. Local work with no price costs nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("local")]
         public bool? Local { get; set; } = default!;
-
-        /// <summary>
-        /// The entry's own markup in basis points, replacing the list's. Absent takes the list's.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
-        public long? MarkupBps { get; set; } = default!;
 
         /// <summary>
         /// Such as llm, stt, tts, sms or phone.
@@ -9320,17 +9305,35 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("model")]
         public string Model { get; set; } = default!;
 
+        /// <summary>
+        /// What customers are charged for long prompts, at the thresholds of tiers.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("price_tiers")]
+        public System.Collections.Generic.List<PriceTier>? PriceTiers { get; set; } = default!;
+
+        /// <summary>
+        /// What customers are charged, by the meters of rates.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("prices")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Prices { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("provider")]
         public string Provider { get; set; } = default!;
 
         /// <summary>
-        /// The vendor's rates, by meter.
+        /// The vendor's cost, by meter, for reference: nothing is charged from it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("rates")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
 
         /// <summary>
-        /// The vendor's rates for long prompts.
+        /// The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sku")]
+        public string? Sku { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's cost for long prompts, for reference.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tiers")]
         public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
@@ -9363,7 +9366,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// The vendor charges nothing for it.
+        /// The vendor charges nothing for it. A free entry has no price.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("free")]
         public bool? Free { get; set; } = default!;
@@ -9375,12 +9378,6 @@ namespace GetStream.VisionAgents.Models
         public bool? Local { get; set; } = default!;
 
         /// <summary>
-        /// The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
-        public long? MarkupBps { get; set; } = default!;
-
-        /// <summary>
         /// Such as llm, stt, tts, sms or phone.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("modality")]
@@ -9389,17 +9386,35 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("model")]
         public string Model { get; set; } = default!;
 
+        /// <summary>
+        /// What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its meters, or 400 price_tiers_mismatch.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("price_tiers")]
+        public System.Collections.Generic.List<PriceTier>? PriceTiers { get; set; } = default!;
+
+        /// <summary>
+        /// What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("prices")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Prices { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("provider")]
         public string Provider { get; set; } = default!;
 
         /// <summary>
-        /// The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused.
+        /// The vendor's cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. Required unless the entry is free or withdrawn. An unknown meter, and a rate of more than $1000 a unit, are refused.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("rates")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
 
         /// <summary>
-        /// Rates for long prompts. Each tier rates every meter the entry does.
+        /// The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sku")]
+        public string? Sku { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's cost for long prompts. Each tier rates every meter the entry does.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tiers")]
         public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
@@ -9417,7 +9432,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, string>? When { get; set; } = default!;
 
         /// <summary>
-        /// Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate.
+        /// Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate, price or SKU.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("withdrawn")]
         public bool? Withdrawn { get; set; } = default!;
@@ -9471,12 +9486,6 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<PriceEntry> Entries { get; set; } = new System.Collections.Generic.List<PriceEntry>();
 
         /// <summary>
-        /// The list's markup in basis points, added to every entry with none of its own.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
-        public long MarkupBps { get; set; } = default!;
-
-        /// <summary>
         /// The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("unpriced")]
@@ -9518,12 +9527,6 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("items")]
         public System.Collections.Generic.List<PricePreviewItem> Items { get; set; } = new System.Collections.Generic.List<PricePreviewItem>();
 
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps_after")]
-        public long MarkupBpsAfter { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps_before")]
-        public long MarkupBpsBefore { get; set; } = default!;
-
         /// <summary>
         /// The items that make it so.
         /// </summary>
@@ -9558,12 +9561,6 @@ namespace GetStream.VisionAgents.Models
         public PricedEntry? Before { get; set; } = default!;
 
         /// <summary>
-        /// The factor the markup it is sold at moves by. Absent when either is 0.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("markup_factor")]
-        public double? MarkupFactor { get; set; } = default!;
-
-        /// <summary>
         /// Such as llm, stt, tts, sms or phone.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("modality")]
@@ -9575,17 +9572,17 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("needs_confirmation")]
         public bool? NeedsConfirmation { get; set; } = default!;
 
+        /// <summary>
+        /// By meter, the factor its price moves by. Absent for a meter with no price before or after.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("price_factors")]
+        public System.Collections.Generic.Dictionary<string, double>? PriceFactors { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("provider")]
         public string Provider { get; set; } = default!;
 
         /// <summary>
-        /// By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("rate_factors")]
-        public System.Collections.Generic.Dictionary<string, double>? RateFactors { get; set; } = default!;
-
-        /// <summary>
-        /// It is priced before the change and billable with no rate after.
+        /// It is priced before the change and billable with no price after.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("unpriced")]
         public bool? Unpriced { get; set; } = default!;
@@ -9659,29 +9656,32 @@ namespace GetStream.VisionAgents.Models
     public partial class PricedEntry
     {
 
-        [System.Text.Json.Serialization.JsonPropertyName("charged_rates")]
-        public System.Collections.Generic.Dictionary<string, PriceRate>? ChargedRates { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("charged_tiers")]
-        public System.Collections.Generic.List<PriceTier>? ChargedTiers { get; set; } = default!;
-
         [System.Text.Json.Serialization.JsonPropertyName("free")]
         public bool? Free { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("local")]
         public bool? Local { get; set; } = default!;
 
-        /// <summary>
-        /// The markup it is sold at.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
-        public long MarkupBps { get; set; } = default!;
+        [System.Text.Json.Serialization.JsonPropertyName("price_tiers")]
+        public System.Collections.Generic.List<PriceTier>? PriceTiers { get; set; } = default!;
 
         /// <summary>
-        /// The vendor's rates.
+        /// What customers are charged.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("prices")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Prices { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's cost, for reference.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("rates")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        /// <summary>
+        /// The SKU it is priced under.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sku")]
+        public string? Sku { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("tiers")]
         public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
@@ -9864,7 +9864,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
+        /// False once the health window holds enough requests to judge and their error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("available")]
         public bool Available { get; set; } = default!;
@@ -14429,24 +14429,6 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// The markup the entry is sold at: its own, else the list's.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("charged_markup_bps")]
-        public long ChargedMarkupBps { get; set; } = default!;
-
-        /// <summary>
-        /// What customers are charged: each rate with the markup added, to 12 significant digits.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("charged_rates")]
-        public System.Collections.Generic.Dictionary<string, PriceRate>? ChargedRates { get; set; } = default!;
-
-        /// <summary>
-        /// What customers are charged for long prompts.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("charged_tiers")]
-        public System.Collections.Generic.List<PriceTier>? ChargedTiers { get; set; } = default!;
-
-        /// <summary>
         /// When the entry took effect, or takes effect.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
@@ -14459,16 +14441,10 @@ namespace GetStream.VisionAgents.Models
         public bool? Free { get; set; } = default!;
 
         /// <summary>
-        /// The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+        /// The deployment runs the model itself, as its routing config says. Local work with no price costs nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("local")]
         public bool? Local { get; set; } = default!;
-
-        /// <summary>
-        /// The entry's own markup in basis points, replacing the list's. Absent takes the list's.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("markup_bps")]
-        public long? MarkupBps { get; set; } = default!;
 
         /// <summary>
         /// Such as llm, stt, tts, sms or phone.
@@ -14479,11 +14455,23 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("model")]
         public string Model { get; set; } = default!;
 
+        /// <summary>
+        /// What customers are charged for long prompts, at the thresholds of tiers.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("price_tiers")]
+        public System.Collections.Generic.List<PriceTier>? PriceTiers { get; set; } = default!;
+
+        /// <summary>
+        /// What customers are charged, by the meters of rates.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("prices")]
+        public System.Collections.Generic.Dictionary<string, PriceRate>? Prices { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("provider")]
         public string Provider { get; set; } = default!;
 
         /// <summary>
-        /// The vendor's rates, by meter.
+        /// The vendor's cost, by meter, for reference: nothing is charged from it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("rates")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
@@ -14495,7 +14483,13 @@ namespace GetStream.VisionAgents.Models
         public string Reason { get; set; } = default!;
 
         /// <summary>
-        /// The vendor's rates for long prompts.
+        /// The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sku")]
+        public string? Sku { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor's cost for long prompts, for reference.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tiers")]
         public System.Collections.Generic.List<PriceTier>? Tiers { get; set; } = default!;
@@ -14793,6 +14787,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("session_id")]
         public string? SessionId { get; set; } = default!;
+
+        /// <summary>
+        /// The SKU of the item the work was priced as, as getPrices lists it: the same across its price changes. Absent for work no entry priced, and for work recorded before SKUs were.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sku")]
+        public string? Sku { get; set; } = default!;
 
         /// <summary>
         /// Whether the work succeeded.

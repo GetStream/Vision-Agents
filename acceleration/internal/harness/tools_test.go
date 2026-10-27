@@ -95,8 +95,8 @@ func (s *ToolsSuite) TestAGoAheadIsActedOnWithoutAskingForOptionalDetails() {
 }
 
 func (s *ToolsSuite) TestAReadBackThatWaitsForAgreementEndsTheTurn() {
-	// Voicebench operators say to read details back and wait for agreement before acting,
-	// and Gemma read them back and called the tool in the same breath.
+	// An operator can say to read details back and wait for agreement before acting, and a
+	// model that reads them back and calls the tool in the same breath ignores that.
 	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
 		s.Contains(prompt, "If your instructions say to wait for agreement after a read-back, "+
 			"end your turn after it, with no hold phrase and no call, until they agree.")

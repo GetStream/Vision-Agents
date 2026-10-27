@@ -292,11 +292,19 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
 		reads, graphQL := record.reads(host, r.Method, r.URL)
+		if name := overrider(r.Header); name != "" {
+			reads, logger = false, logger.With("why", "a method override header: "+name)
+		}
 		if graphQL {
 			// Its error names the check alone, never the body's bytes.
 			if err := onlyQueries(r); err != nil {
 				reads, logger = false, logger.With("why", err.Error())
 			}
+		}
+		// A body read to its end fills r.Trailer, which ReverseProxy sends on with the rest, so
+		// the trailer is checked after every body read (GraphQL's is the only one now).
+		if name := overrider(r.Trailer); name != "" {
+			reads, logger = false, logger.With("why", "a method override trailer: "+name)
 		}
 		if !reads {
 			logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
@@ -382,6 +390,24 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// ReverseProxy sends a 1xx's headers on before ModifyResponse sees any.
 		forward.ServeHTTP(finalOnly{sent}, r)
 	}
+}
+
+// methodOverrides are the headers in which a client names the method a host should run in place
+// of the request's own, in net/http's canonical form. Google runs a GET with
+// X-HTTP-Method-Override: POST as the POST (live probe 2026-10-27T20:42Z, AI-2120: a GET to
+// .../datasets answered «Required parameter is missing: dataset_id», datasets.insert's). It
+// ignored X-HTTP-Method and X-Method-Override in the same probe; they are refused too, since no
+// read needs one.
+var methodOverrides = []string{"X-Http-Method-Override", "X-Http-Method", "X-Method-Override"}
+
+// overrider is the first header of methodOverrides that header holds, whatever its value, or "".
+func overrider(header http.Header) string {
+	for _, name := range methodOverrides {
+		if _, ok := header[name]; ok {
+			return name
+		}
+	}
+	return ""
 }
 
 // errEncoded is a substituted request's response in an encoding the rewrite cannot read.

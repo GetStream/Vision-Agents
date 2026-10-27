@@ -35,6 +35,8 @@ class Price:
             description (str | Unset): In upcoming: why the change is made.
             effective_at (datetime.datetime | Unset): When it took effect, or takes effect. Absent when no change set it.
             rates (PriceRates | Unset): What a customer is charged, by meter.
+            sku (str | Unset): The item's SKU, the same across its price changes, which every usage event of its work
+                records. Absent for a model the deployment runs itself that no change prices.
             tiers (list[PriceTier] | None | Unset): What a customer is charged for long prompts.
             when (PriceWhen | Unset): The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is
                 the item's default entry.
@@ -50,6 +52,7 @@ class Price:
     description: str | Unset = UNSET
     effective_at: datetime.datetime | Unset = UNSET
     rates: PriceRates | Unset = UNSET
+    sku: str | Unset = UNSET
     tiers: list[PriceTier] | None | Unset = UNSET
     when: PriceWhen | Unset = UNSET
     withdrawn: bool | Unset = UNSET
@@ -77,6 +80,8 @@ class Price:
         rates: dict[str, Any] | Unset = UNSET
         if not isinstance(self.rates, Unset):
             rates = self.rates.to_dict()
+
+        sku = self.sku
 
         tiers: list[dict[str, Any]] | None | Unset
         if isinstance(self.tiers, Unset):
@@ -115,6 +120,8 @@ class Price:
             field_dict["effective_at"] = effective_at
         if rates is not UNSET:
             field_dict["rates"] = rates
+        if sku is not UNSET:
+            field_dict["sku"] = sku
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
         if when is not UNSET:
@@ -159,6 +166,8 @@ class Price:
         else:
             rates = PriceRates.from_dict(_rates)
 
+        sku = d.pop("sku", UNSET)
+
         def _parse_tiers(data: object) -> list[PriceTier] | None | Unset:
             if data is None:
                 return data
@@ -200,6 +209,7 @@ class Price:
             description=description,
             effective_at=effective_at,
             rates=rates,
+            sku=sku,
             tiers=tiers,
             when=when,
             withdrawn=withdrawn,

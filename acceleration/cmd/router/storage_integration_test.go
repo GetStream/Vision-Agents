@@ -75,7 +75,7 @@ func (s *UsageCommandsSuite) TestStorageIsRecordedOncePerNamespacePerHour() {
 	docs := byCustomer["app-1"]
 	s.Equal(routing.UsageID("knowledge_storage", "app-1__docs", "2026-10-23T14:00:00Z"), docs.UsageID)
 	s.Equal(pricing.Quantities{pricing.Requests: 1, pricing.ByteHours: 2_000_000_000}, docs.Quantities())
-	s.EqualValues(904, docs.CostMicros, "2 GB for an hour at $0.33 a GB-month")
+	s.EqualValues(904, docs.BaseCostMicros, "2 GB for an hour at $0.33 a GB-month")
 	s.Equal("904.110", docs.Attributes[routing.AttributeProviderCostMicros], "turbopuffer's storage rate, from config")
 	s.Equal(pricing.Quantities{pricing.Requests: 1, pricing.ByteHours: 1_000_000}, byCustomer["app-2"].Quantities())
 

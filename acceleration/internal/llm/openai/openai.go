@@ -361,7 +361,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 		p.settle(w, event.Response)
 
 	case "error":
-		p.err = fmt.Errorf("openai: %s", event.Message)
+		p.err = failure(event.Code, event.Message)
 	}
 	return true
 }
@@ -410,9 +410,35 @@ func (p *puller) settle(w *llm.ResponseWriter, response responses.Response) {
 		if response.Error.Message != "" {
 			message = response.Error.Message
 		}
-		p.err = fmt.Errorf("openai: %s", message)
+		p.err = failure(string(response.Error.Code), message)
 	}
 }
+
+// failure is an error OpenAI sent inside a stream, with the code it named, if any. The codes
+// that name OpenAI's own side are transient: the server failing or overloaded, the request
+// being rate limited, or a lookup it ran on the request's behalf timing out. Every other code
+// it lists (an invalid prompt or image, a policy, a residency mismatch) is the request's own.
+func failure(code, message string) error {
+	if code == "" {
+		return fmt.Errorf("openai: %s", message)
+	}
+	transient := false
+	switch responses.ResponseErrorCode(code) {
+	case responses.ResponseErrorCodeServerError, responses.ResponseErrorCodeRateLimitExceeded,
+		responses.ResponseErrorCodeVectorStoreTimeout, serverOverloaded, slowDown:
+		transient = true
+	}
+	return &llm.ProviderFailure{Err: fmt.Errorf("openai: %s: %s", code, message), Transient: transient}
+}
+
+// serverOverloaded and slowDown are the codes OpenAI documents for a model temporarily
+// overloaded (503) and for a request rate that rose too quickly (429), in its error-codes and
+// rate-limits guides. An error after a stream began arrives as a stream event, and the SDK's
+// list of a failed response's codes names neither.
+const (
+	serverOverloaded responses.ResponseErrorCode = "server_is_overloaded"
+	slowDown         responses.ResponseErrorCode = "slow_down"
+)
 
 // finish releases the upstream and works out what ended it.
 func (p *puller) finish(w *llm.ResponseWriter) {

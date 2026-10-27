@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -423,6 +424,9 @@ type recordingTTS struct {
 	voice string
 	// started is told when the router starts it, which a readiness probe never does.
 	started func(*recordingTTS)
+	// completedByTest is set by a test that completes each synthesis itself, with the audio
+	// it says was made: completed by both, an utterance is recorded twice.
+	completedByTest atomic.Bool
 }
 
 // saidLog is what every voice it is handed to was told to say, in order.
@@ -443,7 +447,7 @@ func (s *recordingTTS) Synthesize(request tts.Request) error {
 	s.said.said = append(s.said.said, request.Text)
 	s.said.mu.Unlock()
 
-	if request.Final {
+	if request.Final && !s.completedByTest.Load() {
 		s.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID})
 	}
 	return nil

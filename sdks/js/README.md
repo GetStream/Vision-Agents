@@ -35,7 +35,8 @@ const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token"
 ```
 
 `url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
-passed for a self-hosted or local one. `customerId`, `apiKey` and `apiSecret` fall back to
+passed for a self-hosted or local one. The hosted router is us-east4's; for another region,
+pass `region: "europe-west4"` or set `STREAM_ACCELERATION_REGION` instead. `customerId`, `apiKey` and `apiSecret` fall back to
 `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`.
 
 The hosted router is reached through Stream's authenticating proxy, which wants the
@@ -490,7 +491,7 @@ not in CI: they talk to a deployment, and they skip rather than fail when there 
 talk to — a laptop with no router up, or a checkout with no credentials, is not a broken
 build. `test:local` wants a router on `LOCAL_ACCELERATION_URL`, default
 `http://127.0.0.1:8098`. `test:qa` wants `STREAM_API_KEY` and `STREAM_API_SECRET`, and
-reaches `STAGING_ACCELERATION_URL` and `STAGING_DOCS_SEARCH_URL`. They are the only place
+reaches `QA_ACCELERATION_URL`, which it skips without, and `QA_DOCS_SEARCH_URL`. They are the only place
 the claims above are checked against a real backend rather than against a test one, which
 is worth running before trusting any of them: three of them are `todo` there today, each
 naming what the deployment does instead.

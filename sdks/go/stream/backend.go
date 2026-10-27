@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 const (
 	// URLEnv points this SDK at another router, such as one running locally.
 	URLEnv = "STREAM_ACCELERATION_URL"
+	// RegionEnv holds this SDK to the hosted router in one region, such as us-east4.
+	RegionEnv = "STREAM_ACCELERATION_REGION"
 	// CustomerEnv names who the work is billed to on a router with no proxy in front of it,
 	// which is one run locally. Setting it is what turns authentication off.
 	CustomerEnv = "STREAM_ACCELERATION_CUSTOMER_ID"
@@ -49,8 +52,9 @@ const (
 	// directory is this one; the dashboard and the CLI name themselves.
 	ClientHeader = "X-Stream-Client"
 	ClientSDK    = "sdk"
-	// DefaultURL is the hosted router.
-	DefaultURL = "https://accelerate.gcp.stream-io-api.com"
+	// DefaultURL is the hosted router in us-east4. STREAM_ACCELERATION_URL or
+	// STREAM_ACCELERATION_REGION moves it.
+	DefaultURL = "https://accelerate-us-east4.gcp.stream-io-api.com"
 )
 
 // tokenValidity is how long a minted token lasts. Short, because it is minted per request
@@ -60,14 +64,42 @@ const tokenValidity = time.Hour
 // ErrNoCredential is returned when there is no app credential to authenticate with. Falling
 // back to the customer header instead would send a request the proxy refuses, and report it
 // as whatever the proxy says rather than as what it is.
+// region is the shape of a region name, such as us-east4 or europe-west4. Only the shape
+// is checked: which regions are served is the hosted router's to say, so offering another
+// needs no release of this SDK.
+var region = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
+
+// RegionURL is the hosted router held to one region: requests to it are served there and
+// nowhere else, even when that region is full or down.
+func RegionURL(name string) (string, error) {
+	if !region.MatchString(name) {
+		return "", fmt.Errorf("stream: %q is not a region, such as us-east4", name)
+	}
+	return "https://accelerate-" + name + ".gcp.stream-io-api.com", nil
+}
+
+// hosted says whether url is the hosted router in some region, which is always behind
+// the proxy.
+func hosted(url string) bool {
+	name, ok := strings.CutPrefix(url, "https://accelerate-")
+	if !ok {
+		return false
+	}
+	name, ok = strings.CutSuffix(name, ".gcp.stream-io-api.com")
+	return ok && region.MatchString(name)
+}
+
 var ErrNoCredential = errors.New("stream: set " + APIKeyEnv + " and " + APISecretEnv +
 	", or " + CustomerEnv + " for a local router")
 
 // Backend is where the acceleration router is, and who is calling it.
 type Backend struct {
-	// URL is the router's base URL. Empty falls back to STREAM_ACCELERATION_URL, then to
-	// the hosted router.
+	// URL is the router's base URL. Empty falls back to Region, then to
+	// STREAM_ACCELERATION_URL, then to STREAM_ACCELERATION_REGION, then to the hosted router.
 	URL string
+	// Region holds this SDK to the hosted router in one region, such as us-east4. It
+	// cannot be set together with URL.
+	Region string
 	// CustomerID is the identity every request and every cost row is keyed by. Empty falls
 	// back to STREAM_ACCELERATION_CUSTOMER_ID. A router behind the authenticating proxy
 	// works this out from the credential instead and ignores what it is told.
@@ -103,8 +135,21 @@ type Backend struct {
 
 // Resolve fills in whatever the environment knows and refuses a backend nobody is billed for.
 func (b Backend) Resolve() (Backend, error) {
-	if b.URL == "" {
+	if b.URL != "" && b.Region != "" {
+		return b, errors.New("stream: set a URL or a region, not both")
+	}
+	if b.URL == "" && b.Region == "" {
 		b.URL = os.Getenv(URLEnv)
+	}
+	if b.URL == "" && b.Region == "" {
+		b.Region = os.Getenv(RegionEnv)
+	}
+	if b.URL == "" && b.Region != "" {
+		url, err := RegionURL(b.Region)
+		if err != nil {
+			return b, err
+		}
+		b.URL = url
 	}
 	if b.URL == "" {
 		b.URL = DefaultURL
@@ -118,10 +163,10 @@ func (b Backend) Resolve() (Backend, error) {
 	// A Stream key and secret are in the environment for video and chat whether or not a
 	// local router is being talked to, so a customer id is what says which: sending the
 	// credential to a router with nothing in front of it reads as an end user's device.
-	// What does not depend on the environment does say: the hosted router is always behind
-	// the proxy, and a credential passed in was passed in to be used.
+	// What does not depend on the environment does say: the hosted router, in any region,
+	// is always behind the proxy, and a credential passed in was passed in to be used.
 	passed := b.APIKey != "" && (b.APISecret != "" || b.Token != "")
-	if b.CustomerID == "" || b.URL == DefaultURL || passed {
+	if b.CustomerID == "" || hosted(b.URL) || passed {
 		b.Authenticate = true
 	}
 	if b.Authenticate {

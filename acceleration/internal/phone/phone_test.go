@@ -697,7 +697,7 @@ func (s *PhoneSuite) TestAVendorErrorSaysEverythingTheLogNeeds() {
 // work with no price. Only a number on the customer's own trunk costs nothing.
 func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
 	config := s.config()
-	prices, err := pricing.NewList("config", PriceEntries(config), 0, slog.New(slog.DiscardHandler))
+	prices, err := pricing.NewList("config", pricing.PricedAll(PriceEntries(config)), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 
 	own := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: SIPTrunkVendor, Model: ModelNumber}, nil)
@@ -707,7 +707,8 @@ func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
 		quote := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, nil)
 		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
 		resold := prices.Quoted(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, 1_000_000)
-		s.Equal(int64(1_000_000), resold.CostMicros, vendor.Vendor)
+		s.Equal(int64(1_200_000), resold.CostMicros, vendor.Vendor)
+		s.Equal(int64(1_000_000), resold.BaseCostMicros, vendor.Vendor)
 		s.True(resold.Billable, vendor.Vendor)
 	}
 }
