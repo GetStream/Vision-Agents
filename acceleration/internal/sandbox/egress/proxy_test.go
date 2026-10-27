@@ -24,6 +24,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
@@ -768,6 +769,124 @@ func (s *ProxySuite) TestAGraphQLReadHoldsBesideAnotherReadOfItsPath() {
 	})
 	s.Contains(s.logs.String(), `why="a GraphQL mutation"`)
 	s.NotContains(s.logs.String(), "secretField")
+}
+
+// TestAMethodOverrideHeaderIsRefusedOnEveryRead: Google runs a GET with X-HTTP-Method-Override:
+// POST as the POST (live probe 2026-10-27T20:42Z, AI-2120), so a GET or a GraphQL query that
+// carries an override header, under any spelling of its name and with any value, reaches no host
+// and asks for no token. Without the header both read (200 on the base, e1a71dcc4).
+func (s *ProxySuite) TestAMethodOverrideHeaderIsRefusedOnEveryRead() {
+	s.readGraphQL()
+	reads := []graphQLRequest{
+		{name: "a GET", method: http.MethodGet, target: "https://api.github.test/echo"},
+		{name: "a GET with no placeholder", method: http.MethodGet, target: "https://api.github.test/echo"},
+		graphQLCase("a GraphQL query", `{"query":"{ a }"}`, http.StatusOK),
+	}
+	overrides := map[string][]string{
+		"X-HTTP-Method-Override": {"POST"},
+		"X-HTTP-Method":          {"DELETE"},
+		"X-Method-Override":      {"PUT"},
+		"x-http-method-override": {"post"},
+		"X-HTTP-METHOD":          {"GET"},
+		"x-method-override":      {""},
+		"X-Http-Method-Override": {"GET", "POST"},
+	}
+	for _, read := range reads {
+		for name, values := range overrides {
+			for _, header := range []map[string][]string{nil, {name: values}} {
+				s.granted.forget()
+				asked := s.asked
+				refused := s.requestCount("api.github.test", read.method, "denied_method", "4xx")
+				authorization := "Bearer " + s.placeholder
+				if read.name == "a GET with no placeholder" {
+					authorization = ""
+				}
+				request := s.request(read.method, read.target, authorization, read.body)
+				if read.contentType != "" {
+					request.Header.Set("Content-Type", read.contentType)
+				}
+				// A name not in canonical form is sent as it is written.
+				maps.Copy(request.Header, header)
+
+				response, body, err := s.send(s.sandbox(s.credential), request)
+
+				what := fmt.Sprintf("%s %v", read.name, header)
+				s.Require().NoError(err, what)
+				if header == nil {
+					s.Equal(http.StatusOK, response.StatusCode, what)
+					s.Len(s.granted.requests(), 1, what)
+					continue
+				}
+				s.Equal(http.StatusForbidden, response.StatusCode, what)
+				s.Equal("egress: "+read.method+" "+strings.TrimPrefix(read.target, "https://")+" refused: code in the sandbox "+
+					"only reads through a connector; write with the connector's tools\n", body, what)
+				s.Empty(s.granted.requests(), what)
+				s.Equal(asked, s.asked, what)
+				s.Equal(refused+1, s.requestCount("api.github.test", read.method, "denied_method", "4xx"), what)
+			}
+		}
+	}
+	for _, name := range []string{"X-Http-Method-Override", "X-Http-Method", "X-Method-Override"} {
+		s.Contains(s.logs.String(), `why="a method override header: `+name+`"`)
+	}
+}
+
+// TestAMethodOverrideTrailerIsRefusedOnEveryRead: a chunked request's trailer arrives once its
+// body is read to the end, and ReverseProxy sends it on, so a GraphQL query or a GET that
+// carries an override header there, declared in Trailer or not, reaches no host. The same
+// request without the trailer reads (200 on the base, e1a71dcc4).
+func (s *ProxySuite) TestAMethodOverrideTrailerIsRefusedOnEveryRead() {
+	s.readGraphQL()
+	authorization := "Authorization: Bearer " + s.placeholder + "\r\n"
+	query := `{"query":"{ a }"}`
+	chunked := func(method, path, declared, trailer string) string {
+		head := method + " " + path + " HTTP/1.1\r\nHost: api.github.test\r\n" + authorization +
+			"Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n"
+		if declared != "" {
+			head += "Trailer: " + declared + "\r\n"
+		}
+		return head + "\r\n" + fmt.Sprintf("%x\r\n%s\r\n0\r\n", len(query), query) + trailer + "\r\n"
+	}
+	for _, name := range []string{"X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override"} {
+		for _, read := range []struct{ method, path string }{{http.MethodPost, "/graphql"}, {http.MethodGet, "/echo"}} {
+			for _, declared := range []string{"", name} {
+				what := fmt.Sprintf("%s %s with %s, declared %q", read.method, read.path, name, declared)
+				for _, trailer := range []string{"", name + ": DELETE\r\n"} {
+					s.granted.forget()
+					asked := s.asked
+					refused := s.requestCount("api.github.test", read.method, "denied_method", "4xx")
+
+					conn := s.tunnel(&tls.Config{})
+					_, err := io.WriteString(conn, chunked(read.method, read.path, declared, trailer))
+					s.Require().NoError(err, what)
+					response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+					s.Require().NoError(err, what)
+					_, _ = io.Copy(io.Discard, response.Body)
+					_ = response.Body.Close()
+
+					if trailer == "" {
+						// A name declared in Trailer is refused even unsent, so only the plain request is the control.
+						if declared == "" {
+							s.Equal(http.StatusOK, response.StatusCode, what+", no trailer")
+							s.Len(s.granted.requests(), 1, what+", no trailer")
+						}
+						continue
+					}
+					if read.method == http.MethodGet && declared == "" {
+						// The body of a GET is not read here, and the transport sends no trailer
+						// the request did not declare (probe: the host's r.Trailer is empty).
+						s.Equal(http.StatusOK, response.StatusCode, what)
+						continue
+					}
+					s.Equal(http.StatusForbidden, response.StatusCode, what)
+					s.Empty(s.granted.requests(), what)
+					s.Equal(asked, s.asked, what)
+					s.Equal(refused+1, s.requestCount("api.github.test", read.method, "denied_method", "4xx"), what)
+				}
+			}
+		}
+		s.Contains(s.logs.String(), `why="a method override trailer: `+strings.Replace(name, "HTTP", "Http", 1)+`"`)
+	}
 }
 
 // TestAHostOutsideTheGrantsIsRefusedAndNeverReached is A2.

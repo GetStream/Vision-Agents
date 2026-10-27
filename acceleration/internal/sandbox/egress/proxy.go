@@ -295,6 +295,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
 		reads, graphQL, sql := record.reads(host, r.Method, r.URL)
+		if name := overrider(r.Header); name != "" {
+			reads, logger = false, logger.With("why", "a method override header: "+name)
+		}
 		if graphQL {
 			// Its error names the check alone, never the body's bytes.
 			if err := onlyQueries(r); err != nil {
@@ -307,6 +310,12 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			if query, why = onlyOneQuery(r); why != nil {
 				reads, logger = false, logger.With("why", why.Error())
 			}
+		}
+		// A body read to its end fills r.Trailer, which ReverseProxy sends on with the rest, so
+		// the trailer is checked after every body read (GraphQL's and a SQL read's), before the
+		// dry run.
+		if name := overrider(r.Trailer); name != "" {
+			reads, logger = false, logger.With("why", "a method override trailer: "+name)
 		}
 		if !reads {
 			p.refuseWrite(w, r, t, logger, record.readsSQL(host), why)
@@ -453,6 +462,24 @@ func (p *Proxy) selectsOrRefuse(w http.ResponseWriter, r *http.Request, t tunnel
 
 // errGrantEnded is a grant that ended during a request's dry run.
 var errGrantEnded = errors.New("egress: the grant ended during the dry run")
+
+// methodOverrides are the headers in which a client names the method a host should run in place
+// of the request's own, in net/http's canonical form. Google runs a GET with
+// X-HTTP-Method-Override: POST as the POST (live probe 2026-10-27T20:42Z, AI-2120: a GET to
+// .../datasets answered «Required parameter is missing: dataset_id», datasets.insert's). It
+// ignored X-HTTP-Method and X-Method-Override in the same probe; they are refused too, since no
+// read needs one.
+var methodOverrides = []string{"X-Http-Method-Override", "X-Http-Method", "X-Method-Override"}
+
+// overrider is the first header of methodOverrides that header holds, whatever its value, or "".
+func overrider(header http.Header) string {
+	for _, name := range methodOverrides {
+		if _, ok := header[name]; ok {
+			return name
+		}
+	}
+	return ""
+}
 
 // errEncoded is a substituted request's response in an encoding the rewrite cannot read.
 var errEncoded = errors.New("egress: the host's response is encoded")
