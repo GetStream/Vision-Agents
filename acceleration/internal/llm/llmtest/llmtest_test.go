@@ -28,4 +28,5 @@ func (s *ScriptSuite) TestACancelledScriptEndsAbandonedWithNoFailure() {
 	}
 	s.NoError(stream.Err())
 	s.Equal(llm.StatusCancelled, stream.Response().Status)
+	s.Empty(stream.Response().OutputText, "a cancelled reply writes no text")
 }
